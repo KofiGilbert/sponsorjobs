@@ -37,7 +37,10 @@ function setup(extra) {
     acquireDebugger: () => null, frames: {},
     applyDecision: async (u) => ({ fill: !/byhand/.test(u) }),
     isNewPage: () => false, attachResume: async () => false,
-    getApp: async (p) => (p.startsWith("/api/autoapply/agent/parked") ? { ok: true, parked: extra.parked || [] } : { hosts: [] }),
+    // The saved mode is Hybrid here (the questions and the digest also go to Telegram); Assisted
+    // and Auto are covered in tests/js/test_apply_modes.js.
+    getApp: async (p) => (p.startsWith("/api/autoapply/agent/parked") ? { ok: true, parked: extra.parked || [] }
+      : p === "/api/autoapply/mode" ? { ok: true, mode: extra.mode || "hybrid", telegram_asks: (extra.mode || "hybrid") === "hybrid" } : { hosts: [] }),
     postApp: async (p, b) => {
       posts.push([p, b]);
       if (answers[p]) return answers[p](b);

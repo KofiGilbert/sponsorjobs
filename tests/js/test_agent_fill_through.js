@@ -188,11 +188,12 @@ function askRoute(answers) {
     const askAt = s.P.log.findIndex((l) => /^ask batch=true/.test(l));
     const readyStep = s.P.log.findIndex((l) => l === "step 2");
     assert(readyStep >= 0 && askAt > readyStep, "the ask came after the brain reported the Submit page\n" + s.P.log.join("\n"));
-    assert(!s.progress.slice(0, s.progress.findIndex((x) => x.state === "ask")).some((x) => x.state === "ask"), "no ask before the end");
-    // the bar said so while it filled, then asked as a list
+    // (2026-11-17, the guided ask) No question list ever goes on the bar: the person answers on
+    // the page, one outlined field at a time (tests/js/test_agent_guide.js). Here the engine has
+    // the answers at once, so nothing is shown at all.
+    assert(!s.progress.some((x) => x.state === "ask"), "no question list on the bar");
+    // the bar said so while it filled
     assert(s.progress.some((x) => x.state === "running" && x.message === DEFER_LINE && x.deferred === 2), "the honest line " + JSON.stringify(s.progress.map((x) => x.message)));
-    const askP = s.progress.find((x) => x.state === "ask");
-    assert(askP && askP.ask.batch === true && askP.ask.questions.length === 2 && askP.message === "I filled everything I could; these 2 need you.", "the bar's batch " + JSON.stringify(askP));
     // the brain was told: the step after the defer carries the two, and its nudge
     const b2 = stepBodies(s.posts)[1];
     assert(b2.deferred.length === 2 && b2.nudges.some((n) => /^Left for the person, asked at the end/.test(n)), "the brain hears what is left " + JSON.stringify(b2));
@@ -241,8 +242,7 @@ function askRoute(answers) {
     const askAt = L.findIndex((l) => /^ask batch=true/.test(l));
     assert(typedZip >= 0 && typedZip < firstNext && firstNext < askAt, "everything else filled, Next tried, THEN asked\n" + L.join("\n"));
     assert(!stepBodies(s.posts).some((b) => (b.observations || []).some((o) => /^Page check before Next/.test(o))), "the left question never held the Next");
-    const askP = s.progress.find((x) => x.state === "ask");
-    assert(askP && askP.message === "I filled everything I could; this one needs you.", "the bar " + JSON.stringify(askP && askP.message));
+    assert(!s.progress.some((x) => x.state === "ask"), "no question list on the bar");
   }
 
   // ---- 3. a saved answer that arrives meanwhile is used: no ask at all -------------------------

@@ -143,8 +143,32 @@ async function ensureServer() {
   throw new Error("SponsorJobs engine did not come up on " + SERVER);
 }
 
+// Auto mode ("I'm away", docs/apply-agent.md section 26): while the agent works through the
+// queue the pane is kept OUT OF VIEW. It still exists at a real size (the sites lay out, real
+// clicks land), parked past the window's left edge, and the page is told it is closed, so the
+// right panel never switches to the Browser tab and nothing takes the focus.
+let paneQuiet = false;
+const QUIET_BOUNDS = { x: -6000, y: 0, width: 1280, height: 900 };
+function setPaneQuiet(on) {
+  on = !!on;
+  if (on === paneQuiet) return;
+  if (on) {
+    // The person's own page in the Browser tab is never taken over: a quiet run starts only when
+    // the pane is closed (agent:batch refuses otherwise).
+    paneQuiet = true;
+  } else {
+    paneQuiet = false;
+    // The hidden page is closed (and reaped a minute later, like any closed pane). A job left at
+    // Ready to send keeps its place on the record: Send fills it again and submits (agent.send).
+    if (pane) { disarmSuccessWatch(); disarmPageWatch(); closePane(); return; }
+  }
+  layoutPane();
+  pushPaneState();
+}
+
 function paneState() {
   const wc = pane && pane.webContents;
+  if (paneQuiet) return { open: false, url: "", title: "", canGoBack: false, canGoForward: false };
   return {
     open: paneOpen,
     url: wc ? wc.getURL() : "",
@@ -160,6 +184,7 @@ function pushPaneState() {
 
 function layoutPane() {
   if (!pane || !win || win.isDestroyed()) return;
+  if (paneQuiet && paneOpen) { pane.setBounds(QUIET_BOUNDS); return; }
   if (!paneOpen || !paneBounds) {
     pane.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     return;
@@ -237,8 +262,11 @@ function opensInOwnBrowser(url) {
   } catch (e) { return false; }
 }
 
-function openInPane(url) {
+// ``fromAgent``: the apply agent opening a page for its own run. Anything else is the person
+// (a link, the address bar, a Fill button), and takes the browser back from a quiet Auto run.
+function openInPane(url, fromAgent) {
   if (!/^https?:/i.test(url)) return;
+  if (!fromAgent) takePaneBack();
   if (opensInOwnBrowser(url)) { shell.openExternal(url); return; }
   clearTimeout(paneReap);
   paneReap = null;
@@ -1069,6 +1097,8 @@ async function runAutoApplyOnPane(recordId, opts) {
 // presses Next or Submit itself, and at a sign-in / create-account wall it stops and says so;
 // once the person is past it, the next page fills as usual. One watch at a time, 30 minutes max.
 function sendProgress(info) {
+  // A quiet (Auto) run: every line is marked, so the page shows no bar for it.
+  if (paneQuiet && info && !info.quiet) info = Object.assign({}, info, { quiet: true });
   if (win && !win.isDestroyed()) win.webContents.send("autoapply:progress", info);
 }
 function recordFillReport(recordId, report) {
@@ -1262,9 +1292,9 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 // the review page, and stops at Submit; Send presses it (auto-submit sites with Autonomous on
 // are pressed without asking). One run at a time.
 const agent = createAgent({
-  getPane: () => pane, openInPane, waitPaneLoad, autofillCore, agentViewSource,
+  getPane: () => pane, openInPane: (url) => openInPane(url, true), waitPaneLoad, autofillCore, agentViewSource,
   runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
-  isNewPage, attachResume, newUploadRun,
+  isNewPage, attachResume, newUploadRun, setQuiet: setPaneQuiet,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
@@ -1279,12 +1309,24 @@ ipcMain.handle("agent:send", async (_e, recordId, opts) => agent.send(recordId, 
 // An answer to a paused job just came in on the bar: carry on with it now, not on the next poll.
 ipcMain.handle("agent:poll", async () => agent.pollParked());
 ipcMain.handle("agent:stop", async () => { agent.stop(); return { ok: true }; });
+// Next on the bar during the guided ask: on to the next outlined field, this one stays flagged.
+ipcMain.handle("agent:guide-next", async () => agent.guideNext());
 // Several jobs, one after another; a job that needs the person parks and the next one goes on.
-ipcMain.handle("agent:batch", async (_e, jobs) => agent.batch((Array.isArray(jobs) ? jobs : []).map((o) => ({
-  recordId: o.recordId, url: o.url, resumePath: o.resumePath, lane: o.lane, autonomous: !!o.autonomous, company: o.company || "" }))));
+// opts.quiet (Auto mode): the same batch out of sight. Refused while the person has a page open
+// in the Browser tab, so their own browsing is never taken over.
+ipcMain.handle("agent:batch", async (_e, jobs, opts) => {
+  const quiet = !!(opts && opts.quiet);
+  if (quiet && paneOpen) return { ok: false, reason: "pane-in-use" };
+  return agent.batch((Array.isArray(jobs) ? jobs : []).map((o) => ({
+    recordId: o.recordId, url: o.url, resumePath: o.resumePath, lane: o.lane, autonomous: !!o.autonomous, company: o.company || "" })), { quiet });
+});
+// Send all: the person's one click for every application left at Ready to send, one at a time,
+// through the same Send as the bar's; a captcha stops the list.
+ipcMain.handle("agent:send-all", async (_e, jobs) => agent.sendAll((Array.isArray(jobs) ? jobs : []).map((o) => ({
+  recordId: o.recordId, url: o.url, resumePath: o.resumePath, lane: o.lane, company: o.company || "", sig: o.sig || "" }))));
 // "Continue" on a job parked at a captcha or a step on the page.
 ipcMain.handle("agent:continue", async (_e, recordId) => agent.continueParked(recordId));
-ipcMain.handle("agent:busy", async () => ({ busy: agent.busy() }));
+ipcMain.handle("agent:busy", async () => ({ busy: agent.busy(), quiet: agent.quiet() }));
 // Parked jobs carry on by themselves once answered, also after a restart (the engine keeps them).
 agent.startPolling();
 ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId) }));
@@ -1293,6 +1335,13 @@ ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(re
 ipcMain.handle("autoapply:fill-current", async (_e, recordId) => runAutoApplyOnPane(recordId));
 
 ipcMain.on("pane:set-bounds", (_e, rect) => { paneBounds = rect; layoutPane(); });
+// The person opens a page themselves while an Auto run works out of sight: the browser is
+// theirs. The run stops (it picks the queue up again later) and their page opens in view.
+function takePaneBack() {
+  if (!paneQuiet) return;
+  agent.stop();
+  paneQuiet = false;
+}
 ipcMain.on("pane:open", (_e, url) => openInPane(url));
 ipcMain.on("pane:close", () => { disarmSuccessWatch(); disarmPageWatch(); closePane(); });
 ipcMain.on("pane:back", () => pane && pane.webContents.navigationHistory.goBack());

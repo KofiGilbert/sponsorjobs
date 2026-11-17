@@ -1716,8 +1716,12 @@ mark.jd-gap { text-decoration-color: var(--flag); }
    the Jobs page's own pieces (filter bar, logo tile, visa badges, selected-card border, detail
    header); everything new is scoped under .view-autoapply. One column, the Jobs width (1320). */
 .view-autoapply .page-head, .view-autoapply .aa-col { max-width: 1320px; margin-left: auto; margin-right: auto; }
-.view-autoapply .page-head { align-items: center; margin-bottom: 20px; }
-.view-autoapply .aa-head-actions { display: flex; align-items: center; gap: 14px; flex: none; }
+/* The title never breaks ("Auto-" / "apply", 2026-11-17, a narrow page beside the open right
+   panel): the title block keeps a readable width and the actions drop to their own row under it. */
+.view-autoapply .page-head { align-items: center; margin-bottom: 20px; flex-wrap: wrap; row-gap: 12px; }
+.view-autoapply .page-head > div:first-child { flex: 1 1 340px; min-width: 0; }
+.view-autoapply .page-head .page-title { white-space: nowrap; }
+.view-autoapply .aa-head-actions { display: flex; align-items: center; gap: 14px; flex: 0 1 auto; flex-wrap: wrap; }
 .view-autoapply .aa-how { position: relative; }
 .view-autoapply .aa-how > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
   font-size: 13px; color: var(--muted); font-weight: 500; padding: 6px 2px; }
@@ -1844,6 +1848,18 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .view-autoapply .aa-switch[aria-checked="true"] { background: var(--ink-2); }
 .view-autoapply .aa-switch[aria-checked="true"]::after { transform: translateX(14px); }
 .view-autoapply .aa-switch:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+/* How to apply: Auto / Assisted / Hybrid, and Auto's daily summary line (docs/apply-agent.md 26) */
+.view-autoapply .aa-mode { align-items: flex-start; }
+.view-autoapply .aa-mode-seg { margin: 7px 0 6px; }
+.view-autoapply .aa-mode .aa-set-s { line-height: 1.45; }
+.view-autoapply .aa-mode-min, .view-autoapply .aa-mode-live { margin-top: 6px; }
+.view-autoapply .aa-mode-live { color: var(--ink-2); }
+.view-autoapply .aa-autosum { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; max-width: none; margin: 0 0 14px;
+  padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md, 10px); color: var(--ink-2); }
+.view-autoapply .aa-autosum > span { flex: 1; min-width: 200px; }
+.view-autoapply .aa-conf { margin: 0 0 14px; }
+.view-autoapply .aa-conf-s { font-size: 13px; color: var(--ink); font-weight: 600; }
+.view-autoapply .aa-conf-f, .view-autoapply .aa-conf-b { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
 .view-autoapply .aa-ap-in { width: 40px; padding: 1px 4px; font-size: 12px; text-align: center; margin: 0 1px; }
 .view-autoapply .aa-recent { padding: 12px 0 6px; border-top: 1px solid var(--border); }
 .view-autoapply .aa-recent-h { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }

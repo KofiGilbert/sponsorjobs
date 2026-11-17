@@ -1270,10 +1270,12 @@
   if (window.tailorShell && window.tailorShell.onAutoApplyProgress) {
     window.tailorShell.onAutoApplyProgress((info) => {
       if (!info || !info.message) return;
+      // Auto mode works out of sight: no bar, no Browser tab, no chat line. The lists refresh.
+      if (info.quiet) { aaAutoQuiet(info); return; }
       if (info.agent) {
         aaAgentBar(info);
         applyChatProgress(info);      // a run the builder's Apply started is told in its chat too
-        if (/^(ready|submitted|stopped|parked|batch-done)$/.test(info.state || "")) {
+        if (/^(ready|submitted|stopped|parked|batch-done|sendall-done)$/.test(info.state || "")) {
           if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
         }
         return;
@@ -5460,6 +5462,24 @@
       ${suNote("setup.payS", "Optional. The agent uses these only when a form asks.")}`;
   }
 
+  // The three apply modes (docs/apply-agent.md section 26): one saved choice, made here and on
+  // the Auto-apply page. The line under it is honest: how many sites Auto can send on by itself
+  // comes from the verified allowlist the engine reports, never a made-up number.
+  const APPLY_MODES = [["auto", "mode.auto", "Auto"], ["assisted", "mode.assisted", "Assisted"], ["hybrid", "mode.hybrid", "Hybrid"]];
+  function applyModeLine(mode, sites) {
+    const list = sites || [];
+    if (mode === "auto") {
+      return (!list.length
+        ? MT("mode.autoS0", "I'm away. I work through your queue in the background and never ask. Today no site lets me send by myself, so every application is filled and waits for your Send all. Never on LinkedIn.")
+        : list.length === 1
+        ? MT("mode.autoS1", "I'm away. I work through your queue in the background and never ask. Today I can send by myself on one site, {sites}. Everything else is filled and waits for your Send all. Never on LinkedIn.")
+        : MT("mode.autoSN", "I'm away. I work through your queue in the background and never ask. Today I can send by myself on {n} sites: {sites}. Everything else is filled and waits for your Send all. Never on LinkedIn."))
+        .replace("{sites}", list.join(", ")).replace("{n}", String(list.length));
+    }
+    if (mode === "hybrid") return MT("mode.hybridS", "I'm around. You see me fill each form in the Browser tab, and my questions also reach you on Telegram. You press Send in the app.");
+    return MT("mode.assistedS", "I'm here. You see me fill each form in the Browser tab, I ask what only you know at the end, and you press Send. Nothing is asked on Telegram.");
+  }
+
   const SU_SELFID = [["gender", "ans.gender", "Gender"], ["hispanic", "ans.hispanic", "Hispanic or Latino"], ["race", "ans.race", "Race"],
                      ["veteran", "ans.veteran", "Veteran status"], ["disability", "ans.disability", "Disability"],
                      ["transgender", "ans.transgender", "Transgender"], ["orientation", "ans.orientation", "Sexual orientation"],
@@ -5477,15 +5497,13 @@
 
   function suApply() {
     const a = SU.d.apply;
-    const sites = (a.auto_sites || []).join(", ");
     return `<div class="su-rows">
-        ${suField(suT("setup.mode", "How applications go out"), suSeg("autonomous", a.autonomous ? "auto" : "review",
-          [["review", "setup.review", "I review every one"], ["auto", "setup.auto", "Send for me where the site allows it"]]), "su-row")}
-        <p class="ans-eeo-note su-note">${esc(!(a.auto_sites || []).length
-          ? suT("setup.autoS0", "Today no site allows it, so I fill the form and you click Submit. Never on LinkedIn.")
-          : ((a.auto_sites || []).length === 1
-          ? suT("setup.autoS1", "Today that is one site, {sites}. Everywhere else I fill the form and you click Submit. Never on LinkedIn.")
-          : suT("setup.autoSN", "Today that is {sites}. Everywhere else I fill the form and you click Submit. Never on LinkedIn.")).replace("{sites}", sites))}</p>
+        ${suField(suT("mode.title", "How to apply"), suSeg("mode", a.mode || (a.autonomous ? "auto" : "assisted"), APPLY_MODES), "su-row")}
+        <p class="ans-eeo-note su-note" id="suModeNote">${esc(applyModeLine(a.mode || (a.autonomous ? "auto" : "assisted"), a.auto_sites))}</p>
+        <div id="suModeMin"${(a.mode || (a.autonomous ? "auto" : "assisted")) === "auto" ? "" : " hidden"}>
+          ${suInput("auto_min_match", suT("mode.minMatch", "Only send by myself at this match or better (%)"), a.auto_min_match || "", { type: "number", min: 1, maxv: 100, num: true, max: 3 })}
+          ${suNote("mode.minMatchS", "Leave it empty to send on every site that allows it. Lower matches wait for your Send.")}
+        </div>
       </div>
       <div class="ans-grid su-grid">
         ${suInput("daily_cap", suT("setup.cap", "Most applications sent a day"), a.daily_cap, { type: "number", min: 1, maxv: 100, num: true, max: 3 })}
@@ -5556,7 +5574,7 @@
       if (Object.keys(none).length) out.none = none;
     }
     if (SU.step === "workauth" && out.work_auth) out.work_auth = JSON.parse(out.work_auth);
-    if (SU.step === "apply" && "autonomous" in out) out.autonomous = out.autonomous === "auto";
+    if (SU.step === "apply" && "mode" in out && !out.mode) delete out.mode;   // a second tap cleared it: keep the saved mode
     // a default on screen the person kept is their answer too (how you heard, marketing)
     if (SU.step === "forms") {
       const f = SU.d.forms;
@@ -5622,6 +5640,11 @@
       if (!was) { b.classList.add("is-on"); b.setAttribute("aria-pressed", "true"); }   // a second tap clears it
     }
     if (seg.dataset.suSeg.startsWith("wa_")) suPreview();
+    if (seg.dataset.suSeg === "mode") {          // the line under the choice says what it does
+      const m = (seg.querySelector(".is-on") || {}).dataset?.v || "";
+      if ($("#suModeNote") && m) $("#suModeNote").textContent = applyModeLine(m, SU.d.apply.auto_sites);
+      if ($("#suModeMin")) $("#suModeMin").hidden = m !== "auto";
+    }
   });
   $("#view-setup")?.addEventListener("change", e => {
     const t = e.target;
@@ -6223,7 +6246,9 @@
       ? `<div class="trk-card-state needs" title="${esc(rec.state_detail || "")}">${esc(trkT("tracker.needsYou", "Needs you"))}</div>`
       : rec && rec.state === "submitted" && rec.how === "auto" && c.stage === "applied"
       ? `<div class="trk-card-state">${esc(trkT("tracker.submittedForYou", "Submitted for you"))}</div>` : "";
-    return trkCardShell(c, `${st}
+    const conf = rec && rec.confirmation && c.stage === "applied"
+      ? `<div class="trk-card-state" title="${esc(rec.confirmation.subject || "")}">${esc(trkT("aa.confirmed", "Confirmation received"))}</div>` : "";
+    return trkCardShell(c, `${st}${conf}
       ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
       ${meta.length ? `<div class="trk-card-meta">${meta.join("")}</div>` : ""}`);
   }
@@ -11303,7 +11328,8 @@
       ${companyAvatar(it)}
       <div class="aa-row-main"><div class="aa-t">${esc(it.role || T("aa.role", "Role"))}</div>
         <div class="aa-s"><span class="co">${esc(coName(it))}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}</div>${q ? `
-        <div class="aa-q">${esc(q)}</div>` : ""}</div>
+        <div class="aa-q">${esc(q)}</div>` : ""}${it.confirmation && it.tile === "submitted" ? `
+        <div class="aa-q aa-conf-line" title="${esc(it.confirmation.subject || "")}">${esc(T("aa.confirmed", "Confirmation received"))}</div>` : ""}</div>
       <span class="aa-stage ${cls}"${it.stage_detail && it.stage_detail !== text ? ` title="${esc(it.stage_detail)}"` : ""}><span class="pip"></span><span class="aa-stage-x">${esc(text)}</span></span>
       <span class="aa-match">${it.match != null ? `${it.match}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
       <div class="aa-act"><button class="btn btn-ghost btn-sm${primaryish ? " aa-fillbtn" : ""}" type="button" data-act="${act}">${esc(aaActName(act))}</button></div>
@@ -11348,8 +11374,8 @@
     $("#aaCapSent").innerHTML = T("aa.capSent", "{n} sent for you of {cap}").replace("{n}", `<b>${fmtN(sent)}</b>`).replace("{cap}", fmtN(cap));
     $("#aaCapLeft").textContent = T("aa.capLeft", "{n} left today").replace("{n}", fmtN(d.remaining ?? cap));
     $("#aaMeter").style.width = cap ? Math.min(100, Math.round(sent / cap * 100)) + "%" : "0%";
-    const sw = $("#aaAutonomous");
-    sw.setAttribute("aria-checked", String(!!d.autonomous));
+    aaRenderMode(d);
+    aaRenderAutoSum();
     aaRenderAutopilot(b.autopilot || {});
     $("#aaTgSub").textContent = b.telegram ? T("aa.tgOn", "Connected") : T("aa.tgOff", "Approve from your phone");
     $("#aaTgBtn").textContent = b.telegram ? T("aa.tgSettings", "Settings") : T("aa.tgConnect", "Connect");
@@ -11410,12 +11436,161 @@
   document.querySelectorAll("[data-aa-tile]").forEach(el => el.addEventListener("click", () => aaSelectTile(el.dataset.aaTile)));
   $("#aaSeeAll")?.addEventListener("click", () => { aaSelectTile("submitted"); $("#aaList")?.scrollIntoView({ block: "nearest" }); });
   $("#aaTgBtn")?.addEventListener("click", async () => { await openSettings(); document.querySelector('[data-set="notify"]')?.click(); });
-  $("#aaAutonomous")?.addEventListener("click", async e => {
-    const sw = e.currentTarget, on = sw.getAttribute("aria-checked") !== "true";
-    sw.setAttribute("aria-checked", String(on));
-    try { await api("/api/submit/settings", { autonomous: on }); if (AA.board) AA.board.today.autonomous = on; }
-    catch { sw.setAttribute("aria-checked", String(!on)); }
+  // ---- How to apply: Auto / Assisted / Hybrid (the ONE saved choice; also Apply setup step 6)
+  function aaRenderMode(d) {
+    const seg = $("#aaModeSeg");
+    if (!seg) return;
+    const mode = d.mode || (d.autonomous ? "auto" : "assisted");
+    seg.innerHTML = APPLY_MODES.map(([v, k, f]) =>
+      `<button type="button" class="ans-seg-b${v === mode ? " is-on" : ""}" data-v="${v}" aria-pressed="${v === mode}">${esc(T(k, f))}</button>`).join("");
+    $("#aaModeSub").textContent = applyModeLine(mode, d.auto_sites);
+    const min = $("#aaModeMin");
+    min.hidden = !(mode === "auto" && (d.auto_sites || []).length);
+    if (!min.hidden) {
+      const [before, after] = T("mode.minLine", "Only send by myself at {n}% match or better.").split("{n}");
+      min.innerHTML = esc(before) + `<input class="fld aa-ap-in" id="aaMinMatch" type="number" min="1" max="100" value="${d.auto_min_match || ""}" placeholder="${esc(T("mode.minAny", "any"))}" aria-label="${esc(T("mode.minMatch", "Only send by myself at this match or better (%)"))}">` + esc(after || "");
+      $("#aaMinMatch").addEventListener("change", async e => {
+        const raw = parseInt(e.target.value, 10);
+        const v = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0;
+        e.target.value = v ? String(v) : "";
+        try { await api("/api/submit/settings", { auto_min_match: v }); if (AA.board) AA.board.today.auto_min_match = v; loadAutoApply(); }
+        catch { toast(T("tracker.saveFail", "Couldn't save that, try again.")); }
+      });
+    }
+    const live = $("#aaModeLive");
+    live.hidden = !(mode === "auto" && AA_AUTO.running);
+    live.textContent = T("mode.working", "Working in the background.");
+  }
+  $("#aaModeSeg")?.addEventListener("click", async e => {
+    const b = e.target.closest(".ans-seg-b");
+    if (!b || !AA.board || b.classList.contains("is-on")) return;
+    const was = AA.board.today.mode, mode = b.dataset.v;
+    AA.board.today.mode = mode; AA.board.today.autonomous = mode === "auto";
+    aaRenderMode(AA.board.today);
+    try {
+      await api("/api/submit/settings", { apply_mode: mode });
+      // Leaving Auto ends the background run before its next step; nothing else is touched.
+      if (was === "auto" && mode !== "auto" && AA_AUTO.running) { try { window.tailorShell.agentStop(); } catch {} }
+      loadAutoApply();
+      if (mode === "auto") aaAutoTick();
+    } catch {
+      AA.board.today.mode = was; AA.board.today.autonomous = was === "auto";
+      aaRenderMode(AA.board.today);
+      toast(T("tracker.saveFail", "Couldn't save that, try again."));
+    }
   });
+
+  // ---- Auto mode ("I'm away"): the queue, worked in the background ---------------------------
+  // On a timer while the app is open and the mode is Auto: ask the engine for the next approved
+  // applications (up to what is left of today's limit) and hand them to the shell as a QUIET
+  // batch: the pane stays out of view, no Browser tab, no bar, no questions. A site on the
+  // verified allowlist is sent by itself; every other one is filled and left at Ready to send.
+  // Never while the person runs something themselves or has a page open in the Browser tab.
+  const AA_AUTO = { running: false, timer: null };
+  const AA_AUTO_EVERY = 3 * 60 * 1000;
+  async function aaAutoTick() {
+    if (AA_AUTO.running || AA_AGENT || !AA_HAS_AGENT() || !window.tailorShell.agentBatch) return;
+    if (window.Panel && window.Panel.isOpen && window.Panel.isOpen("browser")) return;   // their browser stays theirs
+    let plan = null;
+    try {
+      const busy = window.tailorShell.agentBusy ? await window.tailorShell.agentBusy() : null;
+      if (busy && busy.busy) return;
+      const m = await api("/api/autoapply/mode");
+      if (!m || m.mode !== "auto") return;
+      plan = await api("/api/autoapply/auto/plan", {});
+    } catch { return; }
+    const jobs = (plan && plan.jobs) || [];
+    if (!jobs.length) return;
+    AA_AUTO.running = true;
+    if (AA.board) aaRenderMode(AA.board.today);
+    try { await window.tailorShell.agentBatch(jobs, { quiet: true }); } catch { /* the next tick tries again */ }
+    AA_AUTO.running = false;
+    if (AA.board) aaRenderMode(AA.board.today);
+    aaAutoNotices();
+    if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
+  }
+  // A quiet run's progress: nothing on the bar. An application it sent is marked applied, as the
+  // visible path does, and the page's lists refresh when they are showing.
+  function aaAutoQuiet(info) {
+    if (!info.agent) return;
+    if (info.state === "submitted" && info.record_id != null) {
+      api(`/api/record/${info.record_id}/status`, { status: "applied" }).catch(() => {});
+    }
+    if (/^(ready|submitted|parked|batch-done)$/.test(info.state || "") && $("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
+  }
+  // What Auto told the person when Telegram is not linked (or is paused): each "Sent: Role at
+  // Company" once, as a toast and a desktop notification; then the daily summary line.
+  async function aaAutoNotices() {
+    let d = null;
+    try { d = await api("/api/autoapply/auto/tick", {}); } catch { return; }
+    const a = (d && d.auto) || {};
+    const fresh = a.notices || [];
+    for (const n of fresh.slice(0, 5)) {
+      toast(n.text);
+      try { window.tailorShell && window.tailorShell.notify && window.tailorShell.notify("SponsorJobs", n.text); } catch { /* the toast said it */ }
+    }
+    if (fresh.length) api("/api/autoapply/auto/seen", { ids: fresh.map(n => n.id) }).catch(() => {});
+    if (AA.board) { AA.board.auto = Object.assign({}, a, { notices: [] }); aaRenderAutoSum(); }
+  }
+  if (AA_HAS_AGENT()) {
+    AA_AUTO.timer = setInterval(() => { aaAutoTick(); aaAutoNotices(); }, AA_AUTO_EVERY);
+    setTimeout(() => { aaAutoTick(); aaAutoNotices(); }, 20 * 1000);
+  }
+
+  // The daily summary (Auto mode) and Send all. Send all is offered whenever applications wait
+  // at Ready to send, in every mode: it is the person's own Send for each, one at a time.
+  const aaReadyRows = () => ((AA.board && AA.board.tiles.waiting) || []).filter(x => x.action === "send" && /^https?:\/\//i.test(x.apply_url || ""));
+  function aaRenderAutoSum() {
+    const box = $("#aaAutoSum");
+    if (!box || !AA.board) return;
+    const sum = (AA.board.auto || {}).summary;
+    const ready = aaReadyRows().length;
+    const showSum = !!(sum && sum.text && !sum.seen);
+    // In Auto, Send all is the main path (few sites let the agent send by itself): offered from
+    // the first ready application. In the other modes, from two.
+    box.hidden = !(showSum || ready > 1 || (ready && AA.board.today.mode === "auto"));
+    if (box.hidden) return;
+    $("#aaAutoSumText").textContent = showSum
+      ? T("mode.sum", "Today: {sent} sent for you, {ready} ready for your Send, {need} need an answer.")
+          .replace("{sent}", fmtN(sum.sent)).replace("{ready}", fmtN(ready)).replace("{need}", fmtN(sum.need))
+      : (ready === 1 ? T("mode.ready1", "1 application is filled and ready for your Send.")
+                     : T("mode.readyN", "{n} applications are filled and ready for your Send.")).replace("{n}", fmtN(ready));
+    const btn = $("#aaSendAll");
+    btn.hidden = !(ready && window.tailorShell && window.tailorShell.agentSendAll);
+    btn.textContent = T("mode.sendAll", "Send all {n}").replace("{n}", fmtN(ready));
+    $("#aaAutoSumHide").hidden = !showSum;
+  }
+  $("#aaAutoSumHide")?.addEventListener("click", async () => {
+    try { const r = await api("/api/autoapply/auto/seen", { summary: true }); if (AA.board) AA.board.auto = r.auto; } catch { /* stays */ }
+    aaRenderAutoSum();
+  });
+  // Send all: every application at Ready to send goes through the SAME Send as the bar's, one at
+  // a time, in the Browser tab where the person can watch. A captcha stops the list there.
+  async function aaSendAll() {
+    if (!window.tailorShell || !window.tailorShell.agentSendAll) return;
+    if (AA_AGENT || AA_AUTO.running) { toast(T("aa.agentBusy", "One application at a time. Stop the current one first.")); return; }
+    const rows = aaReadyRows();
+    if (!rows.length) return;
+    if (AA.open != null) aaClose();
+    AA_AGENT = { batch: true };
+    if (window.Panel && !window.Panel.isOpen("browser")) window.Panel.open("browser");
+    aaAgentBar({ state: "running", message: T("mode.sendingAll", "Sending {n} applications, one after another").replace("{n}", rows.length) });
+    let r = null;
+    try {
+      r = await window.tailorShell.agentSendAll(rows.map(x => ({ recordId: x.id, url: x.apply_url, resumePath: x.cv_path || "",
+                                                                  lane: x.lane || "assisted", company: x.company || "", sig: x.ready_sig || "" })));
+    } catch { r = null; }
+    AA_AGENT = null;
+    for (const x of (r && r.results) || []) {
+      if (x.submitted) await api(`/api/record/${x.record_id}/status`, { status: "applied" }).catch(() => {});
+    }
+    if (!r || r.ok === false) {
+      aaAgentBar({ state: "stopped", message: r && r.reason === "busy" ? T("aa.agentBusy", "One application at a time. Stop the current one first.")
+                                            : T("mode.sendAllFail", "Could not send these. Open one and press Send.") });
+    }
+    loadAutoApply();
+  }
+  $("#aaSendAll")?.addEventListener("click", () => aaSendAll());
   $("#aaRecent")?.addEventListener("click", e => { const r = e.target.closest("[data-id]"); if (r) aaOpen(Number(r.dataset.id)); });
 
   const aaFind = id => {
@@ -11449,7 +11624,9 @@
     if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = T("aa.filling", "Filling…"); }
     const autoOn = opts && "autonomous" in opts ? !!opts.autonomous
       : !!(AA.board && AA.board.today && AA.board.today.autonomous);
-    const auto = it.lane === "auto" && autoOn;
+    // The engine's own verdict for this row when it has one (Auto mode, the verified allowlist
+    // and the match threshold: ``auto_send``), else the lane and the mode.
+    const auto = !(opts && "autonomous" in opts) && it.auto_send != null ? !!it.auto_send : (it.lane === "auto" && autoOn);
     if (AA_HAS_AGENT() && !here) {
       if (btn) btn.textContent = T("aa.applying", "Applying\u2026");
       const r = await aaAgentRun(id, it, auto);
@@ -11605,7 +11782,7 @@
     const jobs = ((AA.board && AA.board.tiles.waiting) || [])
       .filter(x => (x.action === "fill" || x.action === "signin") && /^https?:\/\//i.test(x.apply_url || ""))
       .map(x => ({ recordId: x.id, url: x.apply_url, resumePath: x.cv_path || "", lane: x.lane || "assisted",
-                   autonomous: x.lane === "auto" && autonomous, company: x.company || "" }));
+                   autonomous: x.auto_send != null ? !!x.auto_send : (x.lane === "auto" && autonomous), company: x.company || "" }));
     if (!jobs.length) return;
     AA_AGENT = { batch: true };
     if (window.Panel && !window.Panel.isOpen("browser")) window.Panel.open("browser");
@@ -11789,7 +11966,7 @@
     if (info.activity) { AA_FEED.rid = info.record_id; AA_FEED.snap = info.activity; }
     // The bar's own lines (no record: "Thanks. Carrying on") keep the current run's steps; the
     // gates before a run and a batch's sum-up have none.
-    const mine = info.record_id == null ? !/^(basics|batch-done)$/.test(info.state || "")
+    const mine = info.record_id == null ? !/^(basics|batch-done|sendall-done)$/.test(info.state || "")
       : String(info.record_id) === String(AA_FEED.rid);
     const snap = mine ? AA_FEED.snap : null;
     const now = feedLast(snap && snap.events);
@@ -11938,7 +12115,7 @@
       drafted: T("aa.ans.flag.drafted", "Written for this job. Read it."),
       kept_file: T("aa.ans.flag.kept", "The form already had this file (the same name and size), so it was not attached again. Check it is this job's."),
       earlier_file: T("aa.ans.flag.earlier", "The form also holds an earlier file with the same name. Check which one to keep."),
-      needs_you: T("aa.ans.flag.needsYou", "Needs you: only you can answer this. Fill it on the page before you press Send."),
+      needs_you: T("aa.ans.flag.needsYou", "Needs you: the form will not submit without it. Fill it on the page before you press Send."),
       left_empty: T("aa.ans.flag.leftEmpty", "Left empty: optional."),
     };
     return m[code] || "";
@@ -12042,7 +12219,19 @@
       b.addEventListener("click", fn); bar.appendChild(b); return b;
     };
     let stack = false;
-    if ((info.state === "ask" || info.state === "parked") && info.ask) {
+    if (info.state === "guide" && info.guide) {
+      // (2026-11-17) The guided ask: ONE slim line. The field itself is outlined on the page and
+      // the person answers there, with the site's own control; no question list, no answer box.
+      const g = info.guide;
+      text.textContent = (g.n === 1 ? T("aa.guide.one", "1 field needs you.") : T("aa.guide.many", "{n} fields need you.").replace("{n}", g.n))
+        + " " + T("aa.guide.of", "{i} of {n}").replace("{i}", g.i).replace("{n}", g.n);
+      text.title = String(g.question || "");
+      btn(T("aa.guide.next", "Next"), "btn-primary bb-send", (e) => {
+        e.target.disabled = true;
+        try { window.tailorShell.agentGuideNext(); } catch { /* the field stays outlined */ }
+      });
+      btn(T("aa.agent.skipJob", "Skip this job"), "btn-ghost bb-skip", () => { try { window.tailorShell.agentStop(); } catch {} });
+    } else if ((info.state === "ask" || info.state === "parked") && info.ask) {
       // The agent needs answers. One question shows the page's choices as buttons plus a box.
       // Several show ONE AT A TIME ("Question 2 of 4", the question on its own line, its
       // choices, a box), moving to the next open one after each answer, with the answers given
@@ -12125,6 +12314,18 @@
       // person, together, as a list. Each has its choices and a box of its own (the same controls
       // as one question); an answered one folds to its answer, a link back to change it.
       const list = !!ask.batch && many;
+      // (2026-11-17, Phoenix Contact) A question whose every choice the page lists has NO text box:
+      // the choices, and "Leave it empty". A typed reply that settles nothing comes back with the
+      // ways out (``exits``), so the bar is never a dead end: a choice, leave it empty (flagged at
+      // Ready to send), or skip this job.
+      const closedQ = (x) => (x.options || []).length > 0 && !x.partial && (x.all_options || x.options).length <= x.options.length;
+      const leaveIt = async (x) => after(await post({ action: "leave" }, x), T("aa.agent.left", "Left empty"), x);
+      const skipJob = async () => {
+        AA_ASK.delete(key);
+        try { await fetch("/api/autoapply/agent/ask/close", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ask.id || "" }) }); } catch { /* Stop ends it too */ }
+        try { window.tailorShell.agentStop(); } catch { /* no shell: the ask is closed */ }
+      };
+      const canSkip = info.state === "ask" && !!(window.tailorShell && window.tailorShell.agentStop);
       if (list) {
         stack = true;
         const ol = document.createElement("ol");
@@ -12150,22 +12351,25 @@
               const b = ctl(o, "btn-ghost bb-opt" + (st.answers[x.ix] === o ? " is-picked" : ""), async () => after(await post({ answer: o, exact: true }, x), o, x));
               if (st.answers[x.ix] === o) b.setAttribute("aria-pressed", "true");
             }
-            const inp = document.createElement("input");
-            inp.className = "fld bb-answer"; inp.type = "text";
-            inp.placeholder = T("aa.agent.answer", "Your answer");
-            inp.setAttribute("aria-label", String(x.question || ""));
-            if (st.answers[x.ix] && !(x.options || []).includes(st.answers[x.ix])) inp.value = st.answers[x.ix];
-            const typed = async () => {
-              const val = inp.value.trim();
-              if (!val) return;
-              inp.value = "";
-              after(await post({ answer: val }, x), "", x);
-            };
-            inp.addEventListener("keydown", (e) => { if (e.key === "Enter") typed(); });
-            li.appendChild(inp);
-            // the bar's one primary: Answer on the first question still open; the others ghost
-            const firstOpen = all.find((y) => !st.answers[y.ix] || st.edit === y.ix);
-            ctl(T("aa.agent.sendAnswer", "Answer"), firstOpen && firstOpen.ix === x.ix ? "btn-primary bb-send" : "btn-ghost", typed);
+            if (!closedQ(x)) {
+              const inp = document.createElement("input");
+              inp.className = "fld bb-answer"; inp.type = "text";
+              inp.placeholder = T("aa.agent.answer", "Your answer");
+              inp.setAttribute("aria-label", String(x.question || ""));
+              if (st.answers[x.ix] && !(x.options || []).includes(st.answers[x.ix])) inp.value = st.answers[x.ix];
+              const typed = async () => {
+                const val = inp.value.trim();
+                if (!val) return;
+                inp.value = "";
+                after(await post({ answer: val }, x), "", x);
+              };
+              inp.addEventListener("keydown", (e) => { if (e.key === "Enter") typed(); });
+              li.appendChild(inp);
+              // the bar's one primary: Answer on the first question still open; the others ghost
+              const firstOpen = all.find((y) => !st.answers[y.ix] || st.edit === y.ix);
+              ctl(T("aa.agent.sendAnswer", "Answer"), firstOpen && firstOpen.ix === x.ix ? "btn-primary bb-send" : "btn-ghost", typed);
+            }
+            ctl(T("aa.agent.leave", "Leave it empty"), "btn-ghost bb-leave", () => leaveIt(x));
           }
           ol.appendChild(li);
         });
@@ -12176,6 +12380,7 @@
           bar.appendChild(note);
         }
         bar.appendChild(ol);
+        if (canSkip) btn(T("aa.agent.skipJob", "Skip this job"), "btn-ghost bb-skip", skipJob);
       }
       if (many && !list) {
         stack = true;
@@ -12213,8 +12418,15 @@
           after(await post({ answer: v }), "");
         };
         inp.addEventListener("keydown", (e) => { if (e.key === "Enter") typed(); });
-        bar.appendChild(inp);
-        btn(T("aa.agent.sendAnswer", "Answer"), "btn-primary bb-send", typed);
+        const termsAsk = ask.kind === "terms";
+        if (!closedQ(q) || termsAsk) {
+          bar.appendChild(inp);
+          btn(T("aa.agent.sendAnswer", "Answer"), "btn-primary bb-send", typed);
+        }
+        if (!termsAsk) {                      // a site's terms have their own Stop choice
+          btn(T("aa.agent.leave", "Leave it empty"), "btn-ghost bb-leave", () => leaveIt(q));
+          if (canSkip) btn(T("aa.agent.skipJob", "Skip this job"), "btn-ghost bb-skip", skipJob);
+        }
         if (many && pos > 0) {
           btn(T("aa.agent.back", "Back"), "btn-ghost bb-back", () => { st.cur = all[pos - 1].ix; st.note = ""; aaAgentBar(info); });
         }
@@ -12299,7 +12511,7 @@
       btn(T("aa.stop", "Stop"), "btn-ghost bb-stop", () => { try { window.tailorShell.agentStop(); } catch {} });
     }
     bar.classList.toggle("is-wall", info.state === "stopped");
-    bar.classList.toggle("is-ready", /^(ready|ask|basics|parked|answered|batch-done)$/.test(info.state || ""));
+    bar.classList.toggle("is-ready", /^(ready|ask|guide|basics|parked|answered|batch-done|sendall-done)$/.test(info.state || ""));
     // A question longer than a line (a new wording to confirm, "After ..., the application asks")
     // reads on its own row, the choices and the answer box under it: beside three choices it was
     // squeezed to a 200px column of five lines.
@@ -12477,6 +12689,16 @@
     }
     return cards.join("");
   }
+  // The employer's own "we received your application" mail, when the inbox matched one to this
+  // application: who sent it, its subject and its first lines.
+  function aaConfirmation(it) {
+    const c = it.confirmation;
+    if (!c) return "";
+    return `<div class="aa-conf"><div class="aa-h">${esc(T("aa.confirmed", "Confirmation received"))}</div>
+      <div class="aa-conf-s">${esc(c.subject || "")}</div>
+      <div class="aa-conf-f">${esc([c.sender || c.from || "", c.date || ""].filter(Boolean).join(" · "))}</div>
+      ${c.snippet ? `<p class="aa-conf-b">${esc(c.snippet)}</p>` : ""}</div>`;
+  }
   function aaDrawerHtml(it, loading) {
     const facts = [it.company, it.location ? usLocation(it.location) : "", it.type || "", it.pay || ""].filter(Boolean);
     const stagePill = { review: T("aa.tile.review", "To review"), waiting: it.queued ? T("aa.pill.queued", "Queued") : T("aa.pill.approved", "Approved"),
@@ -12503,6 +12725,7 @@
           <div class="aa-sent">${loading ? `<div class="aa-item aa-loading">${esc(T("aa.loading", "Loading…"))}</div>` : aaSent(it)}</div></div>
         <aside class="aa-dr-side"><div class="aa-h">${esc(T("aa.progress", "Progress"))}</div>
           <ol class="aa-tl">${aaTimeline(it)}</ol>
+          ${aaConfirmation(it)}
           <div class="aa-facts">
             ${it.site ? `<div>${esc(T("aa.site", "Site"))} <b>${esc(it.site)}</b></div>` : ""}
             <div>${esc(T("aa.lane", "Lane"))} <b>${esc(lane)}</b></div>

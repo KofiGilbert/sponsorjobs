@@ -41,6 +41,27 @@ const RETRY_MS = Math.max(10, Number(process.env.SJ_AGENT_RETRY_MS) || 1500);
 const EMAIL_WAIT_S = Math.max(5, Number(process.env.SJ_AGENT_EMAIL_WAIT_S) || 180);
 const EMAIL_RECHECK_S = Math.max(2, Number(process.env.SJ_AGENT_EMAIL_RECHECK_S) || 60);
 const MAX_LADDERS = 4;               // recovery ladders per application, then it parks
+// The guided ask (docs/apply-agent.md section 27): how often the shell looks at the outlined field.
+const GUIDE_POLL_MS = Math.max(5, Number(process.env.SJ_AGENT_GUIDE_MS) || 1000);
+// The outline on the field the person is asked to fill, and its removal. Styles only, on the
+// element itself; what was there before is put back.
+const HL_ON = (i) => `(() => { /*sj-highlight*/ const el = window.TailorAgent.element(${Number(i)}); if (!el) return false;
+  el.scrollIntoView({ block: "center", inline: "nearest" });
+  el.setAttribute("data-sj-hl", JSON.stringify([el.style.outline, el.style.outlineOffset, el.style.boxShadow]));
+  el.style.outline = "3px solid #f5a524"; el.style.outlineOffset = "3px"; el.style.boxShadow = "0 0 0 7px rgba(245, 165, 36, 0.28)";
+  return true; })()`;
+const HL_OFF = `(() => { /*sj-unhighlight*/ let n = 0;
+  for (const el of document.querySelectorAll("[data-sj-hl]")) {
+    let was = ["", "", ""]; try { was = JSON.parse(el.getAttribute("data-sj-hl")) || was; } catch (e) { /* plain */ }
+    el.style.outline = was[0] || ""; el.style.outlineOffset = was[1] || ""; el.style.boxShadow = was[2] || "";
+    el.removeAttribute("data-sj-hl"); n++;
+  }
+  return n; })()`;
+// What a box holds, read in the page for the person's own answer library (never logged):
+// {value, typing} - typing while the box still has the keyboard.
+const VALUE_JS = (i) => `(() => { /*sj-value*/ const el = window.TailorAgent.element(${Number(i)}); if (!el) return null;
+  if (el.tagName === "SELECT") { const o = el.options[el.selectedIndex]; return { value: o ? String(o.text || "").trim() : "", typing: false }; }
+  return { value: String(el.value || "").trim().slice(0, 300), typing: document.activeElement === el }; })()`;
 const SETTLE_QUIET_MS = 600;
 const SETTLE_CAP_MS = 8000;
 const LOOP_WINDOW = 12;
@@ -319,8 +340,11 @@ function createAgent(deps) {
     const key = String(recordId);
     if (state === "running" || state === "ask") lastMsg.set(key, message);
     const feed = recordId == null ? null : feeds.get(key);
+    // (The three apply modes) An Auto batch works out of sight: every line it sends is marked
+    // ``quiet``, so the page shows no bar, opens no Browser tab and asks nothing.
     return deps.sendProgress(Object.assign({ agent: true, record_id: recordId == null ? null : recordId,
-                                             state, message }, feed ? { activity: feed.snap() } : {}, extra || {}));
+                                             state, message }, feed ? { activity: feed.snap() } : {},
+                                           batchOn && batchOn.quiet ? { quiet: true } : {}, extra || {}));
   };
   // A step on the feed, sent at once as a running update.
   const say = (recordId, phase, verb, summary, o) => {
@@ -947,7 +971,7 @@ function createAgent(deps) {
           // In a batch the person is away: never wait, park the job and move on (the digest
           // asks). A single run asks on the bar and Telegram and waits, then parks.
           if (!run.batch) progress(run.recordId, "ask", question, { ask });
-          const r = await askLong("/api/autoapply/agent/terms", Object.assign({ id, park: run.parkInfo(), no_wait: !!run.batch }, body), run.st);
+          const r = await askLong("/api/autoapply/agent/terms", Object.assign({ id, park: run.parkInfo(), no_wait: !!run.batch, telegram: !!run.telegram }, body), run.st);
           dlog("terms ->", r && { ok: r.ok, decision: r.decision, reason: r.reason });
           if (r && r.reason === "stopped") return { stop: { reason: "stopped", message: "Stopped." } };
           if (r && r.reason === "parked") return { park: { kind: "terms", question: needsLine(run.company, title), ask } };
@@ -998,13 +1022,17 @@ function createAgent(deps) {
   // One ask on the engine (/ask or /terms with ``park``): it answers within a chunk, or says
   // "waiting" and the shell asks again until the engine's wait is over (then "parked"). Stop
   // closes the ask between chunks. A missed reply is retried, so a hiccup never ends an hour.
-  async function askLong(path, body, st) {
+  // ``onPartial(answers)``: what the person answered so far while other questions of the same
+  // ask are still open (the engine ends a chunk early on each new answer), so the shell can fill
+  // those in at once.
+  async function askLong(path, body, st, onPartial) {
     const once = (p, b) => withTimeout(deps.postApp(p, b), (ASK_CHUNK_S + 60) * 1000, "ask").catch(() => null);
     let r = await once(path, Object.assign({ chunk_s: ASK_CHUNK_S }, body));
     let id = (r && r.id) || body.id;
     let misses = 0;
     while (!r || (r.ok === false && r.reason === "waiting")) {
       if (!r) { if (++misses > 3 || !id) return null; await delay(1000); } else misses = 0;
+      if (r && r.partial && onPartial) { try { await onPartial(r.partial); } catch (e) { /* filled at the end instead */ } }
       if (st && st.stop) {
         await deps.postApp("/api/autoapply/agent/ask/close", { id }).catch(() => null);
         return { ok: false, reason: "stopped" };
@@ -1026,8 +1054,11 @@ function createAgent(deps) {
   async function run(recordId, opts) {
     opts = opts || {};
     if (current) return { ok: false, reason: "busy" };
-    if (batchOn && opts.mode !== "batch") return { ok: false, reason: "busy" };
+    if (batchOn && opts.mode !== "batch" && !opts.inSendAll) return { ok: false, reason: "busy" };
     const batch = opts.mode === "batch";
+    // (The three apply modes, docs/apply-agent.md section 26) ``quiet``: an Auto batch, out of
+    // sight, that never asks and tells Telegram nothing while it works.
+    const quiet = batch && !!opts.quiet;
     // "resend": the person pressed Send on a Ready to send job whose page is gone. The form is
     // filled again from their answers and submitted (their click is the consent) only when
     // nothing new comes up; a new question parks it, without waiting, and nothing is sent.
@@ -1042,6 +1073,11 @@ function createAgent(deps) {
 
     const st = { recordId, stop: false, disarmSigning: () => {} };
     current = st;
+    // The saved mode, asked once per run: only Hybrid sends the run's questions to Telegram as
+    // well as the bar. Assisted asks on the bar only; a quiet (Auto) run asks nowhere. When the
+    // engine does not answer, nothing goes to Telegram.
+    const modeInfo = quiet ? null : await Promise.resolve(deps.getApp("/api/autoapply/mode")).catch(() => null);
+    const telegramAsks = !quiet && !!(modeInfo && modeInfo.telegram_asks);
     // The live feed: a fresh one per run; a parked job carrying on keeps its timeline.
     const fkey = String(recordId);
     let feed = R ? feeds.get(fkey) : null;
@@ -1085,6 +1121,7 @@ function createAgent(deps) {
                                       termsOk: new Map(), accepted: [] };
     terms.st = st;
     terms.batch = quick;
+    terms.telegram = telegramAsks;
     terms.startedAt = startedAt;                           // the run's identity for the Ready to send notice
     if (!terms.answers) terms.answers = createAnswers();   // the Review answers list (readyAnswers)
     const ans = terms.answers;
@@ -1102,11 +1139,22 @@ function createAgent(deps) {
     if (!ans.held) ans.held = {};                  // page -> needs-answers reports for what is already left
     const answeredQ = (q) => Object.keys(runAnswers).some((x) => sameLabel(x, q));
     const deferredOpen = () => ans.deferred.filter((d) => !d.done && !answeredQ(d.question));
+    // (2026-11-17, Phoenix Contact) A question the person chose to LEAVE EMPTY (the bar's "Leave
+    // it empty", or their standing No to a required consent with no way to decline): dealt with,
+    // never asked again this run, never filled, and flagged "Needs you" at Ready to send.
+    const leftEmpty = (q) => ans.deferred.some((d) => d.leftEmpty && sameLabel(d.question, q));
+    const markLeft = (q, at) => {
+      let d = ans.deferred.find((x) => sameLabel(x.question, q));
+      if (!d) { d = { question: String(q), options: [], all_options: [], partial: false, context: "", hint: "", page: at || 1 }; ans.deferred.push(d); }
+      d.done = true; d.leftEmpty = true;
+    };
+    const LEFT_NUDGE = (qs) => ("The person chose to leave these empty: " + qs.map((q) => "\u201c" + String(q).slice(0, 60) + "\u201d").join(", ")
+      + ". Never fill them and never report needs-answers for them. Carry on; at the Submit page report ready_to_submit.").slice(0, 300);
     // A question left for the person that the page now shows filled (the site filled it after
     // the upload, the brain filled it from the profile, the person typed it): no longer theirs.
     const settleDeferred = (v) => {
       for (const d of ans.deferred) {
-        if (d.done || answeredQ(d.question)) continue;
+        if (d.done || d.leftEmpty || answeredQ(d.question)) continue;
         const shown = linesFor(v.text, d.question);
         if (shown.length && shown.some((ln) => FILLED_LINE_RE.test(ln))) d.done = true;
       }
@@ -1149,7 +1197,11 @@ function createAgent(deps) {
         if (pick[q] && await pickSaved(wc, v, q, pick[q])) { addAnswer(ans, { page, label: q, value: pick[q], from }); continue; }
         runAnswers[q] = a;
       }
-      return { open: items.filter((it) => !(it.question in known)), answered };
+      // The person's standing No to a required consent with no way to decline: left empty.
+      const leave = ((k && k.leave) || []).filter((q) => !(q in known));
+      for (const q of leave) markLeft(q, page);
+      if (leave.length) pendingNudges.push(LEFT_NUDGE(leave));
+      return { open: items.filter((it) => !(it.question in known) && !leave.includes(it.question)), answered, left: leave.length };
     };
     // Note questions as left for the person (once each); returns the new ones.
     const defer = (items) => {
@@ -1188,24 +1240,146 @@ function createAgent(deps) {
       const qs = open.map(askItem);
       const shown = "I filled everything I could; " + (n === 1 ? "this one needs you." : "these " + n + " need you.");
       const ask = { id, question: qs[0].question, options: n === 1 ? qs[0].options : [], questions: qs, batch: true };
-      feed.push("ask", "Asking you", n === 1 ? "1 question" : n + " questions, together", { state: "asking", detail: where === "page" ? "this page will not move on without them" : "everything else is filled" });
-      if (!quick) progress(recordId, "ask", shown, { step, ask });
-      const r = await askLong("/api/autoapply/agent/ask", {
-        questions: qs, record_id: recordId, id, batch: true, force_questions: open.filter((d) => d.forced).map((d) => d.question),
-        park: terms.parkInfo(), no_wait: quick }, st);
+      feed.push("ask", "Asking you", n === 1 ? "1 field" : n + " fields, one at a time", { state: "asking", detail: where === "page" ? "this page will not move on without them" : "everything else is filled" });
+      const body = { questions: qs, record_id: recordId, id, batch: true, force_questions: open.filter((d) => d.forced).map((d) => d.question),
+                     park: terms.parkInfo(), no_wait: quick, telegram: telegramAsks };
+      // A batch (and an Auto run) never waits: the ask parks at once. With the person at the app
+      // (Assisted, Hybrid) the questions are answered ON THE PAGE, one field at a time (guide).
+      const r = quick ? await askLong("/api/autoapply/agent/ask", body, st)
+                      : await guide(wc, step, open, body);
       dlog("step " + step + " batch ask (" + where + ") ->", r && { ok: r.ok, reason: r.reason, n });
       if (r && r.reason === "stopped") return { ret: stopped("stopped", "Stopped.") };
       if (r && r.reason === "parked") return { ret: await park("questions", shown, { url, left, ask: batch ? undefined : ask }) };
       if (!(r && r.ok)) return { ret: stopped("needs-answers", blockedMessage("needs-answers", open.map((d) => d.question)), { url, left }) };
-      for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
+      // What the person set on the page (or the shell filled from their Telegram answer) is done;
+      // anything else answered goes to the brain as a placeholder, as before.
+      const onPage = r.onPage || new Set();
+      for (const [q, a] of Object.entries(r.answers || {})) if (!onPage.has(q)) runAnswers[q] = a;
+      const leftNow = (r.left || []).slice();
+      for (const q of leftNow) markLeft(q, page);
+      if (leftNow.length) pendingNudges.push(LEFT_NUDGE(leftNow));
       noteOrigins(runOrigins, r);
       feed.mark("done", "you answered");
       history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
                      actions: ["asked the person, once, everything left for them"], results: [n + " answered"] });
-      pendingNudges.push("The person answered the questions left for them: each has its placeholder in <left>. Fill them now (on an earlier page, go back to it), then carry on to the Submit page and report ready_to_submit.");
+      pendingNudges.push(onPage.size
+        ? "The person answered on the page itself: never change those fields. Any answer still in <left> has its placeholder: fill it. Then carry on to the Submit page and report ready_to_submit."
+        : "The person answered the questions left for them: each has its placeholder in <left>. Fill them now (on an earlier page, go back to it), then carry on to the Submit page and report ready_to_submit.");
       feed.push("carry", "Carrying on", "with your answers", { transient: true });
-      progress(recordId, "running", "Thanks. Filling in your answers", { step });
+      progress(recordId, "running", onPage.size ? "Thanks. Checking the form" : "Thanks. Filling in your answers", { step });
       return {};
+    };
+    // ---- the guided ask (2026-11-17, the owner: no question list over the Browser pane) --------
+    // The bar stays ONE slim line, "N fields need you. I of N", with Next and Skip this job. The
+    // shell scrolls the form to the first open field and outlines it; the person answers ON THE
+    // PAGE with the site's own control. Once the field holds a value the outline goes, the answer
+    // is handed to the engine (saved to the answer library when the ask closes, so it is asked
+    // once ever) and the next open field is outlined. Next moves on without an answer (the field
+    // stays flagged "Needs you"). In Hybrid the same questions are on Telegram too: an answer
+    // from there is filled into the form by the shell and counts the same; whichever comes first
+    // wins. A field on another page is outlined once the person is on that page.
+    // Returns the ask's result ({ok, answers, left, onPage}) or {ok:false, reason}.
+    const guide = async (wc, step, open, body) => {
+      const once = (p, b) => withTimeout(deps.postApp(p, b), (ASK_CHUNK_S + 60) * 1000, "ask").catch(() => null);
+      const js = (expr) => guard(wc.executeJavaScript(expr, true), PANE_MS, "guide").catch(() => null);
+      const unlight = () => js(HL_OFF);
+      let r = await once("/api/autoapply/agent/ask", Object.assign({}, body, { chunk_s: 0 }));
+      const id = (r && r.id) || body.id;
+      const n = open.length;
+      const onPage = new Set();              // answered on the page, or filled there by the shell
+      const settled = new Set();             // answered, or passed with Next
+      const at = (q) => open.findIndex((d) => sameLabel(d.question, q));
+      const finishAsk = (res) => Object.assign({}, res, { onPage });
+      // An answer that came from Telegram (Hybrid): into the form, by the shell.
+      const fillFrom = async (v2, d, a) => {
+        const idx = v2 ? indexFor(v2.text, d.question) : 0;
+        if (!idx) return false;
+        if ((d.all_options || []).some((o) => String(o) === String(a))) return !!(await pickSaved(wc, v2, d.question, a));
+        if (v2.frameOf.has(idx) || /^\*?\[\d+\]<(select|radio|checkbox)\b/.test(viewLine(v2.text, idx))) return false;
+        const done = await js(`window.TailorAgent.act(${JSON.stringify({ op: "type", index: idx, text: String(a) })})`);
+        return !!(done && done.ok !== false);
+      };
+      const takeEngine = async (v2, res) => {
+        for (const [q, a] of Object.entries((res && (res.partial || res.answers)) || {})) {
+          const k = at(q);
+          if (k < 0 || settled.has(open[k].question)) continue;
+          const d = open[k];
+          settled.add(d.question);
+          if (await fillFrom(v2, d, a)) {
+            onPage.add(q); d.done = true;
+            addAnswer(ans, { page: d.page || page, label: d.question, value: a, from: "you" });
+            feed.push("fill", "Filled", "your answer from Telegram", { state: "done", detail: String(d.question).slice(0, 80) });
+          }
+        }
+      };
+      try {
+        for (let i = 0; i < n && !(r && r.ok); i++) {
+          const d = open[i];
+          if (settled.has(d.question)) continue;
+          st.guide = { next: false };
+          progress(recordId, "guide", (n === 1 ? "1 field needs you." : n + " fields need you.") + " " + (i + 1) + " of " + n,
+                   { step, guide: { i: i + 1, n, question: d.question, id } });
+          let lit = 0, last = null, same = 0;
+          for (;;) {
+            if (st.stop) {
+              await unlight();
+              await deps.postApp("/api/autoapply/agent/ask/close", { id }).catch(() => null);
+              return { ok: false, reason: "stopped" };
+            }
+            if (!r) return null;                   // the engine never took the ask
+            let v2 = null;
+            try { v2 = await view(wc, fr); } catch (e) { if (e && e.stopped) throw e; v2 = null; }
+            const idx = v2 ? indexFor(v2.text, d.question) : 0;
+            if (idx && idx !== lit && !v2.frameOf.has(idx)) { await unlight(); await js(HL_ON(idx)); lit = idx; }
+            // The field holds a value now: a choice counts at once; typed text once the person
+            // left the box (or stopped typing), so half a word is never taken.
+            const lines = v2 ? linesFor(v2.text, d.question) : [];
+            if (idx && lines.some((ln) => FILLED_LINE_RE.test(ln))) {
+              const got = pageValue(lines) || null;
+              const box = got == null ? ((await js(VALUE_JS(idx))) || {}) : { value: got, typing: false };
+              const val = String(box.value || "").trim().slice(0, 300);
+              same = val && val === last ? same + 1 : 0;
+              last = val;
+              if (val && (!box.typing || same >= 3)) {
+                await unlight();
+                const a = await once("/api/autoapply/agent/answer", { id, index: i, question: d.question, answer: val, exact: true, on_page: true });
+                onPage.add(d.question); settled.add(d.question); d.done = true;
+                addAnswer(ans, { page: d.page || page, label: d.question, value: val, from: "you" });
+                feed.push("fill", "You answered", "on the page", { state: "done", detail: String(d.question).slice(0, 80) });
+                dlog("step " + step + " guide: answered on the page " + (i + 1) + "/" + n + " ->", a && { ok: a.ok, done: a.done });
+                break;
+              }
+            }
+            if (st.guide && st.guide.next) {       // Next: on without an answer; it stays flagged
+              await unlight();
+              await once("/api/autoapply/agent/answer", { id, index: i, question: d.question, action: "leave", standing: false });
+              settled.add(d.question);
+              break;
+            }
+            // Telegram's answers (Hybrid), and the engine's own clock (an hour, then it parks).
+            const w = await once("/api/autoapply/agent/ask/wait", { id, chunk_s: 0 });
+            if (w && (w.reason === "parked" || w.reason === "stopped" || w.reason === "timeout")) { await unlight(); return w; }
+            if (w && (w.ok || w.partial)) {
+              await takeEngine(v2, w);
+              if (w.ok) { r = w; break; }
+              if (settled.has(d.question)) { await unlight(); break; }
+            }
+            await delay(GUIDE_POLL_MS);
+          }
+        }
+      } finally {
+        st.guide = null;
+        await unlight();
+      }
+      // Every field is answered or passed: the ask closes with what was answered and what was left.
+      for (let tries = 0; !(r && r.ok) && tries < 20; tries++) {
+        if (st.stop) return { ok: false, reason: "stopped" };
+        const w = await once("/api/autoapply/agent/ask/wait", { id, chunk_s: 1 });
+        if (w && w.ok) { r = w; break; }
+        if (w && w.reason && w.reason !== "waiting") return w;
+        if (!w) await delay(RETRY_MS);
+      }
+      return r && r.ok ? finishAsk(r) : r;
     };
     // What a re-run brings in: the consent (also kept on the record, or as the standing choice),
     // and the answers a parked question got (the saved ones come back from the person's material
@@ -1218,6 +1392,7 @@ function createAgent(deps) {
         terms.termsTries = new Map();
       }
       for (const [q, a] of Object.entries(e.answers || {})) { runAnswers[q] = a; resumeLeft[q] = a; }
+      for (const q of e.left || []) markLeft(q, (S && S.page) || 1);
     }
     const hashes = [];
     const pageHashes = [];
@@ -1271,7 +1446,8 @@ function createAgent(deps) {
       const said = batch ? lead + "Paused, it needs you: " + message + " Moving on."
         : resend ? "Paused, not sent: " + message
           : (onPage ? "Paused. " : "Paused: waiting on your answer. ") + message
-            + (onPage ? "" : " The question stays open, here and on Telegram, until you answer it.");
+            + (onPage ? "" : telegramAsks ? " The question stays open, here and on Telegram, until you answer it."
+                                         : " The question stays open here until you answer it.");
       feed.close("done");
       feed.push("park", "Paused", "", { state: "parked",
         detail: (onPage ? message : "waiting on your answer") + (batch ? ", moving on to the next job" : "") });
@@ -1289,7 +1465,7 @@ function createAgent(deps) {
     // row and one Telegram line say so, and a batch stops after the first such error.
     const unavailable = async (message) => {
       const msg = message || "SponsorJobs' AI is unavailable right now. Nothing was changed; try again later.";
-      await deps.postApp("/api/autoapply/agent/unavailable", { record_id: recordId, message: msg, batch }).catch(() => null);
+      await deps.postApp("/api/autoapply/agent/unavailable", { record_id: recordId, message: msg, batch, quiet }).catch(() => null);
       if (batchOn) { batchOn.stop = true; batchOn.fatal = msg; }
       return stopped("ai-unavailable", (batch ? lead : "") + msg, { url: where(), ai: true });
     };
@@ -1881,6 +2057,12 @@ function createAgent(deps) {
             // Review answers: what was left for the person and is still empty here ("Needs you").
             const still = questionsFor(v.text, left);
             ans.needs = ans.deferred.filter((d) => still.some((q) => sameLabel(q, d.question))).map((d) => ({ page: d.page, label: d.question }));
+            // An Auto run never sends, and never offers for Send all, a form that will not submit:
+            // a required question the person left empty sets the job aside for them.
+            if (quiet && ans.needs.length) {
+              return park("person", "The form will not submit without " + (ans.needs.length === 1 ? "an answer" : ans.needs.length + " answers")
+                + " you left empty: " + ans.needs.map((n) => "\u201c" + String(n.label).slice(0, 80) + "\u201d").join(", ") + ".", { url });
+            }
           }
           // ---- SJ_AX hook 2 (shell-electron/ax_view.js, docs/apply-agent.md section 20): the final form
           // check. A blocker goes back to the brain once, then the person is asked once; never handed over unseen.
@@ -1994,6 +2176,7 @@ function createAgent(deps) {
           // the one page that will not move on without it (askBatch).
           let fromPark = 0;
           const newQs = [];
+          const leftSaid = [];
           settleDeferred(v);
           for (const q of asks) {
             if (st.stop) return stopped("stopped", "Stopped.");
@@ -2001,6 +2184,7 @@ function createAgent(deps) {
             const k = Object.keys(resumeLeft).find((x) => x === q || sameLabel(x, q));
             if (k !== undefined) { runAnswers[q] = resumeLeft[k]; delete resumeLeft[k]; fromPark++; continue; }
             if (deferredOpen().some((d) => sameLabel(d.question, q))) continue;   // already left for the person
+            if (leftEmpty(q)) { leftSaid.push(q); continue; }                     // the person left it empty: never asked again
             // Answered this run and still open: that answer did not stick, so it is the person's
             // again, at the end, about THAT question (never the saved answer once more).
             const was = Object.keys(runAnswers).find((x) => sameLabel(x, q));
@@ -2036,6 +2220,20 @@ function createAgent(deps) {
           // Nothing new: the brain says the page needs what is already left for the person. When
           // the page's own error names it, or it says so a second time on this page, this page
           // will not move on without it: everything left is asked now, together.
+          // Only questions the person left empty: the brain is told once; a page that still will
+          // not move on without one is the person's to open (never asked again, never a loop).
+          if (leftSaid.length && !openNow.some((d) => asks.some((q) => sameLabel(q, d.question)))) {
+            const lk = "left:" + page;
+            ans.held[lk] = (ans.held[lk] || 0) + 1;
+            if (ans.held[lk] >= 2) {
+              return park("person", "This page will not move on without " + (leftSaid.length === 1 ? "an answer" : "answers")
+                + " you chose to leave empty: " + leftSaid.map((q) => "\u201c" + String(q).slice(0, 80) + "\u201d").join(", ") + ".", { url });
+            }
+            pendingNudges.push(LEFT_NUDGE(leftSaid));
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                           actions: ["(needs-answers for questions the person left empty)"], results: ["leave them empty and carry on"] });
+            continue;
+          }
           const here = openNow.filter((d) => asks.some((q) => sameLabel(q, d.question)));
           const key = String(page);
           ans.held[key] = (ans.held[key] || 0) + 1;
@@ -2167,7 +2365,7 @@ function createAgent(deps) {
               // (Fill-through) What is left for the person never holds the click: the page
               // decides whether it moves on without it.
               const mine = chk && Array.isArray(chk.required_empty)
-                ? chk.required_empty.filter((x) => !deferredOpen().some((d) => sameLabel(d.question, String(x)))) : [];
+                ? chk.required_empty.filter((x) => !deferredOpen().some((d) => sameLabel(d.question, String(x))) && !leftEmpty(String(x))) : [];
               if (mine.length) {
                 const line = "Page check before " + name + ": required fields still empty: " + mine.join(", ")
                   + (chk.errors && chk.errors.length ? ". Errors shown: " + chk.errors.join(" | ") : "") + ". Fill them (or report needs-answers if the person must), then click " + name + ".";
@@ -2339,12 +2537,20 @@ function createAgent(deps) {
   // (its question stays open) and the next one starts. ONE digest goes to Telegram when the batch
   // ends (and every 30 minutes while it runs, when something new parked). jobs: [{ recordId, url,
   // resumePath, lane, autonomous, company }].
-  async function batch(jobs) {
+  // ``o.quiet`` (Auto mode, "I'm away"): the same batch out of sight. The pane is kept out of
+  // view (deps.setQuiet), every progress line is marked quiet, nothing is asked and no digest or
+  // Ready to send notice goes to Telegram: the person hears of it in the daily summary. In the
+  // other modes the digest goes to Telegram only in Hybrid (the engine's saved mode decides).
+  async function batch(jobs, o) {
     if (current || batchOn) return { ok: false, reason: "busy" };
     const list = (jobs || []).filter((j) => j && j.recordId != null && /^https?:/i.test(j.url || ""));
     if (!list.length) return { ok: false, reason: "empty" };
-    const b = batchOn = { stop: false };
-    const digest = () => deps.postApp("/api/autoapply/agent/digest", { only_new: true }).catch(() => null);
+    const quiet = !!(o && o.quiet);
+    const b = batchOn = { stop: false, quiet };
+    if (quiet && deps.setQuiet) deps.setQuiet(true);
+    const modeInfo = quiet ? null : await Promise.resolve(deps.getApp("/api/autoapply/mode")).catch(() => null);
+    const tell = !quiet && !!(modeInfo && modeInfo.telegram_asks);
+    const digest = () => (tell ? deps.postApp("/api/autoapply/agent/digest", { only_new: true }).catch(() => null) : Promise.resolve(null));
     const timer = setInterval(() => { digest(); }, DIGEST_MS);
     if (timer.unref) timer.unref();
     const results = [];
@@ -2352,14 +2558,14 @@ function createAgent(deps) {
       for (let i = 0; i < list.length; i++) {
         if (b.stop) break;
         const j = list[i];
-        const r = await run(j.recordId, Object.assign({}, j, { mode: "batch", batchAt: { i: i + 1, n: list.length } }));
+        const r = await run(j.recordId, Object.assign({}, j, { mode: "batch", quiet, batchAt: { i: i + 1, n: list.length } }));
         results.push(Object.assign({ record_id: j.recordId }, r || { ok: false, reason: "error" }));
       }
     } finally {
       clearInterval(timer);
     }
     const d = await digest();
-    batchOn = null;
+    const endQuiet = () => { if (quiet && deps.setQuiet) deps.setQuiet(false); };
     const n = (pred) => results.filter(pred).length;
     const readyN = n((r) => r.ready), sentN = n((r) => r.submitted), parkedN = n((r) => r.parked), closedN = n((r) => r.closed);
     const stoppedN = results.length - readyN - sentN - parkedN - closedN;
@@ -2374,6 +2580,8 @@ function createAgent(deps) {
       + (b.fatal ? " " + b.fatal : "")
       + (parkedN ? " Answer them in Auto-apply, Needs you" + (d && d.sent ? " or on Telegram" : "") + ", and I carry on with each one." : "");
     progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, closed: closedN, stopped: stoppedN, fatal: b.fatal || "" } });
+    batchOn = null;
+    endQuiet();
     if (parkedN) startPolling();
     setTimeout(() => { pollParked().catch(() => {}); }, 50);
     return { ok: true, results, digest: d || null };
@@ -2477,12 +2685,15 @@ function createAgent(deps) {
       if (fd) fd.push("send", "Sending", "your application", { detail: said });
       progress(recordId, "running", "Sending" + (said ? ". " + said : ""), { step });
       current = null;
-      return send(recordId);
+      // ``by``: the shell pressed Submit with nobody there (the verified allowlist, Auto mode);
+      // the person's own Send on a re-filled job stays theirs.
+      return send(recordId, undefined, auto && opts.mode !== "resend" ? "auto" : "");
     }
     // The engine keeps it on the record and sends the Ready to send notice on Telegram, once per
     // run (docs/notify.md): counts and the flagged lines only, never a self-identification value.
-    deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep),
-                                                 notice: readyNotice(answers, wrote && wrote.startedAt) }).catch(() => null);
+    // A quiet (Auto) run sends no notice: the daily summary counts it instead.
+    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep) },
+                 opts.quiet ? {} : { notice: readyNotice(answers, wrote && wrote.startedAt) })).catch(() => null);
     const notes = (noted || []).slice(0, 3);
     // The bar stays ONE short line (2026-11-16, the owner: the Gusto line ran on for five
     // sentences). What the agent wrote or chose and what the check noted go to Steps, one line
@@ -2508,19 +2719,60 @@ function createAgent(deps) {
   // restarted): ONE click fills it again from the person's answers and submits it, or parks it
   // when anything new comes up. ``o``: the job's run options and the review page's fingerprint
   // (from the Auto-apply row after a restart).
-  async function send(recordId, o) {
+  async function send(recordId, o, by) {
     const pane = deps.getPane();
     const r = ready.get(recordId);
+    const inSendAll = !!(o && o.inSendAll);
     if (!r || !pane || r.epoch !== paneEpoch) {
       const job = (r && r.opts) || o || {};
       if (!/^https?:/i.test(job.url || "")) return { ok: false, reason: "not-ready" };
-      if (current || batchOn) return { ok: false, reason: "busy" };
+      if (current || (batchOn && !inSendAll)) return { ok: false, reason: "busy" };
       ready.delete(recordId);
-      return run(recordId, Object.assign({}, job, { mode: "resend", expectSig: (r && r.sig) || (o && o.sig) || "" }));
+      return run(recordId, Object.assign({}, job, { mode: "resend", inSendAll, expectSig: (r && r.sig) || (o && o.sig) || "" }));
     }
-    return pressSubmit(recordId, pane, r);
+    return pressSubmit(recordId, pane, r, by);
   }
-  async function pressSubmit(recordId, pane, r) {
+  // ---- Send all: the person's ONE click for every application left at Ready to send ----------
+  // Each goes through send() above, the same path as the bar's Send (so it is the person's own
+  // Send, allowed on every site), one at a time, in the open. A captcha stops the whole list
+  // there: nothing is solved or stepped around, and the rest stay ready for the next click.
+  // jobs: [{ recordId, url, resumePath, lane, company, sig }].
+  async function sendAll(jobs) {
+    if (current || batchOn) return { ok: false, reason: "busy" };
+    const list = (jobs || []).filter((j) => j && j.recordId != null && /^https?:/i.test(j.url || ""));
+    if (!list.length) return { ok: false, reason: "empty" };
+    const b = batchOn = { stop: false, sendAll: true };
+    const results = [];
+    let captcha = null;
+    try {
+      for (let i = 0; i < list.length; i++) {
+        if (b.stop) break;
+        const j = list[i];
+        progress(null, "running", "Sending " + (i + 1) + " of " + list.length + (j.company ? ": " + j.company : ""), { sendAll: { i: i + 1, n: list.length } });
+        let r = null;
+        try {
+          r = await send(j.recordId, { url: j.url, resumePath: j.resumePath || "", lane: j.lane || "assisted", autonomous: false,
+                                       company: j.company || "", sig: j.sig || "", inSendAll: true });
+        } catch (e) { r = { ok: false, reason: "error" }; }
+        r = r || { ok: false, reason: "error" };
+        results.push(Object.assign({ record_id: j.recordId }, r));
+        if (r.reason === "captcha" || r.kind === "captcha" || r.blocker === "captcha") { captcha = j; break; }
+      }
+    } finally {
+      batchOn = null;
+    }
+    const sent = results.filter((r) => r.submitted).length;
+    const left = list.length - sent;
+    const msg = captcha
+      ? "Sent " + sent + " of " + list.length + ". Stopped at a captcha" + (captcha.company ? " on " + captcha.company : "")
+        + ": solve it on the page, then press Send. The rest are still ready."
+      : b.stop ? "Stopped. Sent " + sent + " of " + list.length + "."
+        : "Sent " + sent + " of " + list.length + "." + (left ? " " + left + (left === 1 ? " was" : " were") + " not sent: see Auto-apply." : "");
+    progress(null, "sendall-done", msg, { sendAll: { n: list.length, sent, left, captcha: captcha ? captcha.recordId : null } });
+    setTimeout(() => { pollParked().catch(() => {}); }, 50);
+    return { ok: true, results, sent, left, captcha: captcha ? captcha.recordId : null, stopped: !!b.stop && !captcha };
+  }
+  async function pressSubmit(recordId, pane, r, by) {
     const wc = pane.webContents;
     await ensureScripts(wc);
     const sig = (await signature(wc)) || {};
@@ -2551,7 +2803,11 @@ function createAgent(deps) {
       progress(recordId, "ready", "The submit hit a captcha. Solve it on the page, then press Send again.", { ready: true, answers: r.answers });
       return { ok: false, reason: "captcha" };
     }
-    await deps.postApp("/api/autofill/applied", { url: r.url, page_url: wc.getURL() || "", record_id: recordId });
+    // ``by: "auto"``: nobody pressed Send. The engine believes it only when its own gate agrees
+    // (Auto mode and the verified allowlist), counts it against the daily limit and sends the
+    // one "Sent: Role at Company" notice.
+    await deps.postApp("/api/autofill/applied", Object.assign({ url: r.url, page_url: wc.getURL() || "", record_id: recordId },
+                                                                 by === "auto" ? { by: "auto" } : {}));
     deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
     { const fd = feedOf(recordId); if (fd) { fd.close(); fd.push("sent", "Sent", confirmed ? "and the site confirmed it" : "", { state: "done", detail: confirmed ? "" : "the page showed no confirmation, check it once" }); } }
     progress(recordId, "submitted", confirmed ? "Sent, and the site confirmed it." : "Sent. The page showed no confirmation, so check it once.",
@@ -2560,10 +2816,13 @@ function createAgent(deps) {
   }
 
   function stop() { if (current) current.stop = true; if (batchOn) batchOn.stop = true; }
+  // The bar's Next during the guided ask: on to the next field, this one stays flagged.
+  function guideNext() { if (current && current.guide) { current.guide.next = true; return { ok: true }; } return { ok: false }; }
   const isReady = (recordId) => ready.has(recordId);
   const busy = () => !!(current || batchOn);
 
-  return { run, batch, send, stop, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
+  return { run, batch, send, sendAll, stop, guideNext, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
+           quiet: () => !!(batchOn && batchOn.quiet),
            _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard } };
 }
 
@@ -2740,6 +2999,19 @@ function emptySelfId(viewText) {
 // A view line whose box holds something: a chosen option, typed text, a ticked box, or a
 // self-identification group's answered=true (its choice never leaves the page).
 const FILLED_LINE_RE = /\bvalue="(?:[^"\\]|\\.)+"|checked=true|answered=true/;
+// The choice a question's view lines show (a ticked radio or box's own words, a dropdown's chosen
+// option); "" when the line only says a box is filled (typed text is read in the page instead).
+function pageValue(lines) {
+  for (const ln of lines || []) {
+    const opt = /\boption="((?:[^"\\]|\\.)*)"/.exec(ln);
+    if (opt && /checked=true/.test(ln)) return opt[1];
+  }
+  for (const ln of lines || []) {
+    const m = /\bvalue="((?:[^"\\]|\\.)+)"/.exec(ln);
+    if (m && m[1] !== "(filled)" && !/^\*?\[\d+\]<(input|textarea)\b/.test(ln)) return m[1];
+  }
+  return "";
+}
 // The view's element lines for a question.
 function linesFor(viewText, label) {
   return String(viewText || "").split("\n").filter((ln) => /^\*?\[\d+\]</.test(ln) && sameLabel(lineLabel(ln), label));
@@ -3283,4 +3555,4 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
-                   DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty };
+                   DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF };
