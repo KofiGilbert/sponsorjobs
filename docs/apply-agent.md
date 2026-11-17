@@ -685,6 +685,35 @@ tests/js/test_agent_workday_fixes.js; fixtures modelled on the real markup):
   Workday application). `settle()` waits up to 8 s more while the page shows a spinner,
   aria-busy or a progress bar, instead of reading a page whose Next is disabled while it saves.
 
+## 19. Review answers at Ready to send (Uline, 2026-11-16)
+
+The owner pressed Send on a Uline (Workday) application without seeing that the agent had picked
+"Agricultural Economics" for Field of Study and "JavaScript" for Skills, and that the form held a
+resume tailored for another Uline role. Now the bar at Ready to send has **Review answers** next to
+Send: every field the run filled, page by page, the question as on the page, the value or choice,
+and where it came from; then the files with the application each was tailored for. The Ready line
+stays one short line; the list opens on demand under the bar like Steps (`#bbAnswers`).
+
+- **Where it comes from** (no new page read, no model call). The fill engine logs each control it
+  marks with its origin (`autofill_core.js` `takeFillLog`: the plan op's `from`, or the pass that
+  ran: profile, library, workauth, eeo_decline, history, today, closest, skills), and
+  `runAutoApplyOnPane(..., {answers: true})` returns it with the files it uploaded (`attached`, or
+  `listed` when the box already held a file of that name). The shell adds its saved
+  self-identification picks (`fillSavedEeo`), the brain's own type / select / radio / option
+  actions (`brainAnswer`: "you" when the person answered that question this run, a placeholder's
+  origin, else "ai"; never the portal email, password or emailed code), and `attachResume`.
+  `readyAnswers` assembles the list on `handOver`; it rides on the Ready to send progress line
+  (`answers`).
+- **Flagged**: an AI pick, an optional list filled by the closest match or from the skills list,
+  a fallback (a declined self-identification question nothing saved answers, a worked-out or
+  drafted answer), a resume tailored for another application (the upload path names its record),
+  and a file the form already held under the same name (not attached again).
+- **Self-identification values** are shown only in this local list: `safeReply` logs a count of
+  the answers, never the rows; nothing goes to the activity feed or the engine. `answersTelegram`
+  builds the same list as one Telegram message with self-identification values left out, for the
+  Ready to send Telegram notice; the agent path sends no such notice yet, so nothing is sent today.
+- Tests: tests/test_ready_answers.py (tests/js/test_fill_log.js, tests/js/test_ready_answers.js).
+
 ## 10. Milestones
 
 1. **One job, visible.** Apply for me on a queued Workday job -> job page -> Apply -> sign in or

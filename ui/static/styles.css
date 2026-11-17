@@ -2058,6 +2058,7 @@ mark.jd-gap { text-decoration-color: var(--flag); }
   --bg: #131316; --surface: #17171b; --surface-2: #1c1c21; --ink: #e7e7ea; --ink-2: #b4b4bb;
   --muted: #82828c; --faint: #55555e; --border: #242429; --border-strong: #2f2f36;
   --accent: #e4e4e8; --accent-hover: #f4f4f6; --accent-ink: #16161a; --accent-ring: rgba(228, 228, 232, 0.22);
+  --flag: #c09a5b;
 }
 
 /* ---------------- the live activity feed (apply agent bar + resume builder) ----------------
@@ -2105,6 +2106,25 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .bb-fill .act-toggle { padding: 0 8px; }
 .bb-feed { padding: 0 12px 8px 12px; background: var(--surface); border-bottom: 1px solid #2a2a2a; color: var(--ink-2); }
 .bb-feed[hidden] { display: none; }
+/* Review answers at Ready to send: question, what went in, where it came from, one row each,
+   grouped by page; a line that deserves a look carries a small "!" and its reason under it in
+   the flag tone. Same chrome as Steps; no new colour. */
+.bb-fill .bb-ans-flag { color: var(--flag); }
+.ans-box { max-height: 40vh; overflow-y: auto; padding: 2px 0 6px; }
+.ans-pg { padding: 8px 0 2px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.ans-list { list-style: none; margin: 0; padding: 0; }
+.ans-row { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 5fr) minmax(0, 3fr); column-gap: 14px;
+  padding: 3px 0; font-size: 12.5px; line-height: 1.45; border-bottom: 1px solid var(--border); }
+.ans-row:last-child { border-bottom: 0; }
+.ans-q { color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
+.ans-v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.ans-f { color: var(--muted); font-size: 11.5px; min-width: 0; overflow-wrap: anywhere; padding-top: 1px; }
+.ans-mk { color: var(--flag); font-weight: 700; margin-right: 6px; }
+.ans-note { grid-column: 2 / -1; color: var(--flag); font-size: 11.5px; }
+@media (max-width: 640px) {
+  .ans-row { grid-template-columns: minmax(0, 1fr); }
+  .ans-note { grid-column: 1; }
+}
 @media (max-width: 640px) { .act-step { grid-template-columns: 64px 14px minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) {
   .act-spin { animation: none; width: 8px; height: 8px; border: 0; background: var(--accent); }

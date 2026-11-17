@@ -473,3 +473,9 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   "All jobs in Tracker →". "In progress" is the state's one name everywhere (LinkedIn's tracker word);
   "Resume" is never a verb. A closed job's chat opens with one quiet note (company and date from the
   job's record) and Reuse / Download, and hides Accept. Screens: scratchpad continue/*.png.
+- 2026-11-16: Ready to send has **Review answers** beside Send (an `act-toggle` like Steps, with the
+  count and "N to check"). It opens a list under the bar in the Steps chrome: page headings, then
+  one row per field (question, what went in, where it came from in muted text); a line that
+  deserves a look carries a small "!" and its reason in `--flag` under it. Files last, each with the
+  application it was tailored for. One panel under the bar at a time (Steps or Review answers).
+  The Ready line itself stays one short line. Self-identification values appear only here.
