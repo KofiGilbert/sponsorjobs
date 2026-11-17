@@ -73,6 +73,19 @@ if (scenario === 'form') {
   iframes = [{ getAttribute: () => 'https://www.recaptcha.net/recaptcha/api2/anchor?size=invisible',
                getBoundingClientRect: () => ({ width: 0, height: 0 }) }];
   inputs = [mkInput({ type: 'email', placeholder: 'Email' })];
+} else if (scenario === 'badge_captcha') {
+  // reCAPTCHA Enterprise BADGE (Octane Lending, Greenhouse embed, 2026-11-17): a VISIBLE 256x60
+  // frame in .grecaptcha-badge with no size=invisible in its src. It asks nothing.
+  iframes = [{ getAttribute: () => 'https://www.recaptcha.net/recaptcha/enterprise/anchor?ar=1&k=x&hl=en',
+               getBoundingClientRect: () => ({ width: 256, height: 60 }),
+               closest: (sel) => (/grecaptcha-badge/.test(sel) ? {} : null) }];
+  inputs = [mkInput({ type: 'email', placeholder: 'Email' })];
+} else if (scenario === 'checkbox_captcha') {
+  // The "I'm not a robot" box: a visible anchor frame NOT inside the badge. Still a wall.
+  iframes = [{ getAttribute: () => 'https://www.google.com/recaptcha/api2/anchor?ar=1&k=x&size=normal',
+               getBoundingClientRect: () => ({ width: 304, height: 78 }),
+               closest: () => null }];
+  inputs = [mkInput({ type: 'email', placeholder: 'Email' })];
 } else if (scenario === 'auth') {
   passwordEl = mkInput({ type: 'password', placeholder: 'Password' });
   bodyText = 'Please sign in to apply for this role.';
@@ -137,6 +150,17 @@ def test_an_invisible_captcha_is_not_a_wall():
     # must not stop and tell them to solve a captcha that is not there.
     r = _run("invisible_captcha")
     assert r["ok"] is True and r["captcha"] is False
+
+
+def test_the_recaptcha_badge_is_not_a_wall():
+    # The "protected by reCAPTCHA" badge is shown but asks nothing: fill, never park on it.
+    r = _run("badge_captcha")
+    assert r["ok"] is True and r["captcha"] is False and r["filled"] == 1, r
+
+
+def test_the_im_not_a_robot_box_is_still_a_captcha():
+    r = _run("checkbox_captcha")
+    assert r["ok"] is True and r["captcha"] is True, r
 
 
 def test_fill_aborts_on_an_auth_wall():
