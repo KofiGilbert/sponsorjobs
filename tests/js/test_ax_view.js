@@ -149,7 +149,7 @@ test("no typed value and no file name ever reaches a line the model reads", asyn
 // ------------------------------------------------------------------ Lever
 test("Lever: a ✱ alone makes a field required; two answers on a Yes/No question are caught", async (ctx) => {
   const { page, v, text, res } = await viewed(ctx, "ax_lever.html?state=bug");
-  assert.ok(!/ required/.test(lineOf(v.text, /label="Email"/)), "the DOM view alone missed it: " + lineOf(v.text, /label="Email"/));
+  // Since #282 the DOM view reads Lever's ✱ itself; the merged view must still say required.
   assert.ok(/ required>$/.test(lineOf(text, /label="Email"/)), lineOf(text, /label="Email"/));
   assert.ok(!/ required/.test(lineOf(text, /label="Current company"/)), "no ✱, not required");
   assert.deepStrictEqual(kinds(res), ["many-ticked", "required-empty", "required-empty", "required-empty"], JSON.stringify(res, null, 1));
