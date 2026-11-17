@@ -61,6 +61,17 @@ const SELF = "Zyxwv Selfid Value";          // a self-identification value no ot
   assert(tg.includes("Field of Study: Agricultural Economics") && tg.includes("\u26a0"), "flagged lines marked");
   assert(tg.includes("tailored for another application"), "the resume flag " + tg);
   assert(!/[\u2013\u2014]/.test(tg) && tg.length < 4096, "no dashes, fits a message");
+  // the Ready to send notice the engine sends on Telegram: counts and the flagged lines only
+  const n = A.readyNotice(L, 1763300000.5);
+  assert(n.run === "1763300000.5" && n.filled === L.rows.length && n.flagged === 5, "notice counts " + JSON.stringify(n));
+  assert(n.lines.length === 5 && n.lines.every((x) => x.includes("\u26a0")), "only flagged lines " + JSON.stringify(n.lines));
+  assert(!JSON.stringify(n).includes(SELF) && !JSON.stringify(n).includes("555 0100"), "no self-ID value, no unflagged value");
+  assert(n.lines.some((x) => x.startsWith("\u2022 Are you a protected veteran?: (self-identification, shown only in the app)")), "a flagged self-ID question keeps its question only");
+  assert(n.lines.some((x) => x.includes("Field of Study: Agricultural Economics (closest match, check it)")), "same words as answersTelegram");
+  const many = A.createAnswers();
+  for (let i = 0; i < 20; i++) A.addAnswer(many, { page: 1, label: "Pick " + i, value: "v" + i, from: "ai" });
+  const nm = A.readyNotice(A.readyAnswers(many, { recordId: 1 }), "");
+  assert(nm.lines.length === 12 && nm.more === 8 && nm.flagged === 20, "capped " + JSON.stringify(nm));
   const big = A.createAnswers();
   for (let i = 0; i < 150; i++) A.addAnswer(big, { page: 1 + (i % 5), label: "Question number " + i + " " + "x".repeat(40), value: "v".repeat(60), from: "profile" });
   assert(A.answersTelegram(A.readyAnswers(big, { recordId: 1 }), "").length <= 3600, "a long list is cut");
@@ -179,6 +190,12 @@ const deps = {
   // never on the feed, never in a post to the engine, never in the debug log
   for (const p of progress) assert(!JSON.stringify(p.activity || {}).includes(SELF), "self-ID on the feed");
   for (const [p, b] of posts) assert(!b.includes(SELF), "self-ID posted to " + p);
+  // the engine hears Ready to send once, with the notice for Telegram
+  const readyPosts = posts.filter(([p, b]) => p === "/api/autoapply/agent/ready" && !JSON.parse(b).clear);
+  assert(readyPosts.length === 1, "one ready post " + readyPosts.length);
+  const nb = JSON.parse(readyPosts[0][1]).notice;
+  assert(nb && /^\d+(\.\d+)?$/.test(nb.run) && nb.filled === L.rows.length && nb.flagged === L.flagged, "notice on the ready post " + JSON.stringify(nb));
+  assert(nb.lines.length === L.flagged && !nb.lines.some((x) => x.includes("555 0100")), "flagged lines only " + JSON.stringify(nb.lines));
   const log = fs.readFileSync(path.join(TMP, "sj-agent.log"), "utf8");
   assert(log.includes("(3 answers)"), "the log counts the fill's answers");
   assert(!log.includes(SELF) && !log.includes("Agricultural Economics"), "no answer value in the debug log");

@@ -30,7 +30,8 @@ RESIDE_OPTS = ["Yes - Denver, CO", "Yes - New York, NY", "No - None of the above
 WORKED = ("Have you ever, or are you currently working at Gusto or Symmetry in any capacity "
           "(ie: employee or contingent worker)?")
 DECLINE = "I don't wish to answer"
-# The engine's labels: "select one" is cut out of "(please select one)".
+# The engine's labels as they read before 2026-11-16 ("select one" cut out of "(please select one)"); saved
+# answers may still carry them, so they must keep matching. Labels now keep the words.
 GUSTO_EEO = [
     ("gender", "How would you describe your gender identity (please )?",
      ["Female", "Male", "Non-binary / third gender (Inclusive of bigender, agender)", "I prefer to self-describe", DECLINE]),

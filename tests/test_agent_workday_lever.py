@@ -11,7 +11,8 @@ values anywhere: the names, dates and schools below are made up):
    keys), and the checkbox group "Please check one of the boxes below:" takes the saved
    disability answer (its topic read from its choices), the decline box when nothing is saved.
 3. Duplicate resume uploads into a Workday draft: a file the upload area already lists by name
-   (and size) is not uploaded again, and extra copies are removed.
+   AND size is not uploaded again, and extra verified copies are removed; a same-name row with no
+   size is not verified (tests/js/test_upload_identity.js has the full rule).
 4. Lever: a custom question's label is its sibling div (with the "✱" that marks it required);
    the location and hybrid-location picks come from the profile's city, the visa-details box from
    the saved work authorization; the page is read again before asking (the agent JS test).
@@ -306,15 +307,19 @@ def test_a_file_the_area_already_lists_is_not_uploaded_again(tmp_path):
         {"do": "eval", "as": "listed", "js": "window.TailorAutofill.fileListed('', 'Avery Example Resume.pdf', 108810)"},
         {"do": "eval", "js": "(window.addFile('Avery Example Resume.pdf', '106.26 KB'), window.addFile('Avery Example Resume.pdf', '106.26 KB'))"},
         {"do": "eval", "as": "three", "js": copies},
-        {"do": "eval", "as": "dropped", "js": "window.TailorAutofill.dropDuplicateFiles('', 'Avery Example Resume.pdf')"},
+        {"do": "eval", "as": "dropped", "js": "window.TailorAutofill.dropDuplicateFiles('', 'Avery Example Resume.pdf', 108810)"},
         {"do": "wait", "ms": 50},
         {"do": "eval", "as": "left", "js": "window.fxCount()"},
         {"do": "eval", "as": "letter", "js": "window.TailorAutofill.fileCopies(document.getElementById('cl'), 'Avery Example Resume.pdf', 108810)"},
+        # a row with no size is never "already there" (an earlier application's file has the same name)
+        {"do": "eval", "js": "window.addFile('Avery Example Resume.pdf', '')"},
+        {"do": "eval", "as": "listing", "js": "window.TailorAutofill.fileListing('', 'Avery Example Resume.pdf', 108810)"},
     ])
     assert r["none"] == 0 and r["one"] == 1 and r["listed"] is True
     assert r["other_size"] == 0                                  # same name, another file: not the same
     assert r["three"] == 3 and r["dropped"] == 2 and r["left"] == 1
     assert r["letter"] == 0                                      # the cover letter box's area is its own
+    assert r["listing"] == {"copies": 2, "same": 1, "unsized": 1, "other": 0}
 
 
 @browser

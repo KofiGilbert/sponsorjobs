@@ -20,6 +20,7 @@ const path = require("path");
 const frames = require("./frames");
 const { isNewPage, pageMessage, wallMessage } = require("./pagewatch");
 const { createAgent } = require("./agent");
+const uploads = require("./uploads");
 const { isSupportMailto, isSupportGmailCompose } = require("./links");
 
 // TAILOR_PORT / TAILOR_CDP_PORT let the dev app (dev-start.sh) run beside the installed app, which
@@ -578,27 +579,42 @@ const RESUME_INPUT_JS = `(() => {
 })()`;
 
 // Is this file already in the box's upload area (Workday keeps a draft across visits and empties
-// its file input after each upload)? The same name, and the same size when the area shows one.
-// Extra copies the area lists are removed with its own Delete buttons, the first one kept.
-async function alreadyAttached(wc, ref, filePath, evalFn) {
+// its file input after each upload)? Only a copy with the same name AND size counts, or one this
+// run itself uploaded (shell-electron/uploads.js; every tailored resume shares the employer-facing
+// name, so a name alone cannot tell this job's resume from an earlier application's).
+// Returns { upload, how, earlier, own }: upload=false when the box already holds this file.
+let uploadLog = uploads.createUploadLog();
+function newUploadRun() { uploadLog = uploads.createUploadLog(); }
+async function listedCheck(wc, ref, filePath, evalFn) {
   const run = evalFn || ((expr) => wc.executeJavaScript(expr, true));
   let size = 0;
   try { size = fs.statSync(filePath).size; } catch (e) { size = 0; }
-  const name = JSON.stringify(path.basename(filePath)), r = JSON.stringify(ref || "");
+  const file = { name: path.basename(filePath), path: filePath, size };
+  const name = JSON.stringify(file.name), r = JSON.stringify(ref || "");
+  let listing = null;
   try {
-    const n = await run(`window.TailorAutofill.fileCopies ? window.TailorAutofill.fileCopies(${r} ? document.querySelector('[data-tailor-ref="' + ${r} + '"]') : null, ${name}, ${size}) : 0`);
-    if (!n && !ref) {
-      const listed = await run(`window.TailorAutofill.fileListed ? window.TailorAutofill.fileListed("", ${name}, ${size}) : false`);
-      if (!listed) return false;
-    } else if (!n) return false;
-    if (n > 1) await run(`window.TailorAutofill.dropDuplicateFiles(${r}, ${name})`);
-    return true;
-  } catch (e) { return false; }
+    listing = await run(`window.TailorAutofill.fileListing ? window.TailorAutofill.fileListing(${r}, ${name}, ${size}) : null`);
+  } catch (e) { listing = null; }
+  const d = uploads.uploadDecision(listing, file, uploadLog);
+  try {
+    if (d.drop === "extra_same") await run(`window.TailorAutofill.dropDuplicateFiles(${r}, ${name}, ${size})`);
+    else if (d.drop === "unsized_own") await run(`window.TailorAutofill.dropUnsizedCopy(${r}, ${name}, ${size})`);
+  } catch (e) { /* the copies stay; the Review answers list still shows the file */ }
+  return Object.assign({ file }, d);
+}
+// What attachResume / cdpUploadFiles report for the Review answers list.
+function uploadFate(d, attached) {
+  if (!d.upload) return d.own ? (d.earlier ? "own-earlier" : "own") : "listed";
+  if (!attached) return false;
+  return d.earlier ? "earlier" : true;
 }
 
 async function attachResume(wc, filePath) {
   if (!filePath || !fs.existsSync(filePath)) return false;
-  if (await alreadyAttached(wc, "", filePath)) return "listed";
+  // true: attached; "earlier": attached, and the box also holds an earlier file of that name;
+  // "listed": the box already holds this file; "own": this run attached it before.
+  const d = await listedCheck(wc, "", filePath);
+  if (!d.upload) return uploadFate(d, false);
   let attached = false;
   const release = acquireDebugger(wc);
   if (!release) return false;
@@ -619,7 +635,8 @@ async function attachResume(wc, filePath) {
   } finally {
     release();
   }
-  return attached;
+  if (attached) uploads.noteUpload(uploadLog, d.file);
+  return uploadFate(d, attached);
 }
 
 // A wall we are NOT allowed to walk through (CLAUDE.md 7): a captcha or a sign-in gate is
@@ -685,8 +702,9 @@ function submitScript(click) {
 // Never clicks submit; drops to the person on any captcha/auth wall or a prohibited site (section 7).
 // ``filePath`` is one path for every ref, or a function ref -> path (the plan names the file per
 // box: the cover letter box gets the cover letter, every other box the resume).
-// ``seen`` (optional): each file's fate, {ref, path, how: "attached" | "listed"}, for the agent's
-// Review answers list ("listed": the box already held a file of this name, nothing was attached).
+// ``seen`` (optional): each file's fate, {ref, path, how: "attached" | "listed", earlier}, for the
+// agent's Review answers list ("listed": the box already held this file, the same name and size,
+// nothing was attached; ``earlier``: the box also holds another file of that name, left alone).
 async function cdpUploadFiles(wc, refs, filePath, seen) {
   const pathOf = typeof filePath === "function" ? filePath : () => filePath;
   const dbg = wc.debugger;
@@ -703,15 +721,17 @@ async function cdpUploadFiles(wc, refs, filePath, seen) {
         if (!objectId) continue;
         const file = pathOf(ref);
         if (!file) continue;
-        if (await alreadyAttached(wc, ref, file)) {               // never the same file twice
-          if (seen) seen.push({ ref, path: file, how: "listed" });
+        const d = await listedCheck(wc, ref, file);
+        if (!d.upload) {                                          // never the same file twice
+          if (seen) seen.push({ ref, path: file, how: d.own ? "attached" : "listed", earlier: !!d.earlier });
           continue;
         }
         // By objectId: DOM.requestNode needs DOM.getDocument first, and without it every
         // upload here failed quietly (found on the real Gusto form, 2026-11-16).
         await dbg.sendCommand("DOM.setFileInputFiles", { files: [file], objectId });
         done++;
-        if (seen) seen.push({ ref, path: file, how: "attached" });
+        uploads.noteUpload(uploadLog, d.file);
+        if (seen) seen.push({ ref, path: file, how: "attached", earlier: !!d.earlier });
       } catch (e) { /* skip this one input; the person can still attach it */ }
     }
   } finally {
@@ -972,7 +992,7 @@ async function runAutoApplyOnPane(recordId, opts) {
           if (rep && (rep.uploads || []).length && resumePath) {
             const seen = [];
             applied.uploaded += await cdpUploadFiles(wc, rep.uploads, resumePath, seen);
-            for (const x of seen) files.push({ kind: uploadFrom.get(x.ref) || "resume", path: x.path, how: x.how });
+            for (const x of seen) files.push({ kind: uploadFrom.get(x.ref) || "resume", path: x.path, how: x.how, earlier: !!x.earlier });
           }
         }
         for (const [ctx, list] of routed.byFrame) {
@@ -1179,6 +1199,7 @@ ipcMain.handle("assist:apply", async (_e, opts) => {
     if (!here) openInPane(startUrl);
     return { ok: false, reason: "fill-by-hand" };
   }
+  if (!here) newUploadRun();                       // a new application: its own upload log
 
   if (!here) {
     openInPane(startUrl);
@@ -1228,6 +1249,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
   try {
     if (/(^|\.)linkedin\.com$/i.test(new URL(url).hostname)) { openInPane(url); return { ok: false, reason: "linkedin" }; }
   } catch (e) { return { ok: false, reason: "bad-url" }; }
+  newUploadRun();
   openInPane(url);
   await new Promise((r) => setTimeout(r, 400));   // navigation kickoff
   await waitPaneLoad();
@@ -1242,7 +1264,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 const agent = createAgent({
   getPane: () => pane, openInPane, waitPaneLoad, autofillCore, agentViewSource,
   runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
-  isNewPage, attachResume,
+  isNewPage, attachResume, newUploadRun,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
 });
 ipcMain.handle("agent:run", async (_e, opts) => {

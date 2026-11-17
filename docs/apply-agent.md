@@ -673,8 +673,8 @@ tests/js/test_agent_workday_fixes.js; fixtures modelled on the real markup):
   topic from its choices, so the saved disability answer ticks exactly its box (else the decline
   box); styled 0x0 checkboxes count as fields when their label is on screen.
 - **Duplicate uploads.** Before any upload the box's upload area is read: a file listed with the
-  same name (and size, when shown) is not uploaded again, and extra copies are removed with the
-  area's own Delete buttons.
+  same name AND size is not uploaded again, and extra verified copies are removed with the area's
+  own Delete buttons (tightened in section 21: a name alone is not enough).
 - **Lever.** A custom question's label is the `div.application-label` above it (no `<label for>`),
   with its `✱`. "Which location are you applying for?" and the hybrid-location pick come from the
   profile's city (`office_option`); a visa-details text box gets the saved status sentence
@@ -710,8 +710,8 @@ stays one short line; the list opens on demand under the bar like Steps (`#bbAns
   and a file the form already held under the same name (not attached again).
 - **Self-identification values** are shown only in this local list: `safeReply` logs a count of
   the answers, never the rows; nothing goes to the activity feed or the engine. `answersTelegram`
-  builds the same list as one Telegram message with self-identification values left out, for the
-  Ready to send Telegram notice; the agent path sends no such notice yet, so nothing is sent today.
+  builds the same list as one Telegram message with self-identification values left out; the
+  Ready to send Telegram notice carries only its flagged lines (section 21).
 - Tests: tests/test_ready_answers.py (tests/js/test_fill_log.js, tests/js/test_ready_answers.js).
 
 ## 10. Milestones
@@ -781,3 +781,40 @@ with it on, then `DEFAULT_ON` flips).
   fields: all filled". Without the debugger (DevTools holds it) the page facts alone still run the
   check. Capped at `SJ_AX_MS` (6 s); a failure leaves the view and the gate as they were.
 - **Tests:** `tests/js/test_ax_view.js` (`tests/test_ax_view.py`) on `tests/fixtures/forms/ax_*.html`.
+
+## 21. The right resume, the Ready to send notice, labels, Greenhouse's confirmation (2026-11-16)
+
+- **Never skip the right resume.** Every tailored resume leaves the app as "<Name> Resume.pdf"
+  (tests/test_outgoing_filenames.py keeps that employer-facing name on purpose), so a Workday draft
+  that kept an EARLIER application's resume lists a file of the same name, and the name-only check
+  skipped the resume tailored for this job (Uline). Now (`shell-electron/uploads.js`
+  `uploadDecision`, `autofill_core.js` `fileListing`), per listed row of that name:
+  - same size, within the rounding the page shows ("106.26 KB" is within 5 bytes, in 1000 or 1024
+    units; a "5MB max" limit is never read as a size): this file. Not uploaded; extra verified
+    copies are removed.
+  - another size, or no size shown: not verified. Ours is uploaded and theirs is left alone, and
+    Review answers flags it ("earlier_file": "The form also holds an earlier file with the same
+    name. Check which one to keep."). Exception: a row with no size that THIS run put there (the
+    run's upload log: the same path and size) is ours, so nothing is uploaded again; a row this
+    run uploaded from another file of that name is removed and replaced. A file the run did not
+    upload is never removed.
+  The page shows nothing else (no hash), so the size is the only identity it offers.
+- **Ready to send on Telegram.** On hand-over the shell's post to `/api/autoapply/agent/ready`
+  carries `notice` (`readyNotice`: the run's start, fields filled, lines flagged, and the flagged
+  lines in `answersTelegram`'s words, never a self-identification value). The engine sends ONE
+  message per run (`notify/ready.py`; rules and template in docs/notify.md, "Ready to send"). No
+  Send button: notify/ has no sanctioned way to approve an assisted submission from Telegram.
+- **Labels keep their words.** `cleanLabel` (engine and view) strips "select one" / "required"
+  only as furniture: alone in brackets, or at the end or start ("Gender Select One Required").
+  Greenhouse's "How would you describe your gender identity (please select one)?" had read
+  "(please )?".
+- **A ticked box names itself.** In a group, the Review answers value is the box's own label
+  ("How did you hear about this opportunity?": "Indeed"), from the engine's read-back and from the
+  brain's own tick (the page text above the boxes is the question); "Checked" only for a lone box.
+- **Greenhouse's confirmation page.** After Submit the board lands on
+  `<board>/jobs/<id>/confirmation` with a "Track your application" card; both are success markers
+  in autoapply/recipes.json, so Send reports "Sent, and the site confirmed it."
+- Tests: tests/js/test_upload_identity.js (tests/test_upload_identity.py), tests/test_ready_telegram.py,
+  tests/js/test_answer_labels.js and the notice checks in tests/js/test_ready_answers.js
+  (tests/test_ready_answers.py), tests/js/test_success_greenhouse.js on
+  tests/fixtures/forms/greenhouse_confirmation.html (tests/test_fill_recipes.py).
