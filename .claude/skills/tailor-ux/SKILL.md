@@ -479,3 +479,12 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   deserves a look carries a small "!" and its reason in `--flag` under it. Files last, each with the
   application it was tailored for. One panel under the bar at a time (Steps or Review answers).
   The Ready line itself stays one short line. Self-identification values appear only here.
+- 2026-11-17 (fill-through): the apply agent no longer asks mid-form. While questions wait for the
+  person the bar's line reads "Filling everything I can; I'll ask what only you know at the end".
+  The run's ONE ask at its end ("I filled everything I could; these N need you.") is a numbered list
+  under the line (`bb-batch`), each question with the page's choices as ghost buttons and its own
+  box, so an answer can only land on its own question; Answer is the primary on the first question
+  still open, ghost on the rest; an answered question folds to its answer as a quiet underlined
+  link to change it. Review answers adds "Chose “X”: nothing saved answers this.", "Needs you"
+  and "Left empty: optional." (the last shown, never counted in "N to check"). Not yet checked at
+  Kofi's window (no app run on the 8 GB builder); check at 76% zoom and 100% before release.

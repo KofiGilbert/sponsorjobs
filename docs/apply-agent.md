@@ -902,3 +902,49 @@ planner and in the ask route's known check, before the grounded call:
 - A new run on a record clears an earlier run's park reason on the Auto-apply row even when the
   park file no longer holds the entry (`/parked/<id>/take`).
 - Tests: tests/test_phoenix_asks.py.
+
+## 24. Fill-through: never a question mid-form; one batch at the end (2026-11-17)
+
+The owner: "ours must never stop to ask questions" mid-application. Until now a required question
+the planner and the brain left open parked the run on the bar ("Question 1 of N", "After X, the
+application asks ...") and waited, page after page. Now the run fills everything it can and asks
+what only the person knows ONCE, at the end. It still stops at Ready to send (CLAUDE.md section 7:
+auto-submit only on the verified allowlist with Autonomous submit on); it never stops BEFORE it.
+
+| On the form | What the run does | Review answers |
+|---|---|---|
+| a field the profile, the library, work authorization, the standing choices or a grounded fact answers | filled, as before (section 22, 23) | its origin |
+| an optional box nothing answers | left EMPTY (never "N/A", "Not provided", a lone "In") | "Left empty: optional." (shown, not counted, not on Telegram) |
+| a required choice nothing answers, with one neutral option ("Prefer not to say", "I do not wish to answer", "Decline"), not about a fact | the neutral option, picked by the shell with real clicks | "Chose “Prefer not to say”: nothing saved answers this." |
+| a required free-text question, a required choice with no neutral option, or any question about a fact (work authorization, a degree, an employer, a legal fact, a covenant, a clearance, salary history, a conviction) | left empty and noted for the person; the run carries on through the rest of the form | asked at the end; "Needs you" if it is still empty at Ready to send |
+| a page that will not move on without a left question (Workday blocks Next) | everything else on that page is filled and Next tried first; then the batch is asked on that page | as above |
+
+- **The shell** (`shell-electron/agent.js`). On `needs-answers` the open questions go through the
+  ask route's known-only check with `fill_through` (the person's material, then
+  `asks.neutral_option`); what is still open is noted on the run (`ans.deferred`, which rides on
+  the Review answers record and so carries over a park) and the brain is told to leave it and carry
+  on (a nudge, and the step route marks the `<left>` line "(left for the person: leave it empty)",
+  brain rule 15). The page check before Next never holds a click for a left question. The brain
+  saying `needs-answers` again for questions already left: when the page's own error names one,
+  or the second time on that page, the batch is asked there. At `ready_to_submit`, after the
+  deterministic gate: any required question still open joins the list, a left question the page
+  now shows filled drops out, the known-only check runs once more (a saved answer that arrived from
+  setup or the library while the run went on is used, with no ask), and ALL the rest is asked as
+  ONE ask (`batch`). The answers come back as placeholders, the brain fills them, and the next
+  `ready_to_submit` goes on to the form check, the critic and Ready to send.
+- **The bar.** While questions wait: "Filling everything I can; I'll ask what only you know at the
+  end". The ask: "I filled everything I could; these N need you." with every question as one
+  numbered list, each with the page's choices and its own box (the one-question controls); an
+  answered one folds to its answer, a link to change it. A batch run (Apply to all) never waits:
+  the job parks once with the whole list, as before.
+- **Telegram.** ONE message for the batch (docs/notify.md), answers saved to the library (asked
+  once ever).
+- **Never typed.** A stand-in typed on the brain's own word ("N/A", "Not provided", "TBD", a lone
+  "In") is refused in the shell (`isFiller`, mirrored in `asks.is_filler`); the person's own saved
+  answer of that kind ({{answer_N}}) still goes in.
+- **Never invented.** No neutral pick on a fact question (`asks.is_fact_question`), and nothing is
+  ever made up: a fact waits for the person.
+- Tests: tests/test_agent_fill_through.py (tests/js/test_agent_fill_through.js: a form with 10 known
+  fields and 3 unknown required questions fills 10, picks the neutral one, leaves two, reaches the
+  Submit page and asks once; a Workday page that blocks Next fills everything else first; a saved
+  answer that arrives meanwhile means no ask; no stand-in typed; Review answers and the notice).

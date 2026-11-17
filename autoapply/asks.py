@@ -225,6 +225,56 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     return None
 
 
+# --------------------------------------------------------------------------- fill-through
+# (2026-11-17, owner: "ours must never stop to ask questions" mid-application) A required
+# question nothing answers no longer parks the run: the shell fills everything else, and asks
+# what only the person knows ONCE, as a batch, at Ready to send (or on the one page that will not
+# move on without it). On the way it takes a required choice's neutral option ("Prefer not to
+# say", "I do not wish to answer", "Decline") where the page offers one, and flags it in Review
+# answers; never on a question about a fact (work authorization, a degree, an employer, a legal
+# fact, a covenant, a clearance, salary history, a conviction): those stay the person's.
+_FACT_Q = re.compile(
+    r"authori[sz]|sponsor|visa\b|citizen|immigration|green card|permanent resident|work permit|legally|eligib"
+    r"|degree|diploma|\bgpa\b|graduat|school|universit|college|certif|licen[cs]|transcript"
+    r"|employ|worked (at|for|with)|work(ed)? here|company|organi[sz]ation|title|years of|experience"
+    r"|non[- ]?compete|non[- ]?solicit|restrictive|covenant|agreement|bound by|obligation"
+    r"|clearance|security|secret|polygraph"
+    r"|salary|compensation|\bpay\b|wage|earn|bonus|\brate\b"
+    r"|convict|criminal|felon|offen[cs]e|arrest|background|drug|terminat|fired|dismiss|discharg|resign"
+    r"|relative|related to|family|spouse"
+    r"|\bage\b|18 years|date of birth|birth|social security|\bssn\b|address|phone|email|name\b", re.I)
+
+
+def is_fact_question(question) -> bool:
+    """A question about a fact of the person's history or legal standing: never a neutral pick,
+    never an invented answer. It waits for the person (or their saved answer)."""
+    q = " ".join(str(question or "").split())
+    return bool(q) and (bool(workauth.classify(q)) or bool(_FACT_Q.search(q)))
+
+
+def neutral_option(question, options) -> str | None:
+    """The page's one neutral choice for a required question nothing the person saved answers,
+    or None: on a fact question, with no such choice, or with two of them (which one is theirs?).
+    A self-identification question takes its decline through ``known_answer`` already."""
+    if is_fact_question(question):
+        return None
+    return decline_option(clean_options(options))
+
+
+# Placeholder text a form must never get unless the person saved it as their answer: an
+# optional box stays EMPTY instead (2026-11-17: "In", "Not provided" and "N/A" reached forms).
+# Mirrored in shell-electron/agent.js FILLER_RE.
+_FILLER = re.compile(
+    r"^\s*(n\s*/\s*a|n\.a\.?|na|none|nil|null|not provided|not applicable|not available|no answer|unknown"
+    r"|tbd|tba|to be (determined|provided)|in|x+|\?+|-+|\.+|_+|test|placeholder|see resume|see cv)\s*[.!]?\s*$", re.I)
+
+
+def is_filler(text) -> bool:
+    """Placeholder text ("N/A", "Not provided", a lone "In"), never a real answer of its own."""
+    s = " ".join(str(text or "").split())
+    return not s or bool(_FILLER.match(s))
+
+
 # --------------------------------------------------------------------------- the messages
 def _num(it: dict, i: int) -> int:
     """The question's number as the person saw it (kept when some are answered first)."""
@@ -268,11 +318,25 @@ def fit_text(text: str) -> str:
     return text if len(text) <= MAX_TEXT else text[:MAX_TEXT - 1].rstrip() + "…"
 
 
+def batch_lead(n: int, role: str = "", company: str = "") -> str:
+    """The first line of the ONE message a fill-through run sends at its end: everything else is
+    filled, and these are what only the person knows. Never a value, never a self-identification
+    choice (the questions and the page's own choices follow)."""
+    job = " at ".join(x for x in (" ".join(str(role or "").split())[:80],
+                                  " ".join(str(company or "").split())[:60]) if x)
+    where = f" for {job}" if job else ""
+    need = "this one needs you" if n == 1 else f"these {n} need you"
+    return f"I filled everything I could on your application{where}; {need}."
+
+
 def prompt_text(items: list[dict], context: str = "", *, list_choices: bool = False,
-                buttons: bool = True) -> str:
+                buttons: bool = True, lead: str = "") -> str:
     """The Telegram message for one question or a batch, under MAX_TEXT. ``list_choices`` lists
     a single question's choices in full, numbered (its buttons are cut to 30 characters, or there
-    are no buttons at all)."""
+    are no buttons at all). ``lead``: a first line (a fill-through run's batch, ``batch_lead``)."""
+    if lead:
+        body = prompt_text(items, context, list_choices=list_choices, buttons=buttons)
+        return fit_text(" ".join(str(lead).split())[:300] + "\n" + body)
     ctx = trim_label(context, 120)
     for cap in (MAX_OPTIONS, 4, 2, 0):
         if len(items) == 1:
@@ -320,7 +384,7 @@ def _label(o: str, k: int, numbered: bool) -> str:
     return lab if len(lab) <= LABEL_MAX else lab[:LABEL_MAX - 1].rstrip() + "…"
 
 
-def telegram_ask(aid: str, items: list[dict], context: str = "") -> tuple[str, list | None]:
+def telegram_ask(aid: str, items: list[dict], context: str = "", lead: str = "") -> tuple[str, list | None]:
     """The Telegram message for the open questions, and its buttons: only for a single question
     with choices, laid out inside the broker's contract (docs/notify.md: at most 3 rows of 1 to 3
     buttons, labels of 1 to 30 characters, ids of 40). Up to three choices go one per row with
@@ -333,8 +397,8 @@ def telegram_ask(aid: str, items: list[dict], context: str = "") -> tuple[str, l
         numbered = cols > 1 or any(len(o) > LABEL_MAX for o in opts)
         flat = [(_label(o, k + 1, numbered), f"ask:{aid}:{k}") for k, o in enumerate(opts)]
         rows = [flat[k:k + cols] for k in range(0, len(flat), cols)]
-        return prompt_text(items, context, list_choices=numbered), rows
-    return prompt_text(items, context), None
+        return prompt_text(items, context, list_choices=numbered, lead=lead), rows
+    return prompt_text(items, context, lead=lead), None
 
 
 def options_reply(items: list[dict]) -> str:

@@ -14292,14 +14292,21 @@ def autoapply_agent_ask():
     (_ask_wait_s, an hour by default, one Telegram reminder at about 15 minutes) in chunks of
     ``chunk_s`` (reason "waiting": go on with /api/autoapply/agent/ask/wait), and past it the job
     PARKS (reason "parked": the question stays open, an answer re-runs the job). With ``no_wait``
-    as well (a batch) it parks at once, and Telegram hears of it in the batch's digest."""
+    as well (a batch) it parks at once, and Telegram hears of it in the batch's digest.
+    (2026-11-17, fill-through, docs/apply-agent.md section 24) ``fill_through`` with
+    ``known_only``: a required choice nothing answers takes the page's neutral option (origin
+    "neutral", in ``select``; never on a fact question, never saved). ``batch``: the run's ONE ask
+    at its end, up to 12 questions, its Telegram message led by asks.batch_lead."""
     from autoapply import asks as AK
     b = request.json or {}
     raw = b.get("questions") if isinstance(b.get("questions"), list) else [b]
     force_all = bool(b.get("force"))
     forced = [" ".join(str(q or "").split())[:300] for q in (b.get("force_questions") or []) if isinstance(q, str)]
     items = []
-    for x in raw[:6]:
+    # (2026-11-17) A fill-through run asks ONCE, at its end, everything it left for the person
+    # (``batch``): up to 12 questions from every page, in one message.
+    batch = bool(b.get("batch"))
+    for x in raw[:12 if batch else 6]:
         if not isinstance(x, dict):
             continue
         q = " ".join(str(x.get("question") or "").split())[:300]
@@ -14389,10 +14396,22 @@ def autoapply_agent_ask():
         return {"origins": {it["question"]: it["origin"] for it in items if it["answer"] and it["origin"]},
                 "facts": {it["question"]: it["fact"] for it in items if it["answer"] and it.get("fact")}}
     if b.get("known_only"):                        # the shell checks first, then shows the bar
+        if b.get("fill_through"):
+            # (2026-11-17) The run fills through: a required choice nothing answers takes the
+            # page's neutral option ("Prefer not to say") where it has one and the question is not
+            # about a fact (asks.neutral_option); Review answers flags it. Never saved; never on a
+            # question whose earlier answer did not stick (that one is the person's now).
+            for it in items:
+                if not it["answer"] and not it["force"]:
+                    n = AK.neutral_option(it["question"], it["page_options"])
+                    if n:
+                        it["answer"], it["origin"] = n, "neutral"
         # A self-identification answer that IS one of the page's choices: the shell picks it
-        # itself with real clicks (shell-electron/agent.js pickSaved), never through the model.
+        # itself with real clicks (shell-electron/agent.js pickSaved), never through the model;
+        # so is a neutral pick (the page's own words).
         select = {it["question"]: it["answer"] for it in items
-                  if it["answer"] and AK.is_eeo(it["question"]) and it["answer"] in it["all_options"]}
+                  if it["answer"] and (AK.is_eeo(it["question"]) or it["origin"] == "neutral")
+                  and it["answer"] in it["all_options"]}
         return jsonify({"ok": all(it["answer"] for it in items), "id": aid, "known": True,
                         "answers": answers(), "select": select, "reword": reword, **origins(),
                         "open": [it["question"] for it in items if not it["answer"]]})
@@ -14425,8 +14444,10 @@ def autoapply_agent_ask():
            "company": company, "country": country, "confirm": confirm, "none": sorted(none),
            "record_id": "" if b.get("record_id") in (None, "") else str(b.get("record_id")),
            "role": (rec.get("role") if rec else "") or ""}
+    if batch:
+        ctx["lead"] = AK.batch_lead(len(pending), ctx["role"], company)
     _ask_open(aid, pending, b.get("record_id"), ctx=ctx, timeout=timeout, park=park)
-    sent = False if no_wait else _ask_telegram(aid, pending)
+    sent = False if no_wait else _ask_telegram(aid, pending, lead=ctx.get("lead", ""))
     from autoapply.answers import normalize as _nq
     if conflict:
         from applicant import facts as _F
@@ -14513,7 +14534,7 @@ def _ask_open(aid: str, pending: list, record_id=None, kind: str = "", *, ctx=No
             _ASKS.pop(k, None)
 
 
-def _ask_telegram(aid: str, pending: list, kind: str = "") -> bool:
+def _ask_telegram(aid: str, pending: list, kind: str = "", lead: str = "") -> bool:
     """Telegram: one message, and for a single question its choices as buttons (asks.telegram_ask
     keeps them inside docs/notify.md). A channel that refuses the buttons still gets the
     question, its choices numbered in the text, so a person away from the desk always sees it.
@@ -14525,7 +14546,7 @@ def _ask_telegram(aid: str, pending: list, kind: str = "") -> bool:
     except Exception:          # noqa: BLE001 - no Telegram is fine; the bar still asks
         ch = None
     if ch is not None:
-        text, buttons = AK.telegram_ask(aid, pending)
+        text, buttons = AK.telegram_ask(aid, pending, lead=lead)
         if kind == "terms":                        # the site's own notice, asked as it is
             text = pending[0]["question"] + "\nTap a choice below, or reply 1, 2 or 3."
         try:
@@ -14534,7 +14555,7 @@ def _ask_telegram(aid: str, pending: list, kind: str = "") -> bool:
         except Exception:      # noqa: BLE001 - retried without buttons below
             if buttons:
                 try:
-                    ch.send(AK.prompt_text(pending, list_choices=True, buttons=False), None)
+                    ch.send(AK.prompt_text(pending, list_choices=True, buttons=False, lead=lead), None)
                     sent = True
                 except Exception:  # noqa: BLE001 - no Telegram is fine; the bar still asks
                     pass
@@ -14875,6 +14896,8 @@ def _ask_view(ask: dict) -> dict:
     one = qs[0] if qs else {"question": "", "options": []}
     return {"id": ask["id"], "question": one["question"], "options": one["options"] if len(qs) == 1 else [],
             "questions": qs, "kind": ask.get("kind") or "",
+            # (fill-through) the run's one ask at its end: the bar shows it as one list
+            "batch": bool((ask.get("ctx") or {}).get("lead")),
             "answered": [x for x in _ask_progress(items) if x["answer"]]}
 
 
@@ -15625,6 +15648,14 @@ def autoapply_agent_step():
         values[key] = value
         placeholders = placeholders + [key]
         left = [f"{x} (type {{{{{key}}}}})" if x == label else x for x in left]
+    # (2026-11-17, fill-through) A required question the run left for the person, to be asked
+    # once at the end with every other one: the model leaves it empty and carries on through the
+    # rest of the form (autoapply/brain.py rule 15). One the library answers by now got its
+    # placeholder above and is filled instead.
+    deferred = {clean_label(str(x)).lower() for x in (b.get("deferred") or [])[:40] if clean_label(str(x))}
+    if deferred:
+        left = [f"{x} {brain.DEFERRED_MARK}" if clean_label(x).lower() in deferred and "{{" not in x else x
+                for x in left]
     # (Section 12 and 13) the plan the model keeps, the last step's tool observations, the
     # shell's own nudges, a screenshot for a reflection call (never stored), and whether the
     # saved portal account was created this run (the site does not know it yet).

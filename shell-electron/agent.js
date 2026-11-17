@@ -70,6 +70,16 @@ const ASK_CHUNK_S = 20;
 const PARK_POLL_MS = Number(process.env.SJ_AGENT_PARK_POLL_MS) || 4000;
 const DIGEST_MS = Number(process.env.SJ_AGENT_DIGEST_MS) || 30 * 60 * 1000;
 const PARK_REASONS = new Set(["captcha", "phone-code", "needs-person"]);
+// Fill-through (2026-11-17, the owner: "ours must never stop to ask questions" mid-application).
+// A required question nothing answers no longer parks the run: it is left for the person, the
+// rest of the form is filled, and everything left is asked ONCE, as one list, at Ready to send
+// (or on the one page that will not move on without it). The bar says so while it fills.
+const DEFER_LINE = "Filling everything I can; I'll ask what only you know at the end";
+// Placeholder text never typed on the brain's own word: an optional box stays EMPTY, a required
+// one waits for the person (2026-11-17: "In", "Not provided", "N/A"). The person's own saved
+// answer ({{answer_N}}) is theirs to give. Mirrors autoapply/asks.py _FILLER.
+const FILLER_RE = /^\s*(?:n\s*\/\s*a|n\.a\.?|na|none|nil|null|not provided|not applicable|not available|no answer|unknown|tbd|tba|to be (?:determined|provided)|in|x+|\?+|-+|\.+|_+|test|placeholder|see resume|see cv)\s*[.!]?\s*$/i;
+const isFiller = (t) => { const s = String(t == null ? "" : t).replace(/\s+/g, " ").trim(); return !s || FILLER_RE.test(s); };
 const SUBMIT_RE = /^(submit( application)?|send( application)?|review and submit|complete application)$/i;
 // Enough to keep running when the engine's allowed-hosts route is unreachable.
 // Web Bot Auth (docs/apply-agent.md section 7, Cloudflare signed agents): while a run is on, the
@@ -588,6 +598,11 @@ function createAgent(deps) {
     if (["text", "option", "path"].some((k) => /\{\{|\}\}/.test(String(a[k] == null ? "" : a[k])))) {
       return { ok: false, note: "refused: an unrendered placeholder" };
     }
+    // (Fill-through) A stand-in typed on the brain's own word ("N/A", "Not provided", a lone
+    // "In") never reaches the form: an optional box stays empty, a required one is the person's.
+    if (a.op === "type" && !a.placeholder && !a.sensitive && isFiller(a.text) && String(a.text || "").trim()) {
+      return { ok: false, note: "refused: placeholder text; leave an optional box empty, and a required one for the person" };
+    }
     const expr = `window.TailorAgent.act(${JSON.stringify(a)})`;
     const ctx = v.frameOf.get(a.index);
     if (a.op === "upload") return upload(wc, fr, ctx, a.index, resumePath, a);
@@ -1079,6 +1094,119 @@ function createAgent(deps) {
       for (const a of r.answers || []) addAnswer(ans, { page, label: a.label, value: a.value, from: a.from });
       for (const f of r.files || []) addFile(ans, Object.assign({ page }, f));
     };
+    // (Fill-through) What the run left for the person, to ask once at the end: each question with
+    // the page's choices and the page it is on (``forced``: an answer that did not stick). It
+    // rides on the Review answers record, so it carries over a park.
+    if (!ans.deferred) ans.deferred = [];
+    if (!ans.optional) ans.optional = {};          // page -> optional boxes left empty (Review answers)
+    if (!ans.held) ans.held = {};                  // page -> needs-answers reports for what is already left
+    const answeredQ = (q) => Object.keys(runAnswers).some((x) => sameLabel(x, q));
+    const deferredOpen = () => ans.deferred.filter((d) => !d.done && !answeredQ(d.question));
+    // A question left for the person that the page now shows filled (the site filled it after
+    // the upload, the brain filled it from the profile, the person typed it): no longer theirs.
+    const settleDeferred = (v) => {
+      for (const d of ans.deferred) {
+        if (d.done || answeredQ(d.question)) continue;
+        const shown = linesFor(v.text, d.question);
+        if (shown.length && shown.some((ln) => FILLED_LINE_RE.test(ln))) d.done = true;
+      }
+    };
+    // The page's choices for each question (a native select's from the element, a radio group's,
+    // or a custom dropdown's from its open popup), as the ask route takes them.
+    const itemsFor = async (wc, v, qs) => {
+      const items = [];
+      for (const q of qs) {
+        if (st.stop) break;
+        const got = (await selectChoices(wc, fr, v, q)) || optionsFor(v.text, q) || (await dropdownOptions(wc, v, q)) || { options: [] };
+        const all = cleanOptions(got.options, 1000);
+        items.push({ question: q, options: orderOptions(q, all), all_options: all.slice(0, 40),
+                     partial: !!got.partial || all.length > 40, context: contextFor(v.text, q),
+                     hint: noteAbove(v.text, q) });
+      }
+      return items;
+    };
+    // The person's material first (the ask route's known_only check: the library, work
+    // authorization, the standing choices, the saved facts), then, filling through, the page's
+    // neutral choice where the question is not about a fact. A choice the page lists is picked by
+    // the shell itself; anything else goes to the brain as a placeholder. Returns what is still
+    // open and how many were answered.
+    const triage = async (wc, v, items, recheck) => {
+      if (!items.length) return { open: [], answered: 0 };
+      const k = await deps.postApp("/api/autoapply/agent/ask", { questions: items.map(askItem), record_id: recordId,
+                                                                  known_only: true, fill_through: !recheck }).catch(() => null);
+      const known = (k && k.answers) || {};
+      const pick = (k && k.select) || {};
+      const origins = (k && k.origins) || {};
+      applyReword(items, k && k.reword);
+      noteOrigins(runOrigins, k);
+      let answered = 0;
+      for (const [q, a] of Object.entries(known)) {
+        knownSeen.add(q);
+        answered++;
+        const from = origins[q] === "neutral" ? "neutral" : origins[q] === "eeo_decline" ? "eeo_decline" : "eeo";
+        // A self-identification or neutral choice the page lists: the shell picks it itself, and
+        // a self-identification one never travels on to the brain.
+        if (pick[q] && await pickSaved(wc, v, q, pick[q])) { addAnswer(ans, { page, label: q, value: pick[q], from }); continue; }
+        runAnswers[q] = a;
+      }
+      return { open: items.filter((it) => !(it.question in known)), answered };
+    };
+    // Note questions as left for the person (once each); returns the new ones.
+    const defer = (items) => {
+      const fresh = [];
+      for (const it of items) {
+        if (ans.deferred.some((d) => sameLabel(d.question, it.question))) continue;
+        const d = Object.assign(askItem(it), { page, forced: knownSeen.has(it.question) });
+        ans.deferred.push(d);
+        fresh.push(d);
+      }
+      return fresh;
+    };
+    const sayDeferred = (fresh, step) => {
+      const n = deferredOpen().length;
+      feed.push("defer", "Left for you", fresh.length === 1 ? "1 question only you can answer" : fresh.length + " questions only you can answer",
+                { state: "done", detail: "I ask " + (n === 1 ? "it" : "them together") + " at the end: " + fresh.map((d) => d.question).join("; ").slice(0, 160) });
+      progress(recordId, "running", lead + DEFER_LINE, { step, deferred: n });
+    };
+    // One batch, at the end (or on the page that will not move on without it): first what the
+    // person's material answers by now (a saved answer from setup or the library arriving while
+    // the run went on), then ONE ask on the bar and ONE Telegram message for all of the rest.
+    // Returns { ret } when the run ends here (parked, stopped), else {} to carry on and fill.
+    const askBatch = async (wc, v, step, reply, url, left, where) => {
+      settleDeferred(v);
+      const again = deferredOpen().filter((d) => !d.forced);
+      if (again.length) await triage(wc, v, again, true);
+      const open = deferredOpen();
+      if (!open.length) {
+        pendingNudges.push("The questions left for the person are answered now: each has its placeholder in <left>. Fill them, then carry on.");
+        history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                       actions: ["(the questions left for the person: answered from their saved answers)"], results: ["fill them"] });
+        return {};
+      }
+      const id = Math.random().toString(16).slice(2, 10);
+      const n = open.length;
+      const qs = open.map(askItem);
+      const shown = "I filled everything I could; " + (n === 1 ? "this one needs you." : "these " + n + " need you.");
+      const ask = { id, question: qs[0].question, options: n === 1 ? qs[0].options : [], questions: qs, batch: true };
+      feed.push("ask", "Asking you", n === 1 ? "1 question" : n + " questions, together", { state: "asking", detail: where === "page" ? "this page will not move on without them" : "everything else is filled" });
+      if (!quick) progress(recordId, "ask", shown, { step, ask });
+      const r = await askLong("/api/autoapply/agent/ask", {
+        questions: qs, record_id: recordId, id, batch: true, force_questions: open.filter((d) => d.forced).map((d) => d.question),
+        park: terms.parkInfo(), no_wait: quick }, st);
+      dlog("step " + step + " batch ask (" + where + ") ->", r && { ok: r.ok, reason: r.reason, n });
+      if (r && r.reason === "stopped") return { ret: stopped("stopped", "Stopped.") };
+      if (r && r.reason === "parked") return { ret: await park("questions", shown, { url, left, ask: batch ? undefined : ask }) };
+      if (!(r && r.ok)) return { ret: stopped("needs-answers", blockedMessage("needs-answers", open.map((d) => d.question)), { url, left }) };
+      for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
+      noteOrigins(runOrigins, r);
+      feed.mark("done", "you answered");
+      history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                     actions: ["asked the person, once, everything left for them"], results: [n + " answered"] });
+      pendingNudges.push("The person answered the questions left for them: each has its placeholder in <left>. Fill them now (on an earlier page, go back to it), then carry on to the Submit page and report ready_to_submit.");
+      feed.push("carry", "Carrying on", "with your answers", { transient: true });
+      progress(recordId, "running", "Thanks. Filling in your answers", { step });
+      return {};
+    };
     // What a re-run brings in: the consent (also kept on the record, or as the standing choice),
     // and the answers a parked question got (the saved ones come back from the person's material
     // anyway; a job's own answer, never saved, only from here).
@@ -1542,6 +1670,8 @@ function createAgent(deps) {
           }
           if (elementLines(v.text).some((ln) => /^\*?\[\d+\]<(input|select|textarea|combobox|radio|checkbox|file)\b/.test(ln) && !/search=true/.test(ln))) formReached = true;
         }
+        // The optional boxes this page shows empty, as last seen (Review answers: "Left empty").
+        if (formReached && sig.blocker !== "auth") ans.optional[page] = optionalEmpty(v.text);
         if (pageHashes.length >= 3 && pageHashes.slice(-3).every((h) => h === pageHash) && !filled) {
           const r = await recover(wc, "the page has not changed in 3 steps", { key: "same", hash: pageHash.slice(0, 60) });
           if (r.park) return park("person", r.park, { url });
@@ -1647,8 +1777,10 @@ function createAgent(deps) {
         feed.page = page;
         feed.readPages(v.text);
         feed.push("read", "Reading", step === 1 && !R ? "the job page" : "the page and deciding what to do", { transient: true });
-        progress(recordId, "running", lead + (step === 1 && !R ? "Reading the job page" : "Page " + page + ": deciding what to click"),
-                 { step, filled });
+        // (Fill-through) While questions wait for the person, the bar says so plainly.
+        const waiting = deferredOpen().length;
+        progress(recordId, "running", lead + (step === 1 && !R ? "Reading the job page" : waiting ? DEFER_LINE : "Page " + page + ": deciding what to click"),
+                 Object.assign({ step, filled }, waiting ? { deferred: waiting } : {}));
         const reflect = pendingReflect; pendingReflect = null;
         const image = pendingImage; pendingImage = "";
         let reply = null;
@@ -1666,6 +1798,7 @@ function createAgent(deps) {
             history: history.slice(-12), email_code: emailCode, answers: runAnswers,
             plan, observations: observations.splice(0), reflect, image, last_step: overBudget || step >= MAX_STEPS,
             portal_new: portalNew.has(hostOf(url)),
+            deferred: deferredOpen().map((d) => d.question),
           }), STEP_BRAIN_MS, "brain");
         } catch (e) { if (e && e.stopped) throw e; reply = null; }
         dlog("step " + step + " reply:", reply);
@@ -1719,6 +1852,35 @@ function createAgent(deps) {
               failed = 0;
             }
             continue;
+          }
+          // (Fill-through) Before anything is handed over: a required question still open here
+          // joins what was left for the person (after their material and a neutral choice), and
+          // ALL of it is asked once, together. Their answers are filled in on the next steps,
+          // then this check passes and the gate, the critic and Ready to send follow.
+          {
+            settleDeferred(v);
+            const extra = questionsFor(v.text, left).filter((q) => !answeredQ(q) && !ans.deferred.some((d) => sameLabel(d.question, q)));
+            let answeredNow = 0;
+            if (extra.length) {
+              const items = await itemsFor(wc, v, extra);
+              const forcedIt = items.filter((it) => knownSeen.has(it.question));
+              const t = await triage(wc, v, items.filter((it) => !forcedIt.includes(it)));
+              defer(forcedIt.concat(t.open));
+              answeredNow = t.answered;
+            }
+            if (deferredOpen().length) {
+              const b = await askBatch(wc, v, step, reply, url, left, "end");
+              if (b.ret) return b.ret;
+              continue;
+            }
+            if (answeredNow) {
+              pendingNudges.push("More answers from the person's material are in <left> with placeholders: fill them, then report ready_to_submit again.");
+              history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(ready_to_submit held)"], results: [answeredNow + " more answered: fill them"] });
+              continue;
+            }
+            // Review answers: what was left for the person and is still empty here ("Needs you").
+            const still = questionsFor(v.text, left);
+            ans.needs = ans.deferred.filter((d) => still.some((q) => sameLabel(q, d.question))).map((d) => ({ page: d.page, label: d.question }));
           }
           // ---- SJ_AX hook 2 (shell-electron/ax_view.js, docs/apply-agent.md section 20): the final form
           // check. A blocker goes back to the brain once, then the person is asked once; never handed over unseen.
@@ -1824,76 +1986,67 @@ function createAgent(deps) {
         }
         if (!(done && done.outcome === "blocked")) noAsk = { hash: "", n: 0 };
         if (asks.length) {
-          // Ask the person, on the bar and on Telegram, and carry on with the answers (saved for
-          // every later application). Every open question on the page goes in ONE message, with
-          // the page's own choices: all of a native select's (read from the element), a radio
-          // group's, or a custom dropdown's from its open popup. A list that was only partly
-          // read says so, so an answer outside it still counts. What the person's material
-          // already answers (the library, work authorization, the standing decline choice on
-          // self-identification questions) is never asked.
-          const items = [];
+          // (Fill-through, 2026-11-17) The run never parks on a question mid-form. What the
+          // person's material answers is used (the library, work authorization, the standing
+          // choices, their saved facts); a required choice with a neutral option ("Prefer not
+          // to say") takes it, flagged; the rest is LEFT FOR THE PERSON and the run carries on
+          // through the form. Everything left is asked once, together, at Ready to send, or on
+          // the one page that will not move on without it (askBatch).
           let fromPark = 0;
+          const newQs = [];
+          settleDeferred(v);
           for (const q of asks) {
             if (st.stop) return stopped("stopped", "Stopped.");
             // The answer a parked question got, brought in by this re-run: used once.
             const k = Object.keys(resumeLeft).find((x) => x === q || sameLabel(x, q));
             if (k !== undefined) { runAnswers[q] = resumeLeft[k]; delete resumeLeft[k]; fromPark++; continue; }
-            const got = (await selectChoices(wc, fr, v, q)) || optionsFor(v.text, q) || (await dropdownOptions(wc, v, q));
-            const all = cleanOptions(got.options, 1000);
-            items.push({ question: q, options: orderOptions(q, all), all_options: all.slice(0, 40),
-                         partial: !!got.partial || all.length > 40, context: contextFor(v.text, q),
-                         hint: noteAbove(v.text, q) });
-          }
-          // A question the run already took a known answer for, still open: that answer did not
-          // fit, so the person is asked for real about THAT question; every other question still
-          // gets the person's material first.
-          const forced = items.filter((it) => knownSeen.has(it.question));
-          const rest = items.filter((it) => !knownSeen.has(it.question));
-          let open = forced.slice();
-          if (rest.length) {
-            const k = await deps.postApp("/api/autoapply/agent/ask", { questions: rest, record_id: recordId, known_only: true }).catch(() => null);
-            const known = (k && k.answers) || {};
-            const pick = (k && k.select) || {};
-            applyReword(rest, k && k.reword);
-            noteOrigins(runOrigins, k);
-            for (const [q, a] of Object.entries(known)) {
+            if (deferredOpen().some((d) => sameLabel(d.question, q))) continue;   // already left for the person
+            // Answered this run and still open: that answer did not stick, so it is the person's
+            // again, at the end, about THAT question (never the saved answer once more).
+            const was = Object.keys(runAnswers).find((x) => sameLabel(x, q));
+            if (was !== undefined) {
+              delete runAnswers[was];
               knownSeen.add(q);
-              // A self-identification choice the page lists: the shell picks it itself, and it
-              // never travels on to the brain. Anything else goes to the brain as a placeholder.
-              if (pick[q] && await pickSaved(wc, v, q, pick[q])) continue;
-              runAnswers[q] = a;
+              const d = ans.deferred.find((x) => sameLabel(x.question, q));
+              if (d) { d.forced = true; continue; }
             }
-            open = open.concat(rest.filter((it) => !(it.question in known)));
+            newQs.push(q);
           }
-          let answered = items.length - open.length + fromPark;
-          if (open.length) {
-            const id = Math.random().toString(16).slice(2, 10);
-            const shown = open.length === 1
-              ? (open[0].say ? open[0].say
-                 : (open[0].context ? "After “" + open[0].context + "”, the application asks: " : "The application asks: ") + open[0].question)
-              : "The application asks " + open.length + " questions.";
-            const ask = { id, question: open[0].question, options: open.length === 1 ? open[0].options : [], questions: open };
-            feed.push("ask", "Asking you", open.length === 1 ? "" : open.length + " questions", { state: "asking", detail: open.length === 1 ? open[0].question : "" });
-            if (!quick) progress(recordId, "ask", shown, { step, ask });
-            const r = await askLong("/api/autoapply/agent/ask", {
-              questions: open, record_id: recordId, id, force_questions: forced.map((it) => it.question),
-              park: terms.parkInfo(), no_wait: quick }, st);
-            dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason, n: open.length });
-            if (r && r.reason === "stopped") return stopped("stopped", "Stopped.");
-            if (r && r.reason === "parked") return park("questions", shown, { url, left, ask: batch ? undefined : ask });
-            if (!(r && r.ok)) return stopped("needs-answers", blockedMessage("needs-answers", open.map((it) => it.question)), { url, left });
-            for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
-            noteOrigins(runOrigins, r);
-            answered += open.length;
-            feed.mark("done", "you answered");
+          const items = await itemsFor(wc, v, newQs);
+          if (st.stop) return stopped("stopped", "Stopped.");
+          // A question the run already took a known answer for, still open: that answer did not
+          // fit, so it waits for the person; every other question gets their material first.
+          const forcedIt = items.filter((it) => knownSeen.has(it.question));
+          const t = await triage(wc, v, items.filter((it) => !forcedIt.includes(it)));
+          const fresh = defer(forcedIt.concat(t.open));
+          const answered = t.answered + fromPark;
+          const openNow = deferredOpen();
+          if (fresh.length || answered) {
+            if (fresh.length) sayDeferred(fresh, step);
+            else if (answered) {
+              feed.push("carry", "Carrying on", "with your saved answers", { transient: true });
+              progress(recordId, "running", openNow.length ? lead + DEFER_LINE : "Carrying on", { step, deferred: openNow.length });
+            }
+            if (openNow.length) pendingNudges.push(deferNudge(openNow));
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                           actions: ["(questions only the person can answer: left for the end)"],
+                           results: [(answered ? answered + " answered from their material; " : "") + openNow.length + " left for the person, carry on"] });
+            continue;
           }
-          if (!answered) return stopped("needs-answers", blockedMessage("needs-answers", stillOpen(left, runAnswers, knownSeen)), { url, left });
-          history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
-                         actions: ["asked the person"], results: [answered + " answered"] });
-          if (open.length || fromPark) {
-            feed.push("carry", "Carrying on", "with your answers", { transient: true });
-            progress(recordId, "running", "Thanks. Carrying on", { step });
+          // Nothing new: the brain says the page needs what is already left for the person. When
+          // the page's own error names it, or it says so a second time on this page, this page
+          // will not move on without it: everything left is asked now, together.
+          const here = openNow.filter((d) => asks.some((q) => sameLabel(q, d.question)));
+          const key = String(page);
+          ans.held[key] = (ans.held[key] || 0) + 1;
+          if (ans.held[key] < 2 && !here.some((d) => errorNames(v.text, d.question))) {
+            pendingNudges.push("Those questions are left for the person (marked in <left>). Fill every other field on this page now, then click its Next or Continue. Report needs-answers again only if the page shows an error for them and will not move on.");
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                           actions: ["(needs-answers for questions already left for the person)"], results: ["fill the rest and click Next"] });
+            continue;
           }
+          const b = await askBatch(wc, v, step, reply, url, left, "page");
+          if (b.ret) return b.ret;
           continue;
         }
         if (done && done.outcome === "blocked") {
@@ -2011,8 +2164,12 @@ function createAgent(deps) {
               let chk = null;
               try { chk = await wc.executeJavaScript("window.TailorAgent.pageCheck ? window.TailorAgent.pageCheck() : null", true); }
               catch (e) { if (e && e.stopped) throw e; chk = null; }
-              if (chk && Array.isArray(chk.required_empty) && chk.required_empty.length) {
-                const line = "Page check before " + name + ": required fields still empty: " + chk.required_empty.join(", ")
+              // (Fill-through) What is left for the person never holds the click: the page
+              // decides whether it moves on without it.
+              const mine = chk && Array.isArray(chk.required_empty)
+                ? chk.required_empty.filter((x) => !deferredOpen().some((d) => sameLabel(d.question, String(x)))) : [];
+              if (mine.length) {
+                const line = "Page check before " + name + ": required fields still empty: " + mine.join(", ")
                   + (chk.errors && chk.errors.length ? ". Errors shown: " + chk.errors.join(" | ") : "") + ". Fill them (or report needs-answers if the person must), then click " + name + ".";
                 observations.push(line);
                 results.push("held: required fields still empty");
@@ -2580,6 +2737,9 @@ function emptySelfId(viewText) {
   }
   return [...seen.entries()].filter(([, done]) => !done).map(([label]) => label);
 }
+// A view line whose box holds something: a chosen option, typed text, a ticked box, or a
+// self-identification group's answered=true (its choice never leaves the page).
+const FILLED_LINE_RE = /\bvalue="(?:[^"\\]|\\.)+"|checked=true|answered=true/;
 // The view's element lines for a question.
 function linesFor(viewText, label) {
   return String(viewText || "").split("\n").filter((ln) => /^\*?\[\d+\]</.test(ln) && sameLabel(lineLabel(ln), label));
@@ -2764,7 +2924,10 @@ function orderOptions(question, options) {
 // names the kind, location / job / school / skills / answer), consent (an acknowledgement of a
 // notice or condition under the standing consent to required notices) and optin (a marketing
 // opt-in declined; autoapply/consents.py).
-const ANSWER_FLAGS = new Set(["ai", "closest", "skills", "eeo_decline", "derived", "drafted", "grounded"]);
+// (Fill-through) neutral: a required choice nothing saved answers took the page's neutral
+// option; needs_you: left for the person and still empty; left_empty: an optional box left empty
+// (shown, never counted as one to check, never sent to Telegram).
+const ANSWER_FLAGS = new Set(["ai", "closest", "skills", "eeo_decline", "derived", "drafted", "grounded", "neutral", "needs_you", "left_empty"]);
 const FACT_KINDS = new Set(["location", "job", "school", "skills", "answer"]);
 const ANSWER_MAX = 200;
 const NO_ANSWER_PH = new Set(["portal_email", "portal_password", "email_code"]);
@@ -2813,11 +2976,12 @@ function criticInputs(ans) {
   return { filled: filled.slice(0, 120), files };
 }
 // The origins an ask route reply names ({origins: {question: origin}, facts: {question: kind}}):
-// only a grounded answer is kept (the rest are the person's own material, as before).
+// only a grounded answer and a neutral pick (fill-through) are kept (the rest are the person's
+// own material, as before).
 function noteOrigins(runOrigins, reply) {
   const o = (reply && reply.origins) || {};
   for (const [q, from] of Object.entries(o)) {
-    if (from !== "grounded") continue;
+    if (from !== "grounded" && from !== "neutral") continue;
     const fact = String(((reply && reply.facts) || {})[q] || "");
     runOrigins[q] = FACT_KINDS.has(fact) ? { from, fact } : { from };
   }
@@ -2916,7 +3080,25 @@ function readyAnswers(ans, ctx) {
     const row = { page: r.page, label: r.label, value: r.value, from, flag: ANSWER_FLAGS.has(from) ? from : "", self_id: self, i };
     if (from === "grounded" && r.fact) row.fact = r.fact;
     return row;
-  }).sort((a, b) => a.page - b.page || a.i - b.i).map(({ i, ...r }) => r);
+  });
+  // (Fill-through) What was left for the person and is still empty, and the optional boxes left
+  // empty that nothing filled: rows of their own, with no value.
+  const has = (label) => rows.some((r) => sameLabel(r.label, label));
+  let k = rows.length;
+  for (const n of (ans && ans.needs) || []) {
+    if (!n || !n.label) continue;
+    const at = rows.findIndex((r) => sameLabel(r.label, n.label));
+    if (at >= 0) rows.splice(at, 1);
+    rows.push({ page: Number(n.page) || 1, label: String(n.label).slice(0, 160), value: "", from: "needs_you", flag: "needs_you", self_id: EEO_RE.test(n.label), i: k++ });
+  }
+  for (const [pg, labels] of Object.entries((ans && ans.optional) || {})) {
+    for (const label of labels || []) {
+      if (!label || has(label)) continue;
+      rows.push({ page: Number(pg) || 1, label: String(label).slice(0, 160), value: "", from: "left_empty", flag: "left_empty", self_id: EEO_RE.test(label), i: k++ });
+    }
+  }
+  rows.sort((a, b) => a.page - b.page || a.i - b.i);
+  for (const r of rows) delete r.i;
   const files = ((ans && ans.files) || []).map((f) => {
     const other = f.record_id != null && rid !== "" && String(f.record_id) !== rid;
     // other_resume: tailored for another application; earlier_file: ours went in, and the form
@@ -2924,7 +3106,7 @@ function readyAnswers(ans, ctx) {
     const flag = other ? "other_resume" : f.earlier ? "earlier_file" : f.how === "listed" ? "kept_file" : "";
     return { kind: f.kind, name: f.name, record_id: f.record_id, how: f.how, page: f.page, flag };
   });
-  const flagged = rows.filter((r) => r.flag).length + files.filter((f) => f.flag).length;
+  const flagged = rows.filter((r) => r.flag && r.flag !== "left_empty").length + files.filter((f) => f.flag).length;
   return { rows, files, flagged };
 }
 // The same list as one short Telegram message, WITHOUT self-identification values. The Ready to
@@ -2936,10 +3118,12 @@ const ANSWER_FROM_WORDS = {
   ai: "AI pick, check it", closest: "closest match, check it", skills: "from your skills, check it",
   grounded: "from your saved facts, check it", consent: "you said yes to required notices in setup",
   optin: "declined marketing messages",
+  neutral: "chose the neutral option: nothing saved answers this", needs_you: "needs you", left_empty: "left empty: optional",
 };
 // One answer as a Telegram line: a self-identification value never leaves the app.
 function answerLine(r) {
-  const v = r.self_id ? "(self-identification, shown only in the app)" : r.value;
+  const v = r.from === "needs_you" || r.from === "left_empty" ? "(empty)"
+    : r.self_id ? "(self-identification, shown only in the app)" : r.value;
   return "\u2022 " + r.label + ": " + v + " (" + (ANSWER_FROM_WORDS[r.from] || r.from) + ")" + (r.flag ? " \u26a0" : "");
 }
 function fileLine(f) {
@@ -2954,6 +3138,7 @@ function answersTelegram(list, job) {
   const out = ["Before you press Send" + (job ? " on " + job : "") + ", this is what I filled:"];
   let page = 0;
   for (const r of L.rows || []) {
+    if (r.from === "left_empty") continue;             // an optional box left empty: only in the app
     if (r.page !== page) { page = r.page; out.push("Page " + page); }
     out.push(answerLine(r));
   }
@@ -2976,9 +3161,9 @@ const NOTICE_LINES = 12;
 function readyNotice(list, run) {
   const L = list || { rows: [], files: [] };
   const lines = [];
-  for (const r of L.rows || []) if (r.flag) lines.push(answerLine(r));
+  for (const r of L.rows || []) if (r.flag && r.flag !== "left_empty") lines.push(answerLine(r));
   for (const f of L.files || []) if (f.flag) lines.push(fileLine(f));
-  return { run: run == null ? "" : String(run), filled: (L.rows || []).length, files: (L.files || []).length,
+  return { run: run == null ? "" : String(run), filled: (L.rows || []).filter((r) => r.value).length, files: (L.files || []).length,
            flagged: Number(L.flagged) || lines.length, lines: lines.slice(0, NOTICE_LINES).map((x) => x.slice(0, 300)),
            more: Math.max(0, lines.length - NOTICE_LINES) };
 }
@@ -3023,6 +3208,46 @@ function applyReword(items, reword) {
   return items;
 }
 
+// ---- fill-through (2026-11-17): what the run leaves for the person, asked once at the end -----
+// One question as the ask route takes it (no run-only fields).
+function askItem(it) {
+  const o = { question: String(it.question || ""), options: (it.options || []).slice(0, 8), all_options: (it.all_options || it.options || []).slice(0, 40),
+              partial: !!it.partial, context: String(it.context || ""), hint: String(it.hint || "") };
+  if (it.say) o.say = String(it.say);
+  return o;
+}
+// The nudge that tells the brain to leave these empty and carry on (the engine marks the same
+// lines in <left>, ui/app.py). Inside the step route's 300 characters.
+function deferNudge(open) {
+  const names = (open || []).map((d) => "\u201c" + String(d.question || "").slice(0, 60) + "\u201d").join(", ");
+  return ("Left for the person, asked at the end: " + (names.length > 110 ? names.slice(0, 109) + "\u2026" : names)
+          + ". Leave them empty (never N/A), fill everything else, and carry on: Next, Continue, or ready_to_submit at the Submit page.").slice(0, 300);
+}
+// Whether the page's own error names this question ("Error: The field X is required", a
+// Workday "Error-X" link): then the page will not move on without it.
+function errorNames(viewText, question) {
+  const q = squash(cleanQuestion(question) || question).slice(0, 40);
+  if (!q) return false;
+  return String(viewText || "").split("\n").some((ln) => /^Error\b|<button>Error-|\binvalid\b/i.test(ln.replace(/^\*?\[\d+\]/, "").trim())
+                                                         && squash(ln).includes(q));
+}
+// The optional boxes a page shows empty (a text box, a list, a dropdown with no value and no
+// required mark): Review answers says "Left empty: optional" for each one nothing filled. Labels
+// only; never a search box, a password, a file box or a sign-in field.
+function optionalEmpty(viewText) {
+  const out = [];
+  for (const ln of String(viewText || "").split("\n")) {
+    const m = /^\*?\[\d+\]<(input|textarea|select|combobox)\b(.*)$/.exec(ln);
+    if (!m || !/\bvalue=""/.test(ln) || /\brequired\b|search=true|type=(?:password|hidden|file|search|submit|email)\b/.test(ln)) continue;
+    const raw = lineLabel(ln);
+    if (!raw || /[*\u2731]\s*$/.test(raw)) continue;
+    const label = cleanQuestion(raw);
+    if (label && !out.some((x) => sameLabel(x, label))) out.push(label.slice(0, 160));
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 // The labels a stuck run still names to the person: never one already answered this run (on the
 // bar, on Telegram, or from their saved material), so "needs answers only you can give" lists
 // only what is really open.
@@ -3057,4 +3282,5 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, socialRefused, wroteLines,
-                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice };
+                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
+                   DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty };
