@@ -465,6 +465,10 @@ function createAgent(deps) {
       text += "\n--- embedded frame " + (i + 1) + " ---\n" + v.text;
       for (const n of indicesIn(v.text)) { indices.add(n); frameOf.set(n, ctx); }
     }
+    // ---- SJ_AX hook 1 (shell-electron/ax_view.js, docs/apply-agent.md section 20): each control line
+    // gets the accessibility tree's states (required, invalid, expanded, the files a box lists).
+    if (require("./ax_view").on()) text = await require("./ax_view").enrich({ wc, fr, deps, guard, text }).catch((e) => { if (e && e.stopped) throw e; return text; });
+    // ---- end SJ_AX hook 1
     return { text: text.slice(0, 14000), indices, frameOf };
   }
 
@@ -1682,6 +1686,16 @@ function createAgent(deps) {
             }
             continue;
           }
+          // ---- SJ_AX hook 2 (shell-electron/ax_view.js, docs/apply-agent.md section 20): the final form
+          // check. A blocker goes back to the brain once, then the person is asked once; never handed over unseen.
+          if (require("./ax_view").on()) {
+            const g = await require("./ax_view").readyGate({ wc, fr, deps, guard, feed, seen: checkedPages, recordId, resumePath: opts.resumePath, viewText: v.text })
+              .catch((e) => { if (e && e.stopped) throw e; return null; });
+            if (g && g.nudge) { pendingNudges.push(g.nudge); history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(form check)"], results: g.results }); continue; }
+            if (g && g.ask) return park("person", g.ask, { url });
+            if (g && g.noted) terms.criticIssues = (terms.criticIssues || []).concat(g.noted);
+          }
+          // ---- end SJ_AX hook 2
           // A Send whose page was gone: submit only when the review page came out the same.
           if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
             return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });

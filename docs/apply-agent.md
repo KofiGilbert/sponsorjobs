@@ -717,3 +717,38 @@ tests/js/test_agent_workday_fixes.js; fixtures modelled on the real markup):
   time cap, and a debug log that never carries a secret.
 - Quality: one real-model run per milestone on the fixture and on a live Greenhouse job page
   (stops before submit), logged step count and cost.
+
+## 20. The accessibility tree and the final form check (2026-11-16)
+
+Reading the Gusto form through Chrome's accessibility tree showed what the DOM view missed (every
+"How did you hear" box ticked, the resume in the Cover Letter box, a dropdown left open, three
+copies of the resume on Workday); the tree alone hides what the DOM view has (page text, errors,
+react-select's chosen value, Lever's "✱", long labels). The agent now reads both
+(`shell-electron/ax_view.js`, behind `SJ_AX=1`; **off by default** until the mock e2e has run
+with it on, then `DEFAULT_ON` flips).
+
+- **Merge.** For every frame of every CDP session (`Page.getFrameTree`), `Accessibility.getFullAXTree`
+  gives each control's role, name, value and states (checked, mixed, expanded, required, disabled,
+  invalid, focused) by `backendDOMNodeId`. The view's own elements (`window.__tailorAgentRefs`) are
+  resolved to the same ids through `DOM.describeNode`, so each `[N]` line meets its node (by name
+  when the node has none). One in-page function adds what only the page knows: the files a box
+  lists (Workday's file-upload-item rows, Greenhouse's filename, Lever's success name, else the
+  input's own files), a "✱"/"*" required mark, which question a box belongs to. Role list and
+  property reading follow vercel-labs/agent-browser `snapshot.rs` (Apache-2.0).
+- **What the model sees** (hook 1 in `view()`): the same lines with `required` (a "✱" counts),
+  `invalid`, `expanded=true`, `checked=mixed`, `value="(filled)"` when only the tree sees the text,
+  `file=chosen holds="resume x3"` (file KINDS, never names), and the accessible name of a one-letter
+  button (`<button name="Remove file">x</button>`). Never a value, a file name, or a
+  self-identification choice. An empty required native box is not also "invalid" (Chrome marks both).
+- **The final check** (hook 2, after `notReady`, before the critic): `verifyForm` lists required
+  fields still empty (groups too), a group with more than one box ticked when the question takes
+  one (Yes/No options, "select one", "How did you hear", or a "None" ticked with others) or with
+  every box ticked (3 or more), a resume in a cover letter box (or the reverse; the run's own file
+  names decide when the names say neither), the same file listed twice, a dropdown left open, a
+  field marked invalid. First time: the brain gets the list with the line numbers ("Fix these on
+  this page ... never Submit"). Second time: the person is asked once (the run parks: "Before I hand
+  over: ... Fix it on the page, then press Continue."). After that Continue, the hand-over goes ahead
+  and Steps names each remaining problem ("Check noted"). Clean: Steps shows "Checked N required
+  fields: all filled". Without the debugger (DevTools holds it) the page facts alone still run the
+  check. Capped at `SJ_AX_MS` (6 s); a failure leaves the view and the gate as they were.
+- **Tests:** `tests/js/test_ax_view.js` (`tests/test_ax_view.py`) on `tests/fixtures/forms/ax_*.html`.
