@@ -11393,6 +11393,11 @@
       bar.appendChild(feedToggle(snap.events.length, AA_FEED.open, "bbFeed", (e) => {
         AA_FEED.open = !AA_FEED.open;
         e.currentTarget.setAttribute("aria-expanded", String(AA_FEED.open));
+        if (AA_FEED.open && AA_ANS.open) {                     // one panel under the bar at a time
+          AA_ANS.open = false;
+          bar.querySelector(".bb-ans-toggle")?.setAttribute("aria-expanded", "false");
+          aaAnsRender();
+        }
         aaFeedRender(snap);
       }));
     }
@@ -11400,7 +11405,7 @@
     aaFeedRender(snap);
     return live;
   }
-  const aaFeedHide = () => { const b = $("#bbFeed"); if (b) b.hidden = true; };
+  const aaFeedHide = () => { const b = $("#bbFeed"); if (b) b.hidden = true; const a = $("#bbAnswers"); if (a) a.hidden = true; };
 
   // ---- the resume builder: the build's live message in the CHAT while it builds (the steps
   // appear one by one under "Working on your resume…"). Polls /api/activity while a session
@@ -11461,10 +11466,124 @@
     };
   })();
 
+  // ---- Review answers at Ready to send: every field the agent filled during the run, page by
+  // page, with where each value came from, the files it attached and which application each was
+  // tailored for, and the lines that deserve a look (assembled by the shell from what the run
+  // recorded: shell-electron/agent.js readyAnswers). Opens under the bar like Steps, on demand.
+  // Local only: self-identification values are shown here and nowhere else.
+  const AA_ANS = { lists: new Map(), open: false, rid: null };
+  function aaAnsFrom(code) {
+    const m = {
+      profile: T("aa.ans.from.profile", "Your profile"), history: T("aa.ans.from.history", "Your resume"),
+      library: T("aa.ans.from.library", "Saved answer"), you: T("aa.ans.from.you", "Your answer"),
+      workauth: T("aa.ans.from.workauth", "Work authorization"), eeo: T("aa.ans.from.eeo", "Self-identification"),
+      eeo_decline: T("aa.ans.from.eeo", "Self-identification"), drafted: T("aa.ans.from.drafted", "Drafted"),
+      derived: T("aa.ans.from.derived", "Worked out"), letter: T("aa.ans.from.letter", "Cover letter"),
+      job: T("aa.ans.from.job", "The job"), today: T("aa.ans.from.today", "Today's date"),
+      ai: T("aa.ans.from.ai", "AI pick"), closest: T("aa.ans.from.closest", "Closest match"),
+      skills: T("aa.ans.from.skills", "Your skills"),
+    };
+    return m[code] || code || "";
+  }
+  function aaAnsFlag(code) {
+    const m = {
+      ai: T("aa.ans.flag.ai", "The AI chose this. Check it."),
+      closest: T("aa.ans.flag.closest", "Optional. Picked as the closest match on the list."),
+      skills: T("aa.ans.flag.skills", "Optional. Picked from your skills."),
+      eeo_decline: T("aa.ans.flag.declined", "Declined, nothing you saved answers it."),
+      derived: T("aa.ans.flag.derived", "Worked out from your answers, not saved by you."),
+      drafted: T("aa.ans.flag.drafted", "Written for this job. Read it."),
+      kept_file: T("aa.ans.flag.kept", "The form already had a file with this name, so it was not attached again. Check it is this job's."),
+    };
+    return m[code] || "";
+  }
+  // "Role at Company" of an application (the board, else read once and cached).
+  const aaAnsJobWords = (j) => (!j || !(j.role || j.company) ? ""
+    : j.role && j.company ? T("aa.ans.roleAt", "{role} at {company}").replace("{role}", j.role).replace("{company}", j.company)
+      : j.role || j.company);
+  function aaAnsJob(rid) {
+    if (rid == null) return null;
+    return aaFind(Number(rid)) || aaFeedJob(rid);
+  }
+  function aaAnsToggle(list, rk) {
+    const n = (list.rows || []).length + (list.files || []).length;
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "act-toggle bb-ans-toggle";
+    b.setAttribute("aria-expanded", String(AA_ANS.open));
+    b.setAttribute("aria-controls", "bbAnswers");
+    const check = list.flagged ? `<span class="act-n bb-ans-flag">${esc(T("aa.ans.toCheck", "{n} to check").replace("{n}", list.flagged))}</span>` : "";
+    b.innerHTML = `<span>${esc(T("aa.ans.review", "Review answers"))}</span><span class="act-n">${esc(String(n))}</span>${check}${feedChevron}`;
+    b.addEventListener("click", (e) => {
+      AA_ANS.open = !AA_ANS.open;
+      AA_ANS.rid = rk;
+      e.currentTarget.setAttribute("aria-expanded", String(AA_ANS.open));
+      if (AA_ANS.open && AA_FEED.open) {                       // one panel under the bar at a time
+        AA_FEED.open = false;
+        e.currentTarget.parentElement?.querySelector(".act-toggle:not(.bb-ans-toggle)")?.setAttribute("aria-expanded", "false");
+        aaFeedRender(null);
+      }
+      aaAnsRender();
+    });
+    return b;
+  }
+  function aaAnsHTML(list, rid) {
+    const me = aaAnsJob(rid);
+    const row = (q, v, from, note, cls) => `<li class="ans-row${note ? " is-flag" : ""}${cls ? " " + cls : ""}">`
+      + `<span class="ans-q">${esc(q)}</span><span class="ans-v">${note ? '<span class="ans-mk" aria-hidden="true">!</span>' : ""}${esc(v)}</span>`
+      + `<span class="ans-f">${esc(from)}</span>${note ? `<span class="ans-note">${esc(note)}</span>` : ""}</li>`;
+    let html = "", page = null;
+    for (const r of list.rows || []) {
+      if (r.page !== page) {
+        if (page !== null) html += "</ul>";
+        page = r.page;
+        html += `<div class="ans-pg">${esc(T("aa.ans.page", "Page {n}").replace("{n}", page))}</div><ul class="ans-list">`;
+      }
+      html += row(r.label, r.value, aaAnsFrom(r.from), r.flag ? aaAnsFlag(r.flag) : "");
+    }
+    if (page !== null) html += "</ul>";
+    if ((list.files || []).length) {
+      html += `<div class="ans-pg">${esc(T("aa.ans.files", "Files"))}</div><ul class="ans-list">`;
+      for (const f of list.files) {
+        const kind = f.kind === "cover_letter" ? T("aa.ans.letter", "Cover letter") : T("aa.ans.resume", "Resume");
+        const job = aaAnsWordsFor(f.record_id);
+        let note = "";
+        if (f.flag === "other_resume") {
+          // Another application's tailored file: flagged unless it is the same role at the same company.
+          const same = me && job && aaAnsJobWords(me).toLowerCase() === job.toLowerCase();
+          note = same ? "" : job ? T("aa.ans.flag.otherJob", "Tailored for {job}, not this job.").replace("{job}", job)
+            : T("aa.ans.flag.other", "Tailored for another application, not this job.");
+        } else if (f.flag) note = aaAnsFlag(f.flag);
+        const from = job ? T("aa.ans.tailoredFor", "Tailored for {job}").replace("{job}", job) : "";
+        html += row(kind, f.name, from, note);
+      }
+      html += "</ul>";
+    }
+    const foot = `<div class="act-foot"><span>${esc(T("aa.ans.local", "Only on this computer"))}</span></div>`;
+    return `<div class="ans-box">${html}</div>${foot}`;
+  }
+  // The role and company a file was tailored for; reads the application once when the board
+  // does not have it, then draws the list again.
+  function aaAnsWordsFor(rid) {
+    if (rid == null) return "";
+    const j = aaAnsJob(rid);
+    if (j) return aaAnsJobWords(j);
+    setTimeout(() => { if (AA_ANS.open && aaAnsJob(rid)) aaAnsRender(); }, 900);
+    return "";
+  }
+  function aaAnsRender() {
+    const box = $("#bbAnswers");
+    if (!box) return;
+    const list = AA_ANS.rid != null ? AA_ANS.lists.get(AA_ANS.rid) : null;
+    if (!AA_ANS.open || !list) { box.hidden = true; return; }
+    box.innerHTML = aaAnsHTML(list, AA_ANS.rid);
+    box.hidden = false;
+  }
+
   function aaAgentBar(info) {
     const bar = $("#bbFill");
     if (!bar) return;
     bar.innerHTML = "";
+    if (info.state !== "ready") { AA_ANS.rid = null; AA_ANS.open = false; aaAnsRender(); }
     const text = document.createElement("span");
     text.className = "bb-fill-text";
     text.textContent = info.message || "";
@@ -11623,6 +11742,14 @@
           loadAutoApply();
         }
       });
+      // Every answer the agent gave, on demand (the Ready line stays one short line).
+      const rk = String(info.record_id);
+      if (info.answers) AA_ANS.lists.set(rk, info.answers);
+      const list = AA_ANS.lists.get(rk);
+      if (AA_ANS.rid !== rk) { AA_ANS.rid = rk; AA_ANS.open = false; }
+      if (list && ((list.rows || []).length || (list.files || []).length)) bar.appendChild(aaAnsToggle(list, rk));
+      else AA_ANS.rid = null;
+      aaAnsRender();
       if (info.letter) {
         // The cover letter the agent wrote and attached: the person reads it before Send.
         const a = document.createElement("a");

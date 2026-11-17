@@ -527,9 +527,27 @@ function qsaSafe(sel, root) {
     return false;
   }
 
-  function markFilled(el) {
+  function markFilled(el, from) {
     el.classList.add("tailor-filled");
     setTimeout(() => el.classList.remove("tailor-filled"), 2500);
+    logFill(el, from);
+  }
+
+  // ---- what this fill set, for the "Review answers" list at Ready to send (desktop shell) ----
+  // Only the shell's runs log (fillAsync and applyOpsAsync turn it on). Each control a pass marks
+  // is kept with where its value came from: ``_from``, set by the pass that runs ("profile",
+  // "library", "workauth", "eeo_decline", "history", "today"), or the plan op's own origin.
+  // takeFillLog() reads each control's question and what it shows now, then empties the log.
+  // Read only by the shell's local list; never sent to a model, the broker or Telegram.
+  let _logOn = false;
+  let _from = "";
+  let _section = "";
+  let _fillLog = [];
+  function logFill(el, from, value, label) {
+    if (!_logOn || !el || _fillLog.length >= 300) return;
+    const f = from || _from;
+    if (!f) return;
+    _fillLog.push({ el, from: f, value: value == null ? null : String(value), label: label || "", section: _section });
   }
 
   // Plan the fill without applying it, used both to decide whether to offer the panel
@@ -575,7 +593,7 @@ function qsaSafe(sel, root) {
       if (String(el.value || "").trim()) continue;      // never overwrite what you typed
       const ok = el.tagName === "SELECT" ? fillSelect(el, value)
                                          : (setNativeValue(el, value), true);
-      if (ok) { markFilled(el); noteFilled(el, key, value); filled++; }
+      if (ok) { markFilled(el, ANSWER_KEYS.has(key) ? "library" : "profile"); noteFilled(el, key, value); filled++; }
     }
     return filled;
   }
@@ -673,6 +691,7 @@ function qsaSafe(sel, root) {
     { key: "earliest_start",   re: /start date|available to start|when can you (start|begin)|earliest start|notice period|availability/ },
     { key: "hear_about_us",    re: /how did you hear|where did you hear|hear about (us|this|the (job|role|position|opening))|referral source|how.*find (us|this|out about)/ },
   ];
+  const ANSWER_KEYS = new Set(TEXT_ANSWERS.map((a) => a.key));
   const EEO_TOPICS = /gender|\brace\b|ethnic|veteran|disab/;
   const DECLINE_RE = /decline|prefer not|not to (answer|identify|disclose)|don'?t (wish|want)|do not (wish|want)|not declared/;
   const YES_RE = /^\W*(yes|y|i am\b|i do\b|true)/;
@@ -1137,9 +1156,14 @@ function qsaSafe(sel, root) {
     const fields = (payload && payload.fields) || {};
     const plan = planFill(fields, { recipe });
     const filled = applyFill(plan);
+    const was = _from;
+    _from = "workauth";
     const screening = fillScreening(payload && payload.screening);
+    _from = "library";
     const answers = fillTextAnswers(payload && payload.answers);
+    _from = "eeo_decline";
     const eeo = (payload && payload.eeo && payload.eeo.decline) ? fillEeo() : 0;
+    _from = was;
     const resume_upload = hasResumeUpload();
     // Y in "filled X of Y": the fields SponsorJobs RECOGNIZED it could help with (profile fields with a
     // saved value + the screening/text/EEO answers it set + a résumé upload it saw). X = what it set
@@ -1302,6 +1326,7 @@ function qsaSafe(sel, root) {
       if (el.getAttribute && el.getAttribute("data-tailor-widget")) { skipped++; continue; }   // applyOpsAsync
       const type = fieldType(el);
       const text = String(op.text == null ? "" : op.text);
+      _from = op.from || "ai";
       try {
         if (type === "radio") {
           const radios = qsaDeep(`[data-tailor-group="${CSS.escape(op.ref)}"]`);
@@ -1318,6 +1343,7 @@ function qsaSafe(sel, root) {
         }
       } catch (e) { skipped++; }
     }
+    _from = "";
     return { filled, uploads, skipped };
   }
 
@@ -1881,8 +1907,9 @@ function qsaSafe(sel, root) {
           answer = TEXT_ANSWERS.some((a) => a.key === key);
         }
         if (!value) continue;
-        r = { kind: "fields", text: value, score: answer ? answerScorer(value) : valueScorer(value), freeText: true };
+        r = { kind: "fields", text: value, score: answer ? answerScorer(value) : valueScorer(value), freeText: true, answer };
       }
+      _from = widgetFrom(r);
       const res = await pickCombo(el, r);
       if (res.ok) { out[r.kind]++; out.filled++; markFilled(controlOf(el)); }
     }
@@ -1890,9 +1917,15 @@ function qsaSafe(sel, root) {
       if (g.radios.some(isOn)) continue;
       const r = route(norm(widgetQuestion(g.box)));
       if (!r) continue;
+      _from = widgetFrom(r);
       if (await pickAriaRadio(g.radios, r.score)) { out[r.kind]++; out.filled++; }
     }
+    _from = "";
     return out;
+  }
+  // Where a widget's value came from, for the fill log.
+  function widgetFrom(r) {
+    return r.kind === "screening" ? "workauth" : r.kind === "eeo" ? "eeo_decline" : r.answer ? "library" : "profile";
   }
 
   // One op of the model plan on a custom widget. "filled" | "skipped".
@@ -1919,6 +1952,7 @@ function qsaSafe(sel, root) {
 
   // applyOps for the shell: native fields as before, custom widgets driven and verified.
   async function applyOpsAsync(ops) {
+    _logOn = true;
     const native = [], widget = [];
     for (const op of (ops || [])) {
       const el = elByRef(op.ref);
@@ -1928,9 +1962,11 @@ function qsaSafe(sel, root) {
     const rep = applyOps(native);
     for (const [el, op] of widget) {
       let res = "skipped";
+      _from = op.from || "ai";
       try { res = await applyWidgetOp(el, op); } catch (e) { res = "skipped"; }
       if (res === "filled") rep.filled++; else rep.skipped++;
     }
+    _from = "";
     return rep;
   }
 
@@ -2039,16 +2075,16 @@ function qsaSafe(sel, root) {
       if (!key || !textFor[key] || !emptyBox(el)) continue;
       if (isWidgetInput(el)) {                                                 // a search list (School on some sites)
         const r = await pickCombo(el, { text: textFor[key], score: answerScorer(textFor[key]), freeText: true });
-        if (r.ok) n++;
+        if (r.ok) { n++; logFill(el); }
         continue;
       }
       setNativeValue(el, textFor[key]); markFilled(el); n++;
     }
     const from = dateGroup(sec.box, HIST_LABELS.from);
-    if (from && fillDate(from, item.start)) n++;
+    if (from && fillDate(from, item.start)) { n++; logFill(from, "", dateWords(item.start), "From"); }
     if (!item.current) {
       const to = dateGroup(sec.box, HIST_LABELS.to);
-      if (to && fillDate(to, item.end)) n++;
+      if (to && fillDate(to, item.end)) { n++; logFill(to, "", dateWords(item.end), "To"); }
     }
     if (kind === "edu") {
       const lv = { doctorate: /doctor|ph\.?\s?d/i, masters: /master|\bm\.?s\.?\b|\bmba\b|graduate degree/i,
@@ -2056,19 +2092,19 @@ function qsaSafe(sel, root) {
                    "high school": /high school|secondary/i }[item.level || ""];
       for (const el of qsaSafe("select", sec.box)) {
         if (!HIST_LABELS.degree.test(boxLabel(el)) || !lv) continue;
-        if (pickSelectOption(el, (t) => lv.test(t))) n++;
+        if (pickSelectOption(el, (t) => lv.test(t))) n++;           // marked (and logged) inside
       }
       for (const el of comboboxes().filter((c) => sec.box.contains(c))) {
         const lab = widgetLabel(el);
         if (comboValue(el)) continue;
         if (HIST_LABELS.degree.test(lab) && lv) {
           const r = await pickCombo(el, { score: (t) => (lv.test(t) ? 50 - Math.min(9, t.length / 20) : 0) });
-          if (r.ok) n++;
+          if (r.ok) { n++; logFill(el); }
         } else if (HIST_LABELS.field.test(lab) && (item.field || item.level)) {
           if (isSearchBox(el)) { _searchOps.push(fieldSearch(el, item)); continue; }
           if (!item.field) continue;
           const r = await pickCombo(el, { text: item.field, score: answerScorer(item.field) });
-          if (r.ok) n++;
+          if (r.ok) { n++; logFill(el); }
         }
       }
     }
@@ -2159,7 +2195,11 @@ function qsaSafe(sel, root) {
     const box = best.o.querySelector("input[type='radio'], input[type='checkbox']") || best.o;
     press(box);
     for (let i = 0; i < 20 && chosenPills(el).length <= before; i++) await sleep(STEP_MS);
-    return { ok: chosenPills(el).length > before };
+    const ok = chosenPills(el).length > before;
+    // An optional list filled by a rule, never by the person: the Review answers list flags it
+    // (2026-11-16, Uline: "Agricultural Economics" and "JavaScript" went in unseen).
+    if (ok) logFill(el, spec.kind === "skills" ? "skills" : "closest", cleanText(best.o.textContent));
+    return { ok };
   }
   async function closeSearch(ref) {
     const el = elByRef(ref);
@@ -2168,6 +2208,11 @@ function qsaSafe(sel, root) {
   }
 
   async function fillHistory(payload) {
+    const was = _from;
+    _from = "history";
+    try { return await fillHistoryPass(payload); } finally { _from = was; _section = ""; }
+  }
+  async function fillHistoryPass(payload) {
     const out = { filled: 0, sections: 0 };
     const lists = { work: (payload && payload.history) || [], edu: (payload && payload.education) || [] };
     const caps = { work: 5, edu: 3 };
@@ -2185,7 +2230,9 @@ function qsaSafe(sel, root) {
           secs = sectionsOf(kind);
           if (i >= secs.length) break;
         }
+        _section = cleanText(secs[i].heading.textContent);
         const n = await fillSection(secs[i], items[i], kind);
+        _section = "";
         out.filled += n;
         if (n) out.sections++;
       }
@@ -2231,13 +2278,13 @@ function qsaSafe(sel, root) {
       if (!lg || !SIGN_DATE_RE.test(cleanLabel(lg.textContent)) || seen.has(g)) continue;
       if ([...seen].some((x) => x.contains(g) || g.contains(x))) continue;
       seen.add(g);
-      if (fillDate(g, today)) n++;
+      if (fillDate(g, today)) { n++; logFill(g, "today", dateWords(today), cleanLabel(lg.textContent)); }
     }
     for (const el of qsaDeep("input")) {
       if (!/^(date|text)$/i.test(el.type || "text") || el.getAttribute("role") === "spinbutton" || !emptyBox(el)) continue;
       if ([...seen].some((x) => x.contains(el))) continue;
       if (!SIGN_DATE_RE.test(boxLabel(el))) continue;
-      if (fillDate(el, today)) { markFilled(el); n++; }
+      if (fillDate(el, today)) { markFilled(el, "today"); n++; }
     }
     return n;
   }
@@ -2249,13 +2296,17 @@ function qsaSafe(sel, root) {
   async function fillAsync(payload) {
     _keyOps = [];
     _searchOps = [];
+    _logOn = true;
+    _fillLog = [];
     const r = fill(payload);
     if (!r || !r.ok) return r;
     let w = { filled: 0, fields: 0, screening: 0, eeo: 0 };
     try { w = await fillWidgets(payload); } catch (e) { /* a widget threw: the rest stands */ }
     let h = { filled: 0 };
     try { h = await fillHistory(payload); } catch (e) { /* the rest stands */ }
+    _from = "today";
     try { h.filled += fillSignatureDate(); } catch (e) { /* the rest stands */ }
+    _from = "";
     r.filled += w.fields + h.filled;
     r.history = h.filled;
     r.keys = _keyOps.slice(0, 60);
@@ -2266,6 +2317,77 @@ function qsaSafe(sel, root) {
     r.widgets = w.filled;
     r.remaining = extractForm({ onlyEmpty: true }).length;
     return r;
+  }
+
+  // ---- the fill log, read back: [{label, value, from}] for what this fill set, then emptied.
+  // The question as the page words it and what the control shows NOW (a widget that ignored a
+  // value is not listed as answered). Never a password or a file box (files are the shell's).
+  const LOG_MAX = 160;
+  const dateWords = (w) => (w && w.y ? (w.m ? String(w.m).padStart(2, "0") + "/" : "") + (w.d && w.m ? String(w.d).padStart(2, "0") + "/" : "") + w.y : "");
+  function optionWords(r) {
+    const l = (r.id && labelFor(r)) || r.closest("label");
+    if (l) return cleanText(l.textContent);
+    if (r.nextElementSibling) return cleanText(r.nextElementSibling.textContent);
+    return cleanText(r.value);
+  }
+  function comboShown(el) {
+    if (tagOf(el) !== "INPUT") return cleanText(el.textContent);
+    const pills = chosenPills(el);
+    if (pills.length) return pills.join(", ");
+    let node = el;
+    for (let i = 0; i < 5 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      const v = qsaSafe(VALUE_SEL, node).find((x) => norm(x.textContent));
+      if (v) return cleanText(v.textContent);
+    }
+    return el.getAttribute("aria-expanded") === "true" ? "" : cleanText(el.value);
+  }
+  const groupQ = (c) => cleanLabel(groupQuestionText(c));
+  function readBack(el) {
+    let c = el;
+    const own = tagOf(el), ownRole = (el.getAttribute && el.getAttribute("role")) || "";
+    if (!/^(INPUT|SELECT|TEXTAREA)$/.test(own) && !/^(radio|checkbox|switch|combobox)$/.test(ownRole)) {
+      const inner = el.querySelector && (el.querySelector("input[type=radio]:checked, input[type=checkbox]:checked")
+        || el.querySelector("input:not([type=hidden]), select, textarea, [role='combobox'], [role='radio'], [role='checkbox']"));
+      if (inner) c = inner;
+    }
+    const t = tagOf(c), role = (c.getAttribute && c.getAttribute("role")) || "", type = String(c.type || "").toLowerCase();
+    if (t === "INPUT" && /^(file|password|hidden)$/.test(type)) return null;
+    if (role === "radio" || (t === "INPUT" && type === "radio")) {
+      const box = c.closest && c.closest("[role='radiogroup']");
+      return [(box && widgetQuestion(box)) || groupQ(c), t === "INPUT" ? optionWords(c) : cleanText(rawText(c))];
+    }
+    if (role === "checkbox" || role === "switch" || (t === "INPUT" && type === "checkbox")) {
+      const mine = t === "INPUT" ? boxLabel(c) : cleanLabel(rawText(c));
+      const q = groupQ(c);
+      return q && mine && q !== mine ? [q, mine] : [mine || q, "Checked"];
+    }
+    if (t === "SELECT") {
+      const o = c.options && c.options[c.selectedIndex];
+      return [boxLabel(c) || groupQ(c), o ? cleanText(o.textContent) : ""];
+    }
+    if (role === "combobox" || isWidgetInput(c) || t === "BUTTON") return [widgetLabel(c) || groupQ(c), comboShown(c)];
+    if (t === "INPUT" || t === "TEXTAREA") return [boxLabel(c) || groupQ(c), cleanText(c.value)];
+    return [boxLabel(c) || groupQ(c), cleanText(c.textContent)];
+  }
+  function takeFillLog() {
+    const out = [];
+    const at = new Map();
+    for (const e of _fillLog) {
+      let got = null;
+      try { got = readBack(e.el); } catch (err) { got = null; }
+      if (!got && e.value == null) continue;
+      let label = e.label || (got && got[0]) || "";
+      const value = e.value != null ? e.value : (got && got[1]) || "";
+      if (!label || !value) continue;
+      if (e.section && !label.toLowerCase().startsWith(e.section.toLowerCase())) label = e.section + ": " + label;
+      const row = { label: label.slice(0, LOG_MAX), value: value.slice(0, LOG_MAX), from: e.from };
+      if (at.has(e.el)) out[at.get(e.el)] = row;                 // the same control again: its last word
+      else { at.set(e.el, out.length); out.push(row); }
+    }
+    _fillLog = [];
+    return out.slice(0, 120);
   }
 
   // What is still blank on this page and needs the person, by label: required checkboxes only
@@ -2315,7 +2437,7 @@ function qsaSafe(sel, root) {
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
     // deep DOM + custom widgets + multi-page (desktop shell)
     fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, closeSearch, extractFormAsync,
-    fileListed, dropDuplicateFiles, fileCopies, applyOpsAsync, leftover, pageSignature, setRefPrefix,
+    fileListed, dropDuplicateFiles, fileCopies, applyOpsAsync, leftover, pageSignature, setRefPrefix, takeFillLog,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
     // recipes: the per-system table, success detection, continue hints, corrections
     setRecipes, recipes: () => RECIPES, recipeFor, globToRe, highlightSubmit, continueButton,

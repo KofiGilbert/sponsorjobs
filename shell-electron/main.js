@@ -685,7 +685,9 @@ function submitScript(click) {
 // Never clicks submit; drops to the person on any captcha/auth wall or a prohibited site (section 7).
 // ``filePath`` is one path for every ref, or a function ref -> path (the plan names the file per
 // box: the cover letter box gets the cover letter, every other box the resume).
-async function cdpUploadFiles(wc, refs, filePath) {
+// ``seen`` (optional): each file's fate, {ref, path, how: "attached" | "listed"}, for the agent's
+// Review answers list ("listed": the box already held a file of this name, nothing was attached).
+async function cdpUploadFiles(wc, refs, filePath, seen) {
   const pathOf = typeof filePath === "function" ? filePath : () => filePath;
   const dbg = wc.debugger;
   const release = acquireDebugger(wc);
@@ -701,11 +703,15 @@ async function cdpUploadFiles(wc, refs, filePath) {
         if (!objectId) continue;
         const file = pathOf(ref);
         if (!file) continue;
-        if (await alreadyAttached(wc, ref, file)) continue;      // never the same file twice
+        if (await alreadyAttached(wc, ref, file)) {               // never the same file twice
+          if (seen) seen.push({ ref, path: file, how: "listed" });
+          continue;
+        }
         // By objectId: DOM.requestNode needs DOM.getDocument first, and without it every
         // upload here failed quietly (found on the real Gusto form, 2026-11-16).
         await dbg.sendCommand("DOM.setFileInputFiles", { files: [file], objectId });
         done++;
+        if (seen) seen.push({ ref, path: file, how: "attached" });
       } catch (e) { /* skip this one input; the person can still attach it */ }
     }
   } finally {
@@ -930,6 +936,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     lap("extract", fields.length ? "the AI planned " + fields.length + " fields" : "checking what is left");
 
     let applied = { filled: 0, uploaded: 0, pending_upload: 0, skipped: 0 };
+    const files = [];                                     // the agent's Review answers list
     let planReason = "", wantsLetter = false, letterAttached = false, declined = 0;
     if (fields.length) {
       let plan = null;
@@ -953,6 +960,7 @@ async function runAutoApplyOnPane(recordId, opts) {
         const ops = plan.ops || [];
         const routed = frames.routeOps(ops, liveFrames);
         const uploadPath = new Map(ops.filter((o) => o.op === "upload" && o.path).map((o) => [o.ref, o.path]));
+        const uploadFrom = new Map(ops.filter((o) => o.op === "upload").map((o) => [o.ref, o.from === "letter" ? "cover_letter" : "resume"]));
         const resumePath = uploadPath.size ? (ref) => uploadPath.get(ref) || "" : "";
         letterAttached = ops.some((o) => o.op === "upload" && o.from === "letter");
         declined = ops.filter((o) => o.from === "eeo_decline").length;
@@ -962,7 +970,9 @@ async function runAutoApplyOnPane(recordId, opts) {
           const rep = await wc.executeJavaScript(runOps(routed.main), true);
           reports.push(rep);
           if (rep && (rep.uploads || []).length && resumePath) {
-            applied.uploaded += await cdpUploadFiles(wc, rep.uploads, resumePath);
+            const seen = [];
+            applied.uploaded += await cdpUploadFiles(wc, rep.uploads, resumePath, seen);
+            for (const x of seen) files.push({ kind: uploadFrom.get(x.ref) || "resume", path: x.path, how: x.how });
           }
         }
         for (const [ctx, list] of routed.byFrame) {
@@ -970,7 +980,9 @@ async function runAutoApplyOnPane(recordId, opts) {
           reports.push(rep);
           if (rep && (rep.uploads || []).length && resumePath) {
             for (const ref of rep.uploads) {
-              applied.uploaded += await frames.uploadInFrame(fr.cdp, ctx, [ref], resumePath(ref));
+              const n = await frames.uploadInFrame(fr.cdp, ctx, [ref], resumePath(ref));
+              applied.uploaded += n;
+              if (n) files.push({ kind: uploadFrom.get(ref) || "resume", path: resumePath(ref), how: "attached" });
             }
           }
         }
@@ -990,6 +1002,14 @@ async function runAutoApplyOnPane(recordId, opts) {
     let left = (await wc.executeJavaScript("window.TailorAutofill.leftover()", true)) || [];
     for (const ctx of liveFrames) left = left.concat((await fr.eval(ctx, "window.TailorAutofill.leftover()")) || []);
     left = [...new Set(left)].slice(0, 60);
+    // (the agent only) What this fill set and where each value came from, for the Review answers
+    // list at Ready to send. Kept in the shell: never in the fill report, a log or a model call.
+    let answers = [];
+    if (opts.answers) {
+      const take = "window.TailorAutofill.takeFillLog ? window.TailorAutofill.takeFillLog() : []";
+      try { answers = (await wc.executeJavaScript(take, true)) || []; } catch (e) { answers = []; }
+      for (const ctx of liveFrames) answers = answers.concat((await fr.eval(ctx, take).catch(() => [])) || []);
+    }
     lap("leftover", "finishing");
     const filled = pre.filled + applied.filled;
 
@@ -1012,7 +1032,8 @@ async function runAutoApplyOnPane(recordId, opts) {
              declined,
              system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
              continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
-             captcha: pre.captcha, ms };
+             captcha: pre.captcha, ms,
+             ...(opts.answers ? { answers, files } : {}) };
   } catch (err) {
     return { ok: false, reason: "inject-failed" };
   } finally {
