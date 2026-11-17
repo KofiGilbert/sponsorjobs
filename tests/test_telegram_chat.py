@@ -534,3 +534,59 @@ def test_c_the_whole_path_from_a_telegram_file_to_the_profile(A, monkeypatch):
 def test_c_the_assistant_knows_files_can_be_sent_here():
     assert "Files and photos CAN be sent in this chat" in AS.SYSTEM
     assert "Never tell them to upload it somewhere else" in AS.SYSTEM
+
+
+# ---- B (continued): the self-identification line covers every question, and no value ----------
+# PR #274 added transgender, sexual orientation and first-generation professional to the memory
+# page, but this line still named the original five, so the owner could not tell from Telegram
+# whether the new three were saved. It now follows autoapply/eeo.py, which is the only list.
+
+def _selfid_line(answers):
+    line = [l for l in AS.summary({"identity": {"name": "Jo"}}, [], answers).splitlines()
+            if l.startswith("Self-identification")]
+    assert len(line) == 1, "the summary must carry exactly one self-identification line"
+    return line[0]
+
+
+def test_b_the_self_id_line_names_every_question_the_engine_knows():
+    """Not a count: whatever autoapply/eeo.py lists, including anything added after this test."""
+    from autoapply import eeo as EEO
+
+    line = _selfid_line([{"key": "@gender", "question": "Gender", "answer": "Woman"}])
+    missing = [q for q in EEO.QUESTIONS.values() if q not in line]
+    assert not missing, f"the line never mentions: {missing}"
+    assert len(EEO.QUESTIONS) >= 10, "eeo.QUESTIONS shrank, which this line follows"
+    # The three from #274 in particular, since they are why this issue exists.
+    for q in ("Transgender", "Sexual orientation", "First-generation professional"):
+        assert q in line, f"{q} is missing from the Telegram summary"
+
+
+def test_b_the_self_id_line_says_saved_or_not_saved_per_question():
+    line = _selfid_line([{"key": "@gender", "question": "Gender", "answer": "Woman"},
+                         {"key": "@first_gen", "question": "First-generation professional",
+                          "answer": "Yes"}])
+    assert "Gender: saved" in line and "First-generation professional: saved" in line
+    assert "Transgender: not saved" in line and "Veteran status: not saved" in line
+
+
+def test_b_no_self_id_value_ever_reaches_the_summary():
+    """The values stay on the computer. The line may only ever say which are saved."""
+    from autoapply import eeo as EEO
+
+    # Deliberately synthetic, so a hit is a real leak and never a word that also appears in a
+    # question label (an earlier version of this test used "Hispanic or Latino", which is inside
+    # the question "Are you Hispanic or Latino?" and failed for the wrong reason).
+    secrets = [f"ZZVALUE{i}ZZ" for i in range(len(EEO.QUESTIONS))]
+    answers = [{"key": k, "question": q, "answer": secrets[i]}
+               for i, (k, q) in enumerate(EEO.QUESTIONS.items())]
+    out = AS.summary({"identity": {"name": "Jo"}}, [], answers)
+    for value in secrets:
+        assert value not in out, f"a self-identification VALUE reached the summary: {value!r}"
+    assert "values are private" in out
+
+
+def test_b_a_plain_answer_is_listed_by_question_and_not_by_value():
+    out = AS.summary({"identity": {"name": "Jo"}}, [],
+                     [{"question": "Why this role?", "answer": "Because I like the team"}])
+    assert "Why this role?" in out
+    assert "Because I like the team" not in out
