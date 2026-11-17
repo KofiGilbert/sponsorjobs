@@ -295,7 +295,7 @@ def person(answers: dict) -> tuple[str | None, str | None]:
 _TOPICS = (
     # (the words of planner._EEO, so each of these is read as a self-identification question)
     ("@transgender", re.compile(r"\btransgender\b", re.I)),
-    ("@sexual_orientation", re.compile(r"\bsexual orientation\b", re.I)),
+    ("@sexual_orientation", re.compile(r"\bsexual orientation\b|\blgbt|\bqueer\b", re.I)),
     ("@first_gen", re.compile(r"\bfirst[- ]generation professionals?\b", re.I)),
     ("@hispanic_latino", re.compile(r"^(?!.*\brac(e|ial)\b).*\b(hispanic|latin[oax]|latine)\b", re.I)),
     ("@race", re.compile(r"\brac(e|ial)\b|\bethnicity\b|\bethnic (group|background|origin|identity)\b", re.I)),

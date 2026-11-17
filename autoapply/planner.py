@@ -90,7 +90,7 @@ def contact_key(label: str) -> str:
 
 
 _EEO = re.compile(r"gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation"
-                  r"|transgender|pronoun|first[- ]generation (professional|college|student)", re.I)
+                  r"|transgender|lgbt|queer|pronoun|first[- ]generation (professional|college|student)", re.I)
 # The "decline to self-identify" choice in its usual wordings (autoapply/eeo.py, where the
 # self-identification matching lives). Mirrored in shell-electron/agent.js DECLINE_RE.
 _DECLINE = eeo.DECLINE
@@ -236,6 +236,62 @@ def residence_option(label: str, options, applicant: dict) -> str | None:
         return None                                   # their state is listed: only they know
     no = [o for o in opts if _NONE_OF.search(_n(o))]
     return no[0] if len(no) == 1 else None
+
+
+# Where the person LIVES, in any wording: "Where in the US do you currently reside?" (Upgrade,
+# Greenhouse, 2026-11-17), "Where are you located?", "Current location", "Which state do you live
+# in?", "City and state of residence". It is on the profile, so it is never the person's to type
+# again. Not an office pick (_OFFICE_Q), not "one of the following locations" (residence_option),
+# never relocation, a willingness, a permanent residence status or a work location.
+_LIVE_Q = re.compile(
+    r"\bwhere\b.{0,30}\b(reside|live|living|located|based)\b"
+    r"|\b(which|what) (city|state|metro|area|region|country)\b.{0,30}\b(reside|live|living|located|based)\b"
+    r"|\bcurrent(ly)? (location|residence|city|state|address)\b"
+    r"|\b(city|state|location),? (and|&|/) (state|country)\b.{0,20}\b(residence|you (live|reside))\b"
+    r"|\b(city|state|place) of residence\b|\bresidential location\b", re.I)
+_NOT_LIVE = re.compile(r"relocat|willing|open to|permanent resid|green card|citizen|visa|work (from|location)"
+                       r"|office|applying|commut|travel|prefer", re.I)
+
+
+def _state_codes(state: str) -> tuple[str, str]:
+    """(full name, two-letter code) for a US state given either form, lowercased; ("", "") if unknown."""
+    from tailoring.conform import _US_STATES
+    st = _n(state)
+    if not st:
+        return "", ""
+    for full, code in _US_STATES.items():
+        if st == full or st == code.lower():
+            return full, code.lower()
+    return st, ""
+
+
+def where_you_live(label: str, options, applicant: dict, field_type: str = "") -> str | None:
+    """The answer to a question about where the person lives, from the profile's city and state.
+    Free text: "City, ST". A list: the one choice naming their city, else the one naming their
+    state (full name or code), else None (the choices are unclear: theirs). None when the label is
+    not about where they live or the profile has no city."""
+    lbl = str(label or "")
+    if not _LIVE_Q.search(lbl) or _NOT_LIVE.search(lbl) or _RESIDE_Q.search(lbl):
+        return None
+    city_raw = str((applicant or {}).get("city") or "").strip()
+    if not city_raw:
+        return None
+    full, code = _state_codes(str((applicant or {}).get("state") or ""))
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if not opts:
+        if field_type in ("select", "radio", "checkbox", "combobox"):
+            return None                                   # a list we could not read: theirs
+        st = code.upper() if code else str((applicant or {}).get("state") or "").strip()
+        return f"{city_raw}, {st}" if st else city_raw
+    city = _n(city_raw)
+    hit = [o for o in opts if re.search(r"\b" + re.escape(city) + r"\b", _n(o))]
+    if len(hit) == 1:
+        return hit[0]
+    if hit:
+        return None
+    hit = [o for o in opts if (full and re.search(r"\b" + re.escape(full) + r"\b", _n(o)))
+           or (code and re.search(r"(^|[\s,(-])" + re.escape(code) + r"($|[\s,)-])", _n(o)))]
+    return hit[0] if len(hit) == 1 else None
 
 
 # "Which location are you applying for?", "...a hybrid schedule from one of the locations below?
@@ -738,8 +794,9 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.left.append(f)                         # theirs to answer
             continue
 
-        # 1a. "Do you currently reside in one of the following locations?": the profile's city
-        v = residence_option(label, f.options, ctx.applicant)
+        # 1a. "Do you currently reside in one of the following locations?": the profile's city;
+        #     any other question about where they live: the profile's city and state
+        v = residence_option(label, f.options, ctx.applicant) or where_you_live(label, f.options, ctx.applicant, t)
         if v:
             out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="profile", sensitive=True))
             continue
