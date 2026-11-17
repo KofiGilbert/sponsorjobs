@@ -11909,6 +11909,8 @@
       skills: T("aa.ans.from.skills", "Your skills"), grounded: T("aa.ans.from.grounded", "Your saved facts"),
       consent: T("aa.ans.from.consent", "Your consent to required notices"),
       optin: T("aa.ans.from.optin", "Declined marketing messages"),
+      neutral: T("aa.ans.from.neutral", "Neutral choice"),
+      needs_you: T("aa.ans.from.needsYou", "Needs you"), left_empty: T("aa.ans.from.leftEmpty", "Left empty"),
     };
     return m[code] || code || "";
   }
@@ -11923,8 +11925,10 @@
     };
     return m[fact] || T("aa.ans.flag.grounded", "Answered from your saved facts. Check it.");
   }
-  function aaAnsFlag(code, fact) {
+  function aaAnsFlag(code, fact, value) {
     if (code === "grounded") return aaAnsGrounded(fact);
+    // (Fill-through) what the run chose or left because nothing saved answers it
+    if (code === "neutral") return T("aa.ans.flag.neutral", "Chose \u201c{v}\u201d: nothing saved answers this.").replace("{v}", value || "");
     const m = {
       ai: T("aa.ans.flag.ai", "The AI chose this. Check it."),
       closest: T("aa.ans.flag.closest", "Optional. Picked as the closest match on the list."),
@@ -11934,6 +11938,8 @@
       drafted: T("aa.ans.flag.drafted", "Written for this job. Read it."),
       kept_file: T("aa.ans.flag.kept", "The form already had this file (the same name and size), so it was not attached again. Check it is this job's."),
       earlier_file: T("aa.ans.flag.earlier", "The form also holds an earlier file with the same name. Check which one to keep."),
+      needs_you: T("aa.ans.flag.needsYou", "Needs you: only you can answer this. Fill it on the page before you press Send."),
+      left_empty: T("aa.ans.flag.leftEmpty", "Left empty: optional."),
     };
     return m[code] || "";
   }
@@ -11978,7 +11984,8 @@
         page = r.page;
         html += `<div class="ans-pg">${esc(T("aa.ans.page", "Page {n}").replace("{n}", page))}</div><ul class="ans-list">`;
       }
-      html += row(r.label, r.value, aaAnsFrom(r.from), r.flag ? aaAnsFlag(r.flag, r.fact) : "");
+      html += row(r.label, r.value || T("aa.ans.empty", "(empty)"), aaAnsFrom(r.from), r.flag ? aaAnsFlag(r.flag, r.fact, r.value) : "",
+                  "");
     }
     if (page !== null) html += "</ul>";
     if ((list.files || []).length) {
@@ -12066,9 +12073,10 @@
       if (st.cur == null || !all.some((q) => q.ix === st.cur)) st.cur = (open()[0] || all[0]).ix;
       const pos = all.findIndex((q) => q.ix === st.cur);
       const q = all[pos];
-      const post = async (body) => {
+      const post = async (body, x) => {
+        x = x || q;
         const send = (extra) => fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify(Object.assign({ id: ask.id || "", index: q.ix, question: q.question }, body, extra)) }).catch(() => null);
+                                      body: JSON.stringify(Object.assign({ id: ask.id || "", index: x.ix, question: x.question }, body, extra)) }).catch(() => null);
         let r = await send({});
         if (!r || !r.ok) {
           // The engine may not have registered the question yet; it finds the open one by text.
@@ -12077,7 +12085,8 @@
         }
         return r && r.ok ? r.json().catch(() => null) : null;
       };
-      const after = (d, sent) => {
+      const after = (d, sent, x) => {
+        const one = x || q;
         if (d && d.done && d.parked) {
           AA_ASK.delete(key);
           aaAgentBar({ state: "answered", message: d.reply || T("aa.parked.queued", "Thanks. I carry on with it as soon as the browser is free.") });
@@ -12086,13 +12095,20 @@
           return;
         }
         if (!d || d.done) { AA_ASK.delete(key); aaAgentBar({ state: "running", message: T("aa.agent.thanks", "Thanks. Carrying on") }); return; }
-        const before = st.answers[q.ix];
+        const before = st.answers[one.ix];
         for (const it of (d.items || [])) {
           if (it && it.n) { if (it.answer) st.answers[it.n - 1] = it.answer; else delete st.answers[it.n - 1]; }
         }
         const got = /^Got it/.test(d.reply || "");
-        if (!(d.items || []).length && got && sent) st.answers[q.ix] = sent;     // an older engine: no list back
-        const took = !!st.answers[q.ix] && (st.answers[q.ix] !== before || got);
+        if (!(d.items || []).length && got && sent) st.answers[one.ix] = sent;     // an older engine: no list back
+        const took = !!st.answers[one.ix] && (st.answers[one.ix] !== before || got);
+        if (list) {
+          // The batch list: the answered question folds to its answer, a reply that took nothing shows.
+          st.note = took ? "" : (d.reply || "");
+          if (took && st.edit === one.ix) st.edit = null;
+          aaAgentBar(info);
+          return;
+        }
         if (took && many) {
           // On to the next open question after this one, else the first still open.
           const rest = open();
@@ -12105,7 +12121,63 @@
         if (!many) { text.textContent = d.reply || info.message || ""; return; }
         aaAgentBar(info);
       };
-      if (many) {
+      // (Fill-through, 2026-11-17) The run's ONE ask at its end: every question it left for the
+      // person, together, as a list. Each has its choices and a box of its own (the same controls
+      // as one question); an answered one folds to its answer, a link back to change it.
+      const list = !!ask.batch && many;
+      if (list) {
+        stack = true;
+        const ol = document.createElement("ol");
+        ol.className = "bb-batch";
+        all.forEach((x, k) => {
+          const li = document.createElement("li");
+          li.className = "bb-bq" + (st.answers[x.ix] ? " is-done" : "");
+          const w = document.createElement("span");
+          w.className = "bb-q";
+          w.textContent = (k + 1) + ". " + (x.say || x.question);
+          li.appendChild(w);
+          const ctl = (label, cls, fn) => {
+            const b = document.createElement("button");
+            b.type = "button"; b.className = "btn btn-sm " + cls; b.textContent = label;
+            b.addEventListener("click", fn); li.appendChild(b); return b;
+          };
+          if (st.answers[x.ix] && st.edit !== x.ix) {
+            const a = ctl(st.answers[x.ix], "btn-ghost bb-done-a", () => { st.edit = x.ix; st.note = ""; aaAgentBar(info); });
+            a.title = T("aa.agent.change", "Change") + ": " + String(x.question || "");
+            a.setAttribute("aria-label", T("aa.agent.changeA", "Change your answer to {q}").replace("{q}", String(x.question || "")));
+          } else {
+            for (const o of (x.options || [])) {
+              const b = ctl(o, "btn-ghost bb-opt" + (st.answers[x.ix] === o ? " is-picked" : ""), async () => after(await post({ answer: o, exact: true }, x), o, x));
+              if (st.answers[x.ix] === o) b.setAttribute("aria-pressed", "true");
+            }
+            const inp = document.createElement("input");
+            inp.className = "fld bb-answer"; inp.type = "text";
+            inp.placeholder = T("aa.agent.answer", "Your answer");
+            inp.setAttribute("aria-label", String(x.question || ""));
+            if (st.answers[x.ix] && !(x.options || []).includes(st.answers[x.ix])) inp.value = st.answers[x.ix];
+            const typed = async () => {
+              const val = inp.value.trim();
+              if (!val) return;
+              inp.value = "";
+              after(await post({ answer: val }, x), "", x);
+            };
+            inp.addEventListener("keydown", (e) => { if (e.key === "Enter") typed(); });
+            li.appendChild(inp);
+            // the bar's one primary: Answer on the first question still open; the others ghost
+            const firstOpen = all.find((y) => !st.answers[y.ix] || st.edit === y.ix);
+            ctl(T("aa.agent.sendAnswer", "Answer"), firstOpen && firstOpen.ix === x.ix ? "btn-primary bb-send" : "btn-ghost", typed);
+          }
+          ol.appendChild(li);
+        });
+        if (st.note) {
+          const note = document.createElement("span");
+          note.className = "bb-note";
+          note.textContent = st.note;
+          bar.appendChild(note);
+        }
+        bar.appendChild(ol);
+      }
+      if (many && !list) {
         stack = true;
         text.textContent = "";
         text.classList.add("bb-qhead");
@@ -12124,48 +12196,53 @@
           bar.appendChild(note);
         }
       }
-      for (const o of (q.options || [])) {
-        const b = btn(o, "btn-ghost bb-opt" + (many && st.answers[q.ix] === o ? " is-picked" : ""),
-                      async () => after(await post({ answer: o, exact: true }), o));
-        if (many && st.answers[q.ix] === o) b.setAttribute("aria-pressed", "true");
+      if (!list) {
+        for (const o of (q.options || [])) {
+          const b = btn(o, "btn-ghost bb-opt" + (many && st.answers[q.ix] === o ? " is-picked" : ""),
+                        async () => after(await post({ answer: o, exact: true }), o));
+          if (many && st.answers[q.ix] === o) b.setAttribute("aria-pressed", "true");
+        }
+        const inp = document.createElement("input");
+        inp.className = "fld bb-answer"; inp.type = "text";
+        inp.placeholder = T("aa.agent.answer", "Your answer");
+        if (many && st.answers[q.ix] && !(q.options || []).includes(st.answers[q.ix])) inp.value = st.answers[q.ix];
+        const typed = async () => {
+          const v = inp.value.trim();
+          if (!v) return;
+          inp.value = "";
+          after(await post({ answer: v }), "");
+        };
+        inp.addEventListener("keydown", (e) => { if (e.key === "Enter") typed(); });
+        bar.appendChild(inp);
+        btn(T("aa.agent.sendAnswer", "Answer"), "btn-primary bb-send", typed);
+        if (many && pos > 0) {
+          btn(T("aa.agent.back", "Back"), "btn-ghost bb-back", () => { st.cur = all[pos - 1].ix; st.note = ""; aaAgentBar(info); });
+        }
+        if (many && all.some((x) => st.answers[x.ix])) {
+          // The answers given so far, each a link back to its question to change it.
+          const done = document.createElement("div");
+          done.className = "bb-done";
+          const lead = document.createElement("span");
+          lead.textContent = T("aa.agent.yourAnswers", "Your answers:");
+          done.appendChild(lead);
+          all.forEach((x, k) => {
+            if (!st.answers[x.ix]) return;
+            const a = document.createElement("button");
+            a.type = "button"; a.className = "bb-done-a" + (x.ix === q.ix ? " is-cur" : "");
+            const words = String(x.question || "");
+            a.textContent = (k + 1) + ". " + st.answers[x.ix];
+            a.title = T("aa.agent.change", "Change") + ": " + words;
+            a.setAttribute("aria-label", T("aa.agent.changeA", "Change your answer to {q}").replace("{q}", words));
+            a.addEventListener("click", () => { st.cur = x.ix; st.note = ""; aaAgentBar(info); });
+            done.appendChild(a);
+          });
+          bar.appendChild(done);
+        }
+        if (!(q.options || []).length) setTimeout(() => inp.focus(), 50);
+      } else {
+        const first = bar.querySelector(".bb-batch .bb-answer");
+        if (first) setTimeout(() => first.focus(), 50);
       }
-      const inp = document.createElement("input");
-      inp.className = "fld bb-answer"; inp.type = "text";
-      inp.placeholder = T("aa.agent.answer", "Your answer");
-      if (many && st.answers[q.ix] && !(q.options || []).includes(st.answers[q.ix])) inp.value = st.answers[q.ix];
-      const typed = async () => {
-        const v = inp.value.trim();
-        if (!v) return;
-        inp.value = "";
-        after(await post({ answer: v }), "");
-      };
-      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") typed(); });
-      bar.appendChild(inp);
-      btn(T("aa.agent.sendAnswer", "Answer"), "btn-primary bb-send", typed);
-      if (many && pos > 0) {
-        btn(T("aa.agent.back", "Back"), "btn-ghost bb-back", () => { st.cur = all[pos - 1].ix; st.note = ""; aaAgentBar(info); });
-      }
-      if (many && all.some((x) => st.answers[x.ix])) {
-        // The answers given so far, each a link back to its question to change it.
-        const done = document.createElement("div");
-        done.className = "bb-done";
-        const lead = document.createElement("span");
-        lead.textContent = T("aa.agent.yourAnswers", "Your answers:");
-        done.appendChild(lead);
-        all.forEach((x, k) => {
-          if (!st.answers[x.ix]) return;
-          const a = document.createElement("button");
-          a.type = "button"; a.className = "bb-done-a" + (x.ix === q.ix ? " is-cur" : "");
-          const words = String(x.question || "");
-          a.textContent = (k + 1) + ". " + st.answers[x.ix];
-          a.title = T("aa.agent.change", "Change") + ": " + words;
-          a.setAttribute("aria-label", T("aa.agent.changeA", "Change your answer to {q}").replace("{q}", words));
-          a.addEventListener("click", () => { st.cur = x.ix; st.note = ""; aaAgentBar(info); });
-          done.appendChild(a);
-        });
-        bar.appendChild(done);
-      }
-      if (!(q.options || []).length) setTimeout(() => inp.focus(), 50);
     } else if (info.state === "ready" && info.record_id != null) {
       btn(T("aa.send", "Send"), "btn-primary bb-send", async (e) => {
         e.target.disabled = true;

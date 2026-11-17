@@ -488,3 +488,12 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   answers only ("The agent can now answer N of the M questions forms usually ask"), lists the open
   ones with an Answer jump, and always shows LinkedIn, GitHub and website, "None" when the person said
   they have none. No countdowns, no pressure copy.
+- 2026-11-17 (fill-through): the apply agent no longer asks mid-form. While questions wait for the
+  person the bar's line reads "Filling everything I can; I'll ask what only you know at the end".
+  The run's ONE ask at its end ("I filled everything I could; these N need you.") is a numbered list
+  under the line (`bb-batch`), each question with the page's choices as ghost buttons and its own
+  box, so an answer can only land on its own question; Answer is the primary on the first question
+  still open, ghost on the rest; an answered question folds to its answer as a quiet underlined
+  link to change it. Review answers adds "Chose “X”: nothing saved answers this.", "Needs you"
+  and "Left empty: optional." (the last shown, never counted in "N to check"). Not yet checked at
+  Kofi's window (no app run on the 8 GB builder); check at 76% zoom and 100% before release.

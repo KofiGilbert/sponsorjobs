@@ -175,8 +175,9 @@ def test_the_shells_pick_path_never_logs_or_sends_the_choice():
     posts = re.findall(r"deps\.postApp\(([^)]*)\)", body)
     assert posts and all("known_only: true" in p for p in posts), posts
     assert re.search(r'dlog\("step " \+ step \+ " eeo:", got\.length \+ " filled from saved answers"\)', src)
-    # the choice the shell picked never travels on to the brain as a placeholder
-    assert "if (pick[q] && await pickSaved(wc, v, q, pick[q])) continue;" in src
+    # the choice the shell picked never travels on to the brain as a placeholder (fill-through,
+    # 2026-11-17: it is noted in the local Review answers list, then the loop moves on)
+    assert re.search(r"if \(pick\[q\] && await pickSaved\(wc, v, q, pick\[q\]\)\) \{ addAnswer\(ans, \{[^}]*\}\); continue; \}", src)
 
 
 def test_the_shell_closes_a_dropdown_that_ignores_escape_and_blur():

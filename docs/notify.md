@@ -398,6 +398,22 @@ rate limit or Telegram being down holds it for the next tick; the same run never
 (`ready_sent` and `ready_held` in `notify_state.json`). No buttons: nothing in notify/ approves an
 assisted submission from Telegram, so the person reviews and presses Send in the app.
 
+### The apply agent's questions: one batch at the end (`/api/autoapply/agent/ask`, `batch`)
+
+A run never stops mid-form to ask (fill-through, docs/apply-agent.md section 24). What only the
+person can answer is collected while the run fills everything else, and asked ONCE, at Ready to
+send or on the one page that will not move on without it: ONE message for all of it (up to 12
+questions), led by
+
+`I filled everything I could on your application for {Role} at {Company}; these {n} need you.`
+(`this one needs you.` for one), then the numbered questions with the page's own choices, and
+`Reply in one message, one answer per number, and I will carry on.` A single question with
+choices keeps its buttons. The person's reply is read as any ask's (only the part that answers
+each number counts); answers are saved to the answer library as before, so each is asked once
+ever. Never a value in it, never a self-identification answer (a self-identification question is
+answered from the saved answers or declined before anything is asked). The one reminder and the
+park that follows an unanswered wait are unchanged.
+
 ### Autopilot (`_autopilot_tick` in `ui/app.py`)
 
 A scheduled, capped, hands-off Auto-apply run. OFF by default; the person turns it on from

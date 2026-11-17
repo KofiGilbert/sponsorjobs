@@ -2051,6 +2051,14 @@ mark.jd-gap { text-decoration-color: var(--flag); }
   text-decoration: underline; text-underline-offset: 2px; cursor: pointer; max-width: 260px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bb-fill .bb-done-a:hover, .bb-fill .bb-done-a.is-cur { color: var(--ink); }
+/* The run's one ask at its end (fill-through): every question it left for the person, as one
+   numbered list under the line, each with its own choices and box; an answered one folds to its
+   answer, a quiet link to change it. The same controls and colours as one question. */
+.bb-fill .bb-batch { flex-basis: 100%; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.bb-fill .bb-bq { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.bb-fill .bb-bq .bb-q { flex-basis: 100%; }
+.bb-fill .bb-bq.is-done .bb-q { flex-basis: auto; color: var(--ink-2); }
+.bb-fill .bb-bq .bb-answer { flex: 1 1 160px; min-width: 0; max-width: 360px; }
 /* The bar sits on the in-app browser's chrome, dark in both themes, so its buttons and answer box
    take the dark tokens: in the light theme the near-black primary vanished into the bar and the
    outline buttons' grey text could hardly be read. The steps under it (#bbFeed) are the same chrome. */
