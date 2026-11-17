@@ -644,6 +644,47 @@ asked about questions the person's own material answers. What changed:
   2 s for a late one, never offers a disabled choice, and is read back; `realClick` scrolls
   instantly and re-measures until the box is still.
 
+## 18. Workday My Experience, the CC-305 form, uploads, Lever (Uline and CrossCountry, 2026-11-16)
+
+Defects found on real jobs, each fixed at its cause (tests/test_agent_workday_lever.py and
+tests/js/test_agent_workday_fixes.js; fixtures modelled on the real markup):
+
+- **The fill "hang" on My Experience.** Workday's Field of Study and Skills are search prompts whose
+  list is portalled to `<body>`, draws a radio in every option row, and ignores Escape and blur.
+  The engine opened one to read its options and left it open; the ~100 option rows then counted
+  as form fields and the model plan ran past the fill's 40 s cap. Now: a list is closed with a
+  press on a neutral heading away from it (`pressAway`), a chosen-values pill list is never read
+  as the open menu, controls inside an option list are never fields, option reading has an 8 s
+  budget, the plan call is capped (`SJ_AGENT_PLAN_MS`, 25 s) with a reason, and a fill that still
+  runs past its cap names its phase ("fill timed out while the AI planned 112 fields").
+- **Work history and education** (Apply Manually): `/api/profile/autofill?record_id=` carries the
+  tailored resume's jobs, schools and skills (autoapply/history.py); `fillHistory` fills each
+  "Work Experience N" / "Education N" section and presses its own "Add Another" for the next
+  entry. Workday's Month / Year spinbuttons keep only real key presses, so the engine names them
+  (`keys`) and the shell types them (`typeKeyOps`). Field of Study and Skills filter only on a
+  real Enter: the shell types the query and Enter (`searchPicks`), the engine picks the best REAL
+  option the degree supports (`searchChoice`; an MBA is Business Administration), and nothing
+  that fits leaves the optional box empty.
+- **Only required questions are "left for you".** `leftover()` lists required boxes only
+  (attribute, aria-required, a `*` or `✱` at the end of the question, or a `required` class), so
+  an optional box never stops a run, never becomes an ask, and never shows as "N left".
+- **CC-305.** The signature "Date" on a self-identification or signature page is today's date in
+  the form's own control (`fillSignatureDate`). "Please check one of the boxes below:" takes its
+  topic from its choices, so the saved disability answer ticks exactly its box (else the decline
+  box); styled 0x0 checkboxes count as fields when their label is on screen.
+- **Duplicate uploads.** Before any upload the box's upload area is read: a file listed with the
+  same name (and size, when shown) is not uploaded again, and extra copies are removed with the
+  area's own Delete buttons.
+- **Lever.** A custom question's label is the `div.application-label` above it (no `<label for>`),
+  with its `✱`. "Which location are you applying for?" and the hybrid-location pick come from the
+  profile's city (`office_option`); a visa-details text box gets the saved status sentence
+  (`visa_detail_text`), never a bare Yes or No. The page is read again before an ask, so a box
+  the site filled after the upload ("Current company") is never asked.
+- **Steps and cost.** `needs-answers` with nothing required open: a firm nudge the second time,
+  a park with the brain's reason the third (it looped ten times, then a reload restarted the
+  Workday application). `settle()` waits up to 8 s more while the page shows a spinner,
+  aria-busy or a progress bar, instead of reading a page whose Next is disabled while it saves.
+
 ## 10. Milestones
 
 1. **One job, visible.** Apply for me on a queued Workday job -> job page -> Apply -> sign in or

@@ -11,7 +11,7 @@
       + '<div class="field"><label for="em">Email</label><input type="email" id="em"></div>'
       + '<div class="field"><label for="ph">Phone</label><input type="tel" id="ph"></div>'; },
     () => { step.innerHTML = '<h2>Step 2: Questions</h2><div id="w"></div>'
-      + '<div class="field"><label for="yrs">How many years of experience do you have?</label><input type="text" id="yrs"></div>'
+      + '<div class="field"><label for="yrs">How many years of experience do you have?</label><input type="text" id="yrs" required></div>'
       + '<div class="field" id="cond"></div>';
       const host = document.getElementById("w");
       window.fx.auth = W.ReactSelect(host, { id: "q-auth", label: "Are you legally authorized to work in the United States?",

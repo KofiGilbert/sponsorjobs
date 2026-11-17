@@ -138,6 +138,9 @@ def test_workday_listbox_prompt_and_aria_radios(tmp_path):
     assert v["relocate"] is None                               # no saved answer -> left
     relocate = next(f for f in r["fields"] if f["type"] == "radio")
     assert relocate["label"] == "Are you willing to relocate?" and relocate["options"] == ["Yes", "No"]
+    # Only a REQUIRED question is left for the person; the optional travel question stays empty
+    # silently (2026-11-16: the bar said "3 left for you" on Uline for three optional boxes).
+    assert v["travel"] is None
     assert r["left"] == ["Are you willing to relocate?"]
 
 
@@ -229,7 +232,8 @@ def test_three_page_form_pages_detected_and_filled(tmp_path):
     assert r["p1"]["filled"] == 4 and r["still1"] == 1
     assert r["new2"] is True and r["same2"] is False and r["new3"] is True
     assert r["p2"]["screening"] == 2
-    assert r["left2"] == ["How many years of experience do you have?", "Anything else we should know?"]
+    # left for the person: the required question only; the optional follow-up stays empty silently
+    assert r["left2"] == ["How many years of experience do you have?"]
     assert r["p3"]["eeo"] == 2
     v = r["values"]
     assert v == {"auth": "Yes", "sponsor": "Yes", "gender": "I don't wish to answer",

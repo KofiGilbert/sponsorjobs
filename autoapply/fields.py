@@ -21,6 +21,9 @@ APPLICANT_KEYS: tuple[str, ...] = (
     "first_name", "last_name", "full_name", "email", "phone",
     "address", "city", "state", "postal_code", "country",
     "linkedin", "github", "website",
+    # the job the saved experience marks current (else the most recent): Lever's required
+    # "Current company" was asked of the person although the profile says it (2026-11-16)
+    "current_company", "current_title",
 )
 
 
@@ -122,7 +125,20 @@ def applicant_from_record(record_data: dict, memory: dict | None = None) -> dict
     if out["full_name"] and not out["first_name"]:
         first, _, last = out["full_name"].partition(" ")
         out["first_name"], out["last_name"] = first.strip(), last.strip()
+    out.update(current_job(record_data.get("profile") or record_data))
     return {k: v for k, v in out.items() if v}
+
+
+def current_job(profile: dict) -> dict:
+    """{"current_company", "current_title"} from the saved experience: the role whose dates end in
+    Present / Current, else the most recent one (the first listed), the company exactly as saved.
+    Empty when the profile lists no job."""
+    from autoapply.history import form_history
+    hist = form_history(profile or {}, max_jobs=8)["history"]
+    if not hist:
+        return {}
+    cur = next((h for h in hist if h.get("current")), hist[0])
+    return {"current_company": cur.get("company") or "", "current_title": cur.get("title") or ""}
 
 
 def resolve_plan(actions: list[FillAction], applicant: dict, *, resume_path: str = "",

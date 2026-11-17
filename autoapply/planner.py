@@ -55,6 +55,8 @@ def is_fact_question(label: str) -> bool:
 _NOT_ME = re.compile(r"reference|\breferr|emergency|manager|supervisor|company|employer|school|"
                      r"universit|recruiter|hiring|spouse|parent|guardian", re.I)
 _CONTACT: list[tuple[str, re.Pattern]] = [
+    ("current_company", re.compile(r"^\W*(current|present|most recent|latest) (company|employer|organi[sz]ation)( name)?\W*$", re.I)),
+    ("current_title", re.compile(r"^\W*(current|present|most recent|latest) (job )?(title|position|role)\W*$", re.I)),
     ("email", re.compile(r"e-?mail", re.I)),
     ("first_name", re.compile(r"first name|given name|forename|^\W*first\W*$", re.I)),
     ("last_name", re.compile(r"last name|surname|family name|^\W*last\W*$", re.I)),
@@ -74,9 +76,14 @@ _CONTACT: list[tuple[str, re.Pattern]] = [
 def contact_key(label: str) -> str:
     """The placeholder key a contact field asks for ("" when it is not one)."""
     lbl = str(label or "")
-    if not lbl or _NOT_ME.search(lbl):
+    if not lbl:
         return ""
-    for key, rx in _CONTACT:
+    for key, rx in _CONTACT[:2]:                  # the person's own current job ("Current company")
+        if rx.search(lbl):
+            return key
+    if _NOT_ME.search(lbl):
+        return ""
+    for key, rx in _CONTACT[2:]:
         if rx.search(lbl):
             return key
     return ""
@@ -229,6 +236,53 @@ def residence_option(label: str, options, applicant: dict) -> str | None:
         return None                                   # their state is listed: only they know
     no = [o for o in opts if _NONE_OF.search(_n(o))]
     return no[0] if len(no) == 1 else None
+
+
+# "Which location are you applying for?", "...a hybrid schedule from one of the locations below?
+# If so, please select one." (Lever at CrossCountry, 2026-11-16): an office pick, answered from the
+# profile's city when one choice names it.
+_OFFICE_Q = re.compile(
+    r"\bwhich (office|location|city|site)\b|\blocation (are you|you are|you're) applying\b"
+    r"|\bpreferred (office|work )?location\b|\b(office|location) (preference|you would like)\b"
+    r"|\bfrom one of (the|these|our) (locations|offices|cities|sites)\b"
+    r"|\bselect (one|a|your)( preferred)? (location|office)\b", re.I)
+_CITY_ABBR = {"new york": ("nyc", "ny"), "washington": ("dc", "d c"), "los angeles": ("la",),
+              "san francisco": ("sf",)}
+
+
+def office_option(label: str, options, applicant: dict) -> str | None:
+    """The office choice that names the person's own city (profile), else the one "None of these"
+    choice when the question offers it and no choice names their city. None when the profile has
+    no city or the choices are unclear (theirs to answer)."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if not opts or not _OFFICE_Q.search(str(label or "")):
+        return None
+    city = _n((applicant or {}).get("city") or "")
+    if not city:
+        return None
+    names = (city,) + _CITY_ABBR.get(city, ())
+    named = [o for o in opts if any(re.search(r"\b" + re.escape(c) + r"\b", _n(o)) for c in names)
+             and not _NONE_OF.search(_n(o))]
+    if len(named) == 1:
+        return named[0]
+    if named:
+        return None
+    no = [o for o in opts if _NONE_OF.search(_n(o))]
+    return no[0] if len(no) == 1 else None
+
+
+# A free-text box asking for the visa or sponsorship details ("please specify your current visa
+# type and any future sponsorship needs"): the profile's one-sentence status, workauth.note.
+_VISA_DETAIL = re.compile(
+    r"\b(specify|describe|explain|details?|provide|tell us|elaborate|list)\b.{0,80}\b(visa|sponsorship|immigration|work (authori[sz]ation|permit|status))\b"
+    r"|\b(visa|sponsorship|immigration)\b.{0,60}\b(details?|specify|explain|describe)\b", re.I)
+
+
+def visa_detail_text(label: str, t: str, wa: dict | None, job_country: str = "US") -> str | None:
+    """The person's own status sentence for a visa-details text box, else None."""
+    if (t or "text").lower() not in ("text", "textarea") or not _VISA_DETAIL.search(str(label or "")):
+        return None
+    return workauth.note(wa, job_country) or None
 
 
 # --------------------------------------------------------------------------- option matching
@@ -393,6 +447,22 @@ def _used(key: str, rows: dict) -> list:
     return [rows[k] for k in keys if k in rows]
 
 
+def _saved_for(library, question: str, options) -> tuple:
+    """eeo.saved for a question, or, when its words name no self-identification topic, for the
+    topic its CHOICES name. The federal disability form (CC-305) asks "Please check one of the
+    boxes below:" over "Yes, I have a disability...", "No, I do not have a disability..." and "I do
+    not want to answer": the saved disability answer picks the box (Uline on Workday, 2026-11-16)."""
+    key, answers, rows = eeo.saved(library, question)
+    if key in eeo.KEYS:
+        return key, answers, rows
+    topics = {eeo.topic_key(str(o)) for o in (options or []) if str(o).strip()} & set(eeo.KEYS)
+    if len(topics) == 1:
+        tk = topics.pop()
+        _k, answers, rows = eeo.saved(library, eeo.QUESTIONS[tk])
+        return tk, answers, rows
+    return key, answers, rows
+
+
 def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None) -> tuple | None:
     """(FillAction, [library keys]) for a self-identification field from the person's standing
     decline or their own saved answers, else None (the field is theirs). Never a guess. The
@@ -410,7 +480,7 @@ def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None)
         if ctx.eeo_decline:
             v = decline_option(group)
             return (FillAction(f.ref, "check", value="Yes", origin="eeo", sensitive=True), []) if v and v == opt else None
-        key, answers, rows = eeo.saved(ctx.library, q)
+        key, answers, rows = _saved_for(ctx.library, q, group)
         v = eeo_option(answers.get(key, ""), group, key, answers, question=q) if answers else None
         if v and v == opt:
             return FillAction(f.ref, "check", value="Yes", origin="library", sensitive=True), _used(key, rows)
@@ -421,7 +491,7 @@ def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None)
         if ctx.eeo_decline:
             v = decline_option(f.options)
             return (FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True), []) if v else None
-        key, answers, rows = eeo.saved(ctx.library, label)
+        key, answers, rows = _saved_for(ctx.library, label, f.options)
         v = eeo_option(answers.get(key, ""), f.options, key, answers, question=label) if answers else None
         if v:
             return FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True), _used(key, rows)
@@ -612,7 +682,11 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
 
         # 0. EEO / demographics: the person's standing "decline" choice, else their own saved
         #    answers (Your answers, or an earlier "ask") on the form's own wording, never a guess
-        if _EEO.search(label) and not workauth.classify(label):
+        # (a box of a checkbox group is a self-identification question when any of the group's
+        #  choices is: CC-305's "I do not want to answer" sits beside "Yes, I have a disability")
+        cq, csep, _co = label.partition(": ")
+        eeo_group = t == "checkbox" and csep and any(_EEO.search(o) for o in (groups.get(cq) or []))
+        if (_EEO.search(label) or eeo_group) and not workauth.classify(label):
             got = _eeo_fill(f, label, t, ctx, groups)
             if got:
                 out.actions.append(got[0])
@@ -625,6 +699,21 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
         v = listed_citizenship(label, ctx.library, f.options, t)
         if v:
             out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
+            continue
+
+        # 0c. an office / location pick ("Which location are you applying for?", "a hybrid schedule
+        #     from one of the locations below?"): the profile's city, before the work-authorization
+        #     rules, which read "work ... from one of the locations" as a relocation question
+        v = office_option(label, f.options, ctx.applicant)
+        if v:
+            out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="profile", sensitive=True))
+            continue
+
+        # 1. the visa / sponsorship DETAILS box (text that asks to specify or explain): the
+        #    profile's own status sentence, never a bare Yes or No typed into a text box
+        v = visa_detail_text(label, t, ctx.work_auth, ctx.job_country)
+        if v:
+            out.actions.append(FillAction(f.ref, "fill", value=v, origin="workauth", sensitive=True))
             continue
 
         # 1. work authorization

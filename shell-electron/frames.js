@@ -99,6 +99,15 @@ async function injectEngine(cdp, ctx, coreSource) {
   await evalIn(cdp, ctx, "window.TailorAutofill.setRefPrefix(" + JSON.stringify(ctx.prefix) + ")");
 }
 
+// Load the agent's page view (extension/agent_view.js) into the frame's isolated world. Not
+// through injectEngine: that one skips its source whenever the fill engine is already there, so
+// the view never loaded and a cross-origin frame added nothing to the brain's view. agent_view.js
+// guards itself against a second load.
+async function injectAgentView(cdp, ctx, viewSource) {
+  await evalIn(cdp, ctx, viewSource + "\n;0");
+  return !!(await evalIn(cdp, ctx, "typeof window.TailorAgent === 'object' && !!window.TailorAgent"));
+}
+
 // Attach a file to file inputs (by ref) inside a frame. Script cannot set a file input; CDP can.
 async function uploadInFrame(cdp, ctx, refs, filePath) {
   let done = 0;
@@ -146,5 +155,5 @@ function electronCdp(dbg) {
   };
 }
 
-module.exports = { WORLD, crossOriginFrames, evalIn, injectEngine, uploadInFrame, routeOps,
+module.exports = { WORLD, crossOriginFrames, evalIn, injectEngine, injectAgentView, uploadInFrame, routeOps,
                    prefixFor, electronCdp, originOf };

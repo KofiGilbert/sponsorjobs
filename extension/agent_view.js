@@ -309,7 +309,14 @@
     if (el.required || attrOf(el, "aria-required") === "true") return true;
     const toggle = isToggleInput(el) || /^(radio|checkbox)$/.test(norm(attrOf(el, "role")));
     const g = toggle ? groupOf(el) : null;
-    return !!(g && (attrOf(g, "aria-required") === "true" || g.hasAttribute("required")));
+    if (g && (attrOf(g, "aria-required") === "true" || g.hasAttribute("required"))) return true;
+    // Marked only in the question's own words: Lever ends a custom question with "✱", Workday
+    // a label with "*" (2026-11-16, CrossCountry: two required dropdowns read as optional).
+    if (toggle) return false;
+    let raw = "";
+    const E = T();
+    if (E && typeof E.rawLabel === "function") { try { raw = E.rawLabel(el) || ""; } catch (e) { raw = ""; } }
+    return /[*\u2731]\s*$/.test(String(raw));
   }
   function isDisabled(el) {
     return !!(el.disabled || attrOf(el, "aria-disabled") === "true");

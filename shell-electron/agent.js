@@ -140,7 +140,16 @@ function reviewSig(text) {
   for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
   return t.length + ":" + h.toString(16);
 }
-const QUIET_READ = "(window.__tailorQuiet ? Date.now() - window.__tailorQuiet.at : 0) + '|' + document.readyState";
+const QUIET_READ = "(window.__tailorQuiet ? Date.now() - window.__tailorQuiet.at : 0) + '|' + document.readyState"
+  + " + '|' + ([...document.querySelectorAll(\"[aria-busy='true'], [role='progressbar'], [data-automation-id='loadingIndicator'], [data-automation-id*='spinner' i]\")]"
+  + ".some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }) ? 'busy' : '')";
+// A page that is still saving or loading after a click (Workday's spinner after Next or after a
+// resume upload, aria-busy, a progress bar) is waited for this much longer, once, before the next
+// step reads it: a read in the middle showed "Next is disabled" and cost steps (Uline 2026-11-16).
+const SETTLE_BUSY_MS = 8000;
+// After an upload, how long an ask waits for the site to fill boxes from the resume by itself.
+const ASK_REREAD_MS = Number(process.env.SJ_AGENT_ASK_REREAD_MS) >= 0 && process.env.SJ_AGENT_ASK_REREAD_MS !== undefined
+  ? Number(process.env.SJ_AGENT_ASK_REREAD_MS) : 9000;
 
 // ---- the live activity feed (OpenHands style; ui/activity.py has the same event shape) ---------
 // One run's steps as events: { phase, verb, target, summary, state, at, detail? }, state one of
@@ -363,8 +372,9 @@ function createAgent(deps) {
     let navigated = false;
     const onNav = () => { navigated = true; };
     wc.on("did-start-navigation", onNav);
+    let cap = SETTLE_CAP_MS;
     try {
-      while (Date.now() - t0 < SETTLE_CAP_MS) {
+      while (Date.now() - t0 < cap) {
         await delay(150);
         if (wc.isDestroyed()) return "gone";
         if (navigated || (wc.getURL() || "") !== urlBefore) {
@@ -374,8 +384,9 @@ function createAgent(deps) {
         }
         let q = "";
         try { q = await guard((wc.__real || wc).executeJavaScript(QUIET_READ, true), 3000, "quiet", { nav: true }); } catch (e) { continue; }
-        const [since, state] = String(q).split("|");
-        if (state === "complete" && Number(since) >= SETTLE_QUIET_MS && Date.now() - t0 > 300) return "quiet";
+        const [since, state, busy] = String(q).split("|");
+        if (busy && cap === SETTLE_CAP_MS) cap = Math.max(cap, Date.now() - t0 + SETTLE_BUSY_MS);
+        if (state === "complete" && Number(since) >= SETTLE_QUIET_MS && Date.now() - t0 > 300 && !busy) return "quiet";
       }
       return "cap";
     } finally {
@@ -425,7 +436,7 @@ function createAgent(deps) {
         if (!d.fill) continue;                              // a prohibited board's frame: hands off
         try {
           await deps.frames.injectEngine(cdp, ctx, deps.autofillCore());
-          await deps.frames.injectEngine(cdp, ctx, deps.agentViewSource());
+          await deps.frames.injectAgentView(cdp, ctx, deps.agentViewSource());
           ctxs.push(ctx);
         } catch (e) { /* the frame navigated away */ }
       }
@@ -840,6 +851,14 @@ function createAgent(deps) {
   // engine maps to one of the page's options: picked by the shell (pickSaved). Each question is
   // tried once per run (a widget that refuses goes on to the brain and, if need be, the person).
   // Returns the questions it filled; the caller logs only how many.
+  // The engine's open list read again now (only required boxes still empty), else null.
+  async function freshLeft(wc) {
+    try {
+      const now = await guard(wc.executeJavaScript("window.TailorAutofill.leftover()", true), PANE_MS, "leftover");
+      return Array.isArray(now) ? now : null;      // the page's own errors are read from the view
+    } catch (e) { if (e && e.stopped) throw e; return null; }
+  }
+
   async function fillSavedEeo(wc, fr, v, left, recordId, tried, st) {
     const qs = questionsFor(v.text, left).filter((q) => EEO_RE.test(q) && !tried.has(q));
     if (!qs.length) return [];
@@ -1136,6 +1155,7 @@ function createAgent(deps) {
     let afterEmailLink = 0;              // the step an emailed link was opened: a careers home soon after is not the end
     let forcedNext = null;               // a step the shell decided itself (the ladder's "wait for the site's email")
     let curV = null;                     // the current view, for the ladder's account strategies
+    let noAsk = { hash: "", n: 0 };      // "needs-answers" with nothing to ask, on the same page
     let lastSignin = null;               // { host } after a click on Sign in: the next view says whether it worked
     const authOf = new Map();            // host -> { fails, created, reset, waited }
     const auth = (h) => { if (!authOf.has(h)) authOf.set(h, { fails: 0, created: false, reset: false, waited: false }); return authOf.get(h); };
@@ -1389,7 +1409,7 @@ function createAgent(deps) {
         //    then fills either form with {{portal_email}} / {{portal_password}}. The engine
         //    refuses when the person has turned "Create portal accounts for me" off, and the
         //    brain reports blocked (needs-person) in that case.
-        let filled = 0, left = [];
+        let filled = 0, left = [], uploadedNow = false;
         // A notice the site needs accepted, left open by the last step's actions (a privacy
         // dialog over the form): the person's consent first, before anything is filled under it.
         {
@@ -1410,7 +1430,13 @@ function createAgent(deps) {
           toolFill = false;                                   // the brain fills this page itself
           left = [];
         } else {
-          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true }), FILL_MS, "fill");
+          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true }), FILL_MS, "fill")
+            .catch((e) => {
+              // say where the fill stood when it ran out of time (section 13)
+              const ph = e && e.hang && typeof deps.fillPhase === "function" ? deps.fillPhase() : "";
+              if (ph) e.message = "fill timed out while " + ph;
+              throw e;
+            });
           dlog("step " + step + " fill:", rep);
           // A cover letter box and no letter yet: write one for this job (the Review page's
           // drafter), then fill again so it is attached, never the resume. Once per run; a
@@ -1439,14 +1465,16 @@ function createAgent(deps) {
           left = (rep && rep.left) || [];
           const fromMemory = filled;
           let attached = false;
-          if (rep && rep.uploaded) { filled += 1; attached = true; }
+          if (rep && rep.uploaded) { filled += 1; attached = true; uploadedNow = true; }
           else if (opts.resumePath) {
             // The page has a resume box the plan did not reach (a hidden input behind an
             // Upload button): attach the file to it directly, as assisted apply does.
             let wants = false;
             // Only the resume's own empty box (never a cover letter box, never one already filled).
             try { wants = await wc.executeJavaScript("window.TailorAutofill.resumeInputOpen()", true); } catch (e) { if (e && e.stopped) throw e; wants = false; }
-            if (wants && await guard(deps.attachResume(wc, opts.resumePath), 15000, "attach").catch((e) => { if (e && e.stopped) throw e; return false; })) { filled += 1; attached = true; }
+            // "listed": the box's area already holds this file (a Workday draft), nothing attached.
+            const got = wants ? await guard(deps.attachResume(wc, opts.resumePath), 15000, "attach").catch((e) => { if (e && e.stopped) throw e; return false; }) : false;
+            if (got === true) { filled += 1; attached = true; uploadedNow = true; }
           }
           if (filled > 0) feedFill(feed, page, fromMemory, attached) && say(recordId, "fill", "", "", { refresh: true });
         }
@@ -1722,14 +1750,40 @@ function createAgent(deps) {
           await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: url, record_id: recordId });
           return finish({ ok: true, submitted: true, steps: step });
         }
+        // Read the page again before asking: a site fills boxes by itself after the upload (Lever
+        // reads the resume and fills "Current company"), so a box empty at the fill is often filled
+        // by now, and a question about it would be a false ask (CrossCountry, 2026-11-16).
+        if (done && done.outcome === "blocked" && done.reason === "needs-answers") {
+          // Right after an upload the site may still be reading the resume (Lever fills its boxes
+          // a few seconds later): look again for up to ASK_REREAD_MS while a question is open.
+          const until = Date.now() + (uploadedNow ? ASK_REREAD_MS : 0);
+          for (let k = 0; ; k++) {
+            try { const fresh = await view(wc, fr); if (fresh && fresh.text) v = fresh; } catch (e) { if (e && e.stopped) throw e; }
+            left = (await freshLeft(wc)) || left;
+            if (!questionsFor(v.text, left).length || Date.now() >= until || st.stop) break;
+            await delay(1500);
+          }
+        }
         const asks = (done && done.outcome === "blocked" && done.reason === "needs-answers") ? questionsFor(v.text, left) : [];
         if (done && done.outcome === "blocked" && done.reason === "needs-answers" && !asks.length) {
           // Nothing required is actually open (an optional box, or a stale error over a box that
-          // has since been filled): say so and let the brain continue instead of stopping.
+          // has since been filled): say so and let the brain continue instead of stopping. The
+          // same claim again on the same page gets a firm nudge, a third time parks the job with
+          // the brain's reason: on 2026-11-16 (Uline) it repeated ten times, then the ladder
+          // reloaded the page and the application started over (about 25 steps lost).
+          const same = noAsk.hash === pageHash ? noAsk.n + 1 : 1;
+          noAsk = { hash: pageHash, n: same };
+          dlog("step " + step + " needs-answers with nothing to ask (" + same + ")", "");
+          if (same >= 3) {
+            return park("person", "The application wants something on this page I could not find a question for: "
+              + String(reply.evaluation || "a box the page did not name").slice(0, 160) + ".", { url, left });
+          }
+          if (same === 2) pendingNudges.push("Nothing required is open on this page (no empty required field, no error). Do NOT report needs-answers again: click the page's Next, Continue or Save and Continue now; if the page then shows an error, read_errors and fix that field.");
           history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
                          actions: ["(no required question is open)"], results: ["continue with the page's Next or Continue; leave optional boxes empty"] });
           continue;
         }
+        if (!(done && done.outcome === "blocked")) noAsk = { hash: "", n: 0 };
         if (asks.length) {
           // Ask the person, on the bar and on Telegram, and carry on with the answers (saved for
           // every later application). Every open question on the page goes in ONE message, with
@@ -2000,8 +2054,8 @@ function createAgent(deps) {
           // strategies (wait for the form, reload, reopen the job). Never a frozen loop.
           dlog("step " + step + " hang:", String(e.message || e));
           feed.mark("retry", "the page did not answer");
-          history.push({ step, evaluation: "", memory: "", actions: ["(shell) " + String(e.message || e).slice(0, 60)], results: ["the page did not answer"] });
-          const r = await recover(wc, "the page did not answer (" + String(e.message || e).slice(0, 60) + ")", { key: "hang", hash: "", direct: true, menu: HANG_MENU });
+          history.push({ step, evaluation: "", memory: "", actions: ["(shell) " + String(e.message || e).slice(0, 90)], results: ["the page did not answer"] });
+          const r = await recover(wc, "the page did not answer (" + String(e.message || e).slice(0, 90) + ")", { key: "hang", hash: "", direct: true, menu: HANG_MENU });
           if (r.park) return park("person", r.park, { url: where() });
           continue;
         }

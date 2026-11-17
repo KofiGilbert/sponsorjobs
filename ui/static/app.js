@@ -282,7 +282,7 @@
     const stage = c.stage || (c.status === "applied" ? "applied" : "saved");
     const opts = CV_STAGES.map(([v, lbl]) =>
       `<option value="${v}"${v === stage ? " selected" : ""}>${lbl}</option>`).join("");
-    const nudge = c.follow_up_is_due ? `<span class="cv-followup" title="It has been a few days, a short follow-up helps">Follow up due</span>` : "";
+    const nudge = c.follow_up_is_due ? `<span class="cv-followup" title="${esc(I18N.t("cvs.followUpTip", "It has been a few days, a short follow-up helps"))}">${esc(I18N.t("cvs.followUpDue", "Follow up due"))}</span>` : "";
     const sub = [esc(c.company || ""), esc(c.template_label || ""), c.match != null ? `${c.match}% match` : "",
       c.applied_at ? esc(sjT("cvs.appliedOn", "Applied {d}").replace("{d}", sessDay(c.applied_at))) : ""].filter(Boolean).join("  \u00b7  ");
     // A resume made in a session reopens it (chat and page); the small glyph says it has one.
@@ -293,11 +293,11 @@
         <div class="cv-row-name cv-name-line">${esc(c.role)}${glyph}</div>
         <div class="cv-row-sub">${sub}${nudge}</div>
       </div>
-      <select class="cv-stage cv-stage-${stage}" data-id="${c.id}" title="Application status" aria-label="Application status">${opts}</select>
+      <select class="cv-stage cv-stage-${stage}" data-id="${c.id}" title="${esc(I18N.t("cvs.stage", "Application status"))}" aria-label="${esc(I18N.t("cvs.stage", "Application status"))}">${opts}</select>
       <span class="cv-row-date">${esc(c.when || "")}</span>
       <div class="cv-actions">
         <a class="cv-act" data-act="download" href="/api/cv.pdf?job=cv-${c.id}" download title="${esc(sjT("cvs.download", "Download"))}" aria-label="${esc(sjT("cvs.download", "Download"))}"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 2.5v8M4.8 7.6 8 10.8l3.2-3.2M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-        <button class="cv-act" data-act="rename" type="button" title="Rename (F2)">&#9998;</button>
+        <button class="cv-act" data-act="rename" type="button" title="${esc(I18N.t("cvs.rename", "Rename (F2)"))}">&#9998;</button>
         <button class="cv-act" data-act="menu" type="button" title="More">&#8943;</button>
       </div>
     </article>`;
@@ -376,7 +376,7 @@
     if (more) {
       if (!CV_QUERY && recs.length > LIMIT) {
         more.hidden = false;
-        more.textContent = CV_EXPANDED ? "Show fewer" : `More Resumes (${recs.length - LIMIT}) \u2192`;
+        more.textContent = CV_EXPANDED ? I18N.t("cvs.showFewer", "Show fewer") : `More Resumes (${recs.length - LIMIT}) \u2192`;
       } else more.hidden = true;
     }
     wireCvManager(root);
@@ -506,7 +506,7 @@
     if (document.querySelector(".cvf-new")) { document.querySelector(".cvf-new input").focus(); return; }
     const wrap = document.createElement("div");
     wrap.className = "cvf-new";
-    wrap.innerHTML = `<input class="fld" placeholder="New folder name, Enter to create" aria-label="New folder name" />`;
+    wrap.innerHTML = `<input class="fld" placeholder="${esc(I18N.t("cvs.newFolderPh", "New folder name, Enter to create"))}" aria-label="${esc(I18N.t("cvs.newFolder", "New folder name"))}" />`;
     $("#cvManager").prepend(wrap);
     const input = wrap.querySelector("input");
     input.focus();
@@ -871,9 +871,18 @@
   }
 
   // Home: a small curated peek at the freshest roles (full feed lives in Jobs).
-  async function loadHomeToday() {
+  // After a restart the page can paint before the engine has its feed, and the request simply
+  // fails. It used to blank the list (`el.innerHTML = ""`), so the strip showed its heading, a
+  // lone "See all jobs" link and nothing else, which reads as "there are no roles" rather than
+  // "not yet" (Kofi, 2026-11-16: the 12 cards appeared seconds later). So: paint the skeleton
+  // first, retry a few times while the engine starts, and say so plainly if it never answers.
+  const HOME_TODAY_BACKOFF = [600, 1200, 2400];     // ms, then give up with a line
+  async function loadHomeToday(attempt) {
     const el = $("#homeToday");
     if (!el) return;
+    // The waiters call this with no argument, so never trust it to be a number.
+    const tries = Number.isInteger(attempt) ? attempt : 0;
+    if (!tries) el.innerHTML = feedLoadingHtml();
     try {
       const r = await api("/api/jobs?home=1");   // server leaves out roles closed to a visa holder
       noteVia(r);
@@ -925,7 +934,15 @@
       // is the explicit action. It used to start tailoring on the click (2026-10-20).
       el.querySelectorAll("[data-sid]").forEach(b =>
         b.addEventListener("click", () => openJobOnBoard(jobs.find(j => j.source_id === b.dataset.sid))));
-    } catch { el.innerHTML = ""; }
+    } catch {
+      // The engine is probably still starting. Keep the skeleton up and come back.
+      if (tries < HOME_TODAY_BACKOFF.length) {
+        setTimeout(() => loadHomeToday(tries + 1), HOME_TODAY_BACKOFF[tries]);
+        return;
+      }
+      el.innerHTML = `<div class="empty small">${esc(sjT("home.todayFailed",
+        "Could not load roles just now. Open Jobs to try again."))}</div>`;
+    }
   }
 
   /* ---------------------------------------------------------------- application package */
@@ -955,8 +972,9 @@
     const applied = status === "applied";
     const s = $("#pkgStatus");
     s.className = "pkg-status " + (applied ? "applied" : "ready");
-    s.textContent = applied ? "Applied" : "Ready to submit";
-    $("#pkgApplied").textContent = applied ? "Mark as not applied" : "Mark as applied";
+    s.textContent = applied ? I18N.t("pkg.applied", "Applied") : I18N.t("pkg.readyToSubmit", "Ready to submit");
+    $("#pkgApplied").textContent = applied ? I18N.t("pkg.markNotApplied", "Mark as not applied")
+                                           : I18N.t("pkg.markApplied", "Mark as applied");
   }
 
   function pkgCoverage(cov) {
@@ -1033,7 +1051,7 @@
 
     const sub = p.submission || {};
     $("#pkgTier").className = "pkg-tier-pill " + (sub.tier || "assisted");
-    $("#pkgTier").textContent = sub.label || "Assisted, you review and click submit";
+    $("#pkgTier").textContent = sub.label || I18N.t("pkg.assisted", "Assisted, you review and click submit");
     $("#pkgSubmitMsg").textContent = (sub.result && sub.result.message) || "";
     PKG_APPLY_URL = p.apply_url || "";
     $("#pkgSubmitBtn").textContent = sub.tier === "auto" ? "Auto-submit"
@@ -1055,7 +1073,7 @@
     $("#pkgScr").innerHTML = PKG_SCR.map((qa, i) =>
       `<div class="pkg-qa${qa.knockout ? " pkg-qa-knockout" : ""}" data-i="${i}">
          <div class="pkg-q">${esc(qa.question)}${qa.knockout
-           ? ` <span class="pkg-knockout" title="Employers auto-reject on this question. Check the answer yourself.">auto-reject question, check this one</span>`
+           ? ` <span class="pkg-knockout" title="${esc(I18N.t("pkg.knockoutTip", "Employers auto-reject on this question. Check the answer yourself."))}">auto-reject question, check this one</span>`
            : ""}</div>
          <div class="pkg-a">${esc(qa.answer)}</div>
          <div class="pkg-qa-acts"><button class="link-btn" type="button" data-scr="edit">${esc(I18N.t("aa.edit", "Edit"))}</button>
@@ -1133,7 +1151,7 @@
     const exclude = [...document.querySelectorAll("[data-var-org]")]
       .filter(cb => !cb.checked).map(cb => cb.dataset.varOrg);
     const btn = $("#pkgVarBtn"); btn.disabled = true;
-    note.textContent = "Building the variant…";
+    note.textContent = I18N.t("pkg.buildingVariant", "Building the variant…");
     try {
       showView("builder"); $("#jdGate").hidden = true;
       await withWorking(async () => { applyState(await api(`/api/record/${PKG_ID}/variant`, { template, exclude_orgs: exclude })); });
@@ -1210,7 +1228,7 @@
     const url = (PKG_FILL_URL || $("#pkgAssistUrl").value || "").trim();
     if (!here && !/^https?:\/\//i.test(url)) {
       $("#pkgAssistUrl").hidden = false; $("#pkgAssistUrl").focus();
-      note.textContent = "Paste the application link first.";
+      note.textContent = I18N.t("pkg.pasteLink", "Paste the application link first.");
       return;
     }
     const btn = here ? $("#pkgFillHereBtn") : $("#pkgFillBtn");
@@ -1233,7 +1251,7 @@
     if (old) old.remove();
     const b = document.createElement("button");
     b.type = "button"; b.className = "btn btn-ghost btn-sm assist-learn";
-    b.textContent = "Save what I changed to my profile";
+    b.textContent = I18N.t("pkg.saveChanges", "Save what I changed to my profile");
     b.addEventListener("click", async () => {
       b.disabled = true;
       const r = await window.tailorShell.assistLearn();
@@ -1335,7 +1353,7 @@
 
   $("#pkgClCopy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("#pkgCl").value); pkgFlash($("#pkgClMsg"), "Copied."); }
-    catch { pkgFlash($("#pkgClMsg"), "Select the text to copy."); }
+    catch { pkgFlash($("#pkgClMsg"), I18N.t("pkg.selectToCopy", "Select the text to copy.")); }
   });
 
   $("#pkgClSave").addEventListener("click", async () => {
@@ -1344,14 +1362,17 @@
       const r = await api(`/api/record/${PKG_ID}/cover_letter`, { text: $("#pkgCl").value });
       pkgSetPdfLink(!!($("#pkgCl").value || "").trim());
       renderClReview(r.review, r.skills_used, r.posting_findings);
-      pkgFlash($("#pkgClMsg"), r.pdf ? "Saved · PDF updated." : "Saved.");
+      pkgFlash($("#pkgClMsg"), r.pdf ? I18N.t("pkg.savedPdf", "Saved · PDF updated.")
+                                     : I18N.t("pkg.saved", "Saved."));
     } catch { pkgFlash($("#pkgClMsg"), "Couldn't save."); }
   });
 
   // Honest craft check on the cover letter (hook, names the company, length, no unbacked claim),
   // plus the real experiences it leans on, mirroring the resume's pre-send review.
-  const CL_VERDICT = { ready: ["Ready to send", "good"], review: ["Worth a tweak", "mid"],
-    check: ["Check before sending", "low"] };
+  // Keyed, not literal, so the verdict reads in the person's language (#257).
+  const CL_VERDICT = { ready: ["cl.ready", "Ready to send", "good"],
+    review: ["cl.review", "Worth a tweak", "mid"],
+    check: ["cl.check", "Check before sending", "low"] };
   // One quiet line per thing llm/textguard.py took out of the posting before a model read
   // it, in the warning tone the letter check already uses. The decoded sentence is quoted,
   // because the point is that the person gets to read what was aimed at the model. It only
@@ -1370,7 +1391,7 @@
       return `<span class="ps-quote"${title}>${esc(shown)}</span>`;
     }).join("");
     return `<div class="ps-row ps-lvl-warn"><span class="ps-ic">~</span><div class="ps-body">`
-      + `<div class="ps-label">This posting contained hidden text, removed before drafting:</div>`
+      + `<div class="ps-label">${esc(I18N.t("cl.hiddenText", "This posting contained hidden text, removed before drafting:"))}</div>`
       + `<div class="ps-items">${items}</div></div></div>`;
   }
 
@@ -1384,7 +1405,8 @@
       el.innerHTML = hidden;
       return;
     }
-    const v = CL_VERDICT[r.verdict] || ["Letter check", "mid"];
+    const vd = CL_VERDICT[r.verdict] || ["cl.letterCheck", "Letter check", "mid"];
+    const v = [I18N.t(vd[0], vd[1]), vd[2]];
     const rows = (r.checks || []).map(c => {
       const items = (c.items || []).length
         ? `<div class="ps-items">${c.items.map(t => `<span class="ps-term ps-${esc(c.level)}">${esc(t)}</span>`).join("")}</div>`
@@ -1395,7 +1417,7 @@
     }).join("");
     const grounds = (skillsUsed || []).slice(0, 12);
     const draws = grounds.length
-      ? `<div class="cl-draws"><span class="cl-draws-lbl">Draws on:</span> ${grounds.map(s => `<span class="fd-gap">${esc(s)}</span>`).join("")}</div>`
+      ? `<div class="cl-draws"><span class="cl-draws-lbl">${esc(I18N.t("cl.drawsOn", "Draws on:"))}</span> ${grounds.map(s => `<span class="fd-gap">${esc(s)}</span>`).join("")}</div>`
       : "";
     el.hidden = false;
     el.innerHTML = `<div class="ps-head ps-${esc(v[1])}"><span class="ps-verdict">${esc(v[0])}</span>`
@@ -1409,15 +1431,17 @@
     coverDrafting = true;
     const btn = $("#pkgClGen"), label = btn.textContent;
     btn.disabled = true; btn.textContent = "Drafting…";
-    $("#pkgClMsg").textContent = auto ? "Drafting your cover letter from your profile…"
-                                      : "Writing a cover letter from your profile…";
+    $("#pkgClMsg").textContent = auto
+      ? I18N.t("cl.drafting", "Drafting your cover letter from your profile…")
+      : I18N.t("cl.writing", "Writing a cover letter from your profile…");
     try {
       const r = await api(`/api/record/${id}/cover_letter`, {});
       if (PKG_ID !== id) return;                       // navigated away mid-draft
       $("#pkgCl").value = r.cover_letter || "";
       pkgSetPdfLink(!!(r.cover_letter || "").trim());
       renderClReview(r.review, r.skills_used, r.posting_findings);
-      pkgFlash($("#pkgClMsg"), auto ? "Cover letter ready, review and edit." : "Drafted, review and edit.", 4000);
+      pkgFlash($("#pkgClMsg"), auto ? I18N.t("cl.ready2", "Cover letter ready, review and edit.")
+                                    : I18N.t("cl.drafted", "Drafted, review and edit."), 4000);
     } catch {
       if (PKG_ID === id) pkgFlash($("#pkgClMsg"), "Couldn't draft, the app needs your API key + internet.", 5000);
     } finally { btn.disabled = false; btn.textContent = label; coverDrafting = false; }
@@ -1466,7 +1490,7 @@
         </div>`;
       $("#extCopy").addEventListener("click", async (e) => {
         try { await navigator.clipboard.writeText(folder); e.target.textContent = "Copied"; }
-        catch { e.target.textContent = "Select the path above and copy it"; }
+        catch { e.target.textContent = I18N.t("agent.selectPath", "Select the path above and copy it"); }
       });
       $("#extHide").addEventListener("click", () => { el.hidden = true; });
     });
@@ -3181,7 +3205,7 @@
       const st = await api(url, { ref, text });
       if (st && st.edit_ok === false) {
         el.textContent = el.dataset.last || "";
-        toast(st.edit_error || "That change was not kept.");
+        toast(st.edit_error || I18N.t("cv.editNotKept", "That change was not kept."));
         return;
       }
       el.dataset.last = text;
@@ -3230,7 +3254,7 @@
     document.querySelectorAll(".cv-flag").forEach(f => {
       f.onclick = (ev) => {
         popRole = f.dataset.role;
-        pop.querySelector('[data-dec="keep"]').textContent = `Keep “${f.dataset.sugg}”`;
+        pop.querySelector('[data-dec="keep"]').textContent = I18N.t("cv.keepSugg", "Keep “{s}”").replace("{s}", f.dataset.sugg);
         pop.querySelector('[data-dec="revert"]').textContent = f.dataset.orig
           ? `Use my title “${f.dataset.orig}”` : "Use my original title";
         const rect = f.getBoundingClientRect();
@@ -5487,7 +5511,7 @@
       const res = await fetch("/api/profile/photo", { method: "POST", body: fd });
       const r = await res.json().catch(() => ({}));
       if (!res.ok || r.error) throw new Error(r.error || ("HTTP " + res.status));
-      loadPhoto(); toast("Photo updated.");
+      loadPhoto(); toast(MT("acct.photoUpdated", "Photo updated."));
     } catch (err) { toast(err.message || "Couldn't save that photo."); }
     finally { e.target.value = ""; }
   });
@@ -5976,7 +6000,7 @@
         <div class="trk-contact-who"><b>${esc(c.name)}</b>${c.role ? ` <span class="prof-dim">${esc(c.role)}</span>` : ""}
           <div class="trk-contact-links">${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}${c.linkedin ? `<a href="${esc(c.linkedin)}" target="_blank" rel="noopener">LinkedIn</a>` : ""}</div>
         </div>
-        <button class="btn btn-danger-ghost btn-sm" data-rm-contact="${c.id}" type="button" aria-label="Remove contact">&times;</button>
+        <button class="btn btn-danger-ghost btn-sm" data-rm-contact="${c.id}" type="button" aria-label="${esc(trkT("tracker.removeContact", "Remove contact"))}">&times;</button>
       </div>`).join("") || `<p class="prof-dim">${esc(trkT("tracker.noContacts", "No contacts yet."))}</p>`;
     const files = (j.records || []).map(r => `<div class="trk-file">
         <span>${esc(r.role || trkT("tracker.resume", "Resume"))} <span class="prof-dim">${esc(trkDay(r.when))}</span></span>
@@ -6534,7 +6558,7 @@
              <button class="btn btn-ghost btn-sm" data-act="tocv" type="button">Add to resume</button>`
           : `<button class="btn btn-quiet btn-sm" data-act="guide" type="button">${esc(guideLabel)}</button>
              <button class="btn btn-ghost btn-sm" data-act="defend" type="button">Defend it</button>`}
-        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="Delete ${esc(p.title)}" title="Delete">${PROJ_ICO.trash}</button>
+        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="${esc(PT("projects.deleteNamed", "Delete {t}").replace("{t}", p.title))}" title="${esc(PT("projects.delete", "Delete"))}">${PROJ_ICO.trash}</button>
       </div>
     </article>`;
   }
@@ -6613,7 +6637,7 @@
       </div>
       <div class="proj-card-acts">
         ${part.acts}${dl}
-        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="Delete ${esc(p.title)}" title="Delete">${PROJ_ICO.trash}</button>
+        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="${esc(PT("projects.deleteNamed", "Delete {t}").replace("{t}", p.title))}" title="${esc(PT("projects.delete", "Delete"))}">${PROJ_ICO.trash}</button>
       </div>
     </article>`;
   }
@@ -7311,7 +7335,7 @@
       <span class="proj-empty-mark" aria-hidden="true">${PROJ_ICO.code.replace(/width="16" height="16"/, 'width="26" height="26"')}<span class="proj-empty-badge">${PROJ_ICO.check}</span></span>
       <h2 class="proj-empty-h" id="projEmptyH">Show what you can build</h2>
       <p class="proj-empty-sub">A project you can explain is proof employers trust.</p>
-      <ol class="proj-flow" aria-label="How it works">
+      <ol class="proj-flow" aria-label="${esc(PT("projects.howItWorks", "How it works"))}">
         ${node(0, PROJ_ICO.plus, "Add")}${node(1, PROJ_ICO.steps, "Build")}${node(2, PROJ_ICO.talk, "Defend")}${node(3, PROJ_ICO.check, "Verified")}
       </ol>
       <div class="proj-empty-acts">
@@ -7835,7 +7859,7 @@
   async function startBuildGuide(p) {
     if (!p) return;
     BUILD = { id: p.id, title: p.title, milestones: p.plan?.milestones || [], done: new Set(p.done || []) };
-    $("#projBuildTitle").textContent = `Build: ${p.title}`;
+    $("#projBuildTitle").textContent = PT("projects.buildTitle", "Build: {t}").replace("{t}", p.title);
     $("#projList").hidden = true; $("#projForm").hidden = true; $("#projIdeas").hidden = true; $("#projBuild").hidden = false;
     $("#projBuildFoot").hidden = true;
     if (BUILD.milestones.length) { renderPlan(); }
@@ -7900,7 +7924,7 @@
     ansBox.hidden = false; ansBox.textContent = "…";
     try {
       const d = await api(`/api/projects/${BUILD.id}/coach`, { index: i, question: q });
-      ansBox.textContent = d.answer || "No answer came back.";
+      ansBox.textContent = d.answer || PT("projects.noAnswer", "No answer came back.");
     } catch (err) { ansBox.textContent = err.message || "Couldn't answer right now."; }
     finally { btn.disabled = false; btn.textContent = "Ask"; }
   }
@@ -7910,7 +7934,7 @@
   async function startDefend(p) {
     if (!p) return;
     DEFEND_ID = p.id;
-    $("#projTestTitle").textContent = `Defend: ${p.title}`;
+    $("#projTestTitle").textContent = PT("projects.defendTitle", "Defend: {t}").replace("{t}", p.title);
     $("#projResult").hidden = true; $("#projSubmit").hidden = true;
     $("#projQuestions").innerHTML = `<div class="empty">Preparing your questions…</div>`;
     $("#projList").hidden = true; $("#projForm").hidden = true; $("#projTest").hidden = false;
@@ -7920,7 +7944,7 @@
       $("#projQuestions").innerHTML = DEFEND_QS.map((q, i) => `
         <div class="proj-q">
           <div class="proj-q-t">${i + 1}. ${esc(q)}</div>
-          <textarea class="fld proj-q-a" rows="3" data-i="${i}" placeholder="Answer in your own words, as you would in an interview…"></textarea>
+          <textarea class="fld proj-q-a" rows="3" data-i="${i}" placeholder="${esc(PT("projects.answerPh", "Answer in your own words, as you would in an interview…"))}"></textarea>
         </div>`).join("");
       $("#projSubmit").hidden = false;
     } catch (err) {
@@ -7933,7 +7957,7 @@
     const btn = $("#projSubmit"); btn.disabled = true; btn.textContent = "Reviewing…";
     try { renderDefendResult(await api(`/api/projects/${DEFEND_ID}/grade`, { answers })); }
     catch (err) { const b = $("#projResult"); b.hidden = false; b.innerHTML = `<div class="proj-verdict fail">Couldn't review this right now.</div>`; }
-    finally { btn.disabled = false; btn.textContent = "Submit for review"; }
+    finally { btn.disabled = false; btn.textContent = PT("projects.submitReview", "Submit for review"); }
   });
   function renderDefendResult(r) {
     const box = $("#projResult"); box.hidden = false;
@@ -7947,12 +7971,13 @@
         ${r.pass ? `<button class="btn btn-primary btn-sm" id="projResultCv" type="button">Add to Resume</button>` : `<button class="btn btn-primary btn-sm" id="projRetry" type="button">Try again</button>`}
         <button class="btn btn-ghost btn-sm" id="projResultBack" type="button">Back to projects</button>
       </div>`;
-    $("#projResultCv")?.addEventListener("click", async () => { await fetch(`/api/projects/${DEFEND_ID}/tocv`, { method: "POST" }); toast("Added to your resume material."); $("#projTest").hidden = true; $("#projList").hidden = false; loadProjects(); });
+    $("#projResultCv")?.addEventListener("click", async () => { await fetch(`/api/projects/${DEFEND_ID}/tocv`, { method: "POST" }); toast(PT("projects.addedToCv", "Added to your resume material.")); $("#projTest").hidden = true; $("#projList").hidden = false; loadProjects(); });
     $("#projRetry")?.addEventListener("click", () => startDefend(PROJECTS.find(x => x.id === DEFEND_ID)));
     $("#projResultBack")?.addEventListener("click", () => { $("#projTest").hidden = true; $("#projList").hidden = false; loadProjects(); });
   }
   async function addToCv(p) {
-    try { const r = await fetch(`/api/projects/${p.id}/tocv`, { method: "POST" }); toast(r.ok ? "Added to your resume material." : "Pass the understanding test first."); }
+    try { const r = await fetch(`/api/projects/${p.id}/tocv`, { method: "POST" }); toast(r.ok ? PT("projects.addedToCv", "Added to your resume material.")
+                                            : PT("projects.passFirst", "Pass the understanding test first.")); }
     catch { toast("Couldn't add to resume."); }
   }
   async function publishToGithub(p, btn) {
@@ -7960,7 +7985,7 @@
     if (btn) { btn.disabled = true; btn.textContent = "Publishing…"; }
     try {
       await api(`/api/projects/${p.id}/publish`, {});   // {} body -> POST
-      toast(p.repo_url ? PT("projects.nowPublic", "Your repo is public now.") : "Published to GitHub.");
+      toast(p.repo_url ? PT("projects.nowPublic", "Your repo is public now.") : PT("projects.published", "Published to GitHub."));
       loadProjects();   // re-render: the GitHub mark beside the title loses its lock
     } catch (err) {
       toast(err.message || "Couldn't publish to GitHub.");
@@ -9388,7 +9413,7 @@
       AI_CONFIGURED = !!s.configured;
       if (s.provider) AI_PROVIDER_SEL = s.provider;
       $("#aiDot")?.classList.toggle("on", AI_CONFIGURED);
-      const lbl = $("#aiChipLabel"); if (lbl) lbl.textContent = AI_CONFIGURED ? "AI connected" : "Connect AI";
+      const lbl = $("#aiChipLabel"); if (lbl) lbl.textContent = AI_CONFIGURED ? T("ai.connected", "AI connected") : T("ai.connect", "Connect AI");
       const mk = $("#aiMasked"); if (mk) mk.textContent = s.masked || "";
       const sl = $("#setKeyLabel"); if (sl) sl.textContent = `${s.provider_label || "Anthropic"} API key`;
       // Official edition with the managed AI up: no key talk anywhere. The key stays reachable
@@ -9400,7 +9425,7 @@
       document.documentElement.classList.toggle("is-managed", MANAGED_AI);
       const gk = $("#menuGetKey"); if (gk) gk.hidden = MANAGED_AI;
       if (MANAGED_AI) {
-        if (sl) sl.textContent = "Advanced: your own AI key";
+        if (sl) sl.textContent = T("ai.ownKey", "Advanced: your own AI key");
         const st = $("#setKeyState");
         if (st && !s.configured) st.textContent = "Optional. SponsorJobs' AI is included.";
       }
@@ -9435,7 +9460,7 @@
       hideOutage();
       if (lastCall) await api(lastCall.url, lastCall.body).catch(() => {});
     } catch { /* the outage screen stays up and re-states the reason */ }
-    btn.disabled = false; btn.textContent = "Try again";
+    btn.disabled = false; btn.textContent = T("common.tryAgain", "Try again");
   });
 
   /* ------------------------------------------------- account menu + settings */
@@ -10035,7 +10060,7 @@
   $("#memOpenSettings")?.addEventListener("click", () => { closeSettings(); openMemory({ origin: "settings" }); });
   $("#memAddBtn")?.addEventListener("click", async () => {
     const ta = $("#memAddText"), text = (ta?.value || "").trim();
-    if (!text) { toast("Write something for me to remember."); return; }
+    if (!text) { toast(MT("mem.writeSomething", "Write something for me to remember.")); return; }
     const btn = $("#memAddBtn"); btn.disabled = true; btn.textContent = "Saving…";
     try {
       await api("/api/memory/ingest", { text });
@@ -10048,12 +10073,12 @@
   $("#memAssessBtn")?.addEventListener("click", async () => {
     const text = ($("#memAddText")?.value || "").trim();
     const out = $("#memAssessOut"); if (!out) return;
-    if (!text) { toast("Write something to check first."); return; }
+    if (!text) { toast(MT("mem.writeToCheck", "Write something to check first.")); return; }
     const btn = $("#memAssessBtn"); btn.disabled = true; btn.textContent = "Checking…";
     out.hidden = false; out.innerHTML = `<div class="empty">Reading it…</div>`;
     let a;
     try { a = (await api("/api/memory/assess", { text })).assessment || {}; }
-    catch (err) { out.innerHTML = `<div class="empty">${esc(err.message || "Couldn't check that.")}</div>`; btn.disabled = false; btn.textContent = "Is this resume-worthy?"; return; }
+    catch (err) { out.innerHTML = `<div class="empty">${esc(err.message || MT("mem.checkFailed", "Couldn't check that."))}</div>`; btn.disabled = false; btn.textContent = "Is this resume-worthy?"; return; }
     btn.disabled = false; btn.textContent = "Is this resume-worthy?";
     if (a.worthy) {
       out.innerHTML = `<div class="mem-assess-yes"><b>Yes, this belongs on your resume.</b> ${esc(a.reason || "")}
@@ -10063,11 +10088,11 @@
       $("#memHighlight")?.addEventListener("click", async () => {
         try { await api("/api/memory/ingest", { text, source: "highlight" });
           if ($("#memAddText")) $("#memAddText").value = "";
-          out.hidden = true; toast("Saved as a highlight."); memLoad();
+          out.hidden = true; toast(MT("mem.savedHighlight", "Saved as a highlight.")); memLoad();
         } catch (err) { toast(err.message || "Couldn't save."); }
       });
     } else {
-      out.innerHTML = `<div class="mem-assess-no">${esc(a.reason || "Not quite resume-worthy yet, add a concrete action and a result.")}</div>`;
+      out.innerHTML = `<div class="mem-assess-no">${esc(a.reason || MT("mem.notWorthy", "Not quite resume-worthy yet, add a concrete action and a result."))}</div>`;
     }
   });
   $("#memAddFile")?.addEventListener("change", async (e) => {
@@ -10217,7 +10242,7 @@
   }
   function connPill(el, ok, onText, offText) {
     if (!el) return;
-    el.textContent = ok ? (onText || "Connected") : (offText || "Not connected");
+    el.textContent = ok ? (onText || helpT("conn.on", "Connected")) : (offText || helpT("conn.off", "Not connected"));
     el.classList.toggle("on", !!ok);
   }
   async function renderConnections() {
@@ -10233,9 +10258,10 @@
       const alias = g.alias || "";
       const on = !!(g.configured || g.method);
       connPill($("#gmStatus"), on, alias ? alias : (g.email ? `Connected, ${g.email}` : "Connected"), "Not connected");
-      if ($("#gmAlias")) { $("#gmAlias").textContent = alias ? "Stop using it" : "Get an address"; $("#gmAlias").dataset.on = alias ? "1" : ""; }
+      if ($("#gmAlias")) { $("#gmAlias").textContent = alias ? helpT("mail.stop", "Stop using it") : helpT("mail.get", "Get an address"); $("#gmAlias").dataset.on = alias ? "1" : ""; }
       const imapOn = g.method === "imap";
-      if ($("#gmHelp")) { $("#gmHelp").textContent = imapOn ? "Disconnect your own inbox" : "Advanced: use your own inbox instead"; $("#gmHelp").dataset.on = imapOn ? "1" : ""; }
+      if ($("#gmHelp")) { $("#gmHelp").textContent = imapOn ? helpT("mail.disconnectOwn", "Disconnect your own inbox")
+                                          : helpT("mail.useOwn", "Advanced: use your own inbox instead"); $("#gmHelp").dataset.on = imapOn ? "1" : ""; }
       if ($("#gmDetail")) { $("#gmDetail").textContent = alias
         ? "Applications use this address. Codes and links reach the agent; the full emails and recruiter replies land in your real inbox."
         : (imapOn ? "SponsorJobs reads only your applications' verification codes, links and recruiter replies. It never sends mail." : "");
@@ -10272,7 +10298,7 @@
       } else {
         const r = await fetch("/api/inbox/alias", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const d = await r.json().catch(() => ({}));
-        if (!r.ok || d.ok === false) toast(d.error || "Could not create the address.");
+        if (!r.ok || d.ok === false) toast(d.error || helpT("mail.createFailed", "Could not create the address."));
       }
     } finally { b.disabled = false; }
     renderConnections();
@@ -10556,7 +10582,7 @@
         if (!LOCK_BOOTED) { LOCK_BOOTED = true; boot(); }
         else { loadDashboard(); api("/api/profile").then(paintAccount).catch(() => {}); }
       } else {
-        if (err) { err.textContent = "That passcode is not correct."; err.hidden = false; }
+        if (err) { err.textContent = helpT("lock.wrong", "That passcode is not correct."); err.hidden = false; }
         if (inp) { inp.value = ""; inp.focus(); }
       }
     } catch {
@@ -10583,14 +10609,14 @@
       ? "On. SponsorJobs asks for your passcode when it starts, and your API key is encrypted at rest."
       : "Off. Anyone who opens SponsorJobs on this computer can use it and see your data.";
     if (btn) {
-      btn.textContent = st.enabled ? "Change passcode" : "Set passcode";
+      btn.textContent = st.enabled ? helpT("lock.change", "Change passcode") : helpT("lock.set", "Set passcode");
       // Primary/filled when it's the pane's main action (off); recede to ghost once set.
       btn.classList.toggle("btn-primary", !st.enabled);
       btn.classList.toggle("btn-ghost", st.enabled);
     }
     if ($("#lockCurrent")) $("#lockCurrent").hidden = !st.enabled;
     if ($("#lockRemove")) $("#lockRemove").hidden = !st.enabled;
-    if ($("#lockSave")) $("#lockSave").textContent = st.enabled ? "Change" : "Turn on";
+    if ($("#lockSave")) $("#lockSave").textContent = st.enabled ? helpT("lock.changeBtn", "Change") : helpT("lock.turnOn", "Turn on");
   }
   function lockMsg(t, cls) { const m = $("#lockMsg"); if (m) { m.textContent = t; m.className = "lock-form-msg " + cls; m.hidden = false; } }
   $("#setLockBtn")?.addEventListener("click", () => {
@@ -10648,7 +10674,7 @@
     aiFlash(`Checking your key with ${AI_PROVIDERS[AI_PROVIDER_SEL].label}…`, true);
     try {
       const r = await api("/api/apikey", { key, provider: AI_PROVIDER_SEL });
-      if (r.ok) { await loadApiKeyStatus(); closeAiModal(); toast("Connected. Try that again and it will work."); }
+      if (r.ok) { await loadApiKeyStatus(); closeAiModal(); toast(helpT("ai.connectedRetry", "Connected. Try that again and it will work.")); }
     } catch (e) { aiFlash(e.message || "Couldn't save the key.", false); }
     finally { btn.disabled = false; btn.textContent = "Connect"; }
   });
@@ -13397,7 +13423,7 @@
       const a = document.getElementById("updateNote");
       if (!a || !info || !info.url) return;
       a.href = info.url;
-      a.textContent = `Version ${info.version} is out. Download it`;
+      a.textContent = ST("update.available", "Version {v} is out. Download it").replace("{v}", info.version);
       a.hidden = false;
       a.onclick = (e) => { if (shell.openReleasePage) { e.preventDefault(); shell.openReleasePage(info.url); } };
     });

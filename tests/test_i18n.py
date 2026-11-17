@@ -35,9 +35,9 @@ def test_expected_languages_present():
 # English fallback, in every language, and nothing fails. That is how the strings in #257 went
 # untranslated for so long. This pins it: every key the UI asks for must exist in all five files.
 #
-# KNOWN_MISSING is a ratchet for the #257 sweep, which lands one screen group at a time. It may
-# only ever SHRINK: each batch deletes its own keys from it, and the last batch deletes the set.
-# Adding a key here is not an option, a new untranslated key fails the test instead.
+# KNOWN_MISSING was a ratchet for the #257 sweep, which landed one screen group at a time. It
+# only ever shrank, and batch 3 emptied it. Adding a key back is not an option: a new
+# untranslated key fails the test instead.
 
 import re
 
@@ -46,19 +46,10 @@ APP_JS = Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js"
 # underlying I18N.t, each called as (key, English fallback).
 _T_CALL = re.compile(r'(?:\b\w*T|I18N\.t)\(\s*(["\'])([A-Za-z0-9_.]+)\1\s*,')
 
-KNOWN_MISSING = {
-    # Auto-apply bar and its asks (a later #257 batch).
-    "aa.act.continue", "aa.agent.answer", "aa.agent.back", "aa.agent.change", "aa.agent.changeA",
-    "aa.agent.pageGone", "aa.agent.qOf", "aa.agent.sendAnswer", "aa.agent.thanks",
-    "aa.agent.yourAnswers", "aa.applyAll", "aa.batch.see", "aa.batch.start", "aa.parked.busy",
-    "aa.parked.gone", "aa.parked.queued", "aa.send.start", "aa.st.paused", "aa.st.readySend",
-    # Home agent leftovers, the build message, the inbox strip and Tracker (later batches).
-    "agent.connectFailed", "agent.signInFirst", "bm.took", "bm.working",
-    "inbox.draft.body", "inbox.draft.gap1", "inbox.draft.gaps", "inbox.strip.autoMoved",
-    "inbox.strip.done", "inbox.strip.draftReply", "inbox.strip.ok", "inbox.strip.when",
-    "tracker.fromInbox", "tracker.furthest", "tracker.movedTo", "tracker.undo", "tracker.undoFail",
-    "tracker.undoLast", "tracker.undoneOff", "tracker.undoneTo",
-}
+# The #257 sweep is finished: every key app.js asks for is defined in all five locale files,
+# so there is nothing left to defer. The set stays, empty, because both tests below keep
+# working against it: a new untranslated key fails rather than being added here.
+KNOWN_MISSING: set[str] = set()
 
 
 def _keys_used_in_app_js():
