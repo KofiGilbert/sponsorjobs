@@ -11493,7 +11493,8 @@
       eeo_decline: T("aa.ans.flag.declined", "Declined, nothing you saved answers it."),
       derived: T("aa.ans.flag.derived", "Worked out from your answers, not saved by you."),
       drafted: T("aa.ans.flag.drafted", "Written for this job. Read it."),
-      kept_file: T("aa.ans.flag.kept", "The form already had a file with this name, so it was not attached again. Check it is this job's."),
+      kept_file: T("aa.ans.flag.kept", "The form already had this file (the same name and size), so it was not attached again. Check it is this job's."),
+      earlier_file: T("aa.ans.flag.earlier", "The form also holds an earlier file with the same name. Check which one to keep."),
     };
     return m[code] || "";
   }

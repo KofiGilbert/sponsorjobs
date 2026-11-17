@@ -377,6 +377,27 @@ message goes out 10 minutes after the last activity, outside quiet hours:
 
 If the person comes back first, the digest is skipped.
 
+### Ready to send (the apply agent, `notify/ready.py`)
+
+When Apply for me leaves an application on its review page, the shell's hand-over
+(`/api/autoapply/agent/ready`) carries a notice: the run's start, how many fields it filled, how
+many lines deserve a look, and those lines as the app's Review answers list words them
+(self-identification values never included; the question stays, the value reads "shown only in
+the app"). The engine sends ONE message per run through the active channel:
+
+`Ready to send: {Role} at {Company}.`
+`I filled {n} fields. {m} need a look:` (or `Nothing is flagged.`)
+`• {question}: {value} ({where it came from}) ⚠` (one line each, at most 12, then `And {k} more in the app.`)
+`Review it in SponsorJobs, Auto-apply (Review answers), then press Send there. Nothing is sent until you do.`
+
+Rules: it counts as an "Application updates" message (off there: never sent); no daily cap (the
+cap is the job alerts'); nothing when Telegram is not linked; paused (`/stop`, the broker's
+`paused` status or its 409) drops it for good; quiet hours hold it, and the notify tick sends it
+once they end while the application still waits for Send and the notice is under 36 hours old; a
+rate limit or Telegram being down holds it for the next tick; the same run never twice
+(`ready_sent` and `ready_held` in `notify_state.json`). No buttons: nothing in notify/ approves an
+assisted submission from Telegram, so the person reviews and presses Send in the app.
+
 ### Autopilot (`_autopilot_tick` in `ui/app.py`)
 
 A scheduled, capped, hands-off Auto-apply run. OFF by default; the person turns it on from

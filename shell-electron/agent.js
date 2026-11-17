@@ -1033,6 +1033,9 @@ function createAgent(deps) {
       await deps.postApp("/api/autoapply/agent/parked/" + encodeURIComponent(recordId) + "/take", { drop: true }).catch(() => null);
     }
     ready.delete(recordId);
+    // A fresh application: what this run uploads is tracked from here (shell-electron/uploads.js),
+    // so a file of the same name the form already lists is never mistaken for ours.
+    if (!R && deps.newUploadRun) deps.newUploadRun();
     deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
     deps.postApp("/api/autoapply/agent/unavailable", { record_id: recordId, clear: true }).catch(() => null);
     const S = (R && R.state) || null;     // the parked run's own state, when it carries on in place
@@ -1058,6 +1061,7 @@ function createAgent(deps) {
                                       termsOk: new Map(), accepted: [] };
     terms.st = st;
     terms.batch = quick;
+    terms.startedAt = startedAt;                           // the run's identity for the Ready to send notice
     if (!terms.answers) terms.answers = createAnswers();   // the Review answers list (readyAnswers)
     const ans = terms.answers;
     // What a fill set on this page, into the Review answers list (never logged: safeReply).
@@ -1489,10 +1493,13 @@ function createAgent(deps) {
             let wants = false;
             // Only the resume's own empty box (never a cover letter box, never one already filled).
             try { wants = await wc.executeJavaScript("window.TailorAutofill.resumeInputOpen()", true); } catch (e) { if (e && e.stopped) throw e; wants = false; }
-            // "listed": the box's area already holds this file (a Workday draft), nothing attached.
+            // true / "earlier": attached ("earlier": the box also holds an earlier file of that
+            // name, left alone and flagged); "listed": the box already holds this file (the same
+            // name and size), nothing attached; "own" / "own-earlier": this run attached it before.
             const got = wants ? await guard(deps.attachResume(wc, opts.resumePath), 15000, "attach").catch((e) => { if (e && e.stopped) throw e; return false; }) : false;
-            if (got === true) { filled += 1; attached = true; uploadedNow = true; }
-            if (got === true || got === "listed") addFile(ans, { page, kind: "resume", path: opts.resumePath, how: got === true ? "attached" : "listed" });
+            if (got === true || got === "earlier") { filled += 1; attached = true; uploadedNow = true; }
+            if (got) addFile(ans, { page, kind: "resume", path: opts.resumePath, how: got === "listed" ? "listed" : "attached",
+                                    earlier: got === "earlier" || got === "own-earlier" });
           }
           if (filled > 0) feedFill(feed, page, fromMemory, attached) && say(recordId, "fill", "", "", { refresh: true });
         }
@@ -2299,7 +2306,10 @@ function createAgent(deps) {
       current = null;
       return send(recordId);
     }
-    deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep) }).catch(() => null);
+    // The engine keeps it on the record and sends the Ready to send notice on Telegram, once per
+    // run (docs/notify.md): counts and the flagged lines only, never a self-identification value.
+    deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep),
+                                                 notice: readyNotice(answers, wrote && wrote.startedAt) }).catch(() => null);
     const notes = (noted || []).slice(0, 3);
     // The bar stays ONE short line (2026-11-16, the owner: the Gusto line ran on for five
     // sentences). What the agent wrote or chose and what the check noted go to Steps, one line
@@ -2731,10 +2741,13 @@ function addFile(ans, f) {
   if (!ans || !f || !f.path) return null;
   const name = String(f.path).split(/[\\/]/).pop();
   const r = { kind: f.kind === "cover_letter" ? "cover_letter" : "resume", name, record_id: fileRecord(f.path),
-              how: f.how === "listed" ? "listed" : "attached", page: Number(f.page) || 1 };
+              how: f.how === "listed" ? "listed" : "attached", page: Number(f.page) || 1, earlier: !!f.earlier };
   const at = ans.files.findIndex((x) => x.kind === r.kind && x.name === r.name && x.record_id === r.record_id);
-  if (at >= 0) { if (r.how === "attached" || ans.files[at].how !== "attached") ans.files[at] = r; }
-  else ans.files.push(r);
+  if (at >= 0) {
+    const was = ans.files[at];
+    if (r.how === "attached" || was.how !== "attached") ans.files[at] = r;
+    ans.files[at].earlier = !!(was.earlier || r.earlier);   // an earlier file seen once stays flagged
+  } else ans.files.push(r);
   return r;
 }
 // One element line of the view, by its number.
@@ -2770,7 +2783,11 @@ function brainAnswer(viewText, a, runAnswers) {
   }
   if (/^\*?\[\d+\]<checkbox\b/.test(line)) {
     const label = lineLabel(line);
-    return label && /checked=false/.test(line) ? { label, value: "Checked", from: by(label, "ai") } : null;
+    if (!label || !/checked=false/.test(line)) return null;
+    // A box in a group: the question is the page text above its boxes, the value the box's name
+    // ("How did you hear about this opportunity?": "Indeed"), never "Checked".
+    const q = groupAbove(viewText, line);
+    return q && !sameLabel(q, label) ? { label: q, value: label, from: by(q, "ai") } : { label, value: "Checked", from: by(label, "ai") };
   }
   const opt = /^\*?\[\d+\]<option\b[^>]*>([^<]*)</.exec(line);
   if (opt && opt[1].trim()) {
@@ -2786,6 +2803,22 @@ function brainAnswer(viewText, a, runAnswers) {
   }
   return null;
 }
+// The question a group of checkboxes answers, from the view: the nearest page-text line above the
+// box, past its sibling boxes (at most 12 lines up). "" when the box stands alone.
+function groupAbove(viewText, line) {
+  const lines = String(viewText || "").split("\n");
+  const at = lines.indexOf(line);
+  let boxes = 0;
+  for (let i = at - 1; i >= 0 && i >= at - 12; i--) {
+    const ln = lines[i].trim();
+    if (!ln) continue;
+    if (/^\*?\[\d+\]<checkbox\b/.test(ln)) { boxes++; continue; }
+    if (/^\*?\[\d+\]</.test(ln)) break;                      // another control: not this group's
+    const t = cleanQuestion(ln);
+    return t && t.length > 3 && (boxes > 0 || /[?:]$/.test(t) || /\bselect all\b/i.test(t)) ? t.slice(0, 160) : "";
+  }
+  return "";
+}
 // The list the app shows: each row's origin and whether it deserves a look, the files with the
 // application each was tailored for. ``ctx.recordId``: this job's record.
 function readyAnswers(ans, ctx) {
@@ -2797,35 +2830,43 @@ function readyAnswers(ans, ctx) {
   }).sort((a, b) => a.page - b.page || a.i - b.i).map(({ i, ...r }) => r);
   const files = ((ans && ans.files) || []).map((f) => {
     const other = f.record_id != null && rid !== "" && String(f.record_id) !== rid;
-    const flag = other ? "other_resume" : f.how === "listed" ? "kept_file" : "";
+    // other_resume: tailored for another application; earlier_file: ours went in, and the form
+    // also holds an earlier file of the same name; kept_file: the form already held this file.
+    const flag = other ? "other_resume" : f.earlier ? "earlier_file" : f.how === "listed" ? "kept_file" : "";
     return { kind: f.kind, name: f.name, record_id: f.record_id, how: f.how, page: f.page, flag };
   });
   const flagged = rows.filter((r) => r.flag).length + files.filter((f) => f.flag).length;
   return { rows, files, flagged };
 }
-// The same list as one short Telegram message, WITHOUT self-identification values. Sent only
-// with the Ready to send Telegram notice (the agent path has none yet; see docs/apply-agent.md).
+// The same list as one short Telegram message, WITHOUT self-identification values. The Ready to
+// send Telegram notice carries only its flagged lines (readyNotice).
 const ANSWER_FROM_WORDS = {
   profile: "your profile", history: "your resume", library: "saved answer", you: "your answer",
   workauth: "work authorization", eeo: "self-identification", eeo_decline: "declined",
   drafted: "drafted", derived: "worked out", letter: "cover letter", job: "the job", today: "today's date",
   ai: "AI pick, check it", closest: "closest match, check it", skills: "from your skills, check it",
 };
+// One answer as a Telegram line: a self-identification value never leaves the app.
+function answerLine(r) {
+  const v = r.self_id ? "(self-identification, shown only in the app)" : r.value;
+  return "\u2022 " + r.label + ": " + v + " (" + (ANSWER_FROM_WORDS[r.from] || r.from) + ")" + (r.flag ? " \u26a0" : "");
+}
+function fileLine(f) {
+  const what = f.kind === "cover_letter" ? "Cover letter" : "Resume";
+  const note = f.flag === "other_resume" ? " (tailored for another application, check it) \u26a0"
+    : f.flag === "earlier_file" ? " (the form also holds an earlier file with the same name: check which one to keep) \u26a0"
+    : f.flag === "kept_file" ? " (already on the form, not attached again, check it) \u26a0" : "";
+  return "\u2022 " + what + ": " + f.name + note;
+}
 function answersTelegram(list, job) {
   const L = list || { rows: [], files: [] };
   const out = ["Before you press Send" + (job ? " on " + job : "") + ", this is what I filled:"];
   let page = 0;
   for (const r of L.rows || []) {
     if (r.page !== page) { page = r.page; out.push("Page " + page); }
-    const v = r.self_id ? "(self-identification, shown only in the app)" : r.value;
-    out.push("\u2022 " + r.label + ": " + v + " (" + (ANSWER_FROM_WORDS[r.from] || r.from) + ")" + (r.flag ? " \u26a0" : ""));
+    out.push(answerLine(r));
   }
-  for (const f of L.files || []) {
-    const what = f.kind === "cover_letter" ? "Cover letter" : "Resume";
-    const note = f.flag === "other_resume" ? " (tailored for another application, check it) \u26a0"
-      : f.flag === "kept_file" ? " (already on the form, not attached again, check it) \u26a0" : "";
-    out.push("\u2022 " + what + ": " + f.name + note);
-  }
+  for (const f of L.files || []) out.push(fileLine(f));
   if (L.flagged) out.push(L.flagged + (L.flagged === 1 ? " line deserves" : " lines deserve") + " a look (\u26a0).");
   let text = out.join("\n");
   if (text.length > 3500) {
@@ -2835,6 +2876,20 @@ function answersTelegram(list, job) {
     text = keep.join("\n") + "\nAnd more in the app.";
   }
   return text;
+}
+// What the engine needs for the Ready to send Telegram notice (ui/app.py _ready_notice): how many
+// fields the run filled, how many lines deserve a look, and those lines only, in the same words
+// as answersTelegram (never a self-identification value). ``run``: the run's start, so the
+// engine sends one notice per run.
+const NOTICE_LINES = 12;
+function readyNotice(list, run) {
+  const L = list || { rows: [], files: [] };
+  const lines = [];
+  for (const r of L.rows || []) if (r.flag) lines.push(answerLine(r));
+  for (const f of L.files || []) if (f.flag) lines.push(fileLine(f));
+  return { run: run == null ? "" : String(run), filled: (L.rows || []).length, files: (L.files || []).length,
+           flagged: Number(L.flagged) || lines.length, lines: lines.slice(0, NOTICE_LINES).map((x) => x.slice(0, 300)),
+           more: Math.max(0, lines.length - NOTICE_LINES) };
 }
 
 // ---- terms a site requires: the words the person sees (pure, so the tests reach them) --------
@@ -2911,4 +2966,4 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, socialRefused, wroteLines,
-                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, readyAnswers, answersTelegram };
+                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, readyAnswers, answersTelegram, readyNotice };

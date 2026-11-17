@@ -35,6 +35,12 @@ def test_the_shell_lists_flags_and_keeps_self_identification_local():
     _node("test_ready_answers.js")
 
 
+def test_labels_keep_their_words_and_a_ticked_box_names_itself():
+    """Gusto (Greenhouse), 2026-11-16: "(please select one)" read "(please )?", and a ticked
+    "How did you hear" box read "Checked" instead of "Indeed"."""
+    _node("test_answer_labels.js")
+
+
 def test_the_bar_offers_review_answers_next_to_send():
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")

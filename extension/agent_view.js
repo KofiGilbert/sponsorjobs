@@ -183,8 +183,21 @@
     if (!el || !el.id) return null;
     try { return rootOf(el).querySelector(`label[for="${CSS.escape(el.id)}"]`) || null; } catch (e) { return null; }
   }
+  // The question as the page words it, without the control's own furniture: a prompt or mark
+  // that stands alone ("(Required)", "(Select one)"), or ends or starts the text (Workday's
+  // "Gender Select One Required", "Required: Gender"). Words inside the question stay: Greenhouse's
+  // "How would you describe your gender identity (please select one)?" lost "select one" and read
+  // "(please )?" (Gusto, 2026-11-16), and "Is a visa required to work here?" lost "required".
   function cleanLabel(t) {
-    return String(t || "").replace(/\s+/g, " ").replace(/\b(select one|required)\b/ig, "").replace(/[*✱]+/g, "").trim();
+    let s = String(t || "").replace(/\s+/g, " ").trim();
+    s = s.replace(/\(\s*(?:select one|required)\s*\)/ig, " ");
+    for (let i = 0; i < 4; i++) {
+      const n = s.replace(/(?:^|\s+|(?<=[*✱]))(?:select one|required)[\s*✱.:]*$/i, "");
+      if (n === s) break;
+      s = n;
+    }
+    s = s.replace(/^(?:required)\b[\s:*✱-]*/i, "");
+    return s.replace(/[*✱]+/g, "").replace(/\s+/g, " ").trim();
   }
   function ownLabel(el) {
     let out = "";

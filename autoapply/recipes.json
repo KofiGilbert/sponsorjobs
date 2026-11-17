@@ -117,10 +117,16 @@
         },
         {
           "text": "Your application has been submitted"
+        },
+        {
+          "url_re": "^https://(job-boards|boards)(\\.eu)?\\.greenhouse\\.io/[^?#]*/confirmation/?([?#]|$)"
+        },
+        {
+          "text": "Track your application"
         }
       ],
       "multipage": false,
-      "notes": "boards.greenhouse.io now redirects to job-boards.greenhouse.io; both serve the same server-rendered form (#application-form with #first_name, #last_name, #email, #phone, #country react-select combobox, #resume file input, custom questions as #question_<id>). Submit is 'Submit application' (button[type=submit]). Custom and EEO questions are react-select comboboxes keyed by question id, so they fall through to the label matcher. Captcha-free on the pages read; some boards add reCAPTCHA at submit, which is the person's to solve. Re-read 2026-10-11: #first_name, #last_name, #email, #phone (type=tel), #resume (file), #country (react-select input) and the single button[type=submit] are present; this board has no LinkedIn/website input, where a board asks for them they are custom questions (#question_<id>) the label matcher reads from their <label for>."
+      "notes": "boards.greenhouse.io now redirects to job-boards.greenhouse.io; both serve the same server-rendered form (#application-form with #first_name, #last_name, #email, #phone, #country react-select combobox, #resume file input, custom questions as #question_<id>). Submit is 'Submit application' (button[type=submit]). Custom and EEO questions are react-select comboboxes keyed by question id, so they fall through to the label matcher. Captcha-free on the pages read; some boards add reCAPTCHA at submit, which is the person's to solve. Re-read 2026-10-11: #first_name, #last_name, #email, #phone (type=tel), #resume (file), #country (react-select input) and the single button[type=submit] are present; this board has no LinkedIn/website input, where a board asks for them they are custom questions (#question_<id>) the label matcher reads from their <label for>. Re-read 2026-11-16 (Gusto): after Submit the board lands on <board>/jobs/<id>/confirmation with a \"Track your application\" card; that URL and text are the success markers."
     },
     {
       "id": "lever",

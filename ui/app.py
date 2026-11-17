@@ -12806,8 +12806,11 @@ def _notify_tick(scan: bool = False) -> dict:
                 _scan_job_alerts()
             except Exception:   # noqa: BLE001 - alerts are best-effort
                 traceback.print_exc()
-        return _notify_hub().tick(ch, datetime.now().astimezone(), _can_auto_apply,
-                                  records_fn=_notify_records, site_name_fn=_site_name)
+        out = _notify_hub().tick(ch, datetime.now().astimezone(), _can_auto_apply,
+                                 records_fn=_notify_records, site_name_fn=_site_name)
+        if out.get("error") != "no_owner":            # fail-closed: an own bot with no owner gets nothing
+            out["ready_sent"] = _ready_notice_flush(ch)
+        return out
 
 
 def start_notify_loop():
@@ -15002,17 +15005,21 @@ def autoapply_agent_ready():
     """The agent left this application on its review page, Ready to send: body {record_id, sig,
     accepted?, run} keeps it on the record (agent_ready) for the Auto-apply row's Send, which
     also works once the page is gone (the shell fills it again and submits only when the review
-    page comes out the same: ``sig``). {record_id, clear: true} drops it (sent, or a new run)."""
+    page comes out the same: ``sig``). {record_id, clear: true} drops it (sent, or a new run).
+    ``notice`` (from the shell's readyNotice: run, filled, flagged, lines) sends the Ready to send
+    notice on Telegram, once per run (_ready_notice, docs/notify.md)."""
     b = request.json or {}
     if b.get("record_id") in (None, ""):
         return jsonify({"ok": False, "reason": "no-record"}), 400
     recs = _records()
     try:
         rid = int(b.get("record_id"))
-        if recs.get(rid) is None:
+        rec = recs.get(rid)
+        if rec is None:
             return jsonify({"ok": False, "reason": "no-record"}), 404
         if b.get("clear"):
             recs.merge_data(rid, {"agent_ready": None})
+            _ready_notice_drop(rid)
             return jsonify({"ok": True, "ready": None})
         run = b.get("run") if isinstance(b.get("run"), dict) else {}
         view = {"sig": str(b.get("sig") or "")[:80], "at": _now_iso(),
@@ -15023,7 +15030,66 @@ def autoapply_agent_ready():
         return jsonify({"ok": False, "reason": "no-record"}), 400
     finally:
         recs.close()
-    return jsonify({"ok": True, "ready": view})
+    notice = _ready_notice(rid, rec, b.get("notice"), view) if isinstance(b.get("notice"), dict) else ""
+    return jsonify({"ok": True, "ready": view, "notice": notice})
+
+
+def _channel_paused(ch) -> bool:
+    """The official bot reports /stop as ``paused`` (cached status); the broker also answers a
+    send with 409 paused, which notify/ready.py treats the same way."""
+    return getattr(ch, "name", "") == "official" and bool((_OFFICIAL_CACHE.get("data") or {}).get("paused"))
+
+
+def _ready_notice(rid: int, rec: dict, notice: dict, view: dict) -> str:
+    """The Ready to send notice on Telegram (notify/ready.py): once per run, through the active
+    channel, never when it is paused or "Application updates" is off, held through quiet hours.
+    Best-effort: the bar already says Ready to send. Returns what happened."""
+    from datetime import datetime
+    from notify import ready as RN
+    try:
+        ch = _active_channel()
+    except Exception:          # noqa: BLE001 - no Telegram is fine
+        ch = None
+    if ch is None:
+        return "none"
+    try:
+        company = rec.get("company") or (view.get("run") or {}).get("company") or ""
+        key = RN.notice_key(rid, notice.get("run") or view.get("sig") or "")
+        text = RN.ready_text(rec.get("role") or "", company, notice)
+        return RN.deliver(_notify_state(), ch, key, rid, text, datetime.now().astimezone(),
+                          paused=_channel_paused(ch))
+    except Exception:          # noqa: BLE001
+        traceback.print_exc()
+        return "failed"
+
+
+def _ready_notice_drop(rid: int) -> None:
+    try:
+        from notify import ready as RN
+        RN.drop(_notify_state(), rid)
+    except Exception:          # noqa: BLE001
+        pass
+
+
+def _ready_still_waiting(rid: int) -> bool:
+    recs = _records()
+    try:
+        rec = recs.get(int(rid))
+        return bool(rec and _record_data(rec).get("agent_ready"))
+    finally:
+        recs.close()
+
+
+def _ready_notice_flush(ch) -> int:
+    """Held Ready to send notices go out once quiet hours end (the notify tick)."""
+    from datetime import datetime
+    from notify import ready as RN
+    try:
+        return RN.flush(_notify_state(), ch, datetime.now().astimezone(), _ready_still_waiting,
+                        paused=_channel_paused(ch))
+    except Exception:          # noqa: BLE001 - best-effort
+        traceback.print_exc()
+        return 0
 
 
 def _digest_text(rows: list) -> tuple[str, list | None]:

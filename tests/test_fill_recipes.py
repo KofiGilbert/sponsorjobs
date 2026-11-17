@@ -232,3 +232,16 @@ def test_prefs_route_dispatches_extension_events(client):
                json={"event": {"type": "applied", "url": "https://nowhere.example/"}}).get_json()
     assert r["ok"] is True and r["matched"] is False
     assert c.post("/api/profile/prefs", headers=EXT, json={"event": {"type": "nope"}}).status_code == 400
+
+
+def test_greenhouse_confirmation_page_counts_as_sent():
+    """Gusto, 2026-11-16: the submit worked and the pane landed on <board>/jobs/<id>/confirmation
+    ("Track your application"), but the bar said the page showed no confirmation. The URL and the
+    card's words are now Greenhouse success markers (tests/js/test_success_greenhouse.js)."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_success_greenhouse.js")],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stdout + out.stderr
