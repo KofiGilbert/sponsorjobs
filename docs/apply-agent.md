@@ -818,3 +818,55 @@ with it on, then `DEFAULT_ON` flips).
   tests/js/test_answer_labels.js and the notice checks in tests/js/test_ready_answers.js
   (tests/test_ready_answers.py), tests/js/test_success_greenhouse.js on
   tests/fixtures/forms/greenhouse_confirmation.html (tests/test_fill_recipes.py).
+
+## 22. Grounded answers before any ask; optional self-identification; the check's false alarms (2026-11-17)
+
+**Grounded answers** (`autoapply/grounded.py`). The planner answers a question about the person
+only in wordings a rule was written for, so each new wording went to the bar and Telegram
+although the profile says it ("Where in the US do you currently reside?" at Upgrade, "Current
+company" on Lever, "Do you currently reside in one of the following locations?" at Gusto). Now the
+ask route (`/api/autoapply/agent/ask`, both the shell's `known_only` check and the ask itself)
+first sends the page's still open questions, in ONE call, with the person's saved facts: where
+they live (city, state, postal code, country), each job, each school, their skills, and their own
+saved answers (the 30 most related to the page). Never a self-identification or legal value, a
+drafted answer, a password or code, nor resume text beyond those facts; stored self-identification
+values are withheld from the payload as a guard. Never asked of the model: self-identification,
+work authorization, visa, citizenship, legal attestations, signatures, consents, terms, essays,
+why-this-job questions, and salary unless a salary is saved.
+
+The model returns {answer, fact} or none per question. Code checks each one against the fact it
+cites and drops what it cannot verify (the person is then asked, once, and the answer saved as
+before):
+
+- a list question's answer is one of its options, exactly;
+- a place: names the fact's city, state, postal code or country, and no other state or country
+  (a free-text place has no other words); Yes only when the question or the choice names where
+  they live, No only when nothing on the question or its choices does and some place is named;
+- a job: the saved organization or title (a "current" question needs the current job), or dates
+  whose years are that job's; Yes only when the question names that organization or title;
+  never a No (a history is not proven complete);
+- a school: its school, degree, field or degree level (a "highest" question needs the highest);
+  Yes for a level only at or above it, and not while still studying for "completed"; never a No;
+- skills: each part is a saved skill; Yes only when the question names one (never "years of");
+- a saved answer: its question asks the same (the same key, or nothing this question asks is
+  new), and the answer is the saved one, or the option the saved one names.
+
+A grounded answer carries origin `grounded` and its fact's kind to the shell (`origins`, `facts`
+on the reply), is never saved to the library, and shows in Review answers flagged "Answered from
+your saved address. Check it." (work history, education, skills, one of your saved answers). Tried
+questions are cached per wording, options and facts for the session, so the check and the ask
+that follows never pay twice. Cost: about 2,000 tokens in and 150 out per page that has an
+eligible open question, about $0.003 on Haiku 4.5 and $0.006 on Sonnet 5.5; nothing when nothing
+is open.
+
+**Optional self-identification** (Upgrade, Greenhouse). "What is your veteran status?" and "What is
+your disability status?" stayed on "Select..." with both answers saved: the shell picked saved
+self-identification answers only for REQUIRED open questions. `fillSavedEeo` now also takes every
+empty self-identification control in the view (`emptySelfId`): the saved answer when a choice says
+it, else the page's decline.
+
+**The pre-submit check's false alarms.** The critic read "no resume attached" (Greenhouse shows
+the file's name where the upload box was) and "LGBTQ+, ethnicity still empty" (react-select keeps
+its choice beside its input). The shell now sends what the run filled (labels) and attached (file
+kinds) from its own record; the view marks those dropdowns filled, the prompt names both lists,
+and a line the record contradicts is dropped in code (`brain.false_alarm`).
