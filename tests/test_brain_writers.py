@@ -377,7 +377,9 @@ def test_the_telegram_summary_reads_the_brain_and_never_a_value(app):
 def test_worked_here_before_is_per_company(st):
     # (Phase 4) a Yes read from the resume is confirmed once per company before it is used
     assert F.worked_here(st, "Stanbic Bank", ["Stanbic Bank Ghana", "Viva"]) == ("Yes", "confirm")
-    assert F.worked_here(st, "Acme Corp", ["Stanbic Bank Ghana"]) is None                # never answered: asked
+    # (2026-11-17) a work history without the company answers No (tests/test_phoenix_asks.py)
+    assert F.worked_here(st, "Acme Corp", ["Stanbic Bank Ghana"]) == ("No", "history")
+    assert F.worked_here(st, "Acme Corp", []) is None                                    # no history: asked
     F.save_worked_here(st, "Acme Corporation", "No", question="Have you worked for us before?")
     assert F.worked_here(st, "ACME Corp.", []) == ("No", "library")                        # the same company
     assert F.worked_here(st, "Globex", ["Stanbic Bank"]) == ("No", "derived")             # answers from history
@@ -431,12 +433,19 @@ def test_an_asked_worked_here_answer_is_saved_for_that_company_only(app):
         out["r"] = c.post("/api/autoapply/agent/ask", json={"question": "Have you ever worked for this company before?",
                                                              "options": ["Yes", "No"], "timeout_s": 10, "id": "w1",
                                                              "record_id": rid}, headers=H).get_json()
-    th = threading.Thread(target=ask)
-    th.start()
-    time.sleep(1.2)
-    c.post("/api/autoapply/agent/answer", json={"id": "w1", "answer": "No", "exact": True, "index": 0}, headers=H)
-    th.join(15)
+    # (2026-11-17) Initech is not in the person's work history: answered No from it, never asked
+    ask()
+    assert out["r"]["known"] and out["r"]["answer"] == "No"
     st = A._brain()
+    assert not _active(st, "@previously_worked", F.company_key("Initech"))       # history, not a saved answer
+    # an answer the person gives on the bar (a company in their history is asked) is kept for that
+    # company only
+    lib = A._answer_lib()
+    try:
+        A._save_answer(lib, "Have you ever worked for this company before?", "No", company="Initech",
+                       via="ask_bar", ref="w1")
+    finally:
+        lib.close()
     assert _active(st, "@previously_worked", F.company_key("Initech"))[0]["source_ref"] == "ask_bar:w1"
     assert not _facts(st, "@previously_worked", "", "answers.db")                       # never every employer's
     assert A._worked_here("Globex") == ("No", "derived")

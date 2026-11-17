@@ -6742,7 +6742,9 @@ def _save_answer(lib, question: str, answer: str, *, source: str = "you", compan
             ok = _E.save_country_salary(st, country, answer, question=question,
                                         source_ref=":".join(x for x in (via, ref) if x))
             return {"key": key, "question": question, "answer": answer} if ok else None
-    if key == "@previously_worked" and company:
+    from autoapply.planner import worked_here_question
+    if company and (key == "@previously_worked" or (worked_here_question(question, company)
+                                                     and re.match(r"^\W*(yes|no)\b", str(answer or ""), re.I))):
         st = _brain()
         if st is not None:
             yes = _F.save_worked_here(st, company, answer, question=question, source=source,
@@ -13514,7 +13516,8 @@ def autoapply_plan():
                            drafted=[x for x in (data.get("screening") or []) if isinstance(x, dict)],
                            cover_letter=str(data.get("cover_letter") or ""), cover_letter_path=letter,
                            applicant=applicant, resume_path=resume, job_country=_job_country(data),
-                           company=company, eeo_decline=_eeo_decline(), **_recall_ctx(company, data))
+                           company=company, eeo_decline=_eeo_decline(), accept_notices=_accept_notices(),
+                           **_recall_ctx(company, data))
         res = plan_known(fields, ctx)
         open_ = res.left + [f for f in res.rest if (f.type or "").lower() != "file"]
         if open_ and ctx.per_company:
@@ -13643,7 +13646,7 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
     from autoapply import KnownContext, plan_known, resolve_plan
     from autoapply.asks import is_eeo
     from autoapply.fields import FormField
-    from autoapply.planner import residence_withheld
+    from autoapply.planner import residence_withheld, worked_here_question
     labels = [lab for lab in labels if not is_eeo(lab)]
     if not labels:
         return {}
@@ -13659,7 +13662,7 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
                            drafted=[x for x in ((data or {}).get("screening") or []) if isinstance(x, dict)],
                            cover_letter="", applicant=applicant, resume_path="",
                            job_country=_job_country(data or {}), company=company,
-                           eeo_decline=_eeo_decline(), **recall)
+                           eeo_decline=_eeo_decline(), accept_notices=_accept_notices(), **recall)
         if recall:
             # (Phase 4) new wordings: the cached mapping (or one call for the page)
             mapped, confirm, none = _label_maps([{"label": lab} for lab in labels], company, lib)
@@ -13687,6 +13690,8 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
             if lab in out or residence_withheld(lab, wa):
                 continue
             k = _norm_q(lab)
+            if recall.get("per_company") and k != "@previously_worked" and worked_here_question(lab, company):
+                k = "@previously_worked"
             if k in recall.get("hold", ()) or (recall.get("per_company") and k == "@previously_worked"):
                 continue                       # asked, or answered for this company only (above)
             if lab in skip or k in recall.get("withhold", ()) or (k == "@salary" and recall.get("job_salary")):
@@ -13810,6 +13815,7 @@ def _rewords(items: list, recall: dict, confirm: dict, company: str, country: st
         return {}
     from autoapply.answers import normalize as _nq
     from autoapply.basics import parse_salary
+    from autoapply.planner import worked_here_question
     from applicant import expiry as _E
     from applicant import facts as _F
     from applicant import mapper as _M
@@ -13826,6 +13832,8 @@ def _rewords(items: list, recall: dict, confirm: dict, company: str, country: st
                 continue
             q, page = it["question"], list(it.get("page_options") or it.get("all_options") or [])
             k = _nq(q)
+            if recall.get("per_company") and k != "@previously_worked" and worked_here_question(q, company):
+                k = "@previously_worked"            # "Are you a current or former <company> employee?"
             # a salary question's own choices, or the amounts this question offered last time
             free = not page or all(parse_salary(o) for o in page)
             if q in (confirm or {}):
@@ -14303,7 +14311,7 @@ def autoapply_agent_ask():
         it = {"question": q, "options": AK.order_options(q, cleaned), "all_options": every,
               "partial": bool(x.get("partial")) or len(cleaned) > len(every),
               "hint": " ".join(str(x.get("hint") or "").split())[:400],
-              "context": " ".join(str(x.get("context") or b.get("context") or "").split())[:120],
+              "context": AK.trim_label(x.get("context") or b.get("context") or "", 120),
               "answer": None, "origin": "", "force": force_all or any(AK.same_question(q, f) for f in forced)}
         dup = next((o for o in items if AK.same_question(o["question"], q)), None)
         if dup is None:
@@ -14336,22 +14344,24 @@ def autoapply_agent_ask():
         try:
             eeo_decline = _eeo_decline()
             wa = _work_auth()
+            notices = _accept_notices()
             if recall:
                 # (Phase 4) wordings no rule knows: the cached mapping, or one call for the page
                 mapped, confirm, none = _label_maps(
                     [{"label": it["question"], "options": it["page_options"]} for it in unforced], company, lib)
                 if confirm:
                     confirm = _confirmable(confirm, KnownContext(work_auth=wa, library=lib, job_country=country,
-                                                                 eeo_decline=eeo_decline, **recall),
+                                                                 eeo_decline=eeo_decline, accept_notices=notices,
+                                                                 **recall),
                                            {it["question"]: it["page_options"] for it in unforced})
             for it in unforced:
                 k = AK.known_answer(it["question"], it["page_options"], partial=it["partial"], library=lib,
                                     work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"],
                                     mapped=mapped, confirm=confirm, company=company,
-                                    eeo_fallback=bool(b.get("known_only")), **recall) if recall else \
+                                    eeo_fallback=bool(b.get("known_only")), accept_notices=notices, **recall) if recall else \
                     AK.known_answer(it["question"], it["page_options"], partial=it["partial"], library=lib,
                                     work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"],
-                                    eeo_fallback=bool(b.get("known_only")))
+                                    eeo_fallback=bool(b.get("known_only")), accept_notices=notices)
                 if k:
                     it["answer"], it["origin"] = k
             # Before anything is asked: what the person's saved facts answer (one call per page,
@@ -14705,7 +14715,8 @@ def _questions_result(aid: str, how: str, reg: list, ctx: dict, sent: bool, via:
                 _brain_do(_M.confirm, it["question"], key)
                 k = AK.known_answer(it["question"], it.get("page_options") or [], partial=True, library=lib,
                                     work_auth=_work_auth(), eeo_decline=_eeo_decline(), job_country=country,
-                                    mapped={it["question"]: key}, **{**(recall or {}), "hold": frozenset()})
+                                    mapped={it["question"]: key}, accept_notices=_accept_notices(),
+                                    **{**(recall or {}), "hold": frozenset()})
                 it["answer"], it["origin"] = (k[0], k[1]) if k else (None, "")
         finally:
             lib.close()
@@ -15070,6 +15081,10 @@ def autoapply_agent_parked_take(rid: int):
         rows = _parked_load()
         e = rows.get(str(rid))
         if not e:
+            # (2026-11-17, Phoenix Contact) the Auto-apply row kept an earlier run's park reason
+            # ("I tried wait_for form, reload ... could not get past this") while a new run was
+            # asking: the row's copy goes with the run that replaced it, entry or not.
+            _record_park(rid, None)
             return jsonify({"ok": False, "reason": "none"})
         if e.get("state") == "waiting" and not b.get("drop"):
             return jsonify({"ok": False, "reason": "waiting"})
@@ -15319,6 +15334,16 @@ def _ask_progress_of(aid: str) -> list:
 def _terms_pref() -> str:
     v = str(_brain_prefs().get("accept_required_terms") or "ask")
     return v if v in ("ask", "always") else "ask"
+
+
+def _accept_notices() -> bool:
+    """(2026-11-17) The standing consent to required notices also answers acknowledgement
+    questions (a background check as a condition of employment, a GDPR or privacy notice, at-will
+    employment, "the information is true"): their affirmative choice (autoapply/consents.py)."""
+    try:
+        return _terms_pref() == "always"
+    except Exception:          # noqa: BLE001 - no consent known: asked as before
+        return False
 
 
 def _terms_company(rec, b: dict) -> str:

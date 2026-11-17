@@ -51,6 +51,7 @@ KEYS: dict[str, str] = {
     "@years_experience": "total years of professional experience",
     "@over_18": "whether the person is at least 18 years old",
     "@previously_worked": "whether the person has worked for this company before",
+    "@restrictive_covenants": "whether the person has a non-compete, non-solicitation or other restrictive covenant with an employer",
     "@citizenship": "the person's country of citizenship",
     "@citizenship2": "a second country of citizenship",
     "@preferred_name": "the name the person prefers to be called",
@@ -148,6 +149,12 @@ def rule_known(label: str, company: str = "") -> bool:
     if not key or key.startswith("@"):
         return True
     if workauth.classify(lab) or contact_key(lab) or is_eeo(lab):
+        return True
+    # (2026-11-17) "Are you a current or former <company> employee?", a marketing opt-in, an
+    # acknowledgement of a notice: the code's own rules answer them, never a one-tap confirm
+    from autoapply import consents
+    from autoapply.planner import worked_here_question
+    if any(worked_here_question(x, company) or consents.is_optin(x) or consents.is_acknowledgement(x) for x in (lab, label)):
         return True
     if _LETTER.search(lab) or _RESUME.search(lab) or A.is_per_job(lab, company) or _FURNITURE.search(lab):
         return True

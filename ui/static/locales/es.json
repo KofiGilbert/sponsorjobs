@@ -1607,6 +1607,8 @@
   "aa.ans.from.closest": "Coincidencia más cercana",
   "aa.ans.from.skills": "Tus habilidades",
   "aa.ans.from.grounded": "Tus datos guardados",
+  "aa.ans.from.consent": "Tu consentimiento a los avisos obligatorios",
+  "aa.ans.from.optin": "Mensajes de marketing rechazados",
   "aa.ans.flag.ai": "Lo eligió la IA. Revísalo.",
   "aa.ans.flag.closest": "Opcional. Elegido como la opción más cercana de la lista.",
   "aa.ans.flag.skills": "Opcional. Elegido de tus habilidades.",

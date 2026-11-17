@@ -870,3 +870,35 @@ the file's name where the upload box was) and "LGBTQ+, ethnicity still empty" (r
 its choice beside its input). The shell now sends what the run filled (labels) and attached (file
 kinds) from its own record; the view marks those dropdowns filled, the prompt names both lists,
 and a line the record contradicts is dropped in code (`brain.false_alarm`).
+
+## 23. Standing rules for opt-ins, acknowledgements and worked-here; the park reason (Phoenix Contact, 2026-11-17)
+
+After 15 fields on a Greenhouse form (Phoenix Contact) the run asked five questions; four are now
+answered by category rules (`autoapply/consents.py`, `planner.worked_here_question`), in the
+planner and in the ask route's known check, before the grounded call:
+
+- **Worked here** in its "employee" wordings ("Are you a current or former Phoenix Contact
+  employee?", "<company> employee (current or former)", "previously employed by/with <company>",
+  "worked for <company> before"; never a relative, a referral, or "why do you want to work at")
+  is the per-company question. `applicant/facts.worked_here` now answers **No from the work
+  history** when the person has one and the company is not in it (origin `history`); a company in
+  it is still the one-tap confirm. The label mapper never sees these wordings (`rule_known`), and
+  a mapped @previously_worked wording that names the company needs no tap. The person's Yes or No
+  to such a wording is saved for that company only.
+- **Marketing and communication opt-ins** (texts, SMS policy, newsletters, job alerts, talent
+  community) get the page's No / decline choice (origin `optin`), unless the person saved a yes
+  under `@marketing_optin` (default no; onboarding will expose it). An optional box stays
+  unticked. A required question with no way to decline is the person's (a forced consent).
+- **Acknowledgements** (a background check or drug screening as a condition of employment, also
+  worded "would you be willing to ... complete any background check", GDPR, a privacy notice,
+  at-will employment, "I certify the information is true") get the affirmative choice under the
+  same standing consent that accepts required terms (`accept_required_terms` "always"; origin
+  `consent`). Without it they are asked as before. A question that asks the person to disclose
+  (a conviction, a failed screen, an existing non-compete, a termination) is never one.
+- **Restrictive covenants** are a fact: one key, `@restrictive_covenants`, asked once and reused on
+  every wording ("Are you bound by a non-compete agreement?"); never grounded.
+- The ask's context line ("After “...”, the application asks") is cut at a word boundary with an
+  ellipsis and never inside a bracket (`trim_label`, `trimLabel`).
+- A new run on a record clears an earlier run's park reason on the Auto-apply row even when the
+  park file no longer holds the entry (`/parked/<id>/take`).
+- Tests: tests/test_phoenix_asks.py.

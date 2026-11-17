@@ -206,6 +206,16 @@ _CANON: list[tuple[str, re.Pattern]] = [
     ("portfolio", re.compile(r"^(portfolio|personal website|website)( url| link)?$")),
     # Workday words it "were you previously an employee, contractor or intern of <company>, <its
     # affiliates...>" (Country Financial, 2026-10-28); the company names are not the question.
+    # (2026-11-17) "Do you have any restrictive covenants (non-compete, non-solicitation,
+    # confidentiality) with either your current or any prior employer?", "Are you bound by a
+    # non-compete agreement?": one fact, asked once. Never "Would you be willing to sign one?".
+    ("restrictive_covenants", re.compile(
+        r"^(?!.*\b(willing|would you|will you|agree to sign|able to sign|sign an?)\b)"
+        r".*\b(restrictive covenants?|non ?compete|non ?competition|non ?solicitation)\b")),
+    # The standing choice on marketing messages (autoapply/consents.py), saved by its own wording
+    # only: an answer to one form's opt-in question never becomes it.
+    ("marketing_optin", re.compile(r"^(may (job sites|employers|companies) send you marketing( texts| messages)?"
+                                   r"( and e ?mails)?|marketing opt ?in)$")),
     ("previously_worked", re.compile(r"(have you )?(ever )?(previously )?(worked|been employed) "
                                      r"(for|at|by) (us|this company|our company) before"
                                      r"|previously (worked|been employed) (for|at|by) (us|this company)"

@@ -82,6 +82,10 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     _k("@over_18", "yes_no", LEGAL, choices=_YES_NO, ask="Are you at least 18 years of age?",
        legacy=("app_prefs.json:over_18",)),
     _k("@previously_worked", "yes_no", LEGAL, ask="Have you worked for this company before?"),
+    # (2026-11-17) A non-compete, non-solicitation or confidentiality covenant with an employer:
+    # a fact asked once ever, then reused on every wording that asks it.
+    _k("@restrictive_covenants", "yes_no", LEGAL, choices=_YES_NO,
+       ask="Do you have a non-compete or other restrictive covenant with a current or past employer?"),
     _k("security_clearance", sensitivity=LEGAL),
     # ---- preferences
     _k("@salary", "money", reconfirm_days=183, ask="Desired annual salary",
@@ -98,6 +102,9 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     # accepts them for every application, "ask" (the default, never stored) asks per site.
     _k("accept_required_terms", "choice", choices=("ask", "always"),
        ask="Accept the terms a site requires to apply?", legacy=("app_prefs.json:accept_required_terms",)),
+    # Marketing texts, emails and job alerts a form offers (autoapply/consents.py): declined unless
+    # this says Yes. Never set from an answer to one form's question.
+    _k("@marketing_optin", "yes_no", choices=_YES_NO, ask="May job sites send you marketing texts and emails?"),
     # ---- voluntary self-identification (EEO)
     _k("@gender", "choice", EEO, ask="Gender"),
     _k("@sex", "choice", EEO, ask="Sex"),
