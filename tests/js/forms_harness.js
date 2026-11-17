@@ -13,6 +13,7 @@
 //   {do:"framesEval", js, as}       evaluate js in every discovered frame -> [results]
 //   {do:"framesUpload", refsFrom, file, as}  CDP file upload in each frame for refs in a prior result
 //   {do:"frameValues", as}          window.fxValues() of the first child frame (main world)
+//   {do:"keys", sel, text, enter?}   real key presses into a box (then Enter)
 //   {do:"wait", ms}
 // Prints {results:{...}} as JSON.
 "use strict";
@@ -103,6 +104,14 @@ async function freePort() {
         if (st.as) results[st.as] = v;
       } else if (st.do === "click") {
         await page.click(st.sel);
+      } else if (st.do === "keys") {
+        // REAL keys into a box, the way the shell's searchPicks types (Workday search prompts
+        // filter only on a trusted Enter)
+        await page.click(st.sel);
+        await page.keyboard.press("ControlOrMeta+A");
+        await page.keyboard.press("Backspace");
+        await page.keyboard.type(st.text);
+        if (st.enter) await page.keyboard.press("Enter");
       } else if (st.do === "frameClick") {
         await page.frames()[1].click(st.sel);
       } else if (st.do === "wait") {

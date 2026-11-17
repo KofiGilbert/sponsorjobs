@@ -170,6 +170,7 @@
   function AriaRadioGroup(host, cfg) {
     const lid = "rg-" + (seq++);
     const group = h("div", { role: "radiogroup", "aria-labelledby": lid });
+    if (cfg.required) group.setAttribute("aria-required", "true");
     for (const o of cfg.options) {
       const r = h("div", { role: "radio", "aria-checked": "false", tabindex: "0", class: "chip", text: o });
       r.addEventListener("click", () => setTimeout(() => {

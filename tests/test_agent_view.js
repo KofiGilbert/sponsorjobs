@@ -470,7 +470,7 @@ test("multipage: after Next the step 2 fields are new, headings and errors are t
   assert.ok(s.length >= 3, b.text);
   assert.ok(s.some((l) => /<combobox label="Are you legally authorized to work in the United States\?"/.test(l)), b.text);
   assert.ok(s.some((l) => /<radio label="Will you now or in the future require visa sponsorship\?" option="Yes" checked=false>/.test(l)), b.text);
-  assert.ok(s.some((l) => /<input type=text label="How many years of experience do you have\?" value="">/.test(l)), b.text);
+  assert.ok(s.some((l) => /<input type=text label="How many years of experience do you have\?" value=""( required)?>/.test(l)), b.text);
   assert.ok(!starred(b.text).some((l) => /<button>Next<\/button>/.test(l)), "Next was seen before");
   // A visible validation error is rendered for the model.
   await page.evaluate(() => {

@@ -412,11 +412,13 @@ function getApp(path) {
     .then((r) => (r.ok ? r.json() : null)).catch(() => null);
 }
 
-function fetchAutofillPayload() {
+function fetchAutofillPayload(recordId) {
   // Same trust position as the extension's background worker: local shell code
   // talking to the local engine, so it sends the guarded-route header. The payload
-  // carries the fill-recipe table too (also served at /api/autofill/recipes).
-  return net.fetch(SERVER + "/api/profile/autofill",
+  // carries the fill-recipe table too (also served at /api/autofill/recipes), and with a
+  // record the work history of that application's resume (for Workday's My Experience).
+  const q = recordId !== undefined && recordId !== null && recordId !== "" ? "?record_id=" + encodeURIComponent(recordId) : "";
+  return net.fetch(SERVER + "/api/profile/autofill" + q,
                    { headers: { "X-Tailor-Extension": "1" } })
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
@@ -575,8 +577,28 @@ const RESUME_INPUT_JS = `(() => {
   return rest.length === 1 ? rest[0] : null;
 })()`;
 
+// Is this file already in the box's upload area (Workday keeps a draft across visits and empties
+// its file input after each upload)? The same name, and the same size when the area shows one.
+// Extra copies the area lists are removed with its own Delete buttons, the first one kept.
+async function alreadyAttached(wc, ref, filePath, evalFn) {
+  const run = evalFn || ((expr) => wc.executeJavaScript(expr, true));
+  let size = 0;
+  try { size = fs.statSync(filePath).size; } catch (e) { size = 0; }
+  const name = JSON.stringify(path.basename(filePath)), r = JSON.stringify(ref || "");
+  try {
+    const n = await run(`window.TailorAutofill.fileCopies ? window.TailorAutofill.fileCopies(${r} ? document.querySelector('[data-tailor-ref="' + ${r} + '"]') : null, ${name}, ${size}) : 0`);
+    if (!n && !ref) {
+      const listed = await run(`window.TailorAutofill.fileListed ? window.TailorAutofill.fileListed("", ${name}, ${size}) : false`);
+      if (!listed) return false;
+    } else if (!n) return false;
+    if (n > 1) await run(`window.TailorAutofill.dropDuplicateFiles(${r}, ${name})`);
+    return true;
+  } catch (e) { return false; }
+}
+
 async function attachResume(wc, filePath) {
   if (!filePath || !fs.existsSync(filePath)) return false;
+  if (await alreadyAttached(wc, "", filePath)) return "listed";
   let attached = false;
   const release = acquireDebugger(wc);
   if (!release) return false;
@@ -679,6 +701,7 @@ async function cdpUploadFiles(wc, refs, filePath) {
         if (!objectId) continue;
         const file = pathOf(ref);
         if (!file) continue;
+        if (await alreadyAttached(wc, ref, file)) continue;      // never the same file twice
         // By objectId: DOM.requestNode needs DOM.getDocument first, and without it every
         // upload here failed quietly (found on the real Gusto form, 2026-11-16).
         await dbg.sendCommand("DOM.setFileInputFiles", { files: [file], objectId });
@@ -726,6 +749,90 @@ async function openFrameSession(wc) {
   }
 }
 
+// Type into boxes that take only real key presses (Workday's date segments: a value set from
+// script shows but is not kept, so Next says "Invalid Date"). The engine names them ({ref, text}),
+// empty ones only; each is focused and typed with real key events, then left with a blur.
+// Main frame only.
+async function typeKeyOps(wc, keys) {
+  if (!keys || !keys.length) return 0;
+  const release = acquireDebugger(wc);
+  if (!release) { if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps: debugger busy"); return 0; }
+  let n = 0;
+  try {
+    const dbg = wc.debugger;
+    for (const k of keys) {
+      const sel = JSON.stringify('[data-tailor-ref="' + k.ref + '"]');
+      const ok = await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (!el) return false;
+        try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
+        el.focus(); return document.activeElement === el; })()`, true).catch(() => false);
+      if (!ok) continue;
+      // The engine only names EMPTY boxes, so nothing is cleared first: a Backspace in an empty
+      // date segment steps back into the one before it and erases that.
+      for (const ch of String(k.text)) {
+        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
+        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
+      }
+      n++;
+    }
+    await wc.executeJavaScript("(() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); })()", true).catch(() => null);
+  } catch (e) {                                  // what was typed stands; the rest is left on the page
+    if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps:", String(e && e.message || e));
+  } finally { release(); }
+  if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps: typed " + n + " of " + keys.length);
+  return n;
+}
+
+// Search lists that filter only on a real Enter (Workday's Field of Study and Skills): for each
+// one the engine names, click it, type a query with real keys, press Enter, and let the engine
+// pick the best REAL option it lists (searchChoice); the next query only when nothing fit. Both
+// are optional questions: nothing that fits leaves them empty. At most SEARCH_MS in all.
+const SEARCH_MS = 20000;
+async function searchPicks(wc, ops) {
+  if (!ops || !ops.length) return 0;
+  const release = acquireDebugger(wc);
+  if (!release) return 0;
+  const dbg = wc.debugger;
+  const key = async (k, code, vk) => {
+    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, windowsVirtualKeyCode: vk });
+    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: k, code, windowsVirtualKeyCode: vk });
+  };
+  const until = Date.now() + SEARCH_MS;
+  let picked = 0;
+  try {
+    for (const op of ops) {
+      const sel = JSON.stringify('[data-tailor-ref="' + op.ref + '"]');
+      let got = 0;
+      for (const q of (op.queries || [])) {
+        if (Date.now() > until || got >= (op.max || 1)) break;
+        const box = await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (!el) return null;
+          try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
+          const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width }; })()`, true).catch(() => null);
+        if (!box || !(box.w > 0)) break;
+        await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
+        await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
+        await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (el && el.select) el.select(); })()`, true).catch(() => null);
+        await key("Backspace", "Backspace", 8);
+        for (const ch of String(q)) {
+          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
+          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
+        }
+        await key("Enter", "Enter", 13);
+        await new Promise((r) => setTimeout(r, 1500));
+        const spec = JSON.stringify({ kind: op.kind, want: op.want || [], items: op.items || [] });
+        const r = await wc.executeJavaScript(`window.TailorAutofill.searchChoice(${JSON.stringify(op.ref)}, ${spec})`, true).catch(() => null);
+        if (r && r.ok) { got++; picked++; }
+      }
+      await wc.executeJavaScript(`(async () => { const el = document.querySelector(${sel}); if (el && el.value) {
+          const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; set.call(el, "");
+          el.dispatchEvent(new Event("input", { bubbles: true })); }
+        return window.TailorAutofill.closeSearch(${JSON.stringify(op.ref)}); })()`, true).catch(() => null);
+    }
+  } catch (e) {
+    if (process.env.SJ_AGENT_DEBUG === "1") console.warn("searchPicks:", String(e && e.message || e));
+  } finally { release(); }
+  return picked;
+}
+
 // What one fill run did on one page, summed over the top page and its frames.
 function sumPre(list) {
   const out = { filled: 0, system: "", system_name: "", next_page: false, continue_hint: "",
@@ -748,6 +855,9 @@ function sumPre(list) {
 // reports {filled, left:[labels]} for this page, saves that on the application record, and keeps
 // watching for the person's Next so the following page fills itself (never clicking Next or
 // Submit itself).
+const PLAN_MS = Number(process.env.SJ_AGENT_PLAN_MS) > 0 ? Number(process.env.SJ_AGENT_PLAN_MS) : 25000;
+let _fillPhase = "";
+function fillPhase() { return _fillPhase; }
 async function runAutoApplyOnPane(recordId, opts) {
   opts = opts || {};
   if (!pane) return { ok: false, reason: "no-page" };
@@ -788,13 +898,22 @@ async function runAutoApplyOnPane(recordId, opts) {
     // Order of play: 1. the site's fill recipe, 2. the label patterns, 3. custom widgets (all
     // inside fillAsync), 4. the model plan for whatever is STILL empty. Deterministic first, the
     // model last, and the model only ever sees field structure, never the person's data.
-    const payload = await fetchAutofillPayload();
+    const t0 = Date.now(), ms = {};
+    // Each phase's time, and the phase running now (fillPhase), so a fill that runs past the
+    // agent's cap says WHERE it stood ("fill timed out while the AI planned 112 fields").
+    const lap = (k, next) => { ms[k] = (ms[k] || 0) + (Date.now() - (lap.at || t0)); lap.at = Date.now(); _fillPhase = next || ""; };
+    _fillPhase = "reading your saved answers";
+    const payload = await fetchAutofillPayload(recordId);
+    lap("payload", "filling the page");
     const havePayload = !!(payload && payload.loaded !== false);
     const fillExpr = havePayload ? `window.TailorAutofill.fillAsync(${JSON.stringify(payload)})` : "null";
     const pres = [];
     if (havePayload) {
       try { pres.push(await wc.executeJavaScript(fillExpr, true)); } catch (e) { /* fill what we can below */ }
+      if (pres[0] && pres[0].keys && pres[0].keys.length) await typeKeyOps(wc, pres[0].keys);
+      if (pres[0] && pres[0].searches && pres[0].searches.length) pres[0].filled = (pres[0].filled || 0) + await searchPicks(wc, pres[0].searches);
     }
+    lap("engine", "reading the form");
     fr = await openFrameSession(wc);
     const liveFrames = [];
     for (const ctx of (fr ? fr.ctxs : [])) {
@@ -808,19 +927,27 @@ async function runAutoApplyOnPane(recordId, opts) {
     const extract = "window.TailorAutofill.extractFormAsync({ onlyEmpty: true })";
     let fields = (await wc.executeJavaScript(extract, true)) || [];
     for (const ctx of liveFrames) fields = fields.concat((await fr.eval(ctx, extract)) || []);
+    lap("extract", fields.length ? "the AI planned " + fields.length + " fields" : "checking what is left");
 
     let applied = { filled: 0, uploaded: 0, pending_upload: 0, skipped: 0 };
     let planReason = "", wantsLetter = false, letterAttached = false, declined = 0;
     if (fields.length) {
       let plan = null;
       try {
+        // Capped (PLAN_MS): a slow model call ends this page's plan with a reason instead of
+        // running the whole fill past the agent's cap; what the engine filled stands.
         const resp = await net.fetch(SERVER + "/api/autoapply/plan", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" },
           body: JSON.stringify({ url, record_id: recordId, fields }),
+          signal: AbortSignal.timeout(PLAN_MS),
         });
         plan = resp.ok ? await resp.json() : null;
-      } catch (e) { plan = null; }
+      } catch (e) {
+        plan = (e && (e.name === "TimeoutError" || e.name === "AbortError"))
+          ? { ok: false, reason: "The AI planner took longer than " + Math.round(PLAN_MS / 1000) + " s on " + fields.length + " fields." } : null;
+      }
+      lap("plan", "filling the planned fields");
       wantsLetter = !!(plan && plan.wants_letter);
       if (plan && plan.ok) {
         const ops = plan.ops || [];
@@ -853,6 +980,7 @@ async function runAutoApplyOnPane(recordId, opts) {
           applied.pending_upload += ((rep && rep.uploads) || []).length;
         }
         applied.pending_upload = Math.max(0, applied.pending_upload - applied.uploaded);
+        lap("ops", "checking what is left");
       } else {
         planReason = (plan && plan.reason) || "no-plan";
       }
@@ -862,6 +990,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     let left = (await wc.executeJavaScript("window.TailorAutofill.leftover()", true)) || [];
     for (const ctx of liveFrames) left = left.concat((await fr.eval(ctx, "window.TailorAutofill.leftover()")) || []);
     left = [...new Set(left)].slice(0, 60);
+    lap("leftover", "finishing");
     const filled = pre.filled + applied.filled;
 
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
@@ -883,7 +1012,7 @@ async function runAutoApplyOnPane(recordId, opts) {
              declined,
              system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
              continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
-             captcha: pre.captcha };
+             captcha: pre.captcha, ms };
   } catch (err) {
     return { ok: false, reason: "inject-failed" };
   } finally {
@@ -1091,7 +1220,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 // are pressed without asking). One run at a time.
 const agent = createAgent({
   getPane: () => pane, openInPane, waitPaneLoad, autofillCore, agentViewSource,
-  runAutoApplyOnPane, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
+  runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
   isNewPage, attachResume,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
 });

@@ -33,7 +33,21 @@
     return new RegExp("^" + esc + "$", "i");
   }
 
-  function qsaSafe(sel, root) {
+  // Whether node a comes before node b in the document. compareDocumentPosition where the DOM has it;
+// the lightweight test DOMs (tests/js/*_harness.js) may not, so fall back to a walk of the tree.
+function precedes(a, b) {
+  if (a && typeof a.compareDocumentPosition === "function") {
+    return !!(a.compareDocumentPosition(b) & 4);           // Node.DOCUMENT_POSITION_FOLLOWING
+  }
+  const order = [];
+  const walk = (n) => { if (!n) return; order.push(n); for (const c of n.children || n.childNodes || []) walk(c); };
+  let root = a; while (root && root.parentElement) root = root.parentElement;
+  walk(root);
+  const ia = order.indexOf(a), ib = order.indexOf(b);
+  return ia >= 0 && ib >= 0 && ia < ib;
+}
+
+function qsaSafe(sel, root) {
     try { return Array.from((root || document).querySelectorAll(sel)); } catch (e) { return []; }
   }
 
@@ -687,9 +701,22 @@
   }
   function groupQuestion(control) { return norm(groupQuestionText(control)); }
   // The question in its own case (what the plan and the "left for you" list show).
+  // The legend of the nearest fieldset that has one: Workday's CC-305 wraps its three boxes in an
+  // inner fieldset with no legend, inside the one whose legend is the question ("Please check one
+  // of the boxes below:"); reading only the inner one named each box its own question and the
+  // agent asked about "I do not want to answer" (Uline, 2026-11-16).
+  function legendOf(control) {
+    const inner = control.closest("fieldset");
+    for (let fs = inner, i = 0; fs && i < 4; fs = fs.parentElement && fs.parentElement.closest("fieldset"), i++) {
+      // an outer fieldset's legend asks THIS question only when the outer one holds nothing else
+      if (fs !== inner && qsaSafe("input:not([type=hidden]), select, textarea", fs).some((c) => !inner.contains(c))) break;
+      const lg = [...fs.children].find((c) => c.tagName === "LEGEND") || (fs === inner ? fs.querySelector("legend") : null);
+      if (lg && cleanText(lg.textContent) && !lg.contains(control)) return cleanText(lg.textContent);
+    }
+    return "";
+  }
   function groupQuestionText(control) {
-    const fs = control.closest("fieldset");
-    if (fs) { const lg = fs.querySelector("legend"); if (lg && cleanText(lg.textContent)) return cleanText(lg.textContent); }
+    { const lg = legendOf(control); if (lg) return lg; }
     const ctype = String(control.type || "").toLowerCase();
     const radioName = (ctype === "radio" || ctype === "checkbox") && control.name ? control.name : null;
     let node = control.parentElement;
@@ -714,11 +741,20 @@
   }
   const cleanText = (t) => String(t || "").replace(/\s+/g, " ").trim();
 
+  // A control inside an open dropdown's option list is a CHOICE of that dropdown, never a
+  // question of the form: Workday's Field of Study and Skills lists draw a radio or checkbox in
+  // every option row, and a list left open once flooded the plan with about 100 "Accounting not
+  // checked" fields, so the model call ran past the fill's time cap (Uline, 2026-11-16).
+  const POPUP_LIST_SEL = "[role='option'], [data-automation-id='activeListContainer'], [data-automation-id='promptOption']";
+  function inPopupList(el) {
+    try { return !!(el && el.closest && el.closest(POPUP_LIST_SEL)); } catch (e) { return false; }
+  }
+
   function radioGroups() {
     const groups = new Map();
     let n = 0;
     qsaDeep('input[type="radio"]').forEach((r) => {
-      if (r.disabled) return;
+      if (r.disabled || inPopupList(r)) return;
       const key = r.name || ("__anon" + (n++));
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
@@ -826,6 +862,78 @@
   }
   function resumeInputOpen() { return !!resumeInput(); }
 
+  // ---- a file the box already holds: never upload it twice
+  // Workday keeps a draft application across visits and clears its file input after each upload,
+  // so every visit to My Experience attached the resume again (three copies, Uline 2026-11-16).
+  // The box's own upload area lists what it holds by name (and size): the same name, and the same
+  // size when one is shown, means it is already there.
+  function uploadArea(f) {
+    let box = f.parentElement, best = null;
+    for (let i = 0; box && i < 7; box = box.parentElement, i++) {
+      if (qsaSafe('input[type="file"]', box).some((x) => x !== f)) break;      // another box's area
+      best = box;
+      if (qsaSafe("h1, h2, h3, h4, h5, h6, [role='heading'], legend", box).length) break;
+    }
+    return best;
+  }
+  function sizeTexts(text) {
+    const out = [];
+    const re = /(\d+(?:[.,]\d+)?)\s*(bytes|b|kb|mb)\b/gi;
+    let m;
+    while ((m = re.exec(text))) {
+      const n = parseFloat(m[1].replace(",", ".")), u = m[2].toLowerCase();
+      out.push(u === "mb" ? n * 1048576 : u === "kb" ? n * 1024 : n);
+    }
+    return out;
+  }
+  // How many times the box's area lists a file of this name (and size, when the area shows sizes).
+  function fileCopies(f, name, size) {
+    const area = f && uploadArea(f);
+    if (!area || !name) return 0;
+    const want = cleanText(name).toLowerCase();
+    // one entry per delete / remove button that names the file, else per text mention
+    const dels = qsaSafe("button, [role='button']", area).filter((b) => {
+      const t = cleanText(b.getAttribute("aria-label") || b.textContent || "").toLowerCase();
+      return /^(delete|remove)\b/.test(t) && t.includes(want);
+    });
+    let n = dels.length;
+    if (!n) {
+      const text = cleanText(area.innerText || area.textContent || "").toLowerCase();
+      n = text.split(want).length - 1;
+      if (n > 1 && /successfully uploaded|uploaded/i.test(text)) n = Math.ceil(n / 2);
+    }
+    if (n && size) {
+      const sizes = sizeTexts(area.innerText || area.textContent || "");
+      if (sizes.length && !sizes.some((x) => Math.abs(x - size) <= Math.max(1024, size * 0.01))) return 0;
+    }
+    return n;
+  }
+  function fileListed(ref, name, size) {
+    const f = ref ? elByRef(ref) : resumeInputAny();
+    return fileCopies(f, name, size) > 0;
+  }
+  // Remove the extra copies of one file the area lists (keeps the first), through the area's own
+  // Delete buttons. Returns how many it removed.
+  function dropDuplicateFiles(ref, name) {
+    const f = ref ? elByRef(ref) : resumeInputAny();
+    const area = f && uploadArea(f);
+    if (!area || !name) return 0;
+    const want = cleanText(name).toLowerCase();
+    const dels = qsaSafe("button, [role='button']", area).filter((b) => {
+      const t = cleanText(b.getAttribute("aria-label") || b.textContent || "").toLowerCase();
+      return /^(delete|remove)\b/.test(t) && t.includes(want);
+    });
+    let n = 0;
+    for (const b of dels.slice(1).reverse()) { press(b); n++; }
+    return n;
+  }
+  // The resume's box even when it already holds a file (for the listing checks above).
+  function resumeInputAny() {
+    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled);
+    return boxes.find((f) => !isLetterBox(f) && RESUME_BOX_RE.test(fileBoxWords(f)))
+      || (boxes.filter((f) => !isLetterBox(f)).length === 1 ? boxes.find((f) => !isLetterBox(f)) : null);
+  }
+
   function hasResumeUpload() {
     for (const f of qsaDeep('input[type="file"]')) {
       if (f.disabled) continue;
@@ -846,11 +954,7 @@
   // but is labelled "Country" itself.
   function rawLabel(el) {
     const type = String(el.type || "").toLowerCase();
-    const legend = () => {
-      const fs = el.closest("fieldset");
-      const lg = fs && fs.querySelector("legend");
-      return lg ? cleanText(lg.textContent) : "";
-    };
+    const legend = () => legendOf(el);
     let out = (type === "radio" || type === "checkbox") ? legend() : "";
     if (!out && el.id) { const l = labelFor(el); if (l) out = labelText(l, el); }
     if (!out) out = cleanText(ariaLabelledText(el));
@@ -860,6 +964,21 @@
       const grp = el.closest("div,li,section,fieldset");
       const l = grp && grp.querySelector("label, legend, .label, [class*='question']");
       if (l) out = labelText(l, el);
+    }
+    if (!out) {
+      // The question written ABOVE the control in the box that holds only this control: Lever's
+      // custom questions put it in a sibling <div class="application-label"> with no <label>
+      // (CrossCountry, 2026-11-16: the location and hybrid dropdowns had no question at all).
+      const mine = (c) => c === el || (type === "radio" && c.type === "radio" && c.name && c.name === el.name);
+      for (let grp = el.parentElement, i = 0; grp && i < 4 && !out; grp = grp.parentElement, i++) {
+        const ctrls = qsaSafe("input:not([type=hidden]), select, textarea", grp);
+        if (ctrls.some((c) => !mine(c))) break;                 // the box holds another question
+        const cands = qsaSafe("label, legend, [class*='label'], [class*='question'], [class*='prompt']", grp)
+          .filter((x) => !x.contains(el) && !qsaSafe("input, select, textarea", x).length
+                         && precedes(x, el));
+        const l = cands[cands.length - 1];
+        if (l) out = labelText(l, el);
+      }
     }
     if (!out) out = cleanText(el.getAttribute("aria-label") || el.placeholder || "");
     // A file input's own label is often just its button ("Attach", "Upload"): the question is
@@ -1079,6 +1198,7 @@
     const fields = [];
     qsaDeep("input, textarea, select").forEach((el) => {
       if (el.disabled || el.readOnly) return;
+      if (inPopupList(el)) return;                                           // a dropdown's own choice
       const raw = el.tagName.toLowerCase() === "input" ? (el.type || "text").toLowerCase() : el.tagName.toLowerCase();
       if (["radio", "hidden", "submit", "button", "reset", "password", "image"].includes(raw)) return;
       if (isWidgetInput(el)) return;                                         // listed below as a widget
@@ -1086,7 +1206,9 @@
       if (onlyEmpty && raw !== "file" && raw !== "checkbox" && String(el.value || "").trim()
           && !/^(select|choose|--|please)/i.test(String(el.value))) return;
       const rect = el.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0 && raw !== "file") return;   // truly hidden (files can be styled away)
+      // truly hidden (files can be styled away; a styled checkbox draws its box next to a 0x0
+      // input, Workday's CC-305 boxes, so it counts when its label or wrapper is on screen)
+      if (rect.width === 0 && rect.height === 0 && raw !== "file" && !(raw === "checkbox" && toggleShown(el))) return;
       // A box a person cannot see or reach: react-select's hidden "required" mirror input
       // (aria-hidden, opacity 0), and the classic honeypot. Never offered to the plan.
       if (raw !== "file" && raw !== "checkbox" && (el.getAttribute("aria-hidden") === "true" || !shown(el))) return;
@@ -1095,7 +1217,7 @@
       if (!label && raw !== "file") return;                                  // need a question to answer
       if (raw === "checkbox") label = checkboxLabel(el, label);
       const f = { ref: fieldRef(el), label: (label || "Résumé / CV").slice(0, 200),
-                  type: fieldType(el), required: !!(el.required || REQUIRED_MARK.test(label || "")) };
+                  type: fieldType(el), required: isRequired(el, label) };
       if (el.tagName.toLowerCase() === "select") {
         f.options = [...el.options].map((o) => (o.textContent || o.value).trim())
           .filter((t) => t && !isPlaceholderText(t)).slice(0, 40);              // keeps "Choose not to disclose"
@@ -1110,13 +1232,36 @@
       const ref = fieldRef(radios[0]);
       radios.forEach((r) => r.setAttribute("data-tailor-group", ref));
       fields.push({ ref, label: q.slice(0, 200), type: "radio",
-                    options: radios.map((r) => radioOptionText(r)).filter(Boolean).slice(0, 40), required: false });
+                    options: radios.map((r) => radioOptionText(r)).filter(Boolean).slice(0, 40),
+                    required: radios.some((r) => isRequired(r, "")) || REQUIRED_MARK.test(q) });
     }
     for (const f of widgetFields(onlyEmpty)) fields.push(f);                // custom dropdowns, ARIA radios/checkboxes
     return fields;
   }
 
+  function toggleShown(el) {
+    const lab = (el.id && labelFor(el)) || el.closest("label") || el.parentElement;
+    if (!lab || !lab.getBoundingClientRect) return false;
+    const r = lab.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
   const REQUIRED_MARK = /[*\u2731]\s*$/;
+  // Required the way the page says it: the attribute, aria-required, or a "*" / "✱" at the end of
+  // the question (Lever marks its custom questions with a "✱" only, 2026-11-16).
+  const REQUIRED_CLASS = /(^|\s)(required|is-required|required-field|field-required|mandatory)(\s|$)/i;
+  function isRequired(el, label) {
+    if (el.required || el.getAttribute("aria-required") === "true" || REQUIRED_MARK.test(label || "")) return true;
+    // a class says it (Ashby: <label class="heading required">; Lever: .application-field.required-field)
+    const own = el.id && labelFor(el);
+    if (own && REQUIRED_CLASS.test(String(own.className || ""))) return true;
+    for (let n = el.parentElement, i = 0; n && i < 4; n = n.parentElement, i++) {
+      const ctrls = qsaSafe("input:not([type=hidden]), select, textarea", n);
+      if (ctrls.some((c) => c !== el && !(c.type === "radio" && el.type === "radio" && c.name === el.name))) break;
+      if (REQUIRED_CLASS.test(String(n.className || ""))) return true;
+      if ([...n.children].some((c) => /^(LABEL|LEGEND)$/.test(c.tagName) && REQUIRED_CLASS.test(String(c.className || "")))) return true;
+    }
+    return false;
+  }
   // The other checkboxes answering the same question (same name, or the same fieldset).
   function checkboxGroup(el) {
     const root = rootOf(el);
@@ -1328,17 +1473,25 @@
         const n = byId(el, id); if (n) return n;
       }
     }
-    let node = el;
+    let node = el, near = null;
+    // A list of the CHOSEN values (Workday's "items selected" pills) is never an open menu.
+    const chosenList = (x) => /\bitems? selected\b/i.test(x.getAttribute("aria-label") || "")
+      || !!(x.closest && x.closest("[data-automation-id='selectedItemList']"));
+    const hasOptions = (x) => qsaSafe(OPTION_SEL, x).length > 0;
     for (let i = 0; i < 6 && node.parentElement; i++) {     // react-select: the menu sits beside the control
       node = node.parentElement;
       if (otherCombo(node, el)) break;
-      const m = qsaSafe("[role='listbox'], [class*='menu']", node).find((x) => !x.contains(el) && boxShown(x) && !ownedByOther(x, el));
-      if (m) return m;
+      const m = qsaSafe("[role='listbox'], [class*='menu']", node).find((x) => !x.contains(el) && boxShown(x) && !ownedByOther(x, el) && !chosenList(x));
+      if (m && hasOptions(m)) return m;
+      // Workday's multiselect keeps its chosen pills in a listbox of its own ("items selected");
+      // its open list is portalled to <body>, so keep looking (2026-11-16, Uline).
+      if (m && !near) near = m;
     }
     // A menu portalled to the end of <body> (Workday, react-select menuPortalTarget): the
     // visible listbox, newest last, never one another control names.
-    const lbs = qsaDeep("[role='listbox']").filter((x) => boxShown(x) && !x.contains(el) && !ownedByOther(x, el));
-    return lbs.length ? lbs[lbs.length - 1] : null;
+    const lbs = qsaDeep("[role='listbox']").filter((x) => boxShown(x) && !x.contains(el) && !ownedByOther(x, el) && !chosenList(x));
+    const full = lbs.filter(hasOptions);
+    return full.length ? full[full.length - 1] : (near || (lbs.length ? lbs[lbs.length - 1] : null));
   }
   // A press just outside the dropdown, the way a person clicks away (plain mouse events on the
   // parent of the smallest box holding the control and its list, so it stays inside the form and
@@ -1356,6 +1509,27 @@
       if (t === el) return;
     }
     for (const ty of ["pointerdown", "mousedown", "pointerup", "mouseup"]) fire(t, ty, { button: 0 });
+  }
+  // A press on a neutral spot away from the widget AND its list: the nearest heading above the
+  // control (else the page body), plain mouse events, no click. Workday's multiselect prompts
+  // (Field of Study, Skills) draw their list at the end of <body> and ignore Escape and blur;
+  // pressOutside's spot is still inside their own box, so the list stayed open (Uline,
+  // 2026-11-16). A heading takes no input and opens nothing.
+  function pressAway(el) {
+    const doc = el.ownerDocument || document;
+    const lb = listboxFor(el);
+    const mine = (n) => !n || n.contains(el) || el.contains(n) || (lb && (lb.contains(n) || n.contains(lb)))
+      || !!(n.closest && n.closest("label, button, a, [role='button'], [role='option'], [role='listbox'], [role='dialog'] [role='combobox']"));
+    let spot = null;
+    for (const hd of qsaSafe("h1, h2, h3, h4, h5, h6, [role='heading']", doc)) {
+      if (mine(hd) || !boxShown(hd)) continue;
+      if (precedes(hd, el)) spot = hd;   // above the control
+    }
+    const dlg = el.closest && el.closest("[role='dialog'], [aria-modal='true']");
+    if (dlg && spot && !dlg.contains(spot)) spot = null;          // never press outside a dialog holding the form
+    if (!spot) spot = dlg || doc.body;
+    if (!spot) return;
+    for (const ty of ["pointerdown", "mousedown", "pointerup", "mouseup"]) fire(spot, ty, { button: 0 });
   }
   function optionText(o) { return norm(o.textContent || o.getAttribute("aria-label") || ""); }
   function optionsFor(el) {
@@ -1393,7 +1567,9 @@
     if (open()) {                       // ignored Escape and blur: click away, once
       await sleep(STEP_MS);
       if (open()) { pressOutside(el); await sleep(STEP_MS * 2); }
+      if (open()) { pressAway(el); await sleep(STEP_MS * 2); }
     }
+    return !open();
   }
 
   // ---- matching an option to the value we want
@@ -1561,7 +1737,7 @@
   function ariaRadioGroups() {
     const groups = new Map();
     for (const r of qsaDeep("[role='radio'], button[aria-pressed]")) {
-      if (r.getAttribute("aria-disabled") === "true" || r.disabled || !boxShown(r)) continue;
+      if (r.getAttribute("aria-disabled") === "true" || r.disabled || !boxShown(r) || inPopupList(r)) continue;
       const box = (r.closest && r.closest("[role='radiogroup']")) || r.parentElement;
       if (!box) continue;
       if (!groups.has(box)) groups.set(box, []);
@@ -1598,7 +1774,7 @@
   }
   function ariaCheckboxes() {
     return qsaDeep("[role='checkbox'], [role='switch']").filter((c) =>
-      c.getAttribute("aria-disabled") !== "true" && tagOf(c) !== "INPUT" && boxShown(c));
+      c.getAttribute("aria-disabled") !== "true" && tagOf(c) !== "INPUT" && boxShown(c) && !inPopupList(c));
   }
   async function toggleAria(el) {
     if (el.getAttribute("aria-checked") === "true") return false;
@@ -1647,10 +1823,12 @@
 
   // extractForm, plus the option lists of custom dropdowns, which only exist in the page while
   // the menu is open: open each (at most 15), read up to 40 options, close it again.
+  const EXTRACT_BUDGET_MS = 8000;
   async function extractFormAsync(opts) {
     let n = 0;
+    const budget = Date.now() + EXTRACT_BUDGET_MS;
     for (const el of comboboxes()) {
-      if (n >= 15) break;
+      if (n >= 15 || Date.now() > budget) break;
       if (_comboOptions.has(el) || comboValue(el)) continue;
       n++;
       await openCombo(el);
@@ -1756,13 +1934,332 @@
     return rep;
   }
 
+  // ---- work history and education: a form's repeating sections ("Work Experience 1", "Education 1")
+  // Workday's Apply Manually path asks each job's title, company, location and From / To month,
+  // and each school's name, degree and field of study; the person's profile has them all
+  // (payload.history / payload.education, autoapply/history.py). Filled the way the resume-parse
+  // path fills them: only empty boxes, a section per entry, newest first, "Add Another" pressed
+  // for the next entry while the profile has more (2026-11-16, Uline: six questions asked).
+  const SECTION_RES = {
+    work: /^(?:work experience|experience|employment(?: history)?|work history|previous employment)\s*#?\s*(\d{1,2})$/i,
+    edu: /^(?:education|school)\s*#?\s*(\d{1,2})$/i,
+  };
+  const ADD_RE = /^(?:\+\s*)?add(?: another)?(?: (?:work experience|experience|education|school|position))?$/i;
+  function sectionsOf(kind) {
+    const out = [];
+    for (const hd of qsaDeep("h1, h2, h3, h4, h5, h6, [role='heading'], legend")) {
+      const m = SECTION_RES[kind].exec(cleanText(hd.textContent));
+      if (!m || !boxShown(hd)) continue;
+      let box = hd.closest("[role='group'], fieldset, section") || hd.parentElement;
+      // the smallest box around the heading that holds the section's own boxes
+      for (let i = 0; box && i < 4 && !qsaSafe("input, textarea, select, button", box).length; i++) box = box.parentElement;
+      if (box && !out.some((o) => o.box === box)) out.push({ n: Number(m[1]), box, heading: hd });
+    }
+    return out.sort((a, b) => a.n - b.n);
+  }
+  const HIST_LABELS = {
+    title: /^(?:job |position |role )?title\b|^position$|^role$/i,
+    company: /^(?:company|employer|organi[sz]ation)(?: name)?\b/i,
+    location: /^(?:job |work )?(?:location|city)\b/i,
+    description: /\b(?:description|responsibilit|duties|summary)\b/i,
+    current: /\bcurrent(?:ly)? (?:work|employ)|\bi (?:currently )?work here\b|\bstill (?:work|employed)\b/i,
+    school: /\b(?:school|university|college|institution)\b/i,
+    degree: /^degree\b|\bdegree (?:type|level|earned)\b|^level of education\b/i,
+    field: /\b(?:field of study|major|discipline|area of study)\b/i,
+    from: /^(?:from|start(?: date)?|date from|begin)\b/i,
+    to: /^(?:to|end(?: date)?|date to|until)\b/i,
+  };
+  function boxLabel(el) { return cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || ""); }
+  function emptyBox(el) { return !String(el.value || "").trim(); }
+  // A month / year (/ day) date control: Workday's spinbutton trio, a native date or month input,
+  // or one text box that names its format ("MM/YYYY").
+  function fillDate(group, when) {
+    if (!when || !when.y) return false;
+    const mm = when.m ? String(when.m) : "", yy = String(when.y);
+    const single = tagOf(group) === "INPUT";
+    const spins = single ? [] : qsaSafe("input[role='spinbutton'], input[aria-label='Month'], input[aria-label='Year']", group);
+    if (spins.length) {
+      // Workday's date segments take only real keys (a value set from script shows but is not
+      // kept: "Invalid Date: 03/" on Next, Uline 2026-11-16). They are handed to the shell, which
+      // types them with real key presses (keyOps), month first, as a person does.
+      let n = 0;
+      for (const sp of spins) {
+        if (!emptyBox(sp)) continue;
+        const w = (sp.getAttribute("aria-label") || sp.id || "").toLowerCase();
+        const v = /month/.test(w) ? mm : /year/.test(w) ? yy : /day/.test(w) ? (when.d ? String(when.d) : "") : "";
+        if (!v) continue;
+        _keyOps.push({ ref: fieldRef(sp), text: v });
+        n++;
+      }
+      return n > 0;
+    }
+    const box = single ? (emptyBox(group) ? group : null)
+      : qsaSafe("input", group).find((i) => !/^(hidden|checkbox|radio|button|submit)$/i.test(i.type || "") && emptyBox(i));
+    if (!box) return false;
+    const t = String(box.type || "").toLowerCase(), pad = (x) => String(x).padStart(2, "0");
+    const m2 = pad(when.m || 1), d2 = pad(when.d || 1);
+    const ph = String(box.placeholder || box.getAttribute("aria-label") || "").toUpperCase();
+    let v = "";
+    if (t === "month") v = yy + "-" + m2;
+    else if (t === "date") v = yy + "-" + m2 + "-" + d2;
+    else if (/MM\W*DD\W*YYYY/.test(ph)) v = m2 + "/" + d2 + "/" + yy;
+    else if (/MM\W*YYYY/.test(ph)) v = m2 + "/" + yy;
+    else if (/^YYYY$/.test(ph.trim())) v = yy;
+    else return false;
+    setNativeValue(box, v);
+    return true;
+  }
+  function dateGroup(box, re) {
+    for (const g of qsaSafe("fieldset, [role='group']", box)) {
+      const lg = g.querySelector("legend, [role='heading'], label");
+      if (lg && re.test(cleanLabel(lg.textContent)) && g !== box) return g;
+    }
+    for (const el of qsaSafe("input", box)) {
+      if (re.test(boxLabel(el)) && !/^(hidden|checkbox|radio)$/i.test(el.type || "")) return el.closest("fieldset, [role='group']") || el.parentElement;
+    }
+    return null;
+  }
+  async function fillSection(sec, item, kind) {
+    let n = 0;
+    const inputs = qsaSafe("input, textarea", sec.box).filter((el) => !inPopupList(el) && !el.disabled && !el.readOnly
+      && !/^(hidden|file|radio|submit|button)$/i.test(el.type || ""));
+    const textFor = kind === "work"
+      ? { title: item.title, company: item.company, location: item.location, description: item.description }
+      : { school: item.school };
+    for (const el of inputs) {
+      if (el.getAttribute("role") === "spinbutton") continue;
+      const lab = boxLabel(el);
+      if (!lab) continue;
+      if (String(el.type || "").toLowerCase() === "checkbox") {
+        if (kind === "work" && item.current && HIST_LABELS.current.test(lab) && !el.checked) { press(el); await sleep(STEP_MS * 4); n++; }
+        continue;
+      }
+      if (kind === "edu" && HIST_LABELS.field.test(lab)) continue;            // a list, below
+      const key = Object.keys(textFor).find((k) => HIST_LABELS[k].test(lab));
+      if (!key || !textFor[key] || !emptyBox(el)) continue;
+      if (isWidgetInput(el)) {                                                 // a search list (School on some sites)
+        const r = await pickCombo(el, { text: textFor[key], score: answerScorer(textFor[key]), freeText: true });
+        if (r.ok) n++;
+        continue;
+      }
+      setNativeValue(el, textFor[key]); markFilled(el); n++;
+    }
+    const from = dateGroup(sec.box, HIST_LABELS.from);
+    if (from && fillDate(from, item.start)) n++;
+    if (!item.current) {
+      const to = dateGroup(sec.box, HIST_LABELS.to);
+      if (to && fillDate(to, item.end)) n++;
+    }
+    if (kind === "edu") {
+      const lv = { doctorate: /doctor|ph\.?\s?d/i, masters: /master|\bm\.?s\.?\b|\bmba\b|graduate degree/i,
+                   bachelors: /bachelor|\bb\.?[sa]\.?\b|undergraduate degree/i, associates: /associate/i,
+                   "high school": /high school|secondary/i }[item.level || ""];
+      for (const el of qsaSafe("select", sec.box)) {
+        if (!HIST_LABELS.degree.test(boxLabel(el)) || !lv) continue;
+        if (pickSelectOption(el, (t) => lv.test(t))) n++;
+      }
+      for (const el of comboboxes().filter((c) => sec.box.contains(c))) {
+        const lab = widgetLabel(el);
+        if (comboValue(el)) continue;
+        if (HIST_LABELS.degree.test(lab) && lv) {
+          const r = await pickCombo(el, { score: (t) => (lv.test(t) ? 50 - Math.min(9, t.length / 20) : 0) });
+          if (r.ok) n++;
+        } else if (HIST_LABELS.field.test(lab) && (item.field || item.level)) {
+          if (isSearchBox(el)) { _searchOps.push(fieldSearch(el, item)); continue; }
+          if (!item.field) continue;
+          const r = await pickCombo(el, { text: item.field, score: answerScorer(item.field) });
+          if (r.ok) n++;
+        }
+      }
+    }
+    return n;
+  }
+  function addButtonFor(kind, last) {
+    // The "Add Another" (or "Add") of this kind's own list: in the smallest box around the last
+    // section that has one, and never inside another kind's list.
+    for (let box = last.box.parentElement, i = 0; box && i < 4; box = box.parentElement, i++) {
+      const other = Object.keys(SECTION_RES).filter((k) => k !== kind);
+      const btn = qsaSafe("button, [role='button']", box).find((b) => ADD_RE.test(cleanText(b.textContent || b.getAttribute("aria-label") || ""))
+        && !last.box.contains(b) && boxShown(b) && !b.disabled);
+      if (btn) {
+        const heads = qsaSafe("h1, h2, h3, h4, h5, h6, [role='heading'], legend", box).map((h) => cleanText(h.textContent));
+        if (heads.some((t) => other.some((k) => SECTION_RES[k].test(t)))) return null;
+        return btn;
+      }
+    }
+    return null;
+  }
+  // ---- search lists the page fills only on a real Enter (Workday's Field of Study and Skills:
+  // a typed word filters nothing until Enter, and a script's Enter is ignored). The engine names
+  // them ({ref, queries, want | items}); the shell types each query with real keys and presses
+  // Enter, then searchChoice picks the best real option here. Both are OPTIONAL questions: no
+  // fitting option leaves them empty, never a question for the person.
+  function isSearchBox(el) {
+    return el.getAttribute("data-uxi-widget-type") === "selectinput"
+      && (el.getAttribute("enterkeyhint") === "search" || el.getAttribute("data-automation-id") === "searchBox"
+          || /^search\b/i.test(el.getAttribute("placeholder") || ""));
+  }
+  const GENERIC_WORDS = new Set(["and", "of", "in", "the", "for", "with", "general", "studies", "study", "science",
+    "sciences", "arts", "art", "degree", "program", "other", "s", "a", "an", "to"]);
+  const words = (t) => canon(t).split(" ").filter((w) => w && !GENERIC_WORDS.has(w));
+  // The subject words the person's degree supports: its field, plus what the degree's own name
+  // says (an MBA is Business Administration).
+  function fieldWords(item) {
+    let t = String(item.field || "");
+    if (/\bmba\b|business administration/i.test(String(item.degree || ""))) t += " business administration";
+    return [...new Set(words(t))];
+  }
+  function fieldSearch(el, item) {
+    const want = fieldWords(item);
+    const own = words(item.field || "");
+    const queries = [];
+    if (item.field) queries.push(String(item.field));
+    for (const w of own.slice().sort((a, b) => b.length - a.length)) if (!queries.some((q) => canon(q) === w)) queries.push(w);
+    if (want.includes("administration") && !queries.includes("Business Administration")) queries.push("Business Administration");
+    return { ref: fieldRef(el), kind: "field", want, queries: queries.slice(0, 3) };
+  }
+  // How well an option fits the subject words. An option whose own words are all supported
+  // ("Economics" for "Economics and Sociology"; "Business Administration/Management" for an MBA,
+  // "management" and "administration" adding nothing) fits best; one that shares two subject
+  // words and adds one ("Business Analytics and Data Science") fits less; a choice that adds a
+  // subject the degree does not name ("Agricultural Economics", "Agricultural Business and
+  // Management") never fits: on 2026-11-16 a single shared word picked both of those at Uline.
+  const SOFT_SUBJECT = new Set(["management", "administration", "general", "studies"]);
+  function subjectScore(want, text) {
+    const ow = words(text);
+    if (!ow.length) return 0;
+    const shared = ow.filter((w) => want.includes(w)).length;
+    if (!shared) return 0;
+    const extra = ow.filter((w) => !want.includes(w) && !SOFT_SUBJECT.has(w));
+    if (!extra.length) return 100 + shared * 5 - (ow.length - shared);
+    if (shared >= 2 && extra.length === 1) return 60 + shared;
+    return 0;
+  }
+  function chosenPills(el) {
+    let node = el;
+    for (let i = 0; i < 6 && node.parentElement; i++) {
+      node = node.parentElement;
+      const pills = qsaSafe("[data-automation-id='selectedItem'], [aria-label*='items selected' i] [role='option']", node);
+      if (pills.length) return pills.map((p) => cleanText(p.textContent));
+    }
+    return [];
+  }
+  async function searchChoice(ref, spec) {
+    const el = elByRef(ref);
+    if (!el) return { ok: false, why: "gone" };
+    const opts = optionsFor(el);
+    let best = null;
+    for (const o of opts) {
+      const t = optionText(o);
+      const sc = spec.kind === "skills" ? ((spec.items || []).some((x) => canon(x) === canon(t)) ? 100 : 0) : subjectScore(spec.want || [], t);
+      if (sc > 0 && (!best || sc > best.sc || (sc === best.sc && t.length < optionText(best.o).length))) best = { o, sc };
+    }
+    if (!best) return { ok: false, why: "no-fit", seen: opts.length };
+    const before = chosenPills(el).length;
+    const box = best.o.querySelector("input[type='radio'], input[type='checkbox']") || best.o;
+    press(box);
+    for (let i = 0; i < 20 && chosenPills(el).length <= before; i++) await sleep(STEP_MS);
+    return { ok: chosenPills(el).length > before };
+  }
+  async function closeSearch(ref) {
+    const el = elByRef(ref);
+    if (el) { try { await closeCombo(el); } catch (e) { /* fine */ } }
+    return true;
+  }
+
+  async function fillHistory(payload) {
+    const out = { filled: 0, sections: 0 };
+    const lists = { work: (payload && payload.history) || [], edu: (payload && payload.education) || [] };
+    const caps = { work: 5, edu: 3 };
+    for (const kind of ["work", "edu"]) {
+      const items = lists[kind].slice(0, caps[kind]);
+      if (!items.length) continue;
+      let secs = sectionsOf(kind);
+      if (!secs.length) continue;                                            // this page has no such list
+      for (let i = 0; i < items.length; i++) {
+        if (i >= secs.length) {
+          const add = addButtonFor(kind, secs[secs.length - 1]);
+          if (!add) break;
+          press(add);
+          for (let t = 0; t < 40 && sectionsOf(kind).length <= secs.length; t++) await sleep(STEP_MS);
+          secs = sectionsOf(kind);
+          if (i >= secs.length) break;
+        }
+        const n = await fillSection(secs[i], items[i], kind);
+        out.filled += n;
+        if (n) out.sections++;
+      }
+    }
+    // "Current company" / "Current title" outside the sections (Lever asks it on its first page):
+    // the job the profile marks current, else the most recent one (as autoapply/fields.current_job).
+    const cur = lists.work.find((x) => x && x.current) || lists.work[0];
+    if (cur) {
+      for (const el of qsaDeep("input")) {
+        if (!/^(text|)$/i.test(el.type || "") || !emptyBox(el) || inPopupList(el) || el.disabled || el.readOnly) continue;
+        const lab = boxLabel(el);
+        const v = /^(current|present|most recent|latest) (company|employer|organi[sz]ation)( name)?$/i.test(lab) ? cur.company
+          : /^(current|present|most recent|latest) (job )?(title|position|role)$/i.test(lab) ? cur.title : "";
+        if (v) { setNativeValue(el, v); markFilled(el); out.filled++; }
+      }
+    }
+    // "Type to Add Skills": a few of the person's own skills, only ones the list offers.
+    const skills = ((payload && payload.skills) || []).slice(0, 6);
+    if (skills.length) {
+      for (const el of comboboxes()) {
+        if (!/\bskills?\b/i.test(widgetLabel(el)) || !isSearchBox(el) || chosenPills(el).length) continue;
+        _searchOps.push({ ref: fieldRef(el), kind: "skills", items: skills, queries: skills.slice(0, 4), max: 3 });
+      }
+    }
+    return out;
+  }
+
+  // The signature date of a self-identification or attestation form (the federal CC-305
+  // disability form asks "Name" and "Date"): today's date, in the form's own date control, never
+  // a question for the person (Uline on Workday, 2026-11-16). Only a box named plainly as that
+  // date, on a page that is a self-identification or signature form, and only while empty.
+  const SIGN_DATE_RE = /^(?:date|today'?s date|date signed|signature date|date of signature|signed on)$/i;
+  const SIGN_PAGE_RE = /self[- ]?identif|\bsignature\b|\bsigned\b|electronic(?:ally)? sign/i;
+  function fillSignatureDate() {
+    const text = cleanText((document.body && document.body.innerText) || "").slice(0, 20000);
+    if (!SIGN_PAGE_RE.test(text)) return 0;
+    const now = new Date();
+    const today = { m: now.getMonth() + 1, d: now.getDate(), y: now.getFullYear() };
+    let n = 0;
+    const seen = new Set();
+    for (const g of qsaDeep("fieldset, [role='group']")) {
+      const lg = g.querySelector("legend, [role='heading'], label");
+      if (!lg || !SIGN_DATE_RE.test(cleanLabel(lg.textContent)) || seen.has(g)) continue;
+      if ([...seen].some((x) => x.contains(g) || g.contains(x))) continue;
+      seen.add(g);
+      if (fillDate(g, today)) n++;
+    }
+    for (const el of qsaDeep("input")) {
+      if (!/^(date|text)$/i.test(el.type || "text") || el.getAttribute("role") === "spinbutton" || !emptyBox(el)) continue;
+      if ([...seen].some((x) => x.contains(el))) continue;
+      if (!SIGN_DATE_RE.test(boxLabel(el))) continue;
+      if (fillDate(el, today)) { markFilled(el); n++; }
+    }
+    return n;
+  }
+
+  // Boxes that take only real key presses, for the shell to type ({ref, text}).
+  let _keyOps = [];
+  let _searchOps = [];
   // The keyword fill plus the custom widgets: what the desktop shell runs.
   async function fillAsync(payload) {
+    _keyOps = [];
+    _searchOps = [];
     const r = fill(payload);
     if (!r || !r.ok) return r;
     let w = { filled: 0, fields: 0, screening: 0, eeo: 0 };
     try { w = await fillWidgets(payload); } catch (e) { /* a widget threw: the rest stands */ }
-    r.filled += w.fields;
+    let h = { filled: 0 };
+    try { h = await fillHistory(payload); } catch (e) { /* the rest stands */ }
+    try { h.filled += fillSignatureDate(); } catch (e) { /* the rest stands */ }
+    r.filled += w.fields + h.filled;
+    r.history = h.filled;
+    r.keys = _keyOps.slice(0, 60);
+    r.searches = _searchOps.slice(0, 8);
     r.screening += w.screening;
     r.eeo += w.eeo;
     r.total += w.filled;
@@ -1773,13 +2270,16 @@
 
   // What is still blank on this page and needs the person, by label: required checkboxes only
   // (an optional newsletter box is not "left"), a file input only while no file is attached.
+  // Only a REQUIRED question is ever "left for you": an optional box the person's material does
+  // not answer (Workday's Field of Study, Skills, a second address line) stays empty silently, and
+  // never stops a run or shows on the bar (2026-11-16: "3 left for you" on Uline, all optional).
   function leftover() {
     const out = [];
     for (const f of extractForm({ onlyEmpty: true })) {
       const el = elByRef(f.ref);
+      if (!f.required) continue;
       if (f.type === "file") { if (el && el.files && el.files.length) continue; }
       else if (f.type === "checkbox") {
-        if (!f.required) continue;
         if (el && (el.checked || el.getAttribute("aria-checked") === "true")) continue;
         if (el && tagOf(el) === "INPUT") {
           const peers = checkboxGroup(el);
@@ -1814,7 +2314,8 @@
     rawLabel, answerableTextareas, pageJobContext, screeningAnswer,
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
     // deep DOM + custom widgets + multi-page (desktop shell)
-    fillAsync, fillWidgets, extractFormAsync, applyOpsAsync, leftover, pageSignature, setRefPrefix,
+    fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, closeSearch, extractFormAsync,
+    fileListed, dropDuplicateFiles, fileCopies, applyOpsAsync, leftover, pageSignature, setRefPrefix,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
     // recipes: the per-system table, success detection, continue hints, corrections
     setRecipes, recipes: () => RECIPES, recipeFor, globToRe, highlightSubmit, continueButton,

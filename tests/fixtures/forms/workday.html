@@ -18,7 +18,8 @@
       options: ["Company Website", "Indeed", "LinkedIn", "Referral"] }),
     auth: W.AriaRadioGroup(host, { label: "Are you legally authorized to work in the country in which this job is located?",
       options: ["Yes", "No"] }),
-    relocate: W.AriaRadioGroup(host, { label: "Are you willing to relocate?", options: ["Yes", "No"] }),
+    relocate: W.AriaRadioGroup(host, { label: "Are you willing to relocate?", options: ["Yes", "No"], required: true }),
+    travel: W.AriaRadioGroup(host, { label: "Are you open to travel?", options: ["Yes", "No"] }),
   };
   window.fxValues = () => Object.fromEntries(Object.entries(window.fx).map(([k, v]) => [k, v.value]));
 </script>
