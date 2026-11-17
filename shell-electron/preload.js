@@ -54,7 +54,12 @@ contextBridge.exposeInMainWorld("tailorShell", {
   agentSend: (recordId, opts) => ipcRenderer.invoke("agent:send", recordId, opts || null),
   agentPoll: () => ipcRenderer.invoke("agent:poll"),
   agentStop: () => ipcRenderer.invoke("agent:stop"),
-  agentBatch: (jobs) => ipcRenderer.invoke("agent:batch", jobs || []),
+  // The guided ask's Next: move on to the next field the person is asked to fill on the page.
+  agentGuideNext: () => ipcRenderer.invoke("agent:guide-next"),
+  // opts.quiet: Auto mode's background batch (out of sight, never asks).
+  agentBatch: (jobs, opts) => ipcRenderer.invoke("agent:batch", jobs || [], opts || null),
+  // Send all: every application left at Ready to send, one at a time; a captcha stops the list.
+  agentSendAll: (jobs) => ipcRenderer.invoke("agent:send-all", jobs || []),
   agentContinue: (recordId) => ipcRenderer.invoke("agent:continue", recordId),
   agentBusy: () => ipcRenderer.invoke("agent:busy"),
   agentReady: (recordId) => ipcRenderer.invoke("agent:ready", recordId),

@@ -424,6 +424,41 @@ def options_reply(items: list[dict]) -> str:
     return fit_text(text)
 
 
+# (2026-11-17, Phoenix Contact: a required select whose ONLY option is "Yes", a typed "No", and
+# "I still could not tell" for ever.) A question whose every choice the page lists is CLOSED: a
+# typed reply that is none of them is never read by a model and never loops. The person is told
+# what the form offers and given the exits: a choice, "Leave it empty", "Skip this job".
+LEFT = "Left empty"
+
+
+def closed_choice(item: dict) -> list[str]:
+    """Every choice of a question the page listed in full (not ``partial``), else []."""
+    if not isinstance(item, dict) or item.get("partial"):
+        return []
+    return [str(o) for o in (item.get("all_options") or item.get("options") or []) if str(o).strip()]
+
+
+def closed_match(item: dict, text: str) -> str | None:
+    """The choice a typed reply names word for word, else None. (A number is read by the reply
+    reader, against the order the choices were LISTED in.)"""
+    opts = closed_choice(item)
+    t = " ".join(str(text or "").split()).strip(" .!").casefold()
+    if not t or not opts:
+        return None
+    for o in opts:
+        if " ".join(o.split()).strip(" .!").casefold() == t:
+            return o
+    return None
+
+
+def offers_reply(item: dict) -> str:
+    """"This form only offers: Yes." and what the person can do instead."""
+    opts = closed_choice(item)
+    shown = ", ".join(opts[:8]) + (", and more" if len(opts) > 8 else "")
+    return fit_text(f"This form only offers: {shown}. Choose one, leave it empty (I flag it at Ready to send: "
+                    "the form may not submit without it), or skip this job.")
+
+
 def unclear_reply(items: list[dict]) -> str:
     if len(items) == 1:
         if _every(items[0]):

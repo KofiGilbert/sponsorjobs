@@ -398,6 +398,30 @@ rate limit or Telegram being down holds it for the next tick; the same run never
 (`ready_sent` and `ready_held` in `notify_state.json`). No buttons: nothing in notify/ approves an
 assisted submission from Telegram, so the person reviews and presses Send in the app.
 
+### Auto mode: one notice per send, one daily summary (`notify/daily.py`)
+
+In Auto ("I'm away", docs/apply-agent.md section 26) the apply agent tells Telegram nothing while
+it works: no asks, no digest, no Ready to send notice. The person hears from it in two ways.
+
+1. `Sent: {Role} at {Company}` for each application the agent sent by itself (only on the
+   verified allowlist). Through the active channel when one is linked; otherwise, or when the
+   channel is paused or "Application updates" is off, as a notification in the app. Once per
+   application. Quiet hours hold it; the tick sends it when they end (36 hours at most).
+2. ONE daily summary, built once per local day from 18:00, never in quiet hours, and only when
+   there is something to say:
+   `Today: {n} sent for you, {m} ready for your Send, {k} need an answer.`
+   On Telegram it adds `Open SponsorJobs, Auto-apply, and press Send all. Nothing more is sent
+   until you do.` (and where the open questions are). **No button**: nothing in notify/ approves
+   an assisted submission from Telegram, so Send all is in the app only.
+
+Counts, the role and the company only: never an answer, never a self-identification value.
+State in `notify_state.json`: `auto_sent`, `auto_sent_held`, `auto_inapp`, `auto_summary`,
+`auto_day` (the applications Auto worked on today).
+
+**Which mode sends what.** Asks, the terms question and the batch digest go to Telegram only in
+Hybrid (the shell passes `telegram` to `/api/autoapply/agent/ask` and `/terms`; left out, they
+are sent as before). Assisted keeps the Ready to send notice and nothing else from the agent.
+
 ### The apply agent's questions: one batch at the end (`/api/autoapply/agent/ask`, `batch`)
 
 A run never stops mid-form to ask (fill-through, docs/apply-agent.md section 24). What only the

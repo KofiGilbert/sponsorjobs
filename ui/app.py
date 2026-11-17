@@ -2158,16 +2158,71 @@ def records_ready():
 _AUTONOMOUS_FILE = _DATA / "autonomous_submit"
 
 
-def _autonomous_on() -> bool:
+def _autonomous_legacy() -> bool:
+    """The old Autonomous submit switch (a small file). Read only to migrate it into the apply
+    mode, and still written so an older build finds the choice it expects."""
     try:
         return _AUTONOMOUS_FILE.read_text(encoding="utf-8").strip() == "1"
     except OSError:
         return False
 
 
-def _set_autonomous(on: bool) -> None:
+def _apply_mode() -> str:
+    """The ONE saved choice of how applications go out (autoapply/modes.py): "auto",
+    "assisted" or "hybrid". An install from before the three modes has none saved, so the old
+    Autonomous submit switch decides it: on -> auto, off -> assisted."""
+    from autoapply import modes
+    try:
+        saved = _apply_mode_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        saved = ""
+    return modes.migrate(saved, _autonomous_legacy())
+
+
+def _apply_mode_file():
+    """The mode's own small file, beside the old switch's (the same folder, so the two always
+    travel together)."""
+    return _AUTONOMOUS_FILE.with_name("apply_mode")
+
+
+def _set_apply_mode(mode: str) -> str:
+    from autoapply import modes
+    if mode not in modes.MODES:
+        raise ValueError("Pick Auto, Assisted or Hybrid.")
     _AUTONOMOUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _AUTONOMOUS_FILE.write_text("1" if on else "0", encoding="utf-8")
+    _apply_mode_file().write_text(mode, encoding="utf-8")
+    _AUTONOMOUS_FILE.write_text("1" if mode == modes.AUTO else "0", encoding="utf-8")
+    return mode
+
+
+def _autonomous_on() -> bool:
+    """May the agent send by itself (and then only on the verified allowlist)? Only in Auto."""
+    from autoapply import modes
+    return _apply_mode() == modes.AUTO
+
+
+def _set_autonomous(on: bool) -> None:
+    """The old switch, kept for its callers: on is Auto; off leaves Auto for Assisted (a person
+    on Hybrid stays on Hybrid, which never sends by itself either)."""
+    from autoapply import modes
+    if on:
+        _set_apply_mode(modes.AUTO)
+    elif _apply_mode() == modes.AUTO:
+        _set_apply_mode(modes.ASSISTED)
+    else:
+        _set_apply_mode(_apply_mode())
+
+
+def _auto_min_match() -> int:
+    from autoapply import modes
+    return modes.clamp_threshold(_prefs().get("auto_min_match"))
+
+
+def _may_send_alone(lane: str, match) -> bool:
+    """The agent may press Submit by itself for this application: Auto mode, a site on the
+    verified allowlist, and the match at or above the person's threshold when one is set."""
+    from autoapply import modes
+    return modes.may_send_alone(_apply_mode(), lane, match, _auto_min_match())
 
 
 def _submit_driver_for(url: str):
@@ -2211,7 +2266,10 @@ _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   "apply_setup": {"seen": False, "step": "contact", "done": False},
                   # What the person wants that no other store owns (level, job types, work style,
                   # commute radius, industries). Saved for matching; see autoapply/setup.py.
-                  "apply_wants": {}}
+                  "apply_wants": {},
+                  # Auto mode: "only send by itself when the match is at least X%" (0 = off).
+                  # (The mode itself is _apply_mode, in its own small file.)
+                  "auto_min_match": 0}
 
 
 def _prefs() -> dict:
@@ -2283,6 +2341,10 @@ def _set_prefs(patch: dict) -> dict:
     if "apply_wants" in patch:
         from autoapply.setup import clean_wants
         cur["apply_wants"] = clean_wants(patch["apply_wants"])
+    if "auto_min_match" in patch:
+        from autoapply import modes as _modes
+        v = patch["auto_min_match"]             # left empty = off (every allowlisted site)
+        cur["auto_min_match"] = 0 if v in ("", None) else _modes.clamp_threshold(v, cur.get("auto_min_match", 0))
     if "tou_version" in patch:
         cur["tou_version"] = str(patch["tou_version"] or "")[:40]
         cur["tou_at"] = float(patch.get("tou_at") or 0)
@@ -2321,8 +2383,12 @@ def submit_settings():
     from autoapply.picker import clamp_per_day
     p = _prefs()
     ts, today = _now_ts_today()
+    from autoapply import modes
     return jsonify({
         "autonomous": _autonomous_on(),
+        "apply_mode": _apply_mode(),
+        "auto_min_match": _auto_min_match(),
+        "auto_sites": modes.auto_sites(),
         "approve_all": p["approve_all"],
         "daily_cap": p["daily_cap"],
         "min_gap": p["min_gap"],
@@ -2351,11 +2417,18 @@ def submit_settings_set():
     """Update settings. Body may set {autonomous, approve_all, daily_cap, min_gap, autopilot,
     autopilot_per_day}. autonomous, approve_all and autopilot default OFF and must be turned on
     deliberately."""
-    body = request.json or {}
-    if "autonomous" in body:
+    body = dict(request.json or {})
+    mode = body.pop("apply_mode", None)
+    if mode is not None:
+        try:
+            _set_apply_mode(str(mode))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+    elif "autonomous" in body:
         _set_autonomous(bool(body["autonomous"]))
     _set_prefs(body)
-    return jsonify({"ok": True, "autonomous": _autonomous_on(), **_prefs()})
+    return jsonify({"ok": True, **_prefs(), "autonomous": _autonomous_on(), "apply_mode": _apply_mode(),
+                    "auto_min_match": _auto_min_match()})
 
 
 def _notify_assisted(rec: dict, result: dict) -> None:
@@ -6229,12 +6302,26 @@ def _mark_applied_from_page(body: dict) -> dict:
             return {"ok": True, "matched": False, "record_id": None}
         cur = _record_data(rec)
         patch = stage_patch(cur, "applied", _now_iso())
-        if cur.get("status") != "applied":
+        fresh = cur.get("status") != "applied"
+        # ``by: "auto"``: the apply agent pressed Submit by itself. Believed only when the engine's
+        # own gate agrees right now (Auto mode AND the site on the verified allowlist): anything
+        # else is recorded as the person's own send.
+        by_auto = False
+        if fresh and body.get("by") == "auto":
+            from submit.policy import apply_decision
+            url = (cur.get("source_job") or {}).get("url") or body.get("url") or ""
+            by_auto = _autonomous_on() and bool(apply_decision(url, body.get("page_url") or "").get("click_submit"))
+        if fresh:
             from submit.stages import submitted_by
-            patch.update(submitted_by("you", (cur.get("submission") or {}).get("tier") or ""))
+            patch.update(submitted_by("auto", "auto") if by_auto
+                         else submitted_by("you", (cur.get("submission") or {}).get("tier") or ""))
         data = recs.merge_data(rec["id"], patch)
     finally:
         recs.close()
+    if by_auto:
+        ts, today = _now_ts_today()
+        _rate_limiter().record(ts, today)          # it counts against the daily limit
+        _auto_sent_notice(rec)
     return {"ok": True, "matched": True, "record_id": rec["id"], "stage": data.get("stage"),
             "applied_at": data.get("applied_at"), "follow_up_due": data.get("follow_up_due")}
 
@@ -7063,7 +7150,8 @@ def _setup_payload() -> dict:
         "selfid": {"values": {f: b["values"].get(f) or "" for f in basics.SELF_ID_FIELDS},
                    "eeo_decline": bool(bp.get("eeo_decline")),
                    "choices": {f: [{"code": c, "label": w} for c, w in basics.CHOICES[f]] for f in basics.SELF_ID_FIELDS}},
-        "apply": {"autonomous": _autonomous_on(), "daily_cap": int(p.get("daily_cap") or 40),
+        "apply": {"autonomous": _autonomous_on(), "mode": _apply_mode(), "auto_min_match": _auto_min_match(),
+                  "daily_cap": int(p.get("daily_cap") or 40),
                   "autopilot": bool(p.get("autopilot")), "autopilot_per_day": int(p.get("autopilot_per_day") or 2),
                   "auto_sites": sorted({e.ats for e in _AUTO_REG if e.auto_eligible})},
         "countries": list(countries.NAMES),
@@ -7267,7 +7355,11 @@ def _setup_apply(f: dict) -> None:
             raise ValueError("Write the daily limit as a number.") from None
     if "autopilot_per_day" in f:
         patch["autopilot_per_day"] = f.get("autopilot_per_day")
-    if "autonomous" in f:                    # OFF by default; the person turns it on here or on Auto-apply
+    if "auto_min_match" in f:                # Auto: only send by itself at this match or better (0 = off)
+        patch["auto_min_match"] = f.get("auto_min_match")
+    if "mode" in f:                          # Auto / Assisted / Hybrid: the ONE saved choice
+        _set_apply_mode(str(f.get("mode") or ""))
+    elif "autonomous" in f:                  # the older two-way switch: on is Auto, off is Assisted
         _set_autonomous(bool(f.get("autonomous")))
     if patch:
         _set_prefs(patch)
@@ -12611,6 +12703,8 @@ def _store_inbox_suggestions(messages: list[dict], llm=None) -> list[dict]:
                 w.record_mail(job["source_id"], msg.get("id") or suggestion_id(msg),
                               thread_id=msg.get("thread_id") or "", rfc_id=msg.get("rfc_id") or "",
                               matched_by=lane, label=label, subject=msg.get("subject") or "")
+                if label == "acknowledgement":
+                    _attach_confirmation(job["source_id"], msg)
                 # A later message in this same batch that answers this one matches by thread too.
                 if msg.get("thread_id"):
                     threads[f"t:{str(msg['thread_id']).strip().lower()}"] = job["source_id"]
@@ -13228,6 +13322,10 @@ def start_notify_loop():
                 # NOTIFY_SCAN_EVERY ticks, so reading the board doesn't run twice a minute.
                 _notify_tick(scan=(n % NOTIFY_SCAN_EVERY == 0))
             except Exception:   # noqa: BLE001 - the loop must outlive any one failure
+                traceback.print_exc()
+            try:
+                _auto_daily_tick()        # Auto mode's notices, whether or not Telegram is connected
+            except Exception:   # noqa: BLE001
                 traceback.print_exc()
             if n % NOTIFY_SCAN_EVERY == 0:
                 try:
@@ -14277,9 +14375,64 @@ def _ask_got_it(items: list) -> str:
     return "Got it: " + "; ".join(f"{n}. {it['answer']}" for n, it in enumerate(items, start=1)) + "."
 
 
+def _forced_declined(items: list) -> list:
+    """The questions among ``items`` that are a required consent with no way to decline, when the
+    person saved a standing No to those (autoapply/consents.py): left empty, never asked."""
+    from autoapply import consents as CS
+    forced = [it for it in items if CS.is_forced(it["question"], it.get("page_options") or it.get("all_options") or [])]
+    if not forced:
+        return []
+    lib = _answer_lib()
+    try:
+        return [it["question"] for it in forced] if CS.saved_forced_decline(lib) else []
+    finally:
+        lib.close()
+
+
+def _forced_standing(value: str) -> bool:
+    """Save the person's standing answer to a required consent with no way to decline
+    (``@forced_consent``: Yes accepts those from now on, No leaves them empty and flagged)."""
+    try:
+        lib = _answer_lib()
+        try:
+            _setup_answer(lib, "forced", value)
+        finally:
+            lib.close()
+        return True
+    except Exception:          # noqa: BLE001 - this application's own answer still stands
+        traceback.print_exc()
+        return False
+
+
+def _ask_leave(ask: dict, i: int, standing: bool = True) -> bool:
+    """The person leaves question ``i`` empty: it counts as dealt with (the batch is not held up
+    by it), is never saved as an answer, and the run flags it at Ready to send. A required consent
+    with no way to decline also saves their standing No, so it is not asked again. Returns
+    whether that standing No was saved."""
+    from autoapply import asks as AK
+    from autoapply import consents as CS
+    items = _ask_items(ask)
+    it = items[i]
+    it["answer"], it["left"] = AK.LEFT, True
+    if len(items) == 1:
+        ask["answer"] = AK.LEFT
+    # ``standing`` False: the bar's Next ("not now"), which decides nothing for other forms.
+    if not standing or not CS.is_forced(it["question"], it.get("all_options") or it.get("options") or []):
+        return False
+    return _forced_standing("No")
+
+
 def _ask_set(ask: dict, i: int, value: str):
     items = _ask_items(ask)
+    items[i].pop("left", None)
     items[i]["answer"] = value
+    if (ask.get("kind") or "") != "terms" and value:
+        # Yes to a required consent whose only choice is yes (on the page, a tap, a typed reply):
+        # the person's standing answer to those, so the next form's is accepted without asking.
+        from autoapply import asks as AK
+        from autoapply import consents as CS
+        if CS.is_forced(items[i]["question"], AK.closed_choice(items[i])) and workauth_polarity(value) is True:
+            _forced_standing("Yes")
     if len(items) == 1:
         ask["answer"] = value                      # the older single-question shape
 
@@ -14300,7 +14453,7 @@ def _ask_open_items(items: list) -> list:
 def _ask_progress(items: list) -> list:
     """[{n, question, answer}] for every question of an ask, answered or not: the bar shows one
     question at a time and keeps the answers already given in view (and changeable)."""
-    return [{"n": i + 1, "question": it["question"], "answer": it.get("answer") or None}
+    return [{"n": i + 1, "question": it["question"], "answer": it.get("answer") or None, "left": bool(it.get("left"))}
             for i, it in enumerate(items)]
 
 
@@ -14366,6 +14519,21 @@ def _ask_take_reply(aid: str, text: str, parked: bool = False, only: int | None 
             return f"Got it: {choice}.", True
     if not pending or not text:
         return ("", not pending)
+    # (2026-11-17) A question whose every choice the page lists (Telegram shows them as buttons):
+    # "No" to a required consent whose only choice is yes leaves it empty and saves the standing
+    # No; anything else is read as before, and a reply that settles nothing is told what the form
+    # offers (never a loop).
+    one = target[0] if target else (pending[0] if len(pending) == 1 else None)
+    closed = AK.closed_choice(one) if one else []
+    if closed:
+        from autoapply import consents as CS
+        with _ASKS_LOCK:
+            ask = _ASKS.get(aid)
+            if (ask and ask.get("open", True) and AK.closed_match(one, text) is None
+                    and CS.is_forced(one["question"], closed) and workauth_polarity(text) is False):
+                _ask_leave(ask, one["n"] - 1)
+                return ("Left empty. The form may not submit without it, so I flag it at Ready to send. "
+                        "I will not ask about a required consent like this again."), _ask_done(ask)
     bare = only is None and len(pending) > 1 and AK.is_bare(text)
     reading = target or (pending[:1] if bare else pending)
     got = AK.read_reply(_ask_reader(), reading, text)
@@ -14397,6 +14565,9 @@ def _ask_take_reply(aid: str, text: str, parked: bool = False, only: int | None 
         if got.get("error"):
             # The reader failed or stalled, not the person: it does not count as unclear.
             return "I could not read that just now. Tap a choice, or send just the answer.", False
+        if closed and not bare:
+            # none of the page's choices: what the form offers, and the ways on. Never a loop.
+            return AK.offers_reply(one), False
         if bare:
             # Not an answer to the first open question: say so, and how to answer another one.
             # Never moved on to a later question by guesswork.
@@ -14406,7 +14577,7 @@ def _ask_take_reply(aid: str, text: str, parked: bool = False, only: int | None 
         ask["unclear"] = int(ask.get("unclear") or 0) + 1
         if ask["unclear"] == 1:
             return AK.unclear_reply(target or left), False
-        return "I still could not tell. Type just the answer, or answer on the page yourself.", False
+        return ("I could not use that as the answer. Type just the answer, leave it empty, or skip this job."), False
 
 
 # ---- Late answers: the asks that went to Telegram, kept for a day after they stop waiting. The
@@ -14811,9 +14982,12 @@ def autoapply_agent_ask():
         select = {it["question"]: it["answer"] for it in items
                   if it["answer"] and (AK.is_eeo(it["question"]) or it["origin"] == "neutral")
                   and it["answer"] in it["all_options"]}
-        return jsonify({"ok": all(it["answer"] for it in items), "id": aid, "known": True,
-                        "answers": answers(), "select": select, "reword": reword, **origins(),
-                        "open": [it["question"] for it in items if not it["answer"]]})
+        # (2026-11-17) A required consent with no way to decline, and the person's standing No to
+        # those (``@forced_consent``): never asked again. The run leaves it EMPTY and flags it.
+        leave = _forced_declined([it for it in items if not it["answer"]])
+        return jsonify({"ok": all(it["answer"] or it["question"] in leave for it in items), "id": aid, "known": True,
+                        "answers": answers(), "select": select, "reword": reword, **origins(), "leave": leave,
+                        "open": [it["question"] for it in items if not it["answer"] and it["question"] not in leave]})
     if all(it["answer"] for it in items):
         return jsonify({"ok": True, "id": aid, "known": True, "answer": items[0]["answer"], "answers": answers(),
                         **origins()})
@@ -14846,7 +15020,11 @@ def autoapply_agent_ask():
     if batch:
         ctx["lead"] = AK.batch_lead(len(pending), ctx["role"], company)
     _ask_open(aid, pending, b.get("record_id"), ctx=ctx, timeout=timeout, park=park)
-    sent = False if no_wait else _ask_telegram(aid, pending, lead=ctx.get("lead", ""))
+    # (2026-11-17, the three apply modes) The shell says whether this run's questions also go to
+    # Telegram (``telegram``: only in Hybrid; left out, as before). Assisted asks on the bar only,
+    # and an Auto run never asks: it parks and the daily summary counts it.
+    tg = b.get("telegram") is not False
+    sent = False if (no_wait or not tg) else _ask_telegram(aid, pending, lead=ctx.get("lead", ""))
     from autoapply.answers import normalize as _nq
     if conflict:
         from applicant import facts as _F
@@ -15056,6 +15234,12 @@ def _ask_long_wait(aid: str, chunk: float) -> str:
                 return "stopped" if ask.get("closed") else "timeout"
             if ask.get("parked"):
                 return "parked"
+            # A new answer to one of several questions ends the chunk early, so the shell can fill
+            # it in while the others are still open.
+            got = sum(1 for x in items if x.get("answer") and not x.get("left"))
+            if got > int(ask.get("told") or 0):
+                ask["told"] = got
+                return "waiting"
             if ask.get("sent") and not ask.get("reminded") and now >= float(ask.get("remind_at") or now + 1):
                 ask["reminded"] = True
                 remind = (_ask_open_items(items), ask.get("kind") or "", float(ask.get("deadline") or now) - now)
@@ -15086,7 +15270,15 @@ def _ask_result(aid: str, how: str) -> dict:
         if ask.get("result") is not None:
             return ask["result"]
         if how in ("waiting", "parked"):
-            return {"ok": False, "id": aid, "reason": how}
+            out = {"ok": False, "id": aid, "reason": how}
+            if how == "waiting" and (ask.get("kind") or "") != "terms":
+                # (2026-11-17) What the person answered so far, while its siblings wait: the shell
+                # fills these into the form now, so one open question never holds the others up.
+                got = {it["question"]: it["answer"] for it in _ask_items(ask)
+                       if it.get("answer") and not it.get("left")}
+                if got:
+                    out["partial"] = got
+            return out
         kind = ask.get("kind") or ""
         ctx = ask.get("ctx") or {}
         reg = [dict(x) for x in _ask_items(ask)]
@@ -15117,10 +15309,13 @@ def _questions_result(aid: str, how: str, reg: list, ctx: dict, sent: bool, via:
     for j, i in enumerate(pend):
         if j < len(reg) and 0 <= i < len(items):
             items[i]["answer"] = reg[j].get("answer") or None
+            if reg[j].get("left"):                 # left empty by the person: dealt with, no answer
+                items[i]["left"], items[i]["origin"] = True, "left"
+    left = [it["question"] for it in items if it.get("left")]
     confirm = dict(ctx.get("confirm") or {})
     none = set(ctx.get("none") or [])
     company, country = ctx.get("company") or "", ctx.get("country") or "US"
-    answers = lambda: {it["question"]: it["answer"] for it in items if it.get("answer")}   # noqa: E731
+    answers = lambda: {it["question"]: it["answer"] for it in items if it.get("answer") and not it.get("left")}   # noqa: E731
     # (Phase 4) "Use my saved answer" on a new wording: the mapping is confirmed for good, and the
     # field gets the saved answer (the person's own, so it is not saved again).
     if any(confirm.get(it["question"]) and str(it.get("answer") or "").strip() == _M.CONFIRM for it in items):
@@ -15163,12 +15358,13 @@ def _questions_result(aid: str, how: str, reg: list, ctx: dict, sent: bool, via:
             _recent_ask_end(aid, asked)
         # A job's own answer (never kept) and a confirm are handed to the run as they are.
         keep = {it["question"]: it["answer"] for it in items
-                if it.get("answer") and (it["question"] in none or it.get("skip_save"))}
+                if it.get("answer") and not it.get("left") and (it["question"] in none or it.get("skip_save"))}
         # Where the answers that were not the person's came from (a grounded one names its fact)
-        origins = {it["question"]: it["origin"] for it in items if it.get("answer") and it.get("origin")}
+        origins = {it["question"]: it["origin"] for it in items if it.get("answer") and it.get("origin") and not it.get("left")}
         facts = {it["question"]: it["fact"] for it in items if it.get("answer") and it.get("fact")}
-        return {"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers(), "job_answers": keep,
-                "origins": origins, "facts": facts}
+        first = "" if items[0].get("left") else items[0]["answer"]
+        return {"ok": True, "id": aid, "answer": first, "answers": answers(), "job_answers": keep,
+                "origins": origins, "facts": facts, "left": left}
     if any(it.get("answer") and not it.get("origin") for it in items):
         save_all()                                 # what the person did answer is kept
     if sent:                                       # the rest stays open to a late reply for a day
@@ -15410,7 +15606,8 @@ def _park_settle() -> list:
                     e.update(state="declined", decision="stop")
             elif out.get("ok"):
                 e.update(state="answered", answers=out.get("job_answers") or {},
-                         answered=list((out.get("answers") or {}).keys()))
+                         answered=list((out.get("answers") or {}).keys()),
+                         left=list(out.get("left") or []))       # left empty by the person: not asked again
             else:
                 e["state"] = "stopped"
             changed = True
@@ -15692,6 +15889,205 @@ def autoapply_agent_digest_last():
     return _nostore(jsonify({"ok": True, "count": _DIGEST["count"], "last": _DIGEST["last"]}))
 
 
+# ------------------------------------------------------------------ the three apply modes
+# Auto ("I'm away"), Assisted ("I'm here"), Hybrid ("I'm around"): autoapply/modes.py and
+# docs/apply-agent.md section 26. The shell asks for the mode before each run; the Auto queue,
+# the "Sent" notices and the daily summary live here.
+
+@app.get("/api/autoapply/mode")
+@_guard
+def autoapply_mode():
+    """The saved apply mode and what follows from it, for the shell (asked once per run) and the
+    page: {mode, telegram_asks, hidden, auto_min_match, auto_sites}."""
+    from autoapply import modes
+    m = _apply_mode()
+    return _nostore(jsonify({"ok": True, "mode": m, "telegram_asks": modes.telegram_asks(m),
+                             "hidden": modes.hidden(m), "auto_min_match": _auto_min_match(),
+                             "auto_sites": modes.auto_sites()}))
+
+
+def _auto_day(d: dict, today: str) -> dict:
+    cur = d.get("auto_day") if isinstance(d.get("auto_day"), dict) else {}
+    if cur.get("date") != today:
+        cur = {"date": today, "ids": []}
+    d["auto_day"] = cur
+    return cur
+
+
+@app.post("/api/autoapply/auto/plan")
+@_guard
+def autoapply_auto_plan():
+    """Auto mode's next piece of the queue: the approved applications still waiting to be filled
+    (Waiting on you, not parked, not already Ready to send), oldest approval first, up to what is
+    left of today's limit (``daily_cap``: every application Auto works on today counts, sent or
+    left at Ready to send). The jobs returned are marked as worked on today, so the same one is
+    not tried twice in a day. Nothing when the mode is not Auto. Each job says whether Auto may
+    press Submit itself (``autonomous``: the verified allowlist, the match threshold, and today's
+    send limit not used up); every other one is filled and left at Ready to send.
+    Reply {ok, mode, jobs: [{recordId, url, resumePath, lane, autonomous, company}], left}."""
+    from autoapply import modes
+    mode = _apply_mode()
+    if mode != modes.AUTO:
+        return jsonify({"ok": True, "mode": mode, "jobs": [], "left": 0})
+    b = request.json or {}
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    jobs_idx = _aa_job_index(rows)
+    ts, today = _now_ts_today()
+    cap = max(1, int(_prefs().get("daily_cap") or 40))
+    state = _notify_state()
+    done = set(_auto_day(state.load(), today).get("ids") or [])
+    left = max(0, cap - len(done))
+    try:
+        limit = max(1, min(10, int(b.get("limit") or 5)))
+    except (TypeError, ValueError):
+        limit = 5
+    sends_left = int(_rate_limiter().status(ts, today).get("remaining") or 0)
+    items = []
+    for r in rows:
+        it = _aa_row(r, _record_data(r), jobs_idx)
+        if (it["tile"] == "waiting" and it["action"] in ("fill", "signin") and it["id"] not in done
+                and re.match(r"https?://", it["apply_url"] or "", re.I)):
+            items.append(it)
+    items.sort(key=lambda x: x["approved_at"] or x["when"])
+    out = []
+    for it in items[:min(left, limit)]:
+        alone = bool(it["auto_send"]) and sends_left > 0
+        if alone:
+            sends_left -= 1
+        out.append({"recordId": it["id"], "url": it["apply_url"], "resumePath": it["cv_path"],
+                    "lane": it["lane"], "autonomous": alone, "company": it["company"]})
+    if out and not b.get("peek"):
+        ids = [j["recordId"] for j in out]
+        state.update(lambda d: _auto_day(d, today)["ids"].extend(ids))
+    return jsonify({"ok": True, "mode": mode, "jobs": out, "left": max(0, left - len(out))})
+
+
+def _auto_sent_notice(rec: dict) -> str:
+    """"Sent: Role at Company" for an application Auto sent by itself (notify/daily.py): Telegram
+    when linked, else in the app; once per application; held through quiet hours."""
+    from datetime import datetime
+    from notify import daily as DN
+    try:
+        ch = _active_channel()
+    except Exception:          # noqa: BLE001 - no Telegram is fine: it lands in the app
+        ch = None
+    try:
+        role = (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0]
+        return DN.notify_sent(_notify_state(), ch, rec["id"], role, rec.get("company") or "",
+                              datetime.now().astimezone(), paused=bool(ch) and _channel_paused(ch))
+    except Exception:          # noqa: BLE001 - the application is sent either way
+        traceback.print_exc()
+        return "failed"
+
+
+def _auto_counts() -> dict:
+    """Today's numbers for the daily summary, from the records: sent for the person today,
+    waiting at Ready to send, and paused on something only the person can answer."""
+    _ts, today = _now_ts_today()
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    sent = ready = need = 0
+    for r in rows:
+        d = _record_data(r)
+        from submit.stages import app_stage
+        st = app_stage(d)
+        park = d.get("agent_park") if isinstance(d.get("agent_park"), dict) else None
+        if st["stage"] == "submitted":
+            if st["how"] == "auto" and str(d.get("applied_at") or (d.get("submission") or {}).get("at") or "")[:10] == today:
+                sent += 1
+        elif st["stage"] == "skipped":
+            continue
+        elif park and park.get("state") == "waiting":
+            need += 1
+        elif st["stage"] == "approved" and isinstance(d.get("agent_ready"), dict):
+            ready += 1
+    return {"sent": sent, "ready": ready, "need": need}
+
+
+def _auto_daily_tick() -> dict:
+    """Auto mode's part of the notify tick, with or without Telegram: held "Sent" notices go out
+    once quiet hours end, and the ONE daily summary is built when it is due."""
+    from datetime import datetime
+    from autoapply import modes
+    from notify import daily as DN
+    state = _notify_state()
+    now = datetime.now().astimezone()
+    try:
+        ch = _active_channel()
+    except Exception:          # noqa: BLE001
+        ch = None
+    paused = bool(ch) and _channel_paused(ch)
+    out = {"sent_flushed": DN.flush_sent(state, ch, now, paused=paused), "summary": None}
+    if _apply_mode() == modes.AUTO and DN.summary_due(state, now):
+        out["summary"] = DN.daily_summary(state, ch, _auto_counts(), now, paused=paused)
+    return out
+
+
+def _auto_inbox() -> dict:
+    """The page's copy of what Auto told the person: unseen "Sent" notices and the summary, with
+    the live counts beside it (Send all works on what is ready NOW)."""
+    from notify import daily as DN
+    try:
+        got = DN.inbox(_notify_state())
+    except Exception:          # noqa: BLE001
+        got = {"notices": [], "summary": None}
+    return got
+
+
+@app.post("/api/autoapply/auto/seen")
+@_guard
+def autoapply_auto_seen():
+    """The page showed these: body {ids?: [notice id], summary?: true}."""
+    from notify import daily as DN
+    b = request.json or {}
+    DN.mark_seen(_notify_state(), [str(x) for x in (b.get("ids") or [])][:100], summary=bool(b.get("summary")))
+    return jsonify({"ok": True, "auto": _auto_inbox()})
+
+
+@app.post("/api/autoapply/auto/tick")
+@_guard
+def autoapply_auto_tick():
+    """Run Auto's notices now (the page calls it on its own timer; the notify loop does too)."""
+    out = _auto_daily_tick()
+    return jsonify({"ok": True, **out, "auto": _auto_inbox(), "counts": _auto_counts()})
+
+
+def _attach_confirmation(source_id: str, msg: dict) -> int:
+    """The employer's "we received your application" mail, matched to a job by the inbox
+    (inbox/matching.py: thread, sender domain or company): kept on that job's submitted
+    application(s) as ``confirmation`` (subject, sender, date, a short excerpt), shown as
+    "Confirmation received" on the Submitted list and the Tracker. The first one stays."""
+    sid = str(source_id or "").strip()
+    if not sid:
+        return 0
+    from inbox import detect
+    conf = {"subject": " ".join(str(msg.get("subject") or "").split())[:200],
+            "sender": detect.sender_name(msg)[:120], "from": str(msg.get("from") or "")[:200],
+            "date": str(msg.get("date") or "")[:60],
+            "snippet": " ".join(str(msg.get("body") or "").split())[:400], "at": _now_iso()}
+    n = 0
+    recs = _records()
+    try:
+        for r in recs.list(limit=10000):
+            d = _record_data(r)
+            if str((d.get("source_job") or {}).get("source_id") or "").strip() != sid:
+                continue
+            if d.get("confirmation") or (d.get("status") or "") not in ("applied", "approved"):
+                continue
+            recs.merge_data(r["id"], {"confirmation": conf})
+            n += 1
+    finally:
+        recs.close()
+    return n
+
+
 @app.post("/api/autoapply/agent/answer")
 @_guard
 def autoapply_agent_answer():
@@ -15702,7 +16098,10 @@ def autoapply_agent_answer():
     b = request.json or {}
     aid, ans = str(b.get("id") or ""), str(b.get("answer") or "").strip()[:1500]
     q = " ".join(str(b.get("question") or "").split())[:300]
-    if not ans:
+    # (2026-11-17) ``action: "leave"``: the person leaves this question empty. It counts as dealt
+    # with, so the others are not held up; the run flags it at Ready to send.
+    leave = b.get("action") == "leave"
+    if not ans and not leave:
         return jsonify({"ok": False, "error": "Write an answer first."}), 400
     _parked_boot()
     with _ASKS_LOCK:
@@ -15718,7 +16117,24 @@ def autoapply_agent_answer():
         exact = None
         # The question the bar showed: its index, checked against its words when sent.
         only = _ask_pick(items, b.get("index"), q) if (b.get("index") is not None or q) else None
-        if b.get("exact"):
+        if ask.get("kind") != "terms" and (leave or (only is not None and not b.get("exact"))):
+            i = only if only is not None else (0 if len(items) == 1 else -1)
+            if not 0 <= i < len(items):
+                return jsonify({"ok": False, "error": "No such question."}), 400
+            from autoapply import consents as CS
+            it = items[i]
+            closed = AK.closed_choice(it)
+            # "No" typed on a required consent whose only choice is yes: that is a decision, not an
+            # unclear reply. It is left empty, and their standing No is saved (asked once ever).
+            declined = (not leave and closed and AK.closed_match(it, ans) is None
+                        and CS.is_forced(it["question"], closed) and workauth_polarity(ans) is False)
+            if leave or declined:
+                saved = _ask_leave(ask, i, standing=declined or b.get("standing") is not False)
+                done = _ask_done(ask)
+                note = ("Left empty. The form may not submit without it, so I flag it at Ready to send."
+                        + (" I will not ask about a required consent like this again." if saved else ""))
+                exact = (done, bool(ask.get("parked")), note)
+        if exact is None and b.get("exact"):
             i = only if only is not None else (0 if b.get("index") is None else -1)
             if not 0 <= i < len(items):
                 return jsonify({"ok": False, "error": "No such question."}), 400
@@ -15738,7 +16154,23 @@ def autoapply_agent_answer():
     reply, done = _ask_take_reply(aid, ans, only=only)
     if done and parked:
         return jsonify({"ok": True, "id": aid, "done": True, "parked": True, "reply": _parked_reply(aid, reply)})
-    return jsonify({"ok": True, "id": aid, "done": done, "reply": reply, "items": _ask_progress_of(aid)})
+    out = {"ok": True, "id": aid, "done": done, "reply": reply, "items": _ask_progress_of(aid)}
+    if not done and only is not None:
+        # A reply that settled nothing always comes with the ways on (never a dead end): the
+        # page's own choices when it listed them all, "Leave it empty", "Skip this job".
+        with _ASKS_LOCK:
+            its = _ask_items(_ASKS.get(aid) or {})
+        it = its[only] if 0 <= only < len(its) else {}
+        if not it.get("answer"):
+            out["exits"] = {"index": only, "n": only + 1, "question": it.get("question") or "",
+                            "options": AK.closed_choice(it)[:8], "leave": True, "skip": not parked}
+    return jsonify(out)
+
+
+def workauth_polarity(text: str):
+    """Yes / no / neither, read by rule (autoapply/workauth.polarity)."""
+    from autoapply import workauth as _WA
+    return _WA.polarity(str(text or ""))
 
 
 def _ask_progress_of(aid: str) -> list:
@@ -15946,7 +16378,8 @@ def autoapply_agent_terms():
     if no_wait:
         _park_from_ask(aid)
         return jsonify({"ok": False, "id": aid, "reason": "parked"})
-    _ask_telegram(aid, pending, kind="terms")
+    if b.get("telegram") is not False:             # Hybrid only, when the shell says so
+        _ask_telegram(aid, pending, kind="terms")
     return jsonify(_ask_result(aid, _ask_long_wait(aid, chunk)))
 
 
@@ -16318,7 +16751,8 @@ def autoapply_agent_unavailable():
     msg = " ".join(str(b.get("message") or "").split())[:300] or "SponsorJobs' AI is unavailable right now. Nothing was changed; try again later."
     _records().merge_data(rec["id"], {"agent_note": {"kind": "ai", "message": msg, "at": time.time()}})
     told = False
-    if time.time() - _AI_UNAVAILABLE_TOLD["at"] > 1800:
+    # An Auto batch (``quiet``) tells Telegram nothing while it works: the row keeps the reason.
+    if not b.get("quiet") and time.time() - _AI_UNAVAILABLE_TOLD["at"] > 1800:
         try:
             ch = _active_channel()
         except Exception:      # noqa: BLE001 - no Telegram is fine
@@ -17785,6 +18219,10 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
                     "message": park.get("message") or ""} if park else None),
         "ready_sig": (ready or {}).get("sig") or "",
         "lane": plan["tier"],
+        # Auto mode may press Submit by itself for this one (allowlist, and the match threshold)
+        "auto_send": _may_send_alone(plan["tier"], match),
+        # The employer's own "we received your application" mail, when the inbox saw it
+        "confirmation": (data.get("confirmation") if isinstance(data.get("confirmation"), dict) else None),
         "apply_url": _application_url(url, company) if url else "",
         "posting_url": url,
         "site": _aa_site(url),
@@ -17809,6 +18247,7 @@ def autoapply_board():
     """Everything the Auto-apply page shows except Up next: the four tiles with their counts
     and rows, the Needs you reasons, this week's submissions, today's auto-submit count against
     the daily cap, recent submissions, and which connections exist. Read-only."""
+    from autoapply import modes as _apply_modes
     from submit.stages import TILES, default_tile, needs_summary
     recs = _records()
     try:
@@ -17840,7 +18279,10 @@ def autoapply_board():
         "week": {"sent": len(sent_week), "for_you": sum(1 for x in sent_week if x["how"] == "auto")},
         "needs_summary": needs_summary([x["reason"] for x in tiles["needs"]]),
         "missing_contact": [k for k in ("name", "email") if not ident.get(k)],
-        "today": {**_rate_limiter().status(ts, today), "autonomous": _autonomous_on()},
+        "today": {**_rate_limiter().status(ts, today), "autonomous": _autonomous_on(),
+                  "mode": _apply_mode(), "auto_min_match": _auto_min_match(),
+                  "auto_sites": _apply_modes.auto_sites()},
+        "auto": _auto_inbox(),
         "recent": tiles["submitted"][:5],
         "telegram": _active_channel() is not None,
         "approve_all": bool(p.get("approve_all")),
@@ -18356,6 +18798,8 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
                # How it was sent, or why it came back: "Submitted for you", "Needs you".
                "state": st["stage"], "state_label": st["label"], "state_detail": st["detail"],
                "how": st["how"],
+               # the employer's "we received it" mail, when the inbox saw one (_attach_confirmation)
+               "confirmation": (data.get("confirmation") if isinstance(data.get("confirmation"), dict) else None),
                "pdf": f"/api/cv.pdf?job={job}" if (WORKDIR / f"{job}.pdf").exists() else None,
                "cover_letter": (f"/api/record/{latest['id']}/cover_letter.pdf"
                                 if (data.get("cover_letter") or "").strip() else None),

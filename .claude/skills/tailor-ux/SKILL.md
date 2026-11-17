@@ -497,3 +497,20 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   link to change it. Review answers adds "Chose “X”: nothing saved answers this.", "Needs you"
   and "Left empty: optional." (the last shown, never counted in "N to check"). Not yet checked at
   Kofi's window (no app run on the 8 GB builder); check at 76% zoom and 100% before release.
+- 2026-11-17: Three apply modes, one choice in two places. "How to apply" is a three-way segment
+  (Auto, Assisted, Hybrid) in Apply setup step 6 and at the top of Auto-apply's Today panel (it
+  replaced the Autonomous submit switch), with ONE honest line under it: Auto says how many sites
+  it can send on by itself today (from the allowlist, never a made-up number) and that the rest
+  waits for Send all. Auto shows nothing while it works (no Browser tab, no bar); its only trace
+  on the page is a muted "Working in the background." under the mode and the daily summary line
+  (a `.feed-note` above the list: the counts, Send all, Hide). Send all is a ghost button, not the
+  accent: Tailor & queue stays the page's one primary.
+- 2026-11-17: The Auto-apply title never wraps. With the right panel open the header's three
+  actions squeezed the H1 into "Auto-" / "apply". The title is `white-space: nowrap`, the title
+  block keeps 340px, and the action row wraps under it instead.
+- 2026-11-17: The agent's questions are answered ON THE PAGE, not on the bar. The bar is one slim
+  line ("3 fields need you. 1 of 3", Next, Skip this job); the field itself is scrolled to and
+  outlined in the pane (3px amber outline with a soft glow, removed once it has a value). No
+  question list and no answer box over the Browser pane. A dead end is never acceptable: every
+  ask has a way on (answer, Next, Skip this job). Not yet checked at Kofi's window (no app run on
+  the 8 GB builder); check at 76% zoom and 100% before release.

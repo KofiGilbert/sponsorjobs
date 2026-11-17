@@ -919,7 +919,7 @@ saves into the store that already owns the answer; the setup has no store of its
 | 3. What you want | `aa_focus` titles and places (Auto-apply's picks), "Never apply to" (`aa_learn.json` exclude), `work_auth.relocate`, `@start_date` + `earliest_start`, `@notice_period`, `@salary` + `desired_salary`; level, job type, work style, distance and industries in `apply_wants` |
 | 4. Form questions | `@heard_about` + `hear_about_us`, `@over_18`, `@restrictive_covenants`, `@marketing_optin` (default No), `@forced_consent` (default ask), `accept_required_terms`, `@security_clearance`, `@drivers_license`, `@gpa`, `@related_degree`, `@current_salary`, `@current_bonus`, `@current_equity`; worked-here is shown as answered from the work history |
 | 5. Self-identification | the eight keys of `autoapply/basics.py`, and `eeo_decline` |
-| 6. How to apply | the autonomous switch (allowlisted sites only), `daily_cap`, `autopilot_per_day` |
+| 6. How to apply | the apply mode, Auto / Assisted / Hybrid (section 26; the old autonomous switch migrates into it), Auto's match threshold (`auto_min_match`), `daily_cap`, `autopilot_per_day` |
 | 7. Finish | nothing: "The agent can now answer N of the M questions forms usually ask", from `autoapply/setup.py` `coverage()` over the real stores, each open item with a jump to its step |
 
 New canonical keys (answer library `_CANON`, brain registry, label mapper): `@current_salary`,
@@ -977,3 +977,89 @@ auto-submit only on the verified allowlist with Autonomous submit on); it never 
   fields and 3 unknown required questions fills 10, picks the neutral one, leaves two, reaches the
   Submit page and asks once; a Workday page that blocks Next fills everything else first; a saved
   answer that arrives meanwhile means no ask; no stand-in typed; Review answers and the notice).
+
+## 26. Three apply modes: Auto, Assisted, Hybrid (2026-11-17)
+
+ONE saved choice (`_apply_mode` in ui/app.py, the small file `apply_mode` beside the old switch's;
+the rule is `autoapply/modes.py`), made in Apply setup step 6 ("How to apply") and on the
+Auto-apply page's Today panel. An install from before the modes has none saved, so the old
+Autonomous submit switch decides it: on is Auto, off is Assisted. `_autonomous_on()` is now "the
+mode is Auto", so every existing gate (the submit driver, the alerts' Apply for me, the Home agent)
+reads the same choice.
+
+| | Auto ("I'm away") | Assisted ("I'm here") | Hybrid ("I'm around") |
+|---|---|---|---|
+| Where it runs | in the background: the pane is kept out of view, no Browser tab, no bar | in the Browser tab | in the Browser tab |
+| What starts it | the app, on a timer, through the approved queue (Waiting on you) up to `daily_cap` a day, each application once a day | the person (Apply for me, Apply for me to all) | the person |
+| Questions only the person knows | never asked: the job parks (Needs you) and the daily summary counts it | the guided ask on the page (section 27) | the guided ask, and the same questions on Telegram |
+| Who presses Submit | the agent, ONLY on the verified allowlist (`submit/allowlist.py`, one system today) and, with a threshold set, only at that match or better; everything else is filled and left at Ready to send | the person (Send) | the person (Send, in the app) |
+| Telegram | "Sent: Role at Company" per application it sent, and ONE daily summary | the Ready to send notice only; no asks, no digest | asks, the digest, the Ready to send notice |
+
+- **Nothing here widens the AUTO lane.** `modes.may_send_alone` only narrows what the allowlist
+  and the person's opt-in allow. The shell still asks `/api/submit/decision` with the page that is
+  open before any Submit click; `/api/autofill/applied` believes `by: "auto"` only when the mode is
+  Auto AND that decision says `click_submit`, and then counts it against the daily limit.
+- **Auto's queue** (`POST /api/autoapply/auto/plan`): approved applications still to be filled,
+  oldest approval first, at most what is left of `daily_cap` today. To review is NOT taken: a
+  tailored resume still needs the person's approval (in the app, or Approve all on Telegram).
+  The page asks for it every 3 minutes (`aaAutoTick` in app.js) and hands the jobs to the shell as
+  a QUIET batch (`agentBatch(jobs, {quiet: true})`), never while the person runs something or has
+  a page open in the Browser tab.
+- **Out of view** (shell-electron/main.js `setPaneQuiet`): the pane keeps a real size (1280 by
+  900, so sites lay out and real clicks land) parked past the window's left edge, the page is told
+  the pane is closed (so the right panel never switches to the Browser tab), nothing takes the
+  focus, and every progress line is marked `quiet` (the page shows no bar for it). When the batch
+  ends the hidden page is closed. If the person opens a page themselves meanwhile, the run stops
+  and the browser is theirs.
+- **What the person hears in Auto** (`notify/daily.py`, docs/notify.md "Auto mode"): one "Sent"
+  notice per application the agent sent, and one daily summary, "{n} sent for you, {m} ready for
+  your Send, {k} need an answer", with **Send all** in the app.
+- **Send all** (`agent.sendAll`, the summary line on Auto-apply): each application at Ready to
+  send goes through `agent.send`, the same path as the bar's Send (the person's own click, so it
+  is allowed on every site), one at a time, in the Browser tab. A captcha stops the list there;
+  nothing is solved or stepped around. Not offered from Telegram: nothing in notify/ approves an
+  assisted submission from Telegram ("Approve all" only marks packages approved and submits
+  allowlisted ones), so Telegram says what is ready and Send stays in the app.
+- **The employer's confirmation mail.** When the inbox ties an acknowledgement to a job
+  (inbox/matching.py), `_attach_confirmation` keeps its subject, sender, date and first lines on
+  that job's application; the Submitted list, the drawer and the Tracker card say "Confirmation
+  received".
+- Honest copy: the mode's one line names how many systems Auto can send on by itself today, from
+  the allowlist, and says that everything else waits for Send all. Since that is one system, Send
+  all is the main path: the summary line shows from the first ready application in Auto.
+- Tests: tests/test_apply_modes.py, tests/js/test_apply_modes.js.
+
+## 27. The guided ask: answer on the page, one outlined field at a time (2026-11-17)
+
+Replaces the question list on the bar (section 25's "The bar"). The owner: the list took over the
+top of the Browser pane; and on Phoenix Contact a required select whose ONLY option is "Yes", a
+typed "No" and "I still could not tell" looped for ever while an answered sibling was never filled.
+
+- **The bar is ONE slim line**: "{n} fields need you. {i} of {n}", **Next**, **Skip this job**.
+  No question text, no answer box.
+- **The field is outlined on the page** (`guide` in shell-electron/agent.js; `HL_ON` scrolls it to
+  the middle and outlines it, `HL_OFF` puts the page's own styles back). The person answers with
+  the site's own control and its real options.
+- **The shell watches that field** in the view. A choice counts at once; typed text counts once
+  the box lost the keyboard (or stopped changing), so half a word is never taken. Then the outline
+  goes, the answer is handed to the engine (`/api/autoapply/agent/answer`, `exact`, `on_page`),
+  and the next open field is outlined. The engine saves the answers to the answer library when
+  the ask closes, as before (asked once ever; self-identification answers follow the same local
+  rules as any answer).
+- **Next** passes the field without an answer (`action: "leave"`, `standing: false`): it stays
+  empty, is flagged "Needs you: the form will not submit without it" in Review answers, and is
+  never asked again in this run. **Skip this job** stops the run.
+- **Hybrid**: the same questions are on Telegram with the page's choices. An answer from there is
+  filled into the form by the shell (a real pick for a choice, typed for text) and counts the
+  same; whichever comes first wins. **Assisted**: nothing on Telegram. **Auto**: never asked.
+- **Another page.** A field that is not on the page in view is outlined as soon as the person is
+  on its page; the shell does not navigate back by itself (see the PR's open points).
+- **A required consent whose only choice is yes** (`consents.is_forced`): Yes, on the page or on
+  Telegram, saves the standing Yes (`@forced_consent`); "No" typed to it leaves it empty, flags
+  it and saves the standing No, after which such a question is never asked (`leave` in the ask
+  route's known-only reply): the run leaves it empty and flags it, and an Auto run sets the job
+  aside (Needs you) instead of offering a form that will not submit.
+- **No dead ends.** A reply that is none of a closed question's choices is told "This form only
+  offers: Yes." with the ways on (a choice, leave it empty, skip this job), and nothing loops. An answer already given
+  travels to the shell at once (`partial` on a waiting ask).
+- Tests: tests/test_agent_batch_exits.py, tests/js/test_agent_guide.js.

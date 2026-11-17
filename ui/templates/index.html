@@ -865,6 +865,13 @@
                 <div class="aa-inbox" id="inboxResults"></div>
               </section>
 
+              <!-- Auto mode's daily summary: one line, and Send all for what waits at Ready to send. -->
+              <div class="feed-note aa-autosum" id="aaAutoSum" hidden>
+                <span id="aaAutoSumText"></span>
+                <button class="btn btn-ghost btn-sm" id="aaSendAll" type="button" hidden></button>
+                <button class="link-btn" id="aaAutoSumHide" type="button" data-i18n="aa.inbox.hide">Hide</button>
+              </div>
+
               <section class="aa-sec">
                 <div class="aa-sec-h">
                   <h2 class="aa-sec-t"><span id="aaSecTitle">To review</span> <span class="aa-count" id="aaSecCount"></span></h2>
@@ -892,9 +899,15 @@
                 <div class="aa-cap-row"><span id="aaCapSent"></span><span id="aaCapLeft"></span></div>
                 <div class="aa-meter"><i id="aaMeter"></i></div>
               </div>
-              <div class="aa-set">
-                <div><div class="aa-set-t" data-i18n="aa.auto">Autonomous submit</div><div class="aa-set-s" data-i18n="aa.autoSub">Send for me on verified sites</div></div>
-                <button class="aa-switch" id="aaAutonomous" type="button" role="switch" aria-checked="false" aria-label="Autonomous submit"></button>
+              <!-- How to apply: Auto / Assisted / Hybrid, the ONE saved choice (also Apply setup). -->
+              <div class="aa-set aa-mode" id="aaAutonomous">
+                <div>
+                  <div class="aa-set-t" data-i18n="mode.title">How to apply</div>
+                  <div class="ans-seg aa-mode-seg" id="aaModeSeg" role="group" aria-label="How to apply"></div>
+                  <div class="aa-set-s" id="aaModeSub"></div>
+                  <div class="aa-set-s aa-mode-min" id="aaModeMin" hidden></div>
+                  <div class="aa-set-s aa-mode-live" id="aaModeLive" hidden></div>
+                </div>
               </div>
               <div class="aa-set" id="aaApRow">
                 <div><div class="aa-set-t" data-i18n="aa.ap">Autopilot</div><div class="aa-set-s" id="aaApSub"></div></div>

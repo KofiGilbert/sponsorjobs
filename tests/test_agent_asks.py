@@ -218,7 +218,9 @@ def test_a_bar_free_text_is_read_too_and_an_unclear_reply_asks_again(A):
     th, out = _ask_in_thread(mod, {"id": "b1", "question": "Gender", "options": GENDER_OPTS, "timeout_s": 15})
     c = mod.app.test_client()
     d = c.post("/api/autoapply/agent/answer", json={"id": "b1", "answer": "hmm ok"}, headers=H).get_json()
-    assert d["ok"] and d["done"] is False and "could not tell" in d["reply"]
+    # (2026-11-17) every choice is on the page, so the reply names them and the ways on: never a
+    # vague "could not tell" (tests/test_agent_batch_exits.py)
+    assert d["ok"] and d["done"] is False and d["reply"].startswith("This form only offers: Male, Female")
     d = c.post("/api/autoapply/agent/answer", json={"id": "b1", "answer": "what are the choices?"}, headers=H).get_json()
     assert d["done"] is False and "Female" in d["reply"]
     d = c.post("/api/autoapply/agent/answer", json={"id": "b1", "answer": "I don't wish to answer", "exact": True}, headers=H).get_json()
@@ -877,7 +879,8 @@ def test_f_a_bare_answer_goes_to_the_first_open_question_only(A):
     assert [x["answer"] for x in d["items"]] == ["No", "Yes", None, None]
     assert mod._agent_ask_event("text", "no") == f"Got it: 3. No. Still open: 4. {PHX_QS[3]}."
     reply = mod._agent_ask_event("text", "no")                 # the last one does not take "no"
-    assert reply == "I could not tell your answer from that. The choices for “GDPR Acknowledgement” are: Acknowledge."
+    # (2026-11-17) what the form offers and the ways on, never a vague "could not tell"
+    assert reply.startswith("This form only offers: Acknowledge. Choose one, leave it empty")
     assert _answers_of(mod, "f1") == ["No", "Yes", "No", None]
     assert mod._agent_ask_event("text", "Acknowledge") == "Got it: 1. No; 2. Yes; 3. No; 4. Acknowledge."
     th.join(20)

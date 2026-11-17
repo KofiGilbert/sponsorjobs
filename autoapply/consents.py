@@ -99,6 +99,26 @@ def saved_forced(library) -> bool:
     return _saved_yes(library, FORCED_KEY)
 
 
+def saved_forced_decline(library) -> bool:
+    """(2026-11-17) The person said no once to a required consent with no way to decline
+    (``@forced_consent`` saved as No): such a question is left EMPTY and flagged from then on,
+    never asked again. No saved answer still asks; a saved yes accepts (saved_forced)."""
+    if library is None:
+        return False
+    try:
+        row = library.best(FORCED_KEY) if hasattr(library, "best") else None
+    except Exception:          # noqa: BLE001 - nothing saved then
+        row = None
+    return workauth.polarity(str((row or {}).get("answer") or "")) is False
+
+
+def is_forced(label: str, options, field_type: str = "select") -> bool:
+    """A REQUIRED opt-in with no way to decline (its only choice is yes): the person's."""
+    lbl = " ".join(str(label or "").split())
+    return bool(lbl) and is_optin(lbl) and not is_acknowledgement(lbl) \
+        and optin_answer(lbl, options, field_type, True, opt_in=False) is PERSON
+
+
 # The verdicts of optin_answer: a value to pick or tick, nothing to do (an optional box left
 # unticked), or the person's (a forced consent).
 LEAVE, PERSON = "", None
