@@ -2206,7 +2206,12 @@ _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   # How long the apply agent waits on a question before it parks the job (minutes)
                   "agent_ask_wait_min": 60,
                   # The person made the standing choice on terms a site requires (either way)
-                  "terms_decided": False}
+                  "terms_decided": False,
+                  # Apply setup (autoapply/setup.py): shown once after sign-in, resumable at its step
+                  "apply_setup": {"seen": False, "step": "contact", "done": False},
+                  # What the person wants that no other store owns (level, job types, work style,
+                  # commute radius, industries). Saved for matching; see autoapply/setup.py.
+                  "apply_wants": {}}
 
 
 def _prefs() -> dict:
@@ -2263,6 +2268,21 @@ def _set_prefs(patch: dict) -> dict:
             pass
     if "terms_decided" in patch:
         cur["terms_decided"] = bool(patch["terms_decided"])
+    if isinstance(patch.get("apply_setup"), dict):    # Apply setup's place: seen, step, done
+        from autoapply.setup import STEPS
+        a = dict(cur.get("apply_setup") or {})
+        q = patch["apply_setup"]
+        if "seen" in q:
+            a["seen"] = bool(q["seen"])
+        if q.get("step") in STEPS:
+            a["step"] = q["step"]
+        if "done" in q:
+            a["done"] = bool(q["done"])
+        cur["apply_setup"] = {"seen": bool(a.get("seen")), "step": a.get("step") if a.get("step") in STEPS else "contact",
+                              "done": bool(a.get("done"))}
+    if "apply_wants" in patch:
+        from autoapply.setup import clean_wants
+        cur["apply_wants"] = clean_wants(patch["apply_wants"])
     if "tou_version" in patch:
         cur["tou_version"] = str(patch["tou_version"] or "")[:40]
         cur["tou_at"] = float(patch.get("tou_at") or 0)
@@ -6925,6 +6945,385 @@ def answers_basics_save():
         from applicant import facts as _F
         _brain_do(_F.settle_chat_salary, int(got["salary"]))
     return jsonify(_basics_payload(prefs))
+
+
+# --------------------------------------------------------------------------- Apply setup
+# The short setup that answers up front what the apply agent would otherwise stop to ask
+# (autoapply/setup.py). Every step is pre-filled from the stores that already own the answer and
+# saves back into them: the profile identity and brain contact facts, the work-authorization
+# profile, the answer library, the prefs stores, the Auto-apply focus and company lists. It has
+# no store of its own beyond its place (``apply_setup``) and the wants no other store owns
+# (``apply_wants``). Local only: nothing here reaches a model, the broker, Telegram or a log.
+def _setup_identity() -> tuple[dict, list]:
+    """The saved identity (the profile's over the essentials') and the declined list."""
+    mem = _memory()
+    try:
+        saved = mem.load("default") or {}
+    finally:
+        mem.close()
+    ess = saved.get("essentials") or {}
+    ident = {k: v for k, v in (ess.get("identity") or {}).items() if str(v or "").strip()}
+    ident.update({k: v for k, v in ((saved.get("profile") or {}).get("identity") or {}).items() if str(v or "").strip()})
+    return ident, [str(d) for d in (ess.get("declined") or [])]
+
+
+def _setup_saved(lib, prefs: dict) -> dict:
+    """{library key: answer} for the setup's standing answers, the prefs store's flat answers
+    folded in (an older surface may hold only those)."""
+    from autoapply import setup as S
+    out = {}
+    for k in set(S.KEYS.values()):
+        row = lib.best(k)
+        out[k] = str((row or {}).get("answer") or "").strip()
+    for k, pk in (("@start_date", "earliest_start"), ("@heard_about", "hear_about_us"), ("@over_18", "over_18")):
+        if not out.get(k) and str(prefs.get(pk) or "").strip():
+            out[k] = str(prefs.get(pk)).strip()
+    return out
+
+
+def _setup_payload() -> dict:
+    from autoapply import basics, countries
+    from autoapply import setup as S
+    from autoapply import workauth as _wa
+    from intake.links import link_ok
+    from submit.allowlist import REGISTRY as _AUTO_REG
+    p, bp = _prefs(), _brain_prefs()
+    ident, declined = _setup_identity()
+    try:
+        ap = _applicant_for(_saved_full_profile() or {})
+    except Exception:          # noqa: BLE001 - no profile yet: an empty map
+        ap = {}
+    wa = _work_auth()
+    lib = _answer_lib()
+    try:
+        b = basics.read(lib, eeo_decline=bool(bp.get("eeo_decline")), salary_fallback=bp.get("desired_salary") or "")
+        saved = _setup_saved(lib, bp)
+    finally:
+        lib.close()
+    focus = p.get("aa_focus") or {}
+    wants = S.clean_wants(p.get("apply_wants") or {})
+    titles = list(focus.get("titles") or []) or [t for t in (ap.get("current_title"),) if t]
+    link = lambda f, apk: next((str(v).strip() for v in (ident.get(f), ap.get(apk))  # noqa: E731
+                                if str(v or "").strip() and link_ok(f, v)), "")
+    gpa, scale = S.gpa_parts(saved.get(S.KEYS["gpa"]))
+    try:
+        employers = _employers()[:8]
+    except Exception:          # noqa: BLE001
+        employers = []
+    state = dict(p.get("apply_setup") or {})
+    snap = {"applicant": ap, "declined": declined, "work_auth": wa, "basics": b, "saved": saved}
+    return {
+        "ok": True,
+        "state": {"seen": bool(state.get("seen")), "step": state.get("step") if state.get("step") in S.STEPS else "contact",
+                  "done": bool(state.get("done"))},
+        "steps": list(S.STEPS),
+        "has_profile": bool(ap.get("full_name") or ident.get("name")),
+        "contact": {
+            "name": str(ident.get("name") or ap.get("full_name") or ""),
+            "email": str(ident.get("email") or ap.get("email") or ""),
+            "phone": str(ident.get("phone") or ap.get("phone") or ""),
+            "street": str(ident.get("street") or ap.get("street") or ""),
+            "city": str(ap.get("city") or ""), "state": str(ap.get("state") or ""),
+            "postal_code": str(ap.get("postal_code") or ""),
+            "country": countries.canonical(ap.get("country") or "") or str(ap.get("country") or ""),
+            "linkedin": link("linkedin", "linkedin"), "github": link("github", "github"),
+            "website": link("blog", "website"),
+            "none": {"linkedin": "linkedin" in declined, "github": "github" in declined, "website": "blog" in declined},
+            "alias": _mail_alias(), "apply_with_alias": bool(p.get("apply_with_alias", True)),
+        },
+        "workauth": {
+            "work_auth": wa,
+            "countries": [{"code": c, "name": _wa.COUNTRY_NAMES[c],
+                           "statuses": [{"code": k, "label": v} for k, v in _wa.STATUSES[c]]} for c in _wa.COUNTRIES],
+            "implied": sorted(_wa.CITIZEN | _wa.PERMANENT), "dated": sorted(_wa.DATED),
+            "preview": {c: _wa.note(wa, c) for c in _wa.COUNTRIES if _wa.note(wa, c)},
+            "citizenship": b["values"].get("citizenship") or "", "citizenship2": b["values"].get("citizenship2") or "",
+        },
+        "wants": {
+            "titles": titles, "locations": list(focus.get("locations") or []), **wants,
+            "salary": b["values"].get("salary") or "", "relocate": _wa.clean(wa).get("relocate") or "",
+            "start_date": saved.get("@start_date") or "", "notice": saved.get("@notice_period") or "",
+            "avoid": _learn_view()["exclude"],
+        },
+        "forms": {
+            "heard": saved.get("@heard_about") or "",
+            "over_18": S.yes_no(saved.get("@over_18")),
+            "covenants": S.yes_no(saved.get("@restrictive_covenants")),
+            "marketing": S.yes_no(saved.get("@marketing_optin")) or "No",
+            "forced": "always" if S.yes_no(saved.get("@forced_consent")) == "Yes" else "ask",
+            "terms": _terms_pref(),
+            "clearance": S.clearance_level(saved.get("@security_clearance")),
+            "license": S.yes_no(saved.get("@drivers_license")),
+            "gpa": gpa, "gpa_scale": scale,
+            "related_degree": S.yes_no(saved.get("@related_degree")),
+            "current_salary": saved.get("@current_salary") or "", "current_bonus": saved.get("@current_bonus") or "",
+            "current_equity": saved.get("@current_equity") or "",
+            "employers": employers,
+        },
+        "selfid": {"values": {f: b["values"].get(f) or "" for f in basics.SELF_ID_FIELDS},
+                   "eeo_decline": bool(bp.get("eeo_decline")),
+                   "choices": {f: [{"code": c, "label": w} for c, w in basics.CHOICES[f]] for f in basics.SELF_ID_FIELDS}},
+        "apply": {"autonomous": _autonomous_on(), "daily_cap": int(p.get("daily_cap") or 40),
+                  "autopilot": bool(p.get("autopilot")), "autopilot_per_day": int(p.get("autopilot_per_day") or 2),
+                  "auto_sites": sorted({e.ats for e in _AUTO_REG if e.auto_eligible})},
+        "countries": list(countries.NAMES),
+        "count": S.coverage(snap),
+    }
+
+
+def _setup_save_identity(patch: dict, declined_on: dict) -> None:
+    """Write the contact fields given (a field left out keeps its value) into the profile and the
+    essentials identity, and the brain's contact facts; set or clear a "none" link."""
+    mem = _memory()
+    try:
+        saved = mem.load("default") or {}
+        profile = saved.get("profile") or {}
+        essentials = saved.get("essentials") or {"identity": {}, "education": [], "experience": []}
+        profile.setdefault("identity", {}).update(patch)
+        essentials.setdefault("identity", {}).update(patch)
+        dec = [d for d in (essentials.get("declined") or [])]
+        for k, on in declined_on.items():
+            dec = [d for d in dec if d != k] + ([k] if on else [])
+        essentials["declined"] = dec
+        mem.save("default", profile, essentials, saved.get("history") or [])
+    finally:
+        mem.close()
+    from applicant import facts as _F
+    if any(patch.values()):
+        _pbrain_do(_F.write_contact, {k: v for k, v in patch.items() if v}, source="you", source_ref="setup",
+                   confirm=True)
+    sess = _SESSION.get("s")
+    if sess is not None:
+        try:
+            sess.essentials.setdefault("identity", {}).update(patch)
+            if isinstance(getattr(sess, "profile", None), dict):
+                sess.profile.setdefault("identity", {}).update(patch)
+        except Exception:
+            pass
+
+
+def _setup_answer(lib, field: str, value: str) -> None:
+    """Save (or, with "", remove) one standing answer under its question's canonical key."""
+    from autoapply import setup as S
+    key = S.KEYS[field]
+    value = " ".join(str(value or "").split())[:300]
+    if value:
+        _save_answer(lib, S.QUESTIONS[field], value, via="setup")
+        return
+    for _ in range(10):                     # every row the key has (older wordings too)
+        row = lib.best(key)
+        if row is None or not lib.delete(row["key"]):
+            break
+
+
+def _setup_contact(f: dict) -> None:
+    from autoapply import countries
+    from intake.links import link_ok
+    keys = ("name", "email", "phone", "street", "city", "state", "postal_code", "country", "linkedin", "github", "website")
+    patch = {k: " ".join(str(f.get(k) or "").split())[:200] for k in keys if k in f}
+    if "website" in patch:
+        patch["blog"] = patch.pop("website")
+    for k, lbl in (("linkedin", "LinkedIn"), ("github", "GitHub"), ("blog", "website")):
+        if patch.get(k) and not link_ok(k, patch[k]):
+            raise ValueError(f"That {lbl} link doesn't look right. Paste the whole address.")
+    if patch.get("email") and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", patch["email"]):
+        raise ValueError("That email doesn't look right.")
+    if patch.get("country"):
+        patch["country"] = countries.canonical(patch["country"]) or patch["country"]
+    none = f.get("none") if isinstance(f.get("none"), dict) else {}
+    declined_on = {d: bool(none.get(k)) and not patch.get(d) for k, d in
+                   (("linkedin", "linkedin"), ("github", "github"), ("website", "blog")) if k in none}
+    _setup_save_identity(patch, declined_on)
+    if "apply_with_alias" in f:
+        _set_prefs({"apply_with_alias": bool(f["apply_with_alias"])})
+
+
+def _setup_workauth(f: dict) -> None:
+    from autoapply import basics
+    from autoapply import workauth as _wa
+    if isinstance(f.get("work_auth"), dict):
+        new = _wa.clean(f["work_auth"])
+        new["relocate"] = _wa.clean(_work_auth()).get("relocate") or new.get("relocate") or ""
+        _merge_prefs({"work_auth": new})
+    cit = {k: f[k] for k in ("citizenship", "citizenship2") if k in f}
+    if cit:
+        lib = _answer_lib()
+        if hasattr(lib, "via"):
+            lib.via = "setup"
+        try:
+            basics.write(lib, cit)
+        finally:
+            lib.close()
+
+
+def _setup_wants(f: dict) -> None:
+    from autoapply import basics
+    from autoapply import setup as S
+    from autoapply import workauth as _wa
+    from autoapply.learning import company_key, set_company
+    p = _prefs()
+    focus = dict(p.get("aa_focus") or {})
+    if "titles" in f or "locations" in f:
+        _set_prefs({"aa_focus": {"titles": S.split_list(f.get("titles")) if "titles" in f else focus.get("titles") or [],
+                                 "locations": S.split_list(f.get("locations")) if "locations" in f else focus.get("locations") or [],
+                                 "sponsor_only": bool(focus.get("sponsor_only"))}})
+    if any(k in f for k in ("level", "job_types", "work_style", "radius", "industries")):
+        cur = S.clean_wants(p.get("apply_wants") or {})
+        cur.update({k: f[k] for k in ("level", "job_types", "work_style", "radius", "industries") if k in f})
+        _set_prefs({"apply_wants": cur})
+    if "relocate" in f:
+        wa = _wa.clean(_work_auth())
+        wa["relocate"] = S.yes_no(f.get("relocate"))
+        _merge_prefs({"work_auth": wa})
+    lib = _answer_lib()
+    if hasattr(lib, "via"):
+        lib.via = "setup"
+    patch: dict = {}
+    try:
+        if "salary" in f:
+            got = basics.write(lib, {"salary": f.get("salary")})
+            if got["salary"] is not None:
+                patch["desired_salary"] = got["salary"]
+        if "start_date" in f:
+            _setup_answer(lib, "start_date", f.get("start_date"))
+            patch["earliest_start"] = " ".join(str(f.get("start_date") or "").split())[:60]
+        if "notice" in f:
+            _setup_answer(lib, "notice", f.get("notice"))
+    finally:
+        lib.close()
+    if patch:
+        _merge_prefs(patch, source="card")
+    if "avoid" in f:
+        want = S.split_list(f.get("avoid"))
+        st = _learn_state()
+        have = {company_key(c.get("name")): c.get("name") for c in st.get("exclude", [])}
+        keep = {company_key(n) for n in want}
+        for k, name in have.items():
+            if k not in keep:
+                set_company(st, "exclude", name, on=False)
+        for n in want:
+            if company_key(n) not in have:
+                set_company(st, "exclude", n, on=True)
+        _save_learn(st)
+
+
+def _setup_forms(f: dict) -> None:
+    from autoapply import setup as S
+    # Refused values first, so a step that cannot be saved saves nothing
+    clearance = S.clearance_text(f.get("clearance")) if "clearance" in f else None
+    gpa = S.gpa_text(f.get("gpa"), f.get("gpa_scale")) if ("gpa" in f or "gpa_scale" in f) else None
+    lib = _answer_lib()
+    if hasattr(lib, "via"):
+        lib.via = "setup"
+    patch: dict = {}
+    try:
+        if "heard" in f:
+            _setup_answer(lib, "heard", f.get("heard"))
+            patch["hear_about_us"] = " ".join(str(f.get("heard") or "").split())[:60]
+        for fld in ("over_18", "covenants", "marketing", "license", "related_degree"):
+            if fld in f:
+                _setup_answer(lib, fld, S.yes_no(f.get(fld)))
+        if "over_18" in f:
+            patch["over_18"] = S.yes_no(f.get("over_18"))
+        if "forced" in f:
+            _setup_answer(lib, "forced", "Yes" if f.get("forced") == "always" else "")
+        if clearance is not None:
+            _setup_answer(lib, "clearance", clearance)
+        if gpa is not None:
+            _setup_answer(lib, "gpa", gpa)
+        for fld in ("current_salary", "current_bonus", "current_equity"):
+            if fld in f:
+                _setup_answer(lib, fld, f.get(fld))
+    finally:
+        lib.close()
+    if f.get("terms") in ("ask", "always"):          # the same switch as "What I may do for you"
+        patch["accept_required_terms"] = f["terms"]
+        _set_prefs({"terms_decided": True})
+    if patch:
+        _merge_prefs(patch, source="card")
+
+
+def _setup_selfid(f: dict) -> None:
+    from autoapply import basics
+    fields = {k: f[k] for k in basics.SELF_ID_FIELDS if k in f}
+    if fields:
+        lib = _answer_lib()
+        if hasattr(lib, "via"):
+            lib.via = "card"
+        try:
+            basics.write(lib, fields)
+        finally:
+            lib.close()
+    if "eeo_decline" in f:
+        _merge_prefs({"eeo_decline": bool(f.get("eeo_decline"))}, source="card")
+
+
+def _setup_apply(f: dict) -> None:
+    patch = {}
+    if "daily_cap" in f:
+        try:
+            patch["daily_cap"] = max(1, min(100, int(f.get("daily_cap"))))
+        except (TypeError, ValueError):
+            raise ValueError("Write the daily limit as a number.") from None
+    if "autopilot_per_day" in f:
+        patch["autopilot_per_day"] = f.get("autopilot_per_day")
+    if "autonomous" in f:                    # OFF by default; the person turns it on here or on Auto-apply
+        _set_autonomous(bool(f.get("autonomous")))
+    if patch:
+        _set_prefs(patch)
+
+
+_SETUP_SAVERS = {"contact": _setup_contact, "workauth": _setup_workauth, "wants": _setup_wants,
+                 "forms": _setup_forms, "selfid": _setup_selfid, "apply": _setup_apply}
+
+
+@app.get("/api/apply-setup")
+@_guard
+def apply_setup_get():
+    """Apply setup: every step's fields pre-filled from the stores that own them, where the person
+    left off, and how many of the questions forms usually ask the agent can now answer."""
+    return _nostore(jsonify(_setup_payload()))
+
+
+@app.post("/api/apply-setup/save")
+@_guard
+def apply_setup_save():
+    """Save one step {step, fields, next?}: only the fields given, each into its own store. With
+    ``next`` (a step name) the place moves there, so the setup resumes where the person left."""
+    from autoapply.setup import STEPS
+    b = request.json or {}
+    step = str(b.get("step") or "")
+    fields = b.get("fields") if isinstance(b.get("fields"), dict) else {}
+    if step not in _SETUP_SAVERS:
+        return jsonify({"error": "Unknown step."}), 400
+    try:
+        _SETUP_SAVERS[step](fields)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    nxt = str(b.get("next") or "")
+    if nxt in STEPS:
+        _set_prefs({"apply_setup": {"seen": True, "step": nxt}})
+    return jsonify(_setup_payload())
+
+
+@app.post("/api/apply-setup/state")
+@_guard
+def apply_setup_state():
+    """The setup's place {seen?, step?, done?}: seen when it first opened (it opens by itself only
+    once), the step to resume at, done once the person finished."""
+    b = request.json or {}
+    _set_prefs({"apply_setup": {k: b[k] for k in ("seen", "step", "done") if k in b}})
+    return jsonify({"ok": True, "state": _prefs().get("apply_setup")})
+
+
+@app.post("/api/apply-setup/preview")
+@_guard
+def apply_setup_preview():
+    """The sentence a form's "please explain" box gets for a draft work-authorization profile,
+    before it is saved: {work_auth, country} -> {text}. Built only from what was sent."""
+    from autoapply import workauth as _wa
+    b = request.json or {}
+    return jsonify({"ok": True, "text": _wa.note(_wa.clean(b.get("work_auth")), str(b.get("country") or "US"))})
 
 
 @app.get("/api/brain/conflicts")

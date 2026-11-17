@@ -5,7 +5,8 @@
   newsletters", "Text me updates", "Subscribe to job alerts"). The answer is the page's NO /
   decline choice, unless the person saved a standing yes (``@marketing_optin``, default no). An
   optional box stays unticked. A REQUIRED question whose only choice is yes is a forced consent:
-  it stays the person's.
+  it stays the person's, unless they saved a standing yes to those (``@forced_consent``, Apply
+  setup, default ask).
 * **Acknowledgements of a notice or condition** ("If you are selected ... a background check
   and/or drug screening as a condition of employment", "would you be willing to ... complete any
   background check and/or drug screening required for this position", "GDPR Acknowledgement",
@@ -26,6 +27,9 @@ import re
 from autoapply import workauth
 
 OPTIN_KEY = "@marketing_optin"
+# (2026-11-17, Apply setup) A REQUIRED opt-in whose only choice is yes: asked (the default) unless
+# the person saved a standing Yes under this key.
+FORCED_KEY = "@forced_consent"
 
 # ---------------------------------------------------------------------------- opt-ins
 _CHANNEL = (r"(text|sms|mobile|messages?|newsletters?|marketing|promotional|promotions?|updates?|alerts?|news"
@@ -73,16 +77,26 @@ def optin_choice(want: bool, options) -> str | None:
     return plain[0] if len(plain) == 1 else None
 
 
-def saved_optin(library) -> bool:
-    """The person's standing choice on marketing messages: True only when they saved a yes
-    (``@marketing_optin``); no saved answer is a no."""
+def _saved_yes(library, key: str) -> bool:
     if library is None:
         return False
     try:
-        row = library.best(OPTIN_KEY) if hasattr(library, "best") else None
+        row = library.best(key) if hasattr(library, "best") else None
     except Exception:          # noqa: BLE001 - nothing saved then
         row = None
     return workauth.polarity(str((row or {}).get("answer") or "")) is True
+
+
+def saved_optin(library) -> bool:
+    """The person's standing choice on marketing messages: True only when they saved a yes
+    (``@marketing_optin``); no saved answer is a no."""
+    return _saved_yes(library, OPTIN_KEY)
+
+
+def saved_forced(library) -> bool:
+    """The person's standing choice on a required consent with no way to decline: True only when
+    they saved a yes (``@forced_consent``); no saved answer asks them each time."""
+    return _saved_yes(library, FORCED_KEY)
 
 
 # The verdicts of optin_answer: a value to pick or tick, nothing to do (an optional box left
@@ -197,7 +211,8 @@ def standing_answer(label: str, options, field_type: str = "select", required: b
       ``library`` (the person's saved yes) or ``consent`` (an acknowledgement under their
       standing consent to required notices);
     * (NOTHING, "", ""): an optional opt-in left as it is (unticked, never typed in);
-    * (THEIRS, "", ""): a forced consent (required, no way to decline): the person's."""
+    * (THEIRS, "", ""): a forced consent (required, no way to decline): the person's, unless
+      they saved a standing yes to those (``@forced_consent``): then (PICK, the yes, "consent")."""
     lbl = " ".join(str(label or "").split())
     t = str(field_type or "select").lower()
     q = lbl.partition(": ")[0] if t == "checkbox" and ": " in lbl else lbl
@@ -206,6 +221,11 @@ def standing_answer(label: str, options, field_type: str = "select", required: b
     if is_optin(q):
         yes = saved_optin(library)
         v = optin_answer(lbl, options, t, required, opt_in=yes)
+        if v is PERSON and saved_forced(library):
+            # a forced consent, and the person said once to accept those: the page's yes
+            forced = optin_answer(lbl, options, t, required, opt_in=True)
+            if forced:
+                return PICK, forced, "consent"
         if v is PERSON:
             return THEIRS, "", ""
         if v == LEAVE:

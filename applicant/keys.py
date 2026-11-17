@@ -86,7 +86,12 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     # a fact asked once ever, then reused on every wording that asks it.
     _k("@restrictive_covenants", "yes_no", LEGAL, choices=_YES_NO,
        ask="Do you have a non-compete or other restrictive covenant with a current or past employer?"),
-    _k("security_clearance", sensitivity=LEGAL),
+    # (2026-11-17, Apply setup) "No", or "Yes, Secret": a clearance the person holds.
+    _k("@security_clearance", sensitivity=LEGAL, ask="Do you have an active security clearance?"),
+    _k("@drivers_license", "yes_no", choices=_YES_NO, ask="Do you have a valid driver's license?"),
+    _k("@gpa", ask="What is your GPA?"),
+    # A degree "in X, Y or a related field": the person's own standing call, saved only when set.
+    _k("@related_degree", "yes_no", choices=_YES_NO, ask="Do you have a degree in a related field?"),
     # ---- preferences
     _k("@salary", "money", reconfirm_days=183, ask="Desired annual salary",
        legacy=("app_prefs.json:desired_salary",)),
@@ -105,6 +110,12 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     # Marketing texts, emails and job alerts a form offers (autoapply/consents.py): declined unless
     # this says Yes. Never set from an answer to one form's question.
     _k("@marketing_optin", "yes_no", choices=_YES_NO, ask="May job sites send you marketing texts and emails?"),
+    # A REQUIRED consent whose only choice is yes (autoapply/consents.py): asked unless this says Yes.
+    _k("@forced_consent", "yes_no", choices=_YES_NO, ask="Accept a required consent whose only choice is yes?"),
+    # What the person is paid now: filled only when a form asks it.
+    _k("@current_salary", "money", ask="What is your current annual salary?"),
+    _k("@current_bonus", "money", ask="What is your current annual bonus?"),
+    _k("@current_equity", ask="What is your current equity?"),
     # ---- voluntary self-identification (EEO)
     _k("@gender", "choice", EEO, ask="Gender"),
     _k("@sex", "choice", EEO, ask="Sex"),

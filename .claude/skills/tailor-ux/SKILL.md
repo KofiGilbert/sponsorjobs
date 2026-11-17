@@ -479,3 +479,12 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   deserves a look carries a small "!" and its reason in `--flag` under it. Files last, each with the
   application it was tailored for. One panel under the bar at a time (Steps or Review answers).
   The Ready line itself stays one short line. Self-identification values appear only here.
+- 2026-11-17: Apply setup is a page of its own (`#view-setup`), not a modal: the back link names the
+  page it came from (My profile or Auto-apply; none on the first run), "Step n of 7" with the quiz's
+  3px bar sits right of the title, a quiet row of step names jumps anywhere, and one card holds the
+  step in the Your answers card's own controls (`ans-grid`, `ans-seg`, `fld`). One primary (Save and
+  continue, Done on the last step); Back and Skip this step are ghost. A step saves only what the
+  person changed; a second tap on a chosen segment clears it. The finish step counts real saved
+  answers only ("The agent can now answer N of the M questions forms usually ask"), lists the open
+  ones with an Answer jump, and always shows LinkedIn, GitHub and website, "None" when the person said
+  they have none. No countdowns, no pressure copy.

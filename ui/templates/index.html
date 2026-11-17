@@ -451,6 +451,7 @@
             <p class="page-sub" data-i18n="mem.sub">It all stays on this computer. Edit or forget any of it.</p>
           </div>
           <div class="page-head-actions">
+            <button class="btn btn-ghost" id="memSetup" type="button" data-i18n="setup.title">Apply setup</button>
             <label class="btn btn-ghost" id="memAddResume" hidden>
               <input type="file" id="profCvFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
               <span id="memAddResumeLbl" data-i18n="mem.addResume">Read another resume</span>
@@ -733,6 +734,41 @@
         <div id="tplGrid"><!-- template groups injected: one heading + grid per category --></div>
       </section>
 
+      <!-- ============ APPLY SETUP ============ -->
+      <!-- Apply setup (autoapply/setup.py): seven short steps, each pre-filled from what the app
+           already knows and saved into the store that owns the answer. Opens once by itself after
+           sign-in; reachable any time from My profile and Auto-apply. Every step can be skipped. -->
+      <section class="view view-setup" id="view-setup">
+        <header class="page-head">
+          <div>
+            <button class="btn btn-ghost btn-back tpl-back" id="suBack" type="button" hidden>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span id="suBackLbl"></span>
+            </button>
+            <h1 class="page-title" data-i18n="setup.title">Apply setup</h1>
+            <p class="page-sub" data-i18n="setup.sub">Answer once, and the agent stops less to ask.</p>
+          </div>
+          <div class="su-prog" id="suProg" aria-live="polite">
+            <span class="su-prog-t" id="suProgT"></span>
+            <span class="quiz-rail-bar su-bar" aria-hidden="true"><i id="suBar"></i></span>
+          </div>
+        </header>
+        <div class="su-col">
+          <nav class="su-steps" id="suSteps" aria-label="Steps"></nav>
+          <section class="ans-card su-card" aria-labelledby="suH">
+            <div class="ans-card-h"><h2 class="ans-h" id="suH"></h2></div>
+            <p class="mem-note su-lede" id="suLede"></p>
+            <div class="su-body" id="suBody"></div>
+            <div class="ans-foot su-foot">
+              <button class="btn btn-ghost btn-sm" id="suPrev" type="button" data-i18n="setup.back">Back</button>
+              <span class="ans-note su-msg" id="suMsg" role="status"></span>
+              <button class="btn btn-ghost btn-sm" id="suSkip" type="button" data-i18n="setup.skip">Skip this step</button>
+              <button class="btn btn-primary btn-sm" id="suNext" type="button" data-i18n="setup.next">Save and continue</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <!-- ============ REVIEW & SUBMIT ============ -->
       <!-- ============ TRACKER (the job board) ============
            One stage per job you saved, tailored or applied to: Saved, Applied, Interviewing,
@@ -785,6 +821,7 @@
                 <p data-i18n="aa.how3">Never on LinkedIn or on boards that forbid it.</p>
               </div>
             </details>
+            <button class="btn btn-ghost" id="aaSetup" type="button" data-i18n="setup.title">Apply setup</button>
             <button class="btn btn-primary aa-run" id="aaRun" type="button">Tailor &amp; queue 5 &rarr;</button>
           </div>
         </header>
