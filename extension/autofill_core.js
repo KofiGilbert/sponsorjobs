@@ -33,7 +33,21 @@
     return new RegExp("^" + esc + "$", "i");
   }
 
-  function qsaSafe(sel, root) {
+  // Whether node a comes before node b in the document. compareDocumentPosition where the DOM has it;
+// the lightweight test DOMs (tests/js/*_harness.js) may not, so fall back to a walk of the tree.
+function precedes(a, b) {
+  if (a && typeof a.compareDocumentPosition === "function") {
+    return !!(a.compareDocumentPosition(b) & 4);           // Node.DOCUMENT_POSITION_FOLLOWING
+  }
+  const order = [];
+  const walk = (n) => { if (!n) return; order.push(n); for (const c of n.children || n.childNodes || []) walk(c); };
+  let root = a; while (root && root.parentElement) root = root.parentElement;
+  walk(root);
+  const ia = order.indexOf(a), ib = order.indexOf(b);
+  return ia >= 0 && ib >= 0 && ia < ib;
+}
+
+function qsaSafe(sel, root) {
     try { return Array.from((root || document).querySelectorAll(sel)); } catch (e) { return []; }
   }
 
@@ -961,7 +975,7 @@
         if (ctrls.some((c) => !mine(c))) break;                 // the box holds another question
         const cands = qsaSafe("label, legend, [class*='label'], [class*='question'], [class*='prompt']", grp)
           .filter((x) => !x.contains(el) && !qsaSafe("input, select, textarea", x).length
-                         && (x.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+                         && precedes(x, el));
         const l = cands[cands.length - 1];
         if (l) out = labelText(l, el);
       }
@@ -1509,7 +1523,7 @@
     let spot = null;
     for (const hd of qsaSafe("h1, h2, h3, h4, h5, h6, [role='heading']", doc)) {
       if (mine(hd) || !boxShown(hd)) continue;
-      if (hd.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) spot = hd;   // above the control
+      if (precedes(hd, el)) spot = hd;   // above the control
     }
     const dlg = el.closest && el.closest("[role='dialog'], [aria-modal='true']");
     if (dlg && spot && !dlg.contains(spot)) spot = null;          // never press outside a dialog holding the form
