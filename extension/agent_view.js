@@ -46,7 +46,7 @@
   // A voluntary self-identification question (the planner's _EEO; autoapply/brain.py _SELF_ID).
   // Its chosen option is the person's gender, race, veteran or disability answer, and it never
   // leaves the machine: the view says such a control is answered, never which choice it holds.
-  const SELF_ID_RE = /gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)/i;
+  const SELF_ID_RE = /gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|lgbt|queer|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)/i;
   const TEXT_TYPES = new Set(["text", "email", "tel", "url", "search", "password", "number", "date", "datetime-local",
                               "month", "week", "time", "color", "range", ""]);
   const BUTTON_TYPES = new Set(["submit", "button", "reset", "image"]);

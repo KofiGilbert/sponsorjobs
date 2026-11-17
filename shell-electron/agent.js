@@ -863,8 +863,14 @@ function createAgent(deps) {
   }
 
   // ``picked(question, choice)``: each pick, for the local Review answers list only.
+  // Optional ones too (2026-11-17, Upgrade on Greenhouse: "What is your veteran status?" and "What
+  // is your disability status?" stayed on "Select..." with both answers saved): a
+  // self-identification question, required or not, gets the saved answer, else the decline.
   async function fillSavedEeo(wc, fr, v, left, recordId, tried, st, picked) {
-    const qs = questionsFor(v.text, left).filter((q) => EEO_RE.test(q) && !tried.has(q));
+    const qs = [];
+    for (const q of questionsFor(v.text, left).concat(emptySelfId(v.text))) {
+      if (EEO_RE.test(q) && !tried.has(q) && !qs.some((x) => sameLabel(x, q))) qs.push(q);
+    }
     if (!qs.length) return [];
     const items = [];
     for (const q of qs) {
@@ -1047,6 +1053,9 @@ function createAgent(deps) {
     const startedAt = (S && S.startedAt) || Date.now() / 1000; // mail older than the run is never used
     let emailCode = "";                  // a code the mailbox handed over, for the next step only
     const runAnswers = (S && S.runAnswers) || {};    // question -> the person's answer this run (bar, Telegram)
+    // question -> {from, fact} for an answer that was not the person's own words this run (a
+    // grounded one: answered from their saved address, jobs, schools...; Review answers flags it)
+    const runOrigins = (S && S.runOrigins) || {};
     const knownSeen = (S && S.knownSeen) || new Set();  // questions answered from their material without asking
     const eeoTried = (S && S.eeoTried) || new Set();    // self-identification questions the shell tried to fill
     // (Section 15) The plan the brain keeps (pages done, now, todo) and the dollars spent so far:
@@ -1125,7 +1134,7 @@ function createAgent(deps) {
     const park = async (kind, message, extra) => {
       const pageUrl = where();
       parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single", batchAt: null, expectSig: "" }), kind,
-                                     state: { history, portals, portalNew, startedAt, runAnswers, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts),
+                                     state: { history, portals, portalNew, startedAt, runAnswers, runOrigins, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts),
                                               plan, spent, checkedPages, await: awaitInfo, formReached } });
       if (kind === "captcha" || kind === "person") {
         await deps.postApp("/api/autoapply/agent/park", { record_id: recordId, kind, message, page_url: pageUrl, run: runOpts(opts), batch: quick }).catch(() => null);
@@ -1742,7 +1751,12 @@ function createAgent(deps) {
             }
             feed.push("check", "Checking", "the application before handing it over", { transient: true });
             progress(recordId, "running", lastMsg.get(fkey) || "Checking", { step });
-            const c = await guard(deps.postApp("/api/autoapply/agent/critic", { record_id: recordId, view: whole, plan, left }), 45000, "critic").catch((e) => { if (e && e.stopped) throw e; return null; });
+            // What this run filled and attached, from its own record (labels and file kinds, never
+            // a value or a file name): a react-select's choice and a file Greenhouse shows as its
+            // name read as empty in the view (2026-11-17, Upgrade: two false alarms).
+            const critIn = criticInputs(ans);
+            const c = await guard(deps.postApp("/api/autoapply/agent/critic", { record_id: recordId, view: whole, plan, left,
+                                                                              filled: critIn.filled, files: critIn.files }), 45000, "critic").catch((e) => { if (e && e.stopped) throw e; return null; });
             if (c && c.cost) { spent += Number(c.cost) || 0; feed.cost = spent; }
             const issues = (c && Array.isArray(c.issues) ? c.issues : []).map((x) => String(x).slice(0, 160)).filter(Boolean);
             if (issues.length) {
@@ -1841,6 +1855,7 @@ function createAgent(deps) {
             const known = (k && k.answers) || {};
             const pick = (k && k.select) || {};
             applyReword(rest, k && k.reword);
+            noteOrigins(runOrigins, k);
             for (const [q, a] of Object.entries(known)) {
               knownSeen.add(q);
               // A self-identification choice the page lists: the shell picks it itself, and it
@@ -1868,6 +1883,7 @@ function createAgent(deps) {
             if (r && r.reason === "parked") return park("questions", shown, { url, left, ask: batch ? undefined : ask });
             if (!(r && r.ok)) return stopped("needs-answers", blockedMessage("needs-answers", open.map((it) => it.question)), { url, left });
             for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
+            noteOrigins(runOrigins, r);
             answered += open.length;
             feed.mark("done", "you answered");
           }
@@ -2016,7 +2032,7 @@ function createAgent(deps) {
           if (a.placeholder === "email_code" && r && r.ok) emailCode = "";
           if (r && r.ok) {
             // what the brain answered, for the Review answers list (a file it attached too)
-            const b = brainAnswer(v.text, a, runAnswers);
+            const b = brainAnswer(v.text, a, runAnswers, runOrigins);
             if (b) addAnswer(ans, Object.assign({ page, via: "brain" }, b));
             if (a.op === "upload") addFile(ans, { page, kind: a.file === "cover_letter" ? "cover_letter" : "resume", path: a.path || opts.resumePath || "", how: "attached" });
           }
@@ -2550,6 +2566,20 @@ function lineLabel(line) {
   const m = /label="((?:[^"\\]|\\.)*)"/.exec(String(line || ""));
   return m ? unq(m[1]) : "";
 }
+// The self-identification questions still empty in the view, required or optional: a select or
+// combobox with no value, a radio group nothing in which is chosen. Labels only.
+function emptySelfId(viewText) {
+  const seen = new Map();                      // label -> answered
+  for (const ln of String(viewText || "").split("\n")) {
+    const m = /^\*?\[\d+\]<(combobox|select|radio)\b/.exec(ln);
+    const label = m ? cleanQuestion(lineLabel(ln)) : "";
+    if (!label || !EEO_RE.test(label) || /search=true/.test(ln)) continue;
+    const done = m[1] === "radio" ? /\b(answered|checked)=true\b/.test(ln) : !/\bvalue=""/.test(ln);
+    const key = [...seen.keys()].find((k) => sameLabel(k, label)) || label;
+    seen.set(key, !!seen.get(key) || done);
+  }
+  return [...seen.entries()].filter(([, done]) => !done).map(([label]) => label);
+}
 // The view's element lines for a question.
 function linesFor(viewText, label) {
   return String(viewText || "").split("\n").filter((ln) => /^\*?\[\d+\]</.test(ln) && sameLabel(lineLabel(ln), label));
@@ -2672,7 +2702,7 @@ function indexFor(viewText, label) {
 // Voluntary self-identification questions (the planner's _EEO) and the decline choice
 // (autoapply/eeo.py DECLINE, with the federal form's "I do not want to answer" and Workday's
 // "Not Declared"): on such a question the decline option is offered FIRST, never a guess.
-const EEO_RE = /gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|first[- ]generation (professional|college|student)/i;
+const EEO_RE = /gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|lgbt|queer|pronoun|first[- ]generation (professional|college|student)/i;
 const DECLINE_RE = /decline|prefer not|do not wish|don['\u2019]?t wish|not wish to|(?:do not|don['\u2019]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)|not declared/i;
 // A dropdown's prompt entry, never a choice. Only a pure prompt: "Choose not to disclose" (a
 // decline) and "Search engine" are real choices (autoapply/asks.py has the same rule).
@@ -2712,8 +2742,11 @@ function orderOptions(question, options) {
 // (answersTelegram). Origins: profile, history (the tailored resume's jobs and schools),
 // library (a saved answer), you (answered this run), workauth, eeo, eeo_decline, drafted,
 // derived, letter, job, today, ai, closest (an optional list filled by the closest match),
-// skills (an optional list filled from the person's skills).
-const ANSWER_FLAGS = new Set(["ai", "closest", "skills", "eeo_decline", "derived", "drafted"]);
+// skills (an optional list filled from the person's skills), grounded (answered from one of the
+// person's saved facts by the engine's checked model call, autoapply/grounded.py: its ``fact``
+// names the kind, location / job / school / skills / answer).
+const ANSWER_FLAGS = new Set(["ai", "closest", "skills", "eeo_decline", "derived", "drafted", "grounded"]);
+const FACT_KINDS = new Set(["location", "job", "school", "skills", "answer"]);
 const ANSWER_MAX = 200;
 const NO_ANSWER_PH = new Set(["portal_email", "portal_password", "email_code"]);
 function createAnswers() { return { rows: [], files: [] }; }
@@ -2723,6 +2756,7 @@ function addAnswer(ans, row) {
   const value = String(row.value == null ? "" : row.value).replace(/\s+/g, " ").trim().slice(0, 160);
   if (!label || !value) return null;
   const r = { page: Number(row.page) || 1, label, value, from: String(row.from || "ai"), via: row.via || "fill" };
+  if (FACT_KINDS.has(row.fact)) r.fact = row.fact;
   // The brain's own pick replaces its earlier word on the same question (typed, then picked);
   // the engine's lines stand (two "Job Title" boxes on one page are two answers).
   const at = ans.rows.findIndex((x) => x.page === r.page && sameLabel(x.label, r.label)
@@ -2750,6 +2784,30 @@ function addFile(ans, f) {
   } else ans.files.push(r);
   return r;
 }
+// For the pre-submit check: the questions the run filled (labels) and the kinds of file it
+// attached, from the Review answers record. Never a value, never a file name.
+function criticInputs(ans) {
+  const filled = [];
+  for (const r of (ans && ans.rows) || []) if (r.label && !filled.some((x) => sameLabel(x, r.label))) filled.push(r.label);
+  const files = [];
+  for (const f of (ans && ans.files) || []) if (f.how !== "none" && !files.includes(f.kind)) files.push(f.kind);
+  return { filled: filled.slice(0, 120), files };
+}
+// The origins an ask route reply names ({origins: {question: origin}, facts: {question: kind}}):
+// only a grounded answer is kept (the rest are the person's own material, as before).
+function noteOrigins(runOrigins, reply) {
+  const o = (reply && reply.origins) || {};
+  for (const [q, from] of Object.entries(o)) {
+    if (from !== "grounded") continue;
+    const fact = String(((reply && reply.facts) || {})[q] || "");
+    runOrigins[q] = FACT_KINDS.has(fact) ? { from, fact } : { from };
+  }
+  return runOrigins;
+}
+function originFor(runOrigins, label) {
+  const k = Object.keys(runOrigins || {}).find((q) => sameLabel(q, label));
+  return k === undefined ? null : runOrigins[k];
+}
 // One element line of the view, by its number.
 function lineAt(viewText, index) {
   const m = new RegExp("^\\*?\\[" + Number(index) + "\\]<.*$", "m").exec(String(viewText || ""));
@@ -2757,14 +2815,24 @@ function lineAt(viewText, index) {
 }
 // The answer a brain action gave, from the view it acted on: a typed box, a picked option, a
 // radio or checkbox it clicked, an option in the open list. null for anything else (a Next, a
-// sign-in box, the portal password, the site's search box).
-function brainAnswer(viewText, a, runAnswers) {
+// sign-in box, the portal password, the site's search box). ``runOrigins``: a grounded answer
+// keeps its origin and the kind of fact it came from.
+function brainAnswer(viewText, a, runAnswers, runOrigins) {
+  const r = brainAnswerOf(viewText, a, runAnswers, runOrigins);
+  const o = r && originFor(runOrigins, r.label);
+  if (o && o.fact && r.from === o.from) r.fact = o.fact;
+  return r;
+}
+function brainAnswerOf(viewText, a, runAnswers, runOrigins) {
   if (!a || a.index == null) return null;
   const line = lineAt(viewText, a.index);
   if (!line) return null;
   const answered = (label) => Object.keys(runAnswers || {}).some((q) => sameLabel(q, label));
   const ph = String(a.placeholder || "").toLowerCase();
-  const by = (label, own) => (answered(label) ? "you" : own);
+  const by = (label, own) => {
+    const o = originFor(runOrigins, label);
+    return o ? o.from : answered(label) ? "you" : own;
+  };
   if (a.op === "type") {
     if (NO_ANSWER_PH.has(ph) || /type=password|search=true/.test(line) || !/<(input|textarea|combobox)\b/.test(line)) return null;
     const label = lineLabel(line);
@@ -2826,7 +2894,9 @@ function readyAnswers(ans, ctx) {
   const rows = ((ans && ans.rows) || []).map((r, i) => {
     const self = r.from === "eeo" || r.from === "eeo_decline" || EEO_RE.test(r.label);
     const from = self && /^(eeo|library|profile|you)$/.test(r.from) ? "eeo" : r.from;
-    return { page: r.page, label: r.label, value: r.value, from, flag: ANSWER_FLAGS.has(from) ? from : "", self_id: self, i };
+    const row = { page: r.page, label: r.label, value: r.value, from, flag: ANSWER_FLAGS.has(from) ? from : "", self_id: self, i };
+    if (from === "grounded" && r.fact) row.fact = r.fact;
+    return row;
   }).sort((a, b) => a.page - b.page || a.i - b.i).map(({ i, ...r }) => r);
   const files = ((ans && ans.files) || []).map((f) => {
     const other = f.record_id != null && rid !== "" && String(f.record_id) !== rid;
@@ -2845,6 +2915,7 @@ const ANSWER_FROM_WORDS = {
   workauth: "work authorization", eeo: "self-identification", eeo_decline: "declined",
   drafted: "drafted", derived: "worked out", letter: "cover letter", job: "the job", today: "today's date",
   ai: "AI pick, check it", closest: "closest match, check it", skills: "from your skills, check it",
+  grounded: "from your saved facts, check it",
 };
 // One answer as a Telegram line: a self-identification value never leaves the app.
 function answerLine(r) {
@@ -2966,4 +3037,4 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, socialRefused, wroteLines,
-                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, readyAnswers, answersTelegram, readyNotice };
+                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice };

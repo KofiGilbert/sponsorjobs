@@ -2401,6 +2401,13 @@ class AnthropicLLM:
         value. A short JSON reply at low effort."""
         return self._complete(system, user, max_tokens=400, effort="low")
 
+    def ground_answers(self, system: str, user: str) -> str:
+        """Answer a page's open application questions from the person's saved facts only
+        (autoapply/grounded.py owns the prompt, the facts and the checks: every answer is
+        verified against the fact it cites before it is used). A short JSON reply at low effort,
+        one call per page."""
+        return self._complete(system, user, max_tokens=500, effort="low")
+
     def classify_company(self, system: str, user: str) -> str:
         """Label an employer for the person's resume choices (applicant/scope.py owns the
         prompt): the company name and the start of its ad, never anything about the person. A

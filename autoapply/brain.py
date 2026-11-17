@@ -163,7 +163,7 @@ def redact(text: str, values: dict) -> str:
 # view (extension/agent_view.js) already prints such a control as answered or not, never which
 # choice; this is the same rule on the engine side, for any view that still carries the choice.
 _SELF_ID = re.compile(r"gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab"
-                      r"|sexual orientation|transgender|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)", re.I)
+                      r"|sexual orientation|transgender|lgbt|queer|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)", re.I)
 # A cover letter upload box, by its line's words (autoapply/planner.py _LETTER).
 _LETTER_BOX = re.compile(r"cover\s*letter|letter of (interest|motivation)|motivation(al)? letter", re.I)
 _VIEW_LINE = re.compile(r'^(\*?\[\d+\]<)(select|combobox|radio|checkbox)\b([^\n]*)$', re.M)
@@ -907,20 +907,94 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
 
 
 # --------------------------------------------------------------------------- the critic
-CRITIC_PROMPT = """You check a job application just before it is handed to the person at its Submit button. You get the review page as numbered lines (a filled box reads value="(filled)", never its contents), the plan of pages, and the fields the engine left open. List anything blank, wrong or suspicious: a required field still empty, an error shown on the page, no resume attached where one was asked, a page of the plan still todo, a box that reads (filled) under an error that says it is required. Do not list what is fine. A word in double braces like {{city}} or {{full_name}} is the person's own value, hidden from you on purpose (in text and file names alike): it is filled, never a template left unrendered, so never list it. When the view was cut, the rest of the page follows it under "[Rest of the page]". Never mention a personal value. Reply with JSON only: {"ok": true|false, "issues": ["short line", "..."]}. ok is true when nothing is wrong."""
+CRITIC_PROMPT = """You check a job application just before it is handed to the person at its Submit button. You get the review page as numbered lines (a filled box reads value="(filled)", never its contents), the plan of pages, the fields the engine left open, the questions this run filled (<filled>: filled, even when a custom dropdown's box reads empty in the view) and the files it attached (<attached>: attached, even when the page shows a file name in place of an upload box). Never list a question under <filled> or a file under <attached> as empty or missing. List anything blank, wrong or suspicious: a required field still empty, an error shown on the page, no resume attached where one was asked, a page of the plan still todo, a box that reads (filled) under an error that says it is required. Do not list what is fine. A word in double braces like {{city}} or {{full_name}} is the person's own value, hidden from you on purpose (in text and file names alike): it is filled, never a template left unrendered, so never list it. When the view was cut, the rest of the page follows it under "[Rest of the page]". Never mention a personal value. Reply with JSON only: {"ok": true|false, "issues": ["short line", "..."]}. ok is true when nothing is wrong."""
+
+
+def _label_key(s) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", str(s or "").lower())).strip()
+
+
+def _filled_label(label: str, filled) -> bool:
+    k = _label_key(label)
+    return bool(k) and any(f == k or (min(len(f), len(k)) >= 30 and (f.startswith(k) or k.startswith(f)))
+                           for f in filled)
+
+
+def mark_filled(view: str, filled) -> str:
+    """The view with a dropdown the run filled read as filled: a react-select (Greenhouse) keeps
+    its choice beside its input, so the input, and the view, read value="" although the choice
+    is made (2026-11-17, Upgrade: "LGBTQ+, ethnicity ... are still empty")."""
+    keys = [k for k in (_label_key(f) for f in (filled or [])) if k]
+    if not keys:
+        return str(view or "")
+
+    def fix(m):
+        lab = _ATTR_LABEL.search(m.group(3))
+        if m.group(2) not in ("select", "combobox") or not lab or not _filled_label(lab.group(1), keys):
+            return m.group(0)
+        return m.group(1) + m.group(2) + m.group(3).replace('value=""', 'value="(filled)"', 1)
+    return _VIEW_LINE.sub(fix, str(view or ""))
+
+
+# An issue that says a file is missing, and one that says self-identification questions are empty.
+_RESUME_WORD = re.compile(r"r[ée]sum[ée]|\bcv\b", re.I)
+_LETTER_WORD = re.compile(r"cover\s*letter", re.I)
+_FILE_MISSING = re.compile(r"\bno (r[ée]sum[ée]|cv|cover letter|upload|file|attachment)|not (been )?(attached|uploaded|present"
+                           r"|found|appear)|missing|absent|without (a |an |the )?(r[ée]sum[ée]|cv|cover letter|file)", re.I)
+_EMPTY = re.compile(r"empty|blank|unanswered|unselected|not (been )?(answered|selected|filled|chosen)|missing", re.I)
+_DEMOGRAPHIC = re.compile(r"demographic|self[- ]?identif|voluntary|eeo\b|" + _SELF_ID.pattern, re.I)
+
+
+def _self_id_open(view: str) -> bool:
+    """A self-identification control in the (masked) view that is still empty."""
+    for m in _VIEW_LINE.finditer(view or ""):
+        lab = _ATTR_LABEL.search(m.group(3))
+        if not lab or not _SELF_ID.search(lab.group(1)):
+            continue
+        rest = m.group(3)
+        if m.group(2) in ("select", "combobox") and 'value=""' in rest:
+            return True
+        if m.group(2) == "radio" and "answered=false" in rest:
+            return True
+    return False
+
+
+def false_alarm(issue: str, files, view: str) -> bool:
+    """True for a critic line the run's own record contradicts: a resume or cover letter called
+    missing while the run attached it (Greenhouse shows a file name where the upload box was),
+    or self-identification questions called empty while none is."""
+    i = str(issue or "")
+    if _FILE_MISSING.search(i):
+        if _LETTER_WORD.search(i):
+            return "cover_letter" in files
+        if _RESUME_WORD.search(i) or re.search(r"\bupload\b|\battach", i, re.I):
+            return "resume" in files
+    if _EMPTY.search(i) and _DEMOGRAPHIC.search(i):
+        return not _self_id_open(view)
+    return False
 
 
 def critic(req: dict, llm, values: dict | None = None, withheld=()) -> dict:
     """(Section 14) One cheap call over the review page before ready_to_submit: {ok, issues,
-    cost}. A failed call is ok with no issues: the critic never blocks a hand-over."""
+    cost}. A failed call is ok with no issues: the critic never blocks a hand-over.
+    ``req["filled"]``: the questions the run filled (labels only); ``req["files"]``: the kinds
+    of file it attached ("resume", "cover_letter"). Both keep the check from calling a filled
+    custom dropdown or an attached file (shown as a file name) missing."""
     req = req or {}
-    view = mask_values(mask_self_id(str(req.get("view") or "")), withheld)
+    filled = [str(x)[:200] for x in (req.get("filled") or []) if str(x).strip()][:120]
+    files = {str(x) for x in (req.get("files") or [])} & {"resume", "cover_letter"}
+    view = mask_values(mask_self_id(mark_filled(str(req.get("view") or ""), filled)), withheld)
     if values:
         view = redact(view, values)
+        filled = [redact(f, values) for f in filled]
     plan = clean_plan(req.get("plan"))
     left = [str(x) for x in (req.get("left") or []) if str(x).strip()]
+    attached = {"resume": "the resume", "cover_letter": "the cover letter"}
     user = ("<plan>\n" + ("\n".join(plan) if plan else "(none)") + "\n</plan>\n\n<left>\n"
-            + ("\n".join(left) if left else "(nothing)") + "\n</left>\n\n<view>\n" + (view or "(empty page)") + "\n</view>")
+            + ("\n".join(left) if left else "(nothing)") + "\n</left>\n\n<filled>\n"
+            + ("\n".join(filled) if filled else "(nothing)") + "\n</filled>\n\n<attached>\n"
+            + ("\n".join(attached[k] for k in sorted(files)) if files else "(nothing)") + "\n</attached>\n\n<view>\n"
+            + (view or "(empty page)") + "\n</view>")
     try:
         raw = llm.agent_critic(CRITIC_PROMPT, user) if hasattr(llm, "agent_critic") else llm.agent_step(CRITIC_PROMPT, user)
     except Exception:                            # noqa: BLE001
@@ -929,6 +1003,9 @@ def critic(req: dict, llm, values: dict | None = None, withheld=()) -> dict:
                          getattr(llm, "model", ""))
     data = _json_object(raw) or {}
     issues = [" ".join(str(i).split())[:160] for i in (data.get("issues") or []) if str(i).strip()] if isinstance(data.get("issues"), list) else []
-    issues = [i for i in issues if not (_EMAIL_RE.search(i) or _DIGIT_RUN.search(i))][:6]
-    ok = bool(data.get("ok")) and not issues
+    issues = [i for i in issues if not (_EMAIL_RE.search(i) or _DIGIT_RUN.search(i))]
+    kept = [i for i in issues if not false_alarm(i, files, view)]
+    dropped = len(kept) < len(issues)
+    issues = kept[:6]
+    ok = (bool(data.get("ok")) or dropped) and not issues
     return {"ok": ok, "issues": issues, "cost": cost}

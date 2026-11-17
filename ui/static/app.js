@@ -11481,11 +11481,23 @@
       derived: T("aa.ans.from.derived", "Worked out"), letter: T("aa.ans.from.letter", "Cover letter"),
       job: T("aa.ans.from.job", "The job"), today: T("aa.ans.from.today", "Today's date"),
       ai: T("aa.ans.from.ai", "AI pick"), closest: T("aa.ans.from.closest", "Closest match"),
-      skills: T("aa.ans.from.skills", "Your skills"),
+      skills: T("aa.ans.from.skills", "Your skills"), grounded: T("aa.ans.from.grounded", "Your saved facts"),
     };
     return m[code] || code || "";
   }
-  function aaAnsFlag(code) {
+  // A grounded answer (autoapply/grounded.py) names the kind of saved fact it came from.
+  function aaAnsGrounded(fact) {
+    const m = {
+      location: T("aa.ans.flag.grounded.location", "Answered from your saved address. Check it."),
+      job: T("aa.ans.flag.grounded.job", "Answered from your saved work history. Check it."),
+      school: T("aa.ans.flag.grounded.school", "Answered from your saved education. Check it."),
+      skills: T("aa.ans.flag.grounded.skills", "Answered from your saved skills. Check it."),
+      answer: T("aa.ans.flag.grounded.answer", "Answered from one of your saved answers. Check it."),
+    };
+    return m[fact] || T("aa.ans.flag.grounded", "Answered from your saved facts. Check it.");
+  }
+  function aaAnsFlag(code, fact) {
+    if (code === "grounded") return aaAnsGrounded(fact);
     const m = {
       ai: T("aa.ans.flag.ai", "The AI chose this. Check it."),
       closest: T("aa.ans.flag.closest", "Optional. Picked as the closest match on the list."),
@@ -11539,7 +11551,7 @@
         page = r.page;
         html += `<div class="ans-pg">${esc(T("aa.ans.page", "Page {n}").replace("{n}", page))}</div><ul class="ans-list">`;
       }
-      html += row(r.label, r.value, aaAnsFrom(r.from), r.flag ? aaAnsFlag(r.flag) : "");
+      html += row(r.label, r.value, aaAnsFrom(r.from), r.flag ? aaAnsFlag(r.flag, r.fact) : "");
     }
     if (page !== null) html += "</ul>";
     if ((list.files || []).length) {

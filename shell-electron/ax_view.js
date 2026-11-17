@@ -49,7 +49,7 @@ function on() {
 const CONTROL_ROLES = new Set(["button", "link", "textbox", "checkbox", "radio", "combobox", "listbox",
   "menuitem", "menuitemcheckbox", "menuitemradio", "option", "searchbox", "slider", "spinbutton",
   "switch", "tab", "treeitem", "PopUpButton", "MenuListPopup"]);
-const SELF_ID_RE = /gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)/i;
+const SELF_ID_RE = /gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|lgbt|queer|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)/i;
 const FIELD_KINDS = new Set(["input", "textarea", "select", "combobox", "checkbox", "radio", "file"]);
 
 // ------------------------------------------------------------------ the accessibility tree
