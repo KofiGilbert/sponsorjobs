@@ -180,8 +180,11 @@ def summary(profile: dict | None, resumes: list[str] | None = None, answers: lis
         if is_eeo_row(r):
             k = str(r.get("key") or "")
             have.add(k if k in EEO.KEYS else normalize(r.get("question") or ""))
-    eeo_bits = [f"{EEO.QUESTIONS[k]}: {'saved' if k in have else 'not saved'}"
-                for k in ("@gender", "@race", "@ethnicity", "@veteran", "@disability")]
+    # Every self-identification question the engine knows, in autoapply/eeo.py's own order, so a
+    # question added there (transgender, sexual orientation and first-generation professional
+    # arrived in #274) shows up here without anyone remembering to edit this list. The VALUES
+    # never appear: a question is only ever "saved" or "not saved" (CLAUDE.md section 5).
+    eeo_bits = [f"{EEO.QUESTIONS[k]}: {'saved' if k in have else 'not saved'}" for k in EEO.KEYS]
     lines.append("Self-identification answers (values are private): " + ", ".join(eeo_bits))
     wa = _work_auth_line(work_auth or {}, status_labels or {})
     lines.append("Work authorization: " + (wa or "not set"))
