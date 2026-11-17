@@ -265,6 +265,12 @@ class LLMBackend(Protocol):
         (applicant/mapper.py): the raw JSON text {"map": [{"n", "key"}]}. The message carries
         labels, options and key names only, never a value."""
 
+    def ground_answers(self, system: str, user: str) -> str:
+        """Answer a page's open application questions from the person's saved facts only
+        (autoapply/grounded.py): the raw JSON text {"answers": [{"n", "answer", "fact"} or
+        {"n", "none": true}]}. The message carries the questions, their options and the saved
+        facts (never a self-identification or legal value); code verifies every answer."""
+
     def classify_company(self, system: str, user: str) -> str:
         """Label an employer for the person's resume choices (applicant/scope.py owns the prompt):
         the raw JSON text {"naics": "52", "type": "startup"}. The message carries the company
@@ -2005,6 +2011,18 @@ class FakeLLM:
             key = next((k for rx, k in rules if re.search(rx, text)), "ask")
             out.append({"n": int(q.get("n") or 0), "key": key})
         return _json.dumps({"map": out})
+
+    ground_calls = 0
+
+    def ground_answers(self, system: str, user: str) -> str:
+        # Grounded answers before an ask (autoapply/grounded.py). A test double: plumbing only, it
+        # counts its calls and answers nothing, so every question stays the person's. The
+        # tests that check what is answered use stub models.
+        import json as _json
+        FakeLLM.ground_calls += 1
+        qm = re.search(r"<questions>\n(.*?)\n</questions>", user, re.S)
+        qs = _json.loads(qm.group(1)) if qm else []
+        return _json.dumps({"answers": [{"n": int(q.get("n") or 0), "none": True} for q in qs]})
 
     def app_assistant(self, system: str, user: str) -> str:
         # The Telegram assistant (notify/assistant.py owns the prompt and the honesty check).

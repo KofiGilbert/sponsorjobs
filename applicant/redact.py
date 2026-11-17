@@ -52,13 +52,26 @@ def _leaves(value: str) -> list[str]:
     return [v]
 
 
-def sensitive_values(store) -> list[str]:
-    """Every current EEO and legal value in the brain, longest first."""
+def sensitive_values(store, kinds=(K.EEO, K.LEGAL)) -> list[str]:
+    """Every current EEO and legal value in the brain (or only the ``kinds`` given), longest first."""
     vals: set[str] = set()
-    rows = store.q("SELECT value FROM fact WHERE sensitivity IN (?, ?) AND status IN ('active', 'needs_check')",
-                   (K.EEO, K.LEGAL))
+    kinds = tuple(kinds) or (K.EEO, K.LEGAL)
+    rows = store.q("SELECT value FROM fact WHERE sensitivity IN (" + ",".join("?" * len(kinds)) + ")"
+                   " AND status IN ('active', 'needs_check')", kinds)
     for r in rows:
         for s in _leaves(r["value"]):
+            s = " ".join(s.split())
+            if len(s) >= 4 and s.lower() not in _GENERIC:
+                vals.add(s)
+    return sorted(vals, key=lambda s: (-len(s), s))
+
+
+def plain_values(answers) -> list[str]:
+    """The words of saved answers worth withholding (``sensitive_values``'s rule for one value:
+    4 characters or more, not a bare Yes, No or decline), longest first."""
+    vals: set[str] = set()
+    for a in answers or ():
+        for s in _leaves(a):
             s = " ".join(s.split())
             if len(s) >= 4 and s.lower() not in _GENERIC:
                 vals.add(s)

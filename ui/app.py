@@ -13702,6 +13702,66 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
     return out
 
 
+# ---- Grounded answers before an ask (autoapply/grounded.py): an open question the person's saved
+# facts answer (where they live, their jobs, schools, skills, their saved answers) is answered from
+# that fact, with ONE model call per page whose every answer code verifies against the fact it
+# cites; only what no saved fact answers is asked. Kept per question and facts for the session,
+# so the shell's known_only check and the ask that follows never pay twice.
+_GROUNDED_CACHE: dict = {}
+_GROUNDED_MAX = 500
+
+
+def _eeo_values(lib) -> list:
+    """Every saved self-identification value (the answer library's and the brain's), so the
+    grounded call's payload can be checked to carry none."""
+    from applicant import keys as _K
+    from applicant import redact as _R
+    from autoapply.asks import is_eeo
+    vals = []
+    try:
+        for r in lib.list() if hasattr(lib, "list") else []:
+            if _K.sensitivity(_K.fact_key(str(r.get("key") or "")), str(r.get("question") or "")) == _K.EEO \
+                    or is_eeo(str(r.get("question") or "")):
+                vals.append(str(r.get("answer") or ""))
+    except Exception:          # noqa: BLE001
+        pass
+    out = _R.plain_values(vals)
+    st = _brain()
+    if st is not None:
+        try:
+            out += [v for v in _R.sensitive_values(st, kinds=(_K.EEO,)) if v not in out]
+        except Exception:      # noqa: BLE001
+            pass
+    return out
+
+
+def _grounded_answers(items: list, data: dict, lib, recall: dict, company: str) -> dict:
+    """{question: {answer, fact, kind}} for the open questions the person's saved facts answer
+    (autoapply/grounded.py). ``items`` = [{question, options}]. Empty when nothing is open, no
+    fact applies, or no model is set up (the person is asked, as before)."""
+    from autoapply import grounded as G
+    if not items:
+        return {}
+    try:
+        prof = (data or {}).get("render_profile") or (data or {}).get("profile") or {}
+        if not prof.get("experience"):
+            prof = _saved_full_profile() or prof
+        applicant = _applicant_for(prof)
+        skip = set(recall.get("hold", ())) | set(recall.get("withhold", ()))
+        if recall.get("job_salary"):
+            skip.add("@salary")                    # a job outside the US: that country's salary only
+        facts = G.build_facts(applicant, prof, lib, questions=[it["question"] for it in items], skip_keys=skip)
+        if not facts:
+            return {}
+        if len(_GROUNDED_CACHE) > _GROUNDED_MAX:
+            _GROUNDED_CACHE.clear()
+        return G.answer_page(_make_llm, items, facts, company=company, eeo_values=_eeo_values(lib),
+                             cache=_GROUNDED_CACHE)
+    except Exception:          # noqa: BLE001 - a hiccup only means the person is asked
+        traceback.print_exc()
+        return {}
+
+
 # ---- "Ask the person": a question the agent cannot answer goes to the bar and to Telegram, the
 # run waits for the answer (up to the caller's timeout), the answer is saved for every later
 # application, and the run goes on. One registry, answered from either side first. Several open
@@ -14294,22 +14354,41 @@ def autoapply_agent_ask():
                                     eeo_fallback=bool(b.get("known_only")))
                 if k:
                     it["answer"], it["origin"] = k
+            # Before anything is asked: what the person's saved facts answer (one call per page,
+            # every answer verified against the fact it cites). Never a self-identification,
+            # legal or consent question, nor one job's own answer or a waiting one-tap confirm.
+            still = [it for it in unforced if not it["answer"] and it["question"] not in none
+                     and it["question"] not in confirm]
+            if still:
+                got = _grounded_answers([{"question": it["question"], "options": it["page_options"]}
+                                         for it in still], data, lib, recall, company)
+                for it in still:
+                    g = got.get(it["question"])
+                    if g:
+                        it["answer"], it["origin"], it["fact"] = g["answer"], "grounded", g["kind"]
         finally:
             lib.close()
     reword = _rewords(items, recall, confirm, company, country)
     conflict = _salary_conflict() if "@salary" in recall.get("hold", ()) else None
     stale = _stale_salary() if recall and country == "US" else None
     answers = lambda: {it["question"]: it["answer"] for it in items if it["answer"]}   # noqa: E731
+
+    def origins() -> dict:
+        # Where an answer came from, for the Review answers list: a grounded one names the kind of
+        # saved fact it came from ("Answered from your saved address").
+        return {"origins": {it["question"]: it["origin"] for it in items if it["answer"] and it["origin"]},
+                "facts": {it["question"]: it["fact"] for it in items if it["answer"] and it.get("fact")}}
     if b.get("known_only"):                        # the shell checks first, then shows the bar
         # A self-identification answer that IS one of the page's choices: the shell picks it
         # itself with real clicks (shell-electron/agent.js pickSaved), never through the model.
         select = {it["question"]: it["answer"] for it in items
                   if it["answer"] and AK.is_eeo(it["question"]) and it["answer"] in it["all_options"]}
         return jsonify({"ok": all(it["answer"] for it in items), "id": aid, "known": True,
-                        "answers": answers(), "select": select, "reword": reword,
+                        "answers": answers(), "select": select, "reword": reword, **origins(),
                         "open": [it["question"] for it in items if not it["answer"]]})
     if all(it["answer"] for it in items):
-        return jsonify({"ok": True, "id": aid, "known": True, "answer": items[0]["answer"], "answers": answers()})
+        return jsonify({"ok": True, "id": aid, "known": True, "answer": items[0]["answer"], "answers": answers(),
+                        **origins()})
     pending = [it for it in items if not it["answer"]]
     for it in pending:
         r = reword.get(it["question"])
@@ -14654,7 +14733,11 @@ def _questions_result(aid: str, how: str, reg: list, ctx: dict, sent: bool, via:
         # A job's own answer (never kept) and a confirm are handed to the run as they are.
         keep = {it["question"]: it["answer"] for it in items
                 if it.get("answer") and (it["question"] in none or it.get("skip_save"))}
-        return {"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers(), "job_answers": keep}
+        # Where the answers that were not the person's came from (a grounded one names its fact)
+        origins = {it["question"]: it["origin"] for it in items if it.get("answer") and it.get("origin")}
+        facts = {it["question"]: it["fact"] for it in items if it.get("answer") and it.get("fact")}
+        return {"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers(), "job_answers": keep,
+                "origins": origins, "facts": facts}
     if any(it.get("answer") and not it.get("origin") for it in items):
         save_all()                                 # what the person did answer is kept
     if sent:                                       # the rest stays open to a late reply for a day
@@ -15817,8 +15900,12 @@ def autoapply_agent_critic():
     from applicant import redact as _R
     withheld = _brain_do(_R.sensitive_values) or []
     left = [str(x.get("label") or "") if isinstance(x, dict) else str(x) for x in (b.get("left") or [])[:40]]
-    out = brain.critic({"view": view[:14000], "plan": b.get("plan") or [], "left": left}, _make_llm(),
-                       values=values, withheld=withheld)
+    # What the run itself filled and attached (labels and file kinds only): a react-select's
+    # choice and a file shown as its name read as empty in the view (2026-11-17, Upgrade).
+    filled = [str(x)[:200] for x in (b.get("filled") or [])[:120] if isinstance(x, str)]
+    files = [str(x) for x in (b.get("files") or [])[:4] if x in ("resume", "cover_letter")]
+    out = brain.critic({"view": view[:14000], "plan": b.get("plan") or [], "left": left, "filled": filled,
+                        "files": files}, _make_llm(), values=values, withheld=withheld)
     return jsonify(out)
 
 

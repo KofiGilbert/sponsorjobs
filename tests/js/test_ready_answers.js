@@ -110,6 +110,25 @@ const SELF = "Zyxwv Selfid Value";          // a self-identification value no ot
   assert(ans.rows.length === 1 && ans.rows[0].value === "Job board", "one line per question " + JSON.stringify(ans.rows));
 }
 
+// ---- 2b. an answer from the person's saved facts (autoapply/grounded.py) is flagged with its fact
+{
+  const view = "[5]<input type=text label=\"Where in the US do you currently reside?\" value=\"\">\n"
+    + "[6]<input type=text label=\"Current company\" value=\"\">";
+  const runAnswers = { "Where in the US do you currently reside?": "Chicago, IL", "Current company": "Acme" };
+  const runOrigins = A.noteOrigins({}, { origins: { "Where in the US do you currently reside?": "grounded", "Current company": "library" },
+                                          facts: { "Where in the US do you currently reside?": "location" } });
+  assert(Object.keys(runOrigins).length === 1, "only a grounded origin is kept " + JSON.stringify(runOrigins));
+  const g = A.brainAnswer(view, { op: "type", index: 5, text: "Chicago, IL", placeholder: "answer_1" }, runAnswers, runOrigins);
+  assert(g && g.from === "grounded" && g.fact === "location", "grounded with its fact " + JSON.stringify(g));
+  const lib = A.brainAnswer(view, { op: "type", index: 6, text: "Acme", placeholder: "answer_2" }, runAnswers, runOrigins);
+  assert(lib && lib.from === "you" && !lib.fact, "the rest as before " + JSON.stringify(lib));
+  const ans = A.createAnswers();
+  A.addAnswer(ans, Object.assign({ page: 1, via: "brain" }, g));
+  const L = A.readyAnswers(ans, {});
+  assert(L.rows[0].flag === "grounded" && L.rows[0].fact === "location" && L.flagged === 1, "flagged for a look " + JSON.stringify(L));
+  assert(A.answersTelegram(L).includes("from your saved facts, check it"), "named on Telegram");
+}
+
 // ---- 3. a mock run: the list reaches the Ready to send line; self-ID stays out of the feed and log
 const PAGES = {
   form: { url: "https://jobs.example.com/apply/2", sig: { labels: ["Phone", "City"] },
