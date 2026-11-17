@@ -1636,5 +1636,6 @@
   "projects.published": "Published to GitHub.",
   "update.available": "Version {v} is out. Download it",
   "agent.signInFirst": "Sign in first, then I'll make the address.",
-  "agent.connectFailed": "That didn't work. Try again in a moment."
+  "agent.connectFailed": "That didn't work. Try again in a moment.",
+  "home.todayFailed": "Could not load roles just now. Open Jobs to try again."
 }
