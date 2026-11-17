@@ -1636,5 +1636,6 @@
   "projects.published": "Publicado en GitHub.",
   "update.available": "La versión {v} ya está. Descárgala",
   "agent.signInFirst": "Inicia sesión primero y luego creo la dirección.",
-  "agent.connectFailed": "Eso no funcionó. Inténtalo de nuevo en un momento."
+  "agent.connectFailed": "Eso no funcionó. Inténtalo de nuevo en un momento.",
+  "home.todayFailed": "No se pudieron cargar los puestos ahora mismo. Abre Empleos para intentarlo de nuevo."
 }

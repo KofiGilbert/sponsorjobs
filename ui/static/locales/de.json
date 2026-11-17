@@ -1636,5 +1636,6 @@
   "projects.published": "Auf GitHub veröffentlicht.",
   "update.available": "Version {v} ist da. Lade sie herunter",
   "agent.signInFirst": "Melde dich zuerst an, dann erstelle ich die Adresse.",
-  "agent.connectFailed": "Das hat nicht geklappt. Versuche es gleich noch einmal."
+  "agent.connectFailed": "Das hat nicht geklappt. Versuche es gleich noch einmal.",
+  "home.todayFailed": "Die Rollen konnten gerade nicht geladen werden. Öffne Jobs, um es erneut zu versuchen."
 }

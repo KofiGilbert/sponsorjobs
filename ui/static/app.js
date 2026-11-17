@@ -871,9 +871,18 @@
   }
 
   // Home: a small curated peek at the freshest roles (full feed lives in Jobs).
-  async function loadHomeToday() {
+  // After a restart the page can paint before the engine has its feed, and the request simply
+  // fails. It used to blank the list (`el.innerHTML = ""`), so the strip showed its heading, a
+  // lone "See all jobs" link and nothing else, which reads as "there are no roles" rather than
+  // "not yet" (Kofi, 2026-11-16: the 12 cards appeared seconds later). So: paint the skeleton
+  // first, retry a few times while the engine starts, and say so plainly if it never answers.
+  const HOME_TODAY_BACKOFF = [600, 1200, 2400];     // ms, then give up with a line
+  async function loadHomeToday(attempt) {
     const el = $("#homeToday");
     if (!el) return;
+    // The waiters call this with no argument, so never trust it to be a number.
+    const tries = Number.isInteger(attempt) ? attempt : 0;
+    if (!tries) el.innerHTML = feedLoadingHtml();
     try {
       const r = await api("/api/jobs?home=1");   // server leaves out roles closed to a visa holder
       noteVia(r);
@@ -925,7 +934,15 @@
       // is the explicit action. It used to start tailoring on the click (2026-10-20).
       el.querySelectorAll("[data-sid]").forEach(b =>
         b.addEventListener("click", () => openJobOnBoard(jobs.find(j => j.source_id === b.dataset.sid))));
-    } catch { el.innerHTML = ""; }
+    } catch {
+      // The engine is probably still starting. Keep the skeleton up and come back.
+      if (tries < HOME_TODAY_BACKOFF.length) {
+        setTimeout(() => loadHomeToday(tries + 1), HOME_TODAY_BACKOFF[tries]);
+        return;
+      }
+      el.innerHTML = `<div class="empty small">${esc(sjT("home.todayFailed",
+        "Could not load roles just now. Open Jobs to try again."))}</div>`;
+    }
   }
 
   /* ---------------------------------------------------------------- application package */
