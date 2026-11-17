@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from autoapply import eeo, workauth
+from autoapply import consents, eeo, workauth
 from autoapply.answers import normalize
 from autoapply import countries
 from autoapply.countries import country_option
@@ -199,17 +199,62 @@ _LETTER = re.compile(r"cover\s*letter|letter of (interest|motivation)|motivation
 # ("Do you have a relative working at ...", "Do you know anyone who works at ...").
 _WORKED_AT = re.compile(r"\b(work(ed|ing)?|been employed|employed|interned|contract(ed|ing))\b[^?]{0,40}?"
                         r"\b(at|for|by|with)\s+(?P<who>[^?]{2,80})", re.I)
-_SOMEONE_ELSE = re.compile(r"relative|family|friend|spouse|anyone|someone|know|refer|partner", re.I)
+# (2026-11-17, Phoenix Contact on Greenhouse) The "employee" wordings: "Are you a current or former
+# Phoenix Contact employee?", "Phoenix Contact employee (current or former)", "Are you a former
+# employee of Acme?".
+_WHEN = r"(?:current|former|past|previous|prior|ex)"
+_EMPLOYEE_OF = re.compile(
+    r"\b" + _WHEN + r"(?:\s*(?:or|/|and)\s*" + _WHEN + r")?[\s-]+(?P<who>[^?()]{2,80}?)\s+"
+    r"(?:employee|employment|contractor|intern|staff member|team member)s?\b"
+    r"|^\W*(?P<who2>[^?()]{2,80}?)\s+(?:employee|contractor|intern)s?\s*\(\s*" + _WHEN
+    + r"|\b" + _WHEN + r"(?:\s*(?:or|/|and)\s*" + _WHEN + r")?\s+(?:employee|contractor|intern)s?\s+(?:of|at|with|for)\s+"
+    r"(?P<who3>[^?()]{2,80})", re.I)
+_SOMEONE_ELSE = re.compile(r"relative|related|family|friend|spouse|anyone|someone|know|refer|partner", re.I)
 _CO_SUFFIX = re.compile(r"\b(inc|incorporated|llc|l l c|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|sa"
-                        r"|group|holdings?|technologies|labs)\b", re.I)
+                        r"|group|holdings?|technologies|labs|usa|u s a|north america|americas|international|global)\b", re.I)
+# "Why do you want to work at Acme?", "Would you like to work for Acme?": a wish, not a history.
+_WISH = re.compile(r"\bwhy\b|\b(want|like|love|wish|hope|plan|excited|eager|interested in|choose|chose)\b[^?]{0,12}"
+                   r"\b(to )?(work|join|working)\b", re.I)
+# A question with no "you" that still asks the person ("Previously employed by Acme?").
+_LEADS = re.compile(r"^\W*(previously|formerly|former|current|past|prior|ever|employed|worked|have|are|were)\b", re.I)
+
+
+def _company_core(company: str) -> str:
+    return _n(_CO_SUFFIX.sub(" ", _n(company)))
+
+
+def names_company(label: str, company: str) -> bool:
+    """True when ``label`` names ``company`` (its name without the Inc / LLC / USA) and is not
+    about someone else (a relative, a referral)."""
+    core = _company_core(company)
+    return len(core) >= 3 and not _SOMEONE_ELSE.search(str(label or "")) \
+        and bool(re.search(r"\b" + re.escape(core) + r"\b", _n(label)))
 
 
 def worked_here_question(label: str, company: str) -> bool:
-    """True when ``label`` asks whether the person works or worked at ``company`` by its name."""
-    lbl, core = str(label or ""), _n(_CO_SUFFIX.sub(" ", _n(company)))
-    if len(core) < 3 or _SOMEONE_ELSE.search(lbl) or not re.search(r"\b(have|are|were|did|do) you\b", lbl, re.I):
+    """True when ``label`` asks whether the person works or worked at ``company`` by its name:
+    "Have you ever worked at Gusto", "Are you a current or former Phoenix Contact employee?",
+    "Previously employed by Acme?", "Have you worked for Acme before?". Never a question about
+    someone else ("Are you related to a current Acme employee?")."""
+    lbl, core = str(label or ""), _company_core(company)
+    if len(core) < 3 or _SOMEONE_ELSE.search(lbl) or _WISH.search(lbl):
         return False
-    return any(re.search(r"\b" + re.escape(core) + r"\b", _n(m.group("who"))) for m in _WORKED_AT.finditer(lbl))
+    has = lambda who: bool(who) and bool(re.search(r"\b" + re.escape(core) + r"\b", _n(who)))  # noqa: E731
+    for m in _EMPLOYEE_OF.finditer(lbl):
+        if has(m.group("who") or m.group("who2") or m.group("who3")):
+            return True
+    if not (re.search(r"\b(have|are|were|did|do) you\b", lbl, re.I) or _LEADS.search(lbl)):
+        return False
+    return any(has(m.group("who")) for m in _WORKED_AT.finditer(lbl))
+
+
+def asks_worked_here(label: str, company: str, confirm=None) -> bool:
+    """"Have you worked here before?" for THIS company: a wording the rule knows, or one the label
+    mapper matched to @previously_worked that names the company (then the person's answer for
+    the company, or their work history, answers it without a one-tap confirm)."""
+    if worked_here_question(label, company):
+        return True
+    return (confirm or {}).get(label) == "@previously_worked" and names_company(label, company)
 
 
 # "Do you currently reside in one of the following locations?" with places as the choices
@@ -626,6 +671,10 @@ class KnownContext:
     withhold: frozenset = frozenset()
     job_salary: str = ""
     wa_ended: object = None
+    # (2026-11-17) The person's standing consent to the notices a site requires (Your answers'
+    # accept_required_terms "always"): an acknowledgement question gets its affirmative choice
+    # (autoapply/consents.py). Marketing opt-ins are declined unless @marketing_optin says yes.
+    accept_notices: bool = False
 
 
 @dataclass
@@ -804,7 +853,7 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
         # 1b. "Have you worked here before?": for THIS company (applicant/facts.py worked_here),
         #     also when the question names the company ("... working at Gusto or Symmetry ...")
         qkey0 = normalize(label)
-        if ctx.per_company and qkey0 != "@previously_worked" and worked_here_question(label, ctx.company):
+        if ctx.per_company and qkey0 != "@previously_worked" and asks_worked_here(label, ctx.company, ctx.confirm):
             qkey0 = "@previously_worked"
         if ctx.per_company and qkey0 == "@previously_worked":
             # (Phase 4) a Yes read from the resume waits for the person's one tap per company
@@ -815,6 +864,26 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                                               sensitive=True))
             else:
                 out.left.append(f)
+            continue
+
+        # 1b'. a marketing opt-in (declined unless the person saved a yes) and an acknowledgement
+        #      of a notice or condition (the affirmative choice, under the person's standing
+        #      consent to required notices): never asked per application (autoapply/consents.py)
+        got = consents.standing_answer(label, f.options, t, f.required, library=ctx.library,
+                                       accept_notices=ctx.accept_notices)
+        if got is not None:
+            kind, v, origin = got
+            if kind == consents.PICK:
+                out.actions.append(FillAction(f.ref, "check" if t == "checkbox" else _op_for(f), value=v,
+                                              origin=origin, sensitive=True))
+            elif kind == consents.THEIRS:
+                hit = ctx.library.lookup(label) if ctx.library is not None else None
+                v = _literal(f, hit["answer"]) if hit else None
+                if v:                                      # their own answer to this exact wording
+                    out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
+                    out.used_library.append(hit["key"])
+                else:
+                    out.left.append(f)
             continue
 
         # 1c. one box of a checkbox group ("How did you hear about this opportunity?: Indeed"):

@@ -1607,6 +1607,8 @@
   "aa.ans.from.closest": "Correspondance la plus proche",
   "aa.ans.from.skills": "Vos compétences",
   "aa.ans.from.grounded": "Vos informations enregistrées",
+  "aa.ans.from.consent": "Votre accord aux avis obligatoires",
+  "aa.ans.from.optin": "Messages marketing refusés",
   "aa.ans.flag.ai": "L'IA a choisi ceci. Vérifiez-le.",
   "aa.ans.flag.closest": "Facultatif. Choisi comme l'option la plus proche de la liste.",
   "aa.ans.flag.skills": "Facultatif. Choisi parmi vos compétences.",

@@ -2639,6 +2639,23 @@ function questionsFor(viewText, left, includeFilled) {
 
 // The question just above this one on the page, with its answer when shown: a box called
 // "Please provide more information" only makes sense under "Will you need sponsorship? Yes".
+// A label cut for a context line ("After “…”, the application asks"): at a word boundary with an
+// ellipsis, never inside a bracket (2026-11-17: "...employment visa status (" was shown). Mirrored
+// in autoapply/asks.py trim_label.
+function trimLabel(text, limit) {
+  const n = limit || 90;
+  let s = String(text || "").replace(/\s+/g, " ").trim();
+  let cut = false;
+  if (s.length > n) {
+    s = s.slice(0, n); cut = true;
+    const sp = s.lastIndexOf(" ");
+    if (sp > n / 3) s = s.slice(0, sp);
+  }
+  const count = (c) => s.split(c).length - 1;
+  while (count("(") > count(")")) { s = s.slice(0, s.lastIndexOf("(")); cut = true; }
+  s = s.replace(/[\s,;:\-\u2013\u2014/(]+$/, "");
+  return cut && s ? s + "\u2026" : s;
+}
 function contextFor(viewText, label) {
   const lines = String(viewText || "").split("\n");
   const at = lines.findIndex((ln) => sameLabel(lineLabel(ln), label));
@@ -2647,7 +2664,7 @@ function contextFor(viewText, label) {
     if (!lab || sameLabel(lab, label)) continue;
     const val = /value="([^"]*)"/.exec(lines[i]);
     const v = val && val[1] && val[1] !== "(filled)" ? val[1] : "";
-    return lab.slice(0, 90) + (v ? ": " + v : "");
+    return trimLabel(lab, 90) + (v ? ": " + v : "");
   }
   return "";
 }
@@ -2744,7 +2761,9 @@ function orderOptions(question, options) {
 // derived, letter, job, today, ai, closest (an optional list filled by the closest match),
 // skills (an optional list filled from the person's skills), grounded (answered from one of the
 // person's saved facts by the engine's checked model call, autoapply/grounded.py: its ``fact``
-// names the kind, location / job / school / skills / answer).
+// names the kind, location / job / school / skills / answer), consent (an acknowledgement of a
+// notice or condition under the standing consent to required notices) and optin (a marketing
+// opt-in declined; autoapply/consents.py).
 const ANSWER_FLAGS = new Set(["ai", "closest", "skills", "eeo_decline", "derived", "drafted", "grounded"]);
 const FACT_KINDS = new Set(["location", "job", "school", "skills", "answer"]);
 const ANSWER_MAX = 200;
@@ -2915,7 +2934,8 @@ const ANSWER_FROM_WORDS = {
   workauth: "work authorization", eeo: "self-identification", eeo_decline: "declined",
   drafted: "drafted", derived: "worked out", letter: "cover letter", job: "the job", today: "today's date",
   ai: "AI pick, check it", closest: "closest match, check it", skills: "from your skills, check it",
-  grounded: "from your saved facts, check it",
+  grounded: "from your saved facts, check it", consent: "you said yes to required notices in setup",
+  optin: "declined marketing messages",
 };
 // One answer as a Telegram line: a self-identification value never leaves the app.
 function answerLine(r) {
@@ -3034,7 +3054,7 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
-                   optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
+                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice };

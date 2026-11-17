@@ -91,7 +91,8 @@ _LEGAL = re.compile(r"\bagree|consent|acknowledg|attest|certif(y|ication that)|s
                     r"|password|passcode|verification code|one[- ]time|captcha|\bpin\b|bank (account|details)|routing number", re.I)
 # Legal by the brain's rules (citizenship, visa, residence status): their own path, never here.
 _LEGAL_TOPIC = re.compile(r"citizen|nationality|\bvisa\b|sponsor|immigra|permanent resid|green card|work permit"
-                          r"|authori[sz]ed to work|right to work|export control|security clearance", re.I)
+                          r"|authori[sz]ed to work|right to work|export control|security clearance"
+                          r"|restrictive covenant|non-?compet|non-?solicit", re.I)
 # An essay or a question whose answer is written for this job: never a fact.
 _ESSAY = re.compile(r"\bwhy\b|describe|tell us|explain|elaborate|share (an?|your|with)|what (excites|motivates)"
                     r"|cover letter|anything else|additional (information|comments)|summary|example of"

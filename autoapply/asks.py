@@ -27,12 +27,13 @@ import json
 import re
 import threading
 
+from autoapply import consents as CONSENTS
 from autoapply import eeo as EEO
 from autoapply import workauth
 from autoapply.answers import normalize
 from autoapply.planner import (_DECLINE, _EEO, _n, both_halves, citizenship_text, decline_option, eeo_option,
-                               listed_citizenship, literal_for, match_option, residence_withheld,
-                               worked_here_question)
+                               asks_worked_here, listed_citizenship, literal_for, match_option,
+                               residence_withheld, worked_here_question)
 
 MAX_OPTIONS = 8          # choices offered as buttons
 MAX_ALL = 40             # choices kept to match a saved answer or a reply against
@@ -104,7 +105,8 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
                  eeo_decline: bool = False, job_country: str = "US", hint: str = "",
                  per_company: bool = False, worked_here=None, hold=frozenset(), mapped=None, confirm=None,
                  withhold=frozenset(), job_salary: str = "", wa_ended=None,
-                 company: str = "", eeo_fallback: bool = False) -> tuple[str, str] | None:
+                 company: str = "", eeo_fallback: bool = False,
+                 accept_notices: bool = False) -> tuple[str, str] | None:
     """(answer, origin) when the person's own material answers this question, else None.
     Origins: "library", "workauth", "eeo_decline". ``options`` is every choice the page has (or
     as many as were read; ``partial`` says the list is cut). With options, the answer is the
@@ -133,7 +135,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         return None
     opts = clean_options(options)
     key = normalize(q)
-    if per_company and key != "@previously_worked" and worked_here_question(q, company):
+    if per_company and key != "@previously_worked" and asks_worked_here(q, company, confirm):
         key = "@previously_worked"          # "Have you ever worked at <this company>?" (planner)
     elif key in (hold or ()) or q in (confirm or {}):
         return None
@@ -142,7 +144,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     ctx = KnownContext(work_auth=work_auth or {}, library=library, job_country=job_country, eeo_decline=eeo_decline,
                        per_company=per_company, worked_here=worked_here, hold=frozenset(hold or ()),
                        mapped=dict(mapped or {}), confirm=dict(confirm or {}), withhold=frozenset(withhold or ()),
-                       job_salary=job_salary, wa_ended=wa_ended)
+                       job_salary=job_salary, wa_ended=wa_ended, accept_notices=accept_notices)
     from applicant.expiry import expired_kind
     ended = wa_ended if expired_kind(q, wa_ended) else None
 
@@ -188,6 +190,13 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         # did not stick comes back as a forced question and is asked for real.
         v = decline_option(opts) if eeo_fallback else None
         return (v, "eeo_decline") if v else None
+    # (2026-11-17) A marketing opt-in: the decline (or the person's saved yes); an acknowledgement
+    # of a notice or condition: its affirmative choice under the standing consent to required
+    # notices (autoapply/consents.py). A forced consent falls through to their own saved words.
+    got = CONSENTS.standing_answer(q, opts, "select" if opts else "text", True, library=library,
+                                   accept_notices=accept_notices)
+    if got is not None and got[0] == CONSENTS.PICK:
+        return got[1], got[2]
     if per_company and key == "@previously_worked":
         ok = worked_here and worked_here[1] != "confirm" and fit(worked_here[0])
         return (fit(worked_here[0]), worked_here[1] or "library") if ok else None
@@ -238,6 +247,23 @@ def _more(it: dict, shown: int) -> str:
     return f", and {extra} more" if extra > 0 else ""
 
 
+def trim_label(text, limit: int = 120) -> str:
+    """A label cut to ``limit`` characters for a context line: at a word boundary with an
+    ellipsis, and never inside a bracket ("...visa status (" read as a cut, 2026-11-17: the open
+    bracket and what follows it go). Mirrored in shell-electron/agent.js trimLabel."""
+    s = " ".join(str(text or "").split())
+    cut = False
+    if len(s) > limit:
+        s, cut = s[:limit], True
+        sp = s.rfind(" ")
+        if sp > limit // 3:
+            s = s[:sp]
+    while s.count("(") > s.count(")"):
+        s, cut = s[:s.rfind("(")], True
+    s = s.rstrip(" ,;:-\u2013\u2014/(")
+    return s + "\u2026" if cut and s else s
+
+
 def fit_text(text: str) -> str:
     return text if len(text) <= MAX_TEXT else text[:MAX_TEXT - 1].rstrip() + "…"
 
@@ -247,11 +273,11 @@ def prompt_text(items: list[dict], context: str = "", *, list_choices: bool = Fa
     """The Telegram message for one question or a batch, under MAX_TEXT. ``list_choices`` lists
     a single question's choices in full, numbered (its buttons are cut to 30 characters, or there
     are no buttons at all)."""
-    ctx = " ".join(str(context or "").split())[:120]
+    ctx = trim_label(context, 120)
     for cap in (MAX_OPTIONS, 4, 2, 0):
         if len(items) == 1:
             it = items[0]
-            c = " ".join(str(it.get("context") or ctx or "").split())[:120]
+            c = trim_label(it.get("context") or ctx or "", 120)
             head = (f"After “{c}”, the application asks: " if c else "The application asks: ") + it["question"]
             if it.get("say"):                     # (Phase 3) one question for two saved values
                 say = " ".join(str(it["say"]).split())[:300]

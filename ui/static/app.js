@@ -11482,6 +11482,8 @@
       job: T("aa.ans.from.job", "The job"), today: T("aa.ans.from.today", "Today's date"),
       ai: T("aa.ans.from.ai", "AI pick"), closest: T("aa.ans.from.closest", "Closest match"),
       skills: T("aa.ans.from.skills", "Your skills"), grounded: T("aa.ans.from.grounded", "Your saved facts"),
+      consent: T("aa.ans.from.consent", "Your consent to required notices"),
+      optin: T("aa.ans.from.optin", "Declined marketing messages"),
     };
     return m[code] || code || "";
   }

@@ -1607,6 +1607,8 @@
   "aa.ans.from.closest": "Nächste Übereinstimmung",
   "aa.ans.from.skills": "Deine Fähigkeiten",
   "aa.ans.from.grounded": "Deine gespeicherten Angaben",
+  "aa.ans.from.consent": "Deine Zustimmung zu Pflichthinweisen",
+  "aa.ans.from.optin": "Werbenachrichten abgelehnt",
   "aa.ans.flag.ai": "Die KI hat das gewählt. Prüfe es.",
   "aa.ans.flag.closest": "Optional. Als nächste Übereinstimmung der Liste gewählt.",
   "aa.ans.flag.skills": "Optional. Aus deinen Fähigkeiten gewählt.",

@@ -452,7 +452,9 @@ def worked_here(st: Store | None, company: str, employers_: list | tuple = ()) -
     2. Yes when the company is one of their employers (their resume's roles), with origin
        ``confirm``: the agent asks the person once for this company before it is used;
     3. No when it is not, and the person has answered No for a company outside their employer
-       history before (or saved a standing No on Your answers): they answer from that history.
+       history before (or saved a standing No on Your answers): they answer from that history;
+    4. (2026-11-17, the owner: "answer from work history, No unless the company is in it") No
+       when they have a work history and the company is not in it, origin ``history``.
     Never the answer they gave for another company as such."""
     ck = company_key(company)
     if not ck:
@@ -476,6 +478,8 @@ def worked_here(st: Store | None, company: str, employers_: list | tuple = ()) -
             return "No", "derived"
         if r["store"] == STORE_ANSWERS and r["subject"] == "" and r["source"] == "you":
             return "No", "derived"
+    if any(str(e or "").strip() for e in employers_ or ()):
+        return "No", "history"
     return None
 
 
