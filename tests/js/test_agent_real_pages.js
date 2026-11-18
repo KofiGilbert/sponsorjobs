@@ -6,7 +6,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const { createAgent, closedJob, socialRefused } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
+const { createAgent, closedJob, alreadyApplied, socialRefused } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
 const assert = (c, m) => { if (!c) throw new Error(m); };
 const REAL = path.join(__dirname, "..", "fixtures", "forms", "real");
 const page = (name) => fs.readFileSync(path.join(REAL, name + ".txt"), "utf8");
@@ -30,6 +30,15 @@ const page = (name) => fs.readFileSync(path.join(REAL, name + ".txt"), "utf8");
   assert(closedJob("Analyst\n[1]<button>Apply</button>\nThis position has been filled by many great people before you.") === "", "Apply on the page");
   // a closed line in a form is not a closed job either
   assert(closedJob("[2]<input type=text label=\"Name\" value=\"\">\nThis job is no longer available.") === "", "a form");
+
+  // ---- 1b. "You've already applied": the site's own line, never a form or an open posting ----
+  assert(/already applied/.test(alreadyApplied("[1]<a>Back</a>\nYou\u2019ve already applied for this job.\n[2]<button>Done</button>")), "the site's line");
+  assert(/already applied/.test(alreadyApplied("You have already applied to this position")), "second wording");
+  assert(alreadyApplied("[1]<input type=text label=\"Have you already applied to this role?\">\nYou have already applied") === "", "a form asking about it");
+  assert(alreadyApplied("[1]<button>Apply</button>\nYou have already applied for this job") === "", "Apply is still offered");
+  for (const name of ["barclays_workday_job", "gartner_workday_job", "oracle_closed", "upgrade_greenhouse_job"]) {
+    assert(alreadyApplied(page(name)) === "", name + " is not already applied");
+  }
 
   // ---- 2. LinkedIn is never clicked; other social sign-ins only without an email path -------
   const eli = page("eliassen_apply_options");
