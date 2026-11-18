@@ -1423,6 +1423,17 @@ function createAgent(deps) {
                { reason: "job-closed", closed: true, steps: history.length, url });
       return finish({ ok: false, reason: "job-closed", closed: true, steps: history.length });
     };
+    // The site says the person already applied: the record becomes Applied (theirs, never
+    // counted as sent by the agent) and nothing more is spent.
+    const appliedStop = async (phrase, url) => {
+      await deps.postApp("/api/autofill/applied", { url: opts.url || url, page_url: url, record_id: recordId }).catch(() => null);
+      deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
+      feed.close();
+      feed.push("sent", "Already applied", "the site says so", { state: "done", detail: phrase });
+      progress(recordId, "stopped", (batch ? lead : "") + "The site says you already applied for this job. I marked it as applied.",
+               { reason: "already-applied", closed: true, steps: history.length, url });
+      return finish({ ok: true, reason: "already-applied", closed: true, steps: history.length });
+    };
     const where = () => (wcNow && !wcNow.isDestroyed() ? wcNow.getURL() || "" : "");
     terms.parkInfo = () => ({ page_url: where(), run: runOpts(opts), batch: quick });
     const lead = batch && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "";
@@ -1843,6 +1854,13 @@ function createAgent(deps) {
           if (gone) {
             dlog("step " + step + " closed:", gone);
             return closedStop(gone, url, false);
+          }
+          // (2026-11-17) The site itself says this job was already applied to (the person sent
+          // it by hand, or an earlier run did): it is Applied, not "not a job". Zero AI cost.
+          const sent = alreadyApplied(v.text);
+          if (sent) {
+            dlog("step " + step + " already applied:", sent);
+            return appliedStop(sent, url);
           }
           if (elementLines(v.text).some((ln) => /^\*?\[\d+\]<(input|select|textarea|combobox|radio|checkbox|file)\b/.test(ln) && !/search=true/.test(ln))) formReached = true;
         }
@@ -2878,6 +2896,19 @@ function closedJob(viewText) {
   }
   return "";
 }
+// "You've already applied for this job": the site's own short line, on a page with no form
+// field and no Apply control (a form that merely mentions earlier applications is not this).
+const APPLIED_RE = /\b(you(['\u2019]ve| have)|you) already (applied|submitted)\b|\balready applied (for|to) this (job|position|role|opening)\b|\bapplication (has |was )?already (been )?(submitted|received)\b/i;
+function alreadyApplied(viewText) {
+  const t = String(viewText || "");
+  if (buttonIndex(t, APPLY_CTRL_RE)) return "";
+  if (elementLines(t).some((ln) => /^\*?\[\d+\]<(input|select|textarea|combobox|radio|checkbox|file)\b/.test(ln) && !/search=true/.test(ln))) return "";
+  for (const ln of pageWords(t).split("\n")) {
+    const line = ln.trim();
+    if (line && line.length <= 200 && APPLIED_RE.test(line)) return line.slice(0, 160);
+  }
+  return "";
+}
 // LinkedIn is never driven (CLAUDE.md section 7): any click on it is refused. Another social
 // sign-in (Indeed, Google, Facebook, Apple...) only when the page offers no email or manual path.
 const LINKEDIN_RE = /linked ?in/i;
@@ -3557,6 +3588,6 @@ function blockedMessage(reason, left) {
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
                    optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
-                   closedJob, socialRefused, wroteLines,
+                   closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
                    DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF };
