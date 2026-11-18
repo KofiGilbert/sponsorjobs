@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>My Information (Workday-style fixture)</title>
+<link rel="stylesheet" href="style.css">
+<style>.wd-pop{position:absolute;left:10px;top:120px;background:#fff;border:1px solid #999;z-index:5}</style></head>
+<body>
+<!-- Modelled on a Workday "My Information" page (2026-11-18): the required "How Did You Hear
+     About Us?" multiselect prompt (input id source--source, searchBox inside multiSelectContainer)
+     whose list has TWO levels. The first holds categories; a click on one replaces the list with
+     its own choices under a header with a back arrow (backButton) and the category's name. A
+     choice is div[menuItem][role=option][aria-label="<text> not checked"] > div[promptLeafNode] >
+     div[promptOption]. A pick adds a selectedItem pill and closes the list. The categories
+     other than "Job Sites" are made up; ?cats=<json> replaces the lists, ?label= the question,
+     ?never=1 makes a list that never opens. -->
+<h3 id="head">My Information</h3>
+<div id="host"></div>
+<button type="button" data-automation-id="pageFooterNextButton">Next</button>
+<script>
+  const h = (tag, attrs, kids) => { const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) { if (k === "text") e.textContent = v; else e.setAttribute(k, v); }
+    for (const c of kids || []) e.appendChild(c); return e; };
+  const qs = new URLSearchParams(location.search);
+  // {category: [choices]} for a category, {choice: null} for a plain choice on the first list
+  const CATS = qs.get("cats") ? JSON.parse(qs.get("cats")) : {
+    "Career Fair": ["Campus Event", "Hiring Event"],
+    "Employee Referral": ["Referred by an Employee"],
+    "Job Sites": ["BuiltIn", "College / University", "Compliance_HireAHero", "Compliance_JOFDAV",
+                  "Compliance_recruitABILITY", "Compliance_USDiversity", "Financial Careers Training", "Glassdoor",
+                  "HACE", "Handshake", "IDES", "Job Board: CareerBuilder", "Job Board: Indeed", "Job Board: Monster",
+                  "Other Job Board"],
+    "Social Media": ["Facebook", "Instagram"],
+  };
+  const LABEL = qs.get("label") || "How Did You Hear About Us?";
+  const input = h("input", { id: "source--source", type: "text", "data-uxi-widget-type": "selectinput",
+                             "data-automation-id": "searchBox", placeholder: "Search", "aria-required": "true" });
+  const pills = h("div", { "data-automation-id": "selectedItemList" });
+  document.getElementById("host").appendChild(h("div", { "data-automation-id": "formField-source" }, [
+    h("label", { for: "source--source", text: LABEL + "*" }),
+    h("div", { "data-automation-id": "multiSelectContainer" }, [pills, input])]));
+  let pop = null, shows = 0; const chosen = [], opened = [];
+  const NEVER = qs.get("never") === "1";               // ?never=1: the list never opens
+  function close() { if (pop) pop.remove(); pop = null; input.setAttribute("aria-expanded", "false"); }
+  function show(cat) {
+    shows++;
+    if (NEVER) return;
+    if (pop) pop.remove();
+    const lb = h("div", { role: "listbox" });
+    const kids = [];
+    if (cat) {
+      opened.push(cat);
+      const back = h("button", { type: "button", "data-automation-id": "backButton", "aria-label": "Back" , text: "<" });
+      back.addEventListener("click", () => show(null));
+      kids.push(h("div", { "data-automation-id": "promptHeader" }, [back, h("span", { text: cat })]));
+      for (const o of CATS[cat]) lb.appendChild(leaf(o));
+    } else {
+      const q = input.value.toLowerCase();
+      for (const c of Object.keys(CATS).filter((x) => x.toLowerCase().includes(q))) {
+        if (CATS[c] === null) { lb.appendChild(leaf(c)); continue; }
+        const row = h("div", { "data-automation-id": "menuItem", role: "option", "aria-label": c },
+                      [h("div", { "data-automation-id": "promptOption", text: c })]);
+        row.addEventListener("click", () => show(c));
+        lb.appendChild(row);
+      }
+    }
+    kids.push(lb);
+    pop = h("div", { "data-automation-id": "popup", class: "wd-pop" }, kids);
+    document.body.appendChild(pop);
+    input.setAttribute("aria-expanded", "true");
+  }
+  function leaf(o) {
+    const row = h("div", { "data-automation-id": "menuItem", role: "option", "aria-label": o + " not checked" },
+      [h("div", { "data-automation-id": "promptLeafNode" }, [h("div", { "data-automation-id": "promptOption", text: o })])]);
+    row.addEventListener("click", () => {
+      chosen.push(o); pills.appendChild(h("div", { "data-automation-id": "selectedItem", text: o })); close();
+    });
+    return row;
+  }
+  input.addEventListener("click", () => { if (!pop) show(null); });
+  input.addEventListener("input", () => show(null));
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  document.addEventListener("mousedown", (e) => { if (pop && !pop.contains(e.target) && e.target !== input) close(); });
+  window.fxValue = () => chosen.slice();
+  window.fxOpened = () => opened.slice();
+  window.fxOpen = () => !!pop;
+  window.fxShows = () => shows;
+</script>
+</body></html>

@@ -3433,7 +3433,8 @@ function orderOptions(question, options) {
 // names the kind, location / job / school / skills / answer), consent (an acknowledgement of a
 // notice or condition under the standing consent to required notices), optin (a marketing
 // opt-in declined; autoapply/consents.py) and tracker (applied here before, from the person's
-// earlier applications; autoapply/commonsense.py).
+// earlier applications; autoapply/commonsense.py) and common_sense (how did you hear: a job
+// board, with nothing saved).
 // (Fill-through) neutral: a required choice nothing saved answers took the page's neutral
 // option; needs_you: left for the person and still empty; left_empty: an optional box left empty
 // (shown, never counted as one to check, never sent to Telegram).
@@ -3490,7 +3491,7 @@ function criticInputs(ans) {
 // worked out by a standing rule, so Review answers names its source: history (the person's work
 // and school dates, or their employers), tracker (their earlier applications) and consent (an
 // acknowledgement under their standing consent). The rest are the person's own material, as before.
-const KEPT_ORIGINS = new Set(["grounded", "neutral", "history", "tracker", "consent"]);
+const KEPT_ORIGINS = new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense"]);
 function noteOrigins(runOrigins, reply) {
   const o = (reply && reply.origins) || {};
   for (const [q, from] of Object.entries(o)) {
@@ -3630,7 +3631,7 @@ const ANSWER_FROM_WORDS = {
   drafted: "drafted", derived: "worked out", letter: "cover letter", job: "the job", today: "today's date",
   ai: "AI pick, check it", closest: "closest match, check it", skills: "from your skills, check it",
   grounded: "from your saved facts, check it", consent: "you said yes to required notices in setup",
-  optin: "declined marketing messages", tracker: "from your tracker",
+  optin: "declined marketing messages", tracker: "from your tracker", common_sense: "common sense",
   neutral: "chose the neutral option: nothing saved answers this", needs_you: "needs you", left_empty: "left empty: optional",
 };
 // One answer as a Telegram line: a self-identification value never leaves the app.

@@ -21,6 +21,32 @@ stops for them (a Workday "Application Questions" page asked five; four needed n
   question for the person. Never a default. A question about a government or public official, a
   competitor, a client or a referral is another question and stays theirs.
 
+* **How did you hear about us?**: the person's saved answer first (``@heard_about``); with
+  none, "Job board" (``HEARD_DEFAULT``, origin ``common_sense``): someone applying through a job
+  app found the job on a job board. On a list, the choice that says so is picked by
+  autoapply/planner.py generic_sources ("Job board", "Other Job Board", else "Other").
+
+* **Highest level of education completed** ("What is the highest level of education you have
+  completed?", "Highest degree earned", "Education level", "Do you have a bachelor's degree or
+  higher?"): the person's saved answer to the wording first; else the highest COMPLETED degree
+  on the resume the agent built (``highest_education``: a degree still in progress or expected
+  does not count), as the list's choice for that level (``education_option``: "Master's Degree
+  (MA, MS)", "Graduate degree", "4-year degree"), else the nearest lower choice. Never a choice
+  above what the profile holds. Origin ``history``.
+
+* **Phone device type** ("Phone Device Type", "Phone Type", "Type of phone"; Workday's My
+  Information): the mobile choice ("Mobile", "Cell", "Cellular", "Cell Phone", "Personal Cell",
+  "Mobile Phone"), origin ``common_sense``. A saved answer wins only when it is one of the
+  choices; one that is not falls back to the mobile choice, never a question. (The label used
+  to read as the phone NUMBER, so the number was offered to the list as the answer.)
+* **Other names used** ("List any aliases or other name(s) you have used or currently use or
+  indicate N/A."): Apply setup asks ONCE (``@other_names``). Saved names fill it; a saved "None"
+  fills what the question asks for when there is nothing ("N/A", "None"). Nothing saved: theirs.
+* **Connections employed by the company, as a list** ("List all close personal and professional
+  connections employed by Acme and their relationship to you, or indicate N/A."): the free-text
+  form of the relatives question. A standing No (``@relatives_at_employer``) writes what the
+  question asks for when there is nothing; anything else leaves it for the person.
+
 Acknowledgements worded as a Yes / No choice live in autoapply/consents.py. Category rules on the
 question's words, never one site's markup. Pure: the caller (ui/app.py) reads the stores.
 """
@@ -35,6 +61,9 @@ from autoapply.history import parse_span
 
 ADULT_KEY = "@over_18"
 RELATIVES_KEY = "@relatives_at_employer"
+HEARD_KEY = "@heard_about"
+HEARD_DEFAULT = "Job board"        # with nothing saved; a saved answer always wins
+HEARD_ORIGIN = "common_sense"
 
 # A question that asks for a detail, never a yes or no ("If yes, when did you apply?").
 _NOT_YES_NO = re.compile(
@@ -230,3 +259,277 @@ def relatives_saved(library) -> str:
 def relatives_answer(library) -> tuple[str, str] | None:
     """("No", "library") when the person saved a standing No, else None (theirs to answer)."""
     return ("No", "library") if relatives_saved(library) == "No" else None
+
+
+# ---------------------------------------------------------------------------- highest education
+# Levels low to high. "some college" is only ever a choice on a list, never read from a degree.
+EDU_RANK = {"none": 0, "high school": 1, "some college": 2, "associates": 3, "bachelors": 4, "masters": 5,
+            "doctorate": 6}
+EDU_WORDS = {"high school": "High school diploma", "associates": "Associate degree", "bachelors": "Bachelor's degree",
+             "masters": "Master's degree", "doctorate": "Doctorate"}
+_EDU_Q = re.compile(
+    r"\bhighest (level|degree|grade|form) of (education|schooling|school|degree)\b"
+    r"|\bhighest (education|educational|academic|degree|qualification)\b"
+    r"|\b(education|educational|degree) (level|attainment)\b|\blevel of (education|schooling)\b", re.I)
+# Another question that mentions education: what a job requires, a parent's, a field, a school.
+_EDU_NOT = re.compile(r"\b(parents?|mother|father|guardian|spouse|require[sd]?|minimum|preferred|field of study|major"
+                      r"|which (school|university|college)|name of|gpa|grade point|pursuing|enrolled|plan to|willing)\b", re.I)
+_DEGREE_YN = re.compile(
+    r"\b(do you (currently )?(have|hold|possess)|have you (earned|completed|obtained|received|attained|been awarded)"
+    r"|did you (earn|complete|obtain|receive|graduate with)|are you (a )?(holder|graduate))\b[^?]{0,40}?"
+    r"\b(?P<what>high school diploma|ged|associate'?s?|bachelor'?s?|undergraduate|4[- ]year|four[- ]year|college"
+    r"|master'?s?|graduate|doctorate|doctoral|ph\.?d)\b[^?]{0,30}?\b(degree|diploma|ged|ph\.?d|doctorate)", re.I)
+# "... a bachelor's degree in Accounting?": the field decides, which a level alone does not say.
+_DEGREE_IN = re.compile(r"\b(degree|diploma|doctorate|ph\.?d)\b(\s*\([^)]*\))?(\s+or (higher|above|equivalent|greater))?"
+                        r"\s+(in|from|with)\b", re.I)
+_PENDING = re.compile(r"\b(expected|anticipated|in progress|ongoing|candidate|pursuing|incomplete|current(ly)?|present"
+                      r"|enrolled|coursework|did not (complete|finish|graduate)|no degree)\b", re.I)
+# A list's choices, by level. Checked top to bottom: the first that fits names the choice's level.
+_EDU_OPTION = [
+    ("", re.compile(r"\bsome (graduate|post ?graduate|master|doctoral)|\bprofessional\b|\bj\.?d\b|\bjuris\b|\bm\.?d\b"
+                    r"|\bother\b|\bprefer\b|\bdecline\b|\bpost ?doc", re.I)),          # never picked by level
+    ("none", re.compile(r"\b(no|less than|did not (complete|finish)|without|not completed?|some) (a )?(high school|secondary)"
+                        r"|\bno (formal )?(education|schooling|diploma)\b", re.I)),
+    ("some college", re.compile(r"\bsome (college|university|undergraduate)|\bno degree\b|\bvocational\b|\btrade\b"
+                                r"|\btechnical (school|college|certificate|diploma)\b|\bcertificate\b|\bcertification\b", re.I)),
+    ("doctorate", re.compile(r"\bdoctor(ate|al)?\b|\bph\.?\s?d\b|\bd\.?phil\b|\bed\.?d\b", re.I)),
+    ("masters", re.compile(r"\bmaster'?s?\b|\bmba\b|\b(post ?)?graduate degree\b|\bpostgraduate\b|\bm\.?s\.?c?\b", re.I)),
+    ("bachelors", re.compile(r"\bbachelor'?s?\b|\b(4|four)[- ]year\b|\bundergraduate degree\b|\b(college|university) "
+                             r"(degree|graduate)\b|\bb\.?s\.?c?\b|\bb\.?a\b", re.I)),
+    ("associates", re.compile(r"\bassociate'?s?\b|\b(2|two)[- ]year\b|\ba\.?a\.?s?\b", re.I)),
+    ("high school", re.compile(r"\bhigh school\b|\bged\b|\bsecondary\b|\bhs diploma\b", re.I)),
+]
+
+
+def education_question(label: str) -> str:
+    """"level" for "what is your highest level of education (completed / attained)?", "highest
+    degree earned", "education level"; the level asked ("bachelors") for "Do you have a
+    bachelor's degree (or higher)?"; else "". Never a question about what the job requires, a
+    field of study, a school, or a degree in a named subject."""
+    lbl = _squash(label)
+    if not lbl or len(lbl) > 300 or _EDU_NOT.search(lbl) or _SOMEONE_ELSE.search(lbl):
+        return ""
+    m = _DEGREE_YN.search(lbl)
+    if m and not _DEGREE_IN.search(lbl):
+        w = m.group("what").lower()
+        for level, words in (("high school", ("high school", "ged")), ("associates", ("associate",)),
+                             ("bachelors", ("bachelor", "undergraduate", "4", "four", "college")),
+                             ("masters", ("master", "graduate")), ("doctorate", ("doctor", "ph"))):
+            if any(w.startswith(x) for x in words):
+                return level
+    if m or _NOT_YES_NO.search(lbl) and not re.match(r"^\W*(what|which|please (select|provide|state|specify|enter))\b", lbl, re.I):
+        return ""
+    return "level" if _EDU_Q.search(lbl) else ""
+
+
+def highest_education(profile: dict, today: _dt.date | None = None) -> str:
+    """The highest degree level the saved profile shows as COMPLETED ("masters", "bachelors",
+    "associates", "high school", ...), "" when it shows none. A degree still in progress (a date
+    range to Present or into the future, a single date in the future, "Expected 2027",
+    "Candidate") does not count; a degree with no date counts (it is on the resume as held)."""
+    from autoapply.history import degree_level
+    today = today or _dt.date.today()
+    now = (today.year, today.month)
+    best = ""
+    for ed in (profile if isinstance(profile, dict) else {}).get("education") or []:
+        if not isinstance(ed, dict):
+            continue
+        degree = _squash(ed.get("degree"))
+        level = degree_level(degree)
+        if level not in EDU_RANK:
+            continue
+        when = _squash(ed.get("date") or ed.get("dates"))
+        if _PENDING.search(degree) or _PENDING.search(when):
+            continue
+        span = parse_span(when) if when else {}
+        if span.get("current"):
+            continue
+        last = span.get("end") or span.get("start")
+        if last and last.get("y") and (int(last["y"]), int(last.get("m") or 0) or 1) > now:
+            continue                                    # it ends in the future
+        if EDU_RANK[level] > EDU_RANK.get(best, -1):
+            best = level
+    return best
+
+
+def education_level_of(option: str) -> str:
+    """The level a list's choice names ("Master's Degree (MA, MS)" -> "masters", "Some College,
+    No Degree" -> "some college"), "" for one that names none or is never picked by level
+    ("Professional degree", "Other")."""
+    o = _squash(option)
+    for level, rx in _EDU_OPTION:
+        if rx.search(o):
+            return level
+    return ""
+
+
+def education_option(level: str, options) -> str | None:
+    """The choice for ``level``: the one that names it, else the nearest LOWER choice (a
+    bachelor's on a list that stops at "Associate degree"). Never a higher one, never "No high
+    school diploma" for someone who holds more."""
+    rank = EDU_RANK.get(level)
+    if not rank:
+        return None
+    best = None
+    for o in [str(o) for o in (options or []) if str(o).strip()]:
+        r = EDU_RANK.get(education_level_of(o))
+        if not r or r > rank:
+            continue
+        if best is None or r > best[0]:
+            best = (r, o)
+    return best[1] if best else None
+
+
+def education_answer(label: str, options, level: str, field_type: str = "select") -> tuple[str, str] | None:
+    """(answer, "history") for an education-level question from the highest completed degree
+    ``level`` (highest_education), else None (the person's). A list: its choice for the level.
+    A Yes / No question ("Do you have a bachelor's degree or higher?"): Yes when the level
+    reaches it, No when the profile's completed education stops short. A text box: the level in
+    words ("Master's degree")."""
+    kind = education_question(label)
+    if not kind or level not in EDU_RANK:
+        return None
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if kind != "level":
+        yes = EDU_RANK[level] >= EDU_RANK[kind]
+        if opts:
+            v = workauth.pick_yes_no(yes, opts)
+            return (v, "history") if v else None
+        return ("Yes" if yes else "No"), "history"
+    if opts:
+        v = education_option(level, opts)
+        return (v, "history") if v else None
+    if (field_type or "").lower() == "checkbox" or level not in EDU_WORDS:
+        return None
+    return EDU_WORDS[level], "history"
+
+
+# ---------------------------------------------------------------------------- phone device type
+_PHONE_TYPE = re.compile(r"\b(phone|telephone|device|contact number|number)\s+(device\s+)?type\b"
+                         r"|\btype of (phone|telephone|device|number|contact number)\b", re.I)
+# The mobile choice, best first: the plain word, then its usual longer forms, then any choice that
+# says mobile or cell and is not a work or other line.
+_MOBILE = (re.compile(r"^\W*mobile\W*$", re.I), re.compile(r"^\W*(mobile|cell|cellular)( ?phone)?\W*$", re.I),
+           re.compile(r"^\W*(personal|my|own) (mobile|cell|cellular)( ?phone)?\W*$", re.I),
+           re.compile(r"\b(mobile|cell|cellular)\b", re.I))
+_NOT_MY_MOBILE = re.compile(r"\b(work|business|office|company|other|fax|pager)\b", re.I)
+
+
+def phone_type_question(label: str) -> bool:
+    """True for "Phone Device Type", "Phone Type", "Type of phone": which KIND of phone the
+    number is, never the number itself."""
+    lbl = _squash(label)
+    return bool(lbl) and len(lbl) <= 120 and bool(_PHONE_TYPE.search(lbl))
+
+
+def mobile_option(options) -> str | None:
+    """The list's mobile choice ("Mobile", "Cell Phone", "Personal Cell"), None when it has none."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    for i, rx in enumerate(_MOBILE):
+        for o in opts:
+            if rx.search(o) and not (i == len(_MOBILE) - 1 and _NOT_MY_MOBILE.search(o)):
+                return o
+    return None
+
+
+def phone_type_answer(label: str, options, saved: str = "", field_type: str = "select") -> tuple[str, str] | None:
+    """(answer, origin) for a phone type question: the person's saved answer when it is one of
+    the choices ("library"), else the mobile choice ("common_sense"); a text box, or a list whose
+    choices were not read, gets the saved answer or "Mobile". None only when a list has no
+    mobile choice at all."""
+    if not phone_type_question(label) or (field_type or "").lower() == "checkbox":
+        return None
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    saved = _squash(saved)
+    if opts:
+        if saved:
+            hit = next((o for o in opts if _squash(o).lower() == saved.lower()), None)
+            if hit:
+                return hit, "library"
+        v = mobile_option(opts)
+        return (v, "common_sense") if v else None
+    return (saved, "library") if saved else ("Mobile", "common_sense")
+
+
+# ---------------------------------------------------------------------------- nothing to list
+# What a question asks for when there is nothing to list: "... or indicate N/A", "if none, write
+# None", "enter N/A if not applicable". The word as the question writes it; "N/A" when it says none.
+_NONE_ASKED = re.compile(
+    r"(?:indicate|write|enter|type|put|state|answer|respond(?: with)?|mark|say|use)\s+[\"'“‘(]?"
+    r"(?P<a>n\s?/\s?a|none|not applicable)\b"
+    r"|[\"'“‘(]?(?P<b>n\s?/\s?a|none)[\"'”’)]?\s+if (?:none|not applicable|there are none|this does not apply)", re.I)
+_NONE_SAID = re.compile(r"^\W*(none|no|nope|n\s?/?\s?a|not applicable|nil|nothing|no other names?|i have (none|not))\W*$", re.I)
+
+
+def none_word(label: str) -> str:
+    """The word the question asks for when there is nothing to list, as it writes it ("N/A",
+    "None"); "N/A" when the question names none."""
+    m = _NONE_ASKED.search(_squash(label))
+    w = (m.group("a") or m.group("b")) if m else ""
+    return re.sub(r"\s+", "", w) if w else "N/A"
+
+
+def said_none(answer: str) -> bool:
+    """True when a saved answer says there is nothing ("None", "N/A", "No")."""
+    return bool(_NONE_SAID.match(_squash(answer)))
+
+
+# ---------------------------------------------------------------------------- other names used
+OTHER_NAMES_KEY = "@other_names"
+_ALIASES = re.compile(r"\balias(es)?\b|\b(other|another|former|previous|prior|maiden|different) (legal )?names?\b"
+                      r"|\bother name\(s\)|\bnames? (you have |you've )?(previously |ever )?(used|gone by|been known (by|as))\b"
+                      r"|\balso known as\b|\ba\.?k\.?a\b", re.I)
+# Someone else's name, or a name that is not a person's: never this question.
+_ALIASES_NOT = re.compile(r"\b(reference|referr|emergency|manager|supervisor|spouse|parent|guardian|company|employer|school"
+                          r"|universit|business|product|preferred name)\b", re.I)
+
+
+def other_names_question(label: str) -> bool:
+    """True for "List any aliases or other name(s) you have used or currently use", "Have you
+    ever used another name?", "Former or maiden name"."""
+    lbl = _squash(label)
+    return bool(lbl) and len(lbl) <= 300 and bool(_ALIASES.search(lbl)) and not _ALIASES_NOT.search(lbl)
+
+
+def other_names_answer(label: str, saved: str, options=None, field_type: str = "text") -> tuple[str, str] | None:
+    """(answer, "library") from the person's standing answer in Apply setup (``@other_names``),
+    else None (theirs: never a guess). Names they gave fill a text box as given. "None" fills what
+    the question asks for when there is nothing ("N/A", "None"), and a Yes / No form of the
+    question ("Have you used another name?") gets No, or Yes when they gave names."""
+    saved = _squash(saved)
+    if not saved or not other_names_question(label):
+        return None
+    none = said_none(saved)
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    t = (field_type or "text").lower()
+    if opts or t in ("select", "radio"):
+        v = workauth.pick_yes_no(not none, opts) if opts else None
+        return (v, "library") if v else None
+    if t not in ("text", "textarea"):
+        return None
+    return (none_word(label) if none else saved), "library"
+
+
+# ---------------------------------------------------------------------------- connections, as a list
+_CONNECTIONS = re.compile(r"\b(connections?|relationships?|acquaintances?|contacts)\b", re.I)
+_LISTS = re.compile(r"^\W*(please )?(list|name|identify|provide|state|describe|disclose|tell us)\b", re.I)
+
+
+def relatives_list_question(label: str) -> bool:
+    """True for the free-text form of "do you know or are you related to anyone employed here?":
+    "List all close personal and professional connections employed by Acme and their
+    relationship to you, or indicate N/A.", "Please list any relatives who work at Acme". Never
+    a follow-up to a Yes ("If yes, please list ...": that box stays empty), a public official, a
+    competitor, a client or a referral."""
+    lbl = _squash(label)
+    if not lbl or len(lbl) > 400 or not _LISTS.search(lbl) or _REL_NOT.search(lbl):
+        return False
+    return bool((_REL.search(lbl) or _CONNECTIONS.search(lbl)) and _REL_WORK.search(lbl))
+
+
+def relatives_list_answer(label: str, library, field_type: str = "text") -> tuple[str, str] | None:
+    """("N/A" | "None" as the question asks, "library") when the person saved a standing No on
+    relatives at a company they apply to, else None (theirs to list)."""
+    if (field_type or "text").lower() not in ("text", "textarea") or not relatives_list_question(label):
+        return None
+    return (none_word(label), "library") if relatives_saved(library) == "No" else None

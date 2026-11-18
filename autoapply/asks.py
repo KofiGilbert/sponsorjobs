@@ -108,7 +108,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
                  withhold=frozenset(), job_salary: str = "", wa_ended=None,
                  company: str = "", eeo_fallback: bool = False,
                  accept_notices: bool = False, adult: bool = False,
-                 applied_here=None, full: str = "") -> tuple[str, str] | None:
+                 applied_here=None, full: str = "", education: str = "") -> tuple[str, str] | None:
     """(answer, origin) when the person's own material answers this question, else None.
     Origins: "library", "workauth", "eeo_decline". ``options`` is every choice the page has (or
     as many as were read; ``partial`` says the list is cut). With options, the answer is the
@@ -134,7 +134,8 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     outside the US; ``wa_ended``: the job country's status ended on that date (applicant/expiry.py).
 
     (2026-11-17, autoapply/commonsense.py) ``adult``: the saved profile proves the person is at
-    least 18, by a degree or a date 4 years back (origin "history"); ``applied_here``: the records' verdict on "have you applied to
+    least 18, by a degree or a date 4 years back (origin "history"); ``education``: the highest
+    completed degree level on the profile, for an education-level question (origin "history"); ``applied_here``: the records' verdict on "have you applied to
     this company before?" (origin "tracker"); a standing No on relatives employed by the company
     (``@relatives_at_employer``, origin "library"). ``full``: the question's whole wording when
     ``question`` was cut short (a long notice whose "Please select Yes to acknowledge" comes
@@ -218,6 +219,19 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         got = COMMON.applied_answer(q, ak, applied_here, worked_here if per_company else None)
         v = fit(got[0]) if got else None
         return (v, got[1]) if v else None
+    # (2026-11-18) the kind of phone, other names used, connections employed here as a list
+    if COMMON.phone_type_question(q):
+        own = library.lookup(q) if library is not None else None
+        return COMMON.phone_type_answer(q, opts, (own or {}).get("answer") or "", "select" if opts else "text")
+    if COMMON.other_names_question(q):
+        row = library.best(COMMON.OTHER_NAMES_KEY) if library is not None and hasattr(library, "best") else None
+        own = library.lookup(q) if library is not None else None
+        return COMMON.other_names_answer(q, (own or row or {}).get("answer") or "", opts, "select" if opts else "text")
+    if COMMON.relatives_list_question(q) and not opts:
+        own = library.lookup(q) if library is not None else None
+        if own and str(own.get("answer") or "").strip():
+            return str(own["answer"]).strip(), "library"
+        return COMMON.relatives_list_answer(q, library, "text")
     if COMMON.relatives_question(q):
         got = COMMON.relatives_answer(library)
         v = fit(got[0]) if got else None
@@ -233,6 +247,14 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         hit = keyed(ctx, key, hit)
         if not hit and key in (withhold or ()):
             return None
+    if not hit and education and COMMON.education_question(q):
+        got = COMMON.education_answer(q, opts, education, "select" if opts else "text")
+        if got:
+            return got                      # the highest completed degree on the resume
+    if not hit and key == COMMON.HEARD_KEY:
+        v = fit(COMMON.HEARD_DEFAULT)        # nothing saved: found on a job board (common sense)
+        if v:
+            return v, COMMON.HEARD_ORIGIN
     if not hit and adult and COMMON.is_adult_question(q):
         v = fit("Yes")                       # the profile shows it: a degree, or a date 4 years back
         if v:

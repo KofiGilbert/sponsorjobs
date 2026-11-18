@@ -225,7 +225,7 @@ test("a saved answer never lands on a choice that adds a qualifier (Phoenix Cont
   await page.evaluate(() => {
     const s = document.createElement("select");
     s.id = "heard"; s.setAttribute("aria-label", "How did you hear about this specific opening?");
-    for (const o of ["Select...", "College Job Board", "Indeed", "LinkedIn", "Company Website", "Employee Referral", "Other"]) {
+    for (const o of ["Select...", "College Job Board", "Company Website", "Employee Referral"]) {
       const e = document.createElement("option"); e.textContent = o; e.value = o === "Select..." ? "" : o; s.appendChild(e);
     }
     document.body.prepend(s);
@@ -233,22 +233,236 @@ test("a saved answer never lands on a choice that adds a qualifier (Phoenix Cont
   const v = await page.evaluate("window.TailorAgent.view()");
   const sel = indices(v.text).find((i) => /<select label="How did you hear/.test(line(v.text, i)));
   assert.ok(sel, v.text);
-  // the person's saved answer: no choice says the same, so nothing is picked and no list is offered
+  // the person's saved answer: no choice says the same and none names no source, so nothing is
+  // picked and no list is offered ("Other" is not on this list yet)
   const miss = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Job board", answer: true})`);
   assert.strictEqual(miss.ok, false);
   assert.ok(/^no choice on this list says the same/.test(miss.note), miss.note);
   assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "");
+  await page.evaluate(() => { const e = document.createElement("option"); e.textContent = e.value = "Other"; document.getElementById("heard").appendChild(e); });
   // without the flag (the brain's own select), a miss still lists the choices
   const m2 = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Job board"})`);
   assert.ok(/^no such option; options: .*College Job Board/.test(m2.note), m2.note);
-  const hit = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Other", answer: true})`);
+  // (2026-11-18) with "Other" on the list, a how-did-you-hear answer takes it by itself: never
+  // "College Job Board", and never a question for the person
+  const hit = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Job board", answer: true})`);
   assert.strictEqual(hit.ok, true, JSON.stringify(hit));
   assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "Other");
+  // any other question keeps the refusal, whatever the list holds
+  await page.evaluate(() => { const s = document.getElementById("heard"); s.value = ""; s.setAttribute("aria-label", "Which team are you applying to?"); });
+  const other = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Job board", answer: true})`);
+  assert.strictEqual(other.ok, false, JSON.stringify(other));
+  assert.ok(/^no choice on this list says the same/.test(other.note), other.note);
+  assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "");
   // a react-select: "States" is not "United States" (the loose contains match took it)
   const c = indices(v.text).find((i) => /<combobox label="Country"/.test(line(v.text, i)));
   const r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${c}, option: "States", answer: true})`);
   assert.strictEqual(r.ok, false, JSON.stringify(r));
   assert.notStrictEqual((await page.evaluate("window.fxValues()")).country, "United States");
+  await page.close();
+});
+
+// ------------------------------------------------------------------ how did you hear (2026-11-18)
+const SOURCE = "workday_source.html";
+const srcQuery = (cats, label) => "?cats=" + encodeURIComponent(JSON.stringify(cats)) + (label ? "&label=" + encodeURIComponent(label) : "");
+async function sourceBox(page) {
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const i = indices(v.text).find((n) => /<combobox\b/.test(line(v.text, n)));
+  assert.ok(i, v.text);
+  return i;
+}
+
+test("how did you hear: the rule on the page is the rule in Python (the shared cases)", async ({ open }) => {
+  const cases = JSON.parse(fs.readFileSync(path.join(ROOT, "tests", "fixtures", "heard_about_cases.json"), "utf8")).cases;
+  assert.ok(cases.length >= 15);
+  const page = await open(SOURCE);
+  await page.evaluate(CORE);
+  const got = await page.evaluate((cs) => cs.map((c) => window.TailorAutofill.heardChoices(c.answer, c.options)[0] || null), cases);
+  cases.forEach((c, i) => assert.strictEqual(got[i], c.want, JSON.stringify(c) + " -> " + got[i]));
+  assert.strictEqual(await page.evaluate(() => window.TailorAutofill.isHeardLabel("How Did You Hear About Us?")), true);
+  assert.strictEqual(await page.evaluate(() => window.TailorAutofill.isHeardLabel("Which team are you applying to?")), false);
+  // the education placeholder ("Master's degree", autoapply/commonsense.py EDU_WORDS) lands on the
+  // list's choice for that level through the strict scorer, never a neighbour
+  const edu = ["No High School Diploma", "High School Diploma or GED", "Some College, No Degree", "Associate Degree (AA, AS)",
+               "Bachelor's Degree (BA, BS)", "Master's Degree (MA, MS)", "Doctorate (PhD)"];
+  const best = await page.evaluate(([opts, words]) => words.map((w) => {
+    const sc = window.TailorAutofill.answerScorer(w);
+    return opts.map((o) => [sc(o.toLowerCase()), o]).filter((x) => x[0] > 0).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
+  }), [edu, ["Master's degree", "Bachelor's degree", "Associate degree", "High school diploma", "Doctorate"]]);
+  assert.deepStrictEqual(best, [["Master's Degree (MA, MS)"], ["Bachelor's Degree (BA, BS)"], ["Associate Degree (AA, AS)"],
+                                ["High School Diploma or GED"], ["Doctorate (PhD)"]]);
+  await page.close();
+});
+
+test("how did you hear: Workday's two-level list, 'Job board' ends on 'Other Job Board' (engine fill, model action, plan op)", async ({ open }) => {
+  // 1. the engine's own fill: no model step at all
+  let page = await open(SOURCE);
+  await page.evaluate(CORE);
+  const out = await page.evaluate(() => window.TailorAutofill.fillWidgets({ answers: { hear_about_us: "Job board" } }));
+  assert.strictEqual(out.filled, 1, JSON.stringify(out));
+  assert.deepStrictEqual(await page.evaluate("window.fxValue()"), ["Other Job Board"]);
+  assert.deepStrictEqual(await page.evaluate("window.fxOpened()"), ["Job Sites"]);
+  assert.strictEqual(await page.evaluate("window.fxOpen()"), false);            // the list is closed again
+  // filled once: a second pass leaves it alone
+  await page.evaluate(() => window.TailorAutofill.fillWidgets({ answers: { hear_about_us: "Job board" } }));
+  assert.deepStrictEqual(await page.evaluate("window.fxValue()"), ["Other Job Board"]);
+  await page.close();
+
+  // 2. the model's action: the saved answer typed into the list (the shell's select with answer)
+  page = await open(SOURCE);
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  const box = await sourceBox(page);
+  const r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${box}, option: "Job board", answer: true})`);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.deepStrictEqual(await page.evaluate("window.fxValue()"), ["Other Job Board"]);
+  await page.close();
+
+  // 3. the plan's op: Python read the first list and chose its board-like category
+  page = await open(SOURCE);
+  await page.evaluate(CORE);
+  const fields = await page.evaluate(() => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }));
+  const f = fields.find((x) => /How Did You Hear/.test(x.label));
+  assert.ok(f && f.options.includes("Job Sites"), JSON.stringify(fields));
+  const rep = await page.evaluate((ref) => window.TailorAutofill.applyOpsAsync([{ ref, op: "select", text: "Job Sites", from: "library" }]), f.ref);
+  assert.strictEqual(rep.filled, 1, JSON.stringify(rep));
+  assert.deepStrictEqual(await page.evaluate("window.fxValue()"), ["Other Job Board"]);
+  await page.close();
+});
+
+test("how did you hear: a category with nothing acceptable is left by the back arrow for 'Other'; nothing at all is still refused", async ({ open }) => {
+  // the board-like category holds only sources the person did not give: back, then "Other"
+  let page = await open(SOURCE, srcQuery({ "Job Sites": ["College Job Board", "Compliance_HireAHero", "Job Board: Indeed"], "Recruiter": ["Staffing Agency"], "Other": null }));
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  let box = await sourceBox(page);
+  let r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${box}, option: "Job board", answer: true})`);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.deepStrictEqual(await page.evaluate("window.fxValue()"), ["Other"]);
+  assert.deepStrictEqual(await page.evaluate("window.fxOpened()"), ["Job Sites"]);
+  await page.close();
+
+  // "Other" is itself a category: its own "Other"
+  page = await open(SOURCE, srcQuery({ "Internet": ["College Job Board"], "Other": ["Radio", "Other"] }));
+  await page.evaluate(CORE);
+  const out = await page.evaluate(() => window.TailorAutofill.fillWidgets({ answers: { hear_about_us: "Job board" } }));
+  assert.strictEqual(out.filled, 1, JSON.stringify(out));
+  assert.deepStrictEqual(await page.evaluate("window.fxValue()"), ["Other"]);
+  assert.deepStrictEqual(await page.evaluate("window.fxOpened()"), ["Internet", "Other"]);
+  await page.close();
+
+  // "College Job Board" alone, flat or under a category: refused, nothing picked, the list closed
+  for (const cats of [{ "College Job Board": null, "Staffing Agency": null },
+                      { "Job Sites": ["College Job Board", "Compliance_HireAHero"], "Recruiter": ["Staffing Agency"] }]) {
+    page = await open(SOURCE, srcQuery(cats));
+    await page.evaluate(CORE);
+    await page.evaluate(AGENT);
+    box = await sourceBox(page);
+    r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${box}, option: "Job board", answer: true})`);
+    assert.strictEqual(r.ok, false, JSON.stringify(r));
+    assert.ok(/^no choice on this list says the same/.test(r.note), r.note);
+    assert.deepStrictEqual(await page.evaluate("window.fxValue()"), []);
+    assert.strictEqual(await page.evaluate("window.fxOpen()"), false);
+    const eng = await page.evaluate(() => window.TailorAutofill.fillWidgets({ answers: { hear_about_us: "Job board" } }));
+    assert.strictEqual(eng.filled, 0, JSON.stringify(eng));
+    assert.deepStrictEqual(await page.evaluate("window.fxValue()"), []);
+    await page.close();
+  }
+
+  // another question on the very same widget and list: refused as before, no category is opened
+  page = await open(SOURCE, srcQuery({ "Job Sites": ["Other Job Board"], "Other": null }, "Which office referred you?"));
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  box = await sourceBox(page);
+  r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${box}, option: "Job board", answer: true})`);
+  assert.strictEqual(r.ok, false, JSON.stringify(r));
+  assert.ok(/^no choice on this list says the same/.test(r.note), r.note);
+  assert.deepStrictEqual(await page.evaluate("window.fxValue()"), []);
+  assert.deepStrictEqual(await page.evaluate("window.fxOpened()"), []);
+  await page.close();
+});
+
+test("how did you hear: the pick costs nothing on other dropdowns, stays in its budget, is not repeated, and leaves the list closed", async ({ open }) => {
+  const PAY = { fields: { country: "United States" }, answers: { hear_about_us: "Job board" } };
+  const stats = (page) => page.evaluate(() => window.TailorAutofill.heardStats());
+  const timed = (page, expr) => page.evaluate(async (e) => { const t = performance.now(); const r = await eval(e); return { ms: performance.now() - t, r }; }, expr);
+  const fill = "window.TailorAutofill.fillWidgets(" + JSON.stringify(PAY) + ")";
+
+  // 1. pages with several dropdowns and no how-did-you-hear question: the pick never runs, for
+  //    the engine's fill, the form read, or a plan op on every dropdown (a count, not a stopwatch)
+  for (const fx of ["verify_widgets.html", "phenom_lam.html", "workday_experience.html", SOURCE + srcQuery({ "Job Sites": ["Other Job Board"], "Other": null }, "Which office referred you?")]) {
+    const page = await open(fx);
+    await page.evaluate(CORE);
+    await page.evaluate(fill);
+    const fields = await page.evaluate(() => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }));
+    const combos = fields.filter((f) => f.widget === "combobox");
+    assert.ok(combos.length >= 1, fx + ": " + combos.length + " dropdowns");
+    assert.ok(!combos.some((f) => /hear about/i.test(f.label)), fx);
+    await page.evaluate((ops) => window.TailorAutofill.applyOpsAsync(ops), combos.slice(0, 3).map((f) => ({ ref: f.ref, op: "select", text: "Job board", from: "ai" })));
+    assert.deepStrictEqual(await stats(page), { picks: 0, skipped: 0, ms: 0 }, fx);
+    await page.close();
+  }
+
+  // 1b. pages with other dropdowns AND a how-did-you-hear one (react-select, Greenhouse): the
+  //     pick runs for that one field only, once over three fill passes, inside its budget
+  for (const fx of ["react_select.html", "greenhouse_live.html"]) {
+    const page = await open(fx);
+    await page.evaluate(CORE);
+    for (let i = 0; i < 3; i++) await page.evaluate(fill);
+    const st = await stats(page);
+    assert.ok(st.picks <= 1, fx + " " + JSON.stringify(st));
+    assert.ok(st.ms < 4500, fx + " " + JSON.stringify(st));
+    await page.close();
+  }
+
+  // 2. the two-level list: one pick, well under the 4 s budget, the list closed
+  let page = await open(SOURCE);
+  await page.evaluate(CORE);
+  let t = await timed(page, fill);
+  assert.strictEqual(t.r.filled, 1, JSON.stringify(t));
+  assert.ok(t.ms < 2000, "two-level pick took " + Math.round(t.ms) + " ms");
+  assert.strictEqual((await stats(page)).picks, 1);
+  assert.strictEqual(await page.evaluate("window.fxOpen()"), false);
+  await page.close();
+
+  // 3. a list that never opens: given up early, never the full budget, and not opened again on
+  //    the next fill passes or by the plan's op for the same answer
+  page = await open(SOURCE, "?never=1");
+  await page.evaluate(CORE);
+  t = await timed(page, fill);
+  assert.strictEqual(t.r.filled, 0, JSON.stringify(t));
+  assert.ok(t.ms < 2500, "a list that never opens took " + Math.round(t.ms) + " ms");
+  const shows = await page.evaluate("window.fxShows()");
+  for (let i = 0; i < 3; i++) {
+    t = await timed(page, fill);
+    assert.ok(t.ms < 500, "pass " + (i + 2) + " took " + Math.round(t.ms) + " ms");
+  }
+  const f3 = (await page.evaluate(() => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }))).find((f) => /How Did You Hear/.test(f.label));
+  const shows2 = await page.evaluate("window.fxShows()");                    // the form read opens it once, as on main
+  t = await timed(page, "window.TailorAutofill.applyOpsAsync(" + JSON.stringify([{ ref: f3.ref, op: "select", text: "Job board", from: "library" }]) + ")");
+  assert.ok(t.ms < 500, "the plan op took " + Math.round(t.ms) + " ms");
+  assert.strictEqual(await page.evaluate("window.fxShows()"), shows2);
+  let st = await stats(page);
+  assert.strictEqual(st.picks, 1, JSON.stringify(st));
+  assert.strictEqual(st.skipped, 4, JSON.stringify(st));
+  assert.ok(shows <= 4, "opened " + shows + " times");
+  await page.close();
+
+  // 4. a list with no choice for the answer: refused once in well under the budget, closed, and
+  //    the next passes do not open it again
+  page = await open(SOURCE, srcQuery({ "Job Sites": ["College Job Board", "Compliance_HireAHero"], "Recruiter": ["Staffing Agency"] }));
+  await page.evaluate(CORE);
+  t = await timed(page, fill);
+  assert.strictEqual(t.r.filled, 0, JSON.stringify(t));
+  assert.ok(t.ms < 2500, "a refusal took " + Math.round(t.ms) + " ms");
+  assert.strictEqual(await page.evaluate("window.fxOpen()"), false);
+  const n4 = await page.evaluate("window.fxShows()");
+  for (let i = 0; i < 3; i++) await page.evaluate(fill);
+  assert.strictEqual(await page.evaluate("window.fxShows()"), n4);
+  st = await stats(page);
+  assert.strictEqual(st.picks, 1, JSON.stringify(st));
+  assert.strictEqual(st.skipped, 3, JSON.stringify(st));
+  assert.ok(st.ms < 4000, JSON.stringify(st));
   await page.close();
 });
 

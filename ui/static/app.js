@@ -5431,6 +5431,7 @@
         ${suInput("heard", suT("setup.heard", "How you heard about the job"), f.heard || suT("setup.heardDefault", "Job board"), { max: 60 })}
         ${suField(suT("setup.over18", "At least 18 years old"), suSeg("over_18", f.over_18, SU_YN))}
         ${suField(suT("setup.covenants", "A non-compete or other restrictive covenant"), suSeg("covenants", f.covenants, SU_YN))}
+        ${suInput("other_names", suT("setup.otherNames", "Other names you have used (write None if there are none)"), f.other_names || "", { max: 120, ph: suT("setup.otherNamesPh", "None"), cls: "ans-span2" })}
         ${suField(suT("setup.relatives", "Do any of your relatives work at companies you apply to?"), suSeg("relatives", f.relatives, [["No", "ans.no", "No"], ["ask", "setup.relativesAsk", "Yes, ask me each time"]]), "ans-span2")}
       </div>
       <p class="ans-eeo-note su-note su-info">${esc(emp.length
@@ -12596,6 +12597,7 @@
       consent: T("aa.ans.from.consent", "Your consent to required notices"),
       optin: T("aa.ans.from.optin", "Declined marketing messages"),
       tracker: T("aa.ans.from.tracker", "Your tracker"),
+      common_sense: T("aa.ans.from.commonSense", "Common sense"),
       neutral: T("aa.ans.from.neutral", "Neutral choice"),
       needs_you: T("aa.ans.from.needsYou", "Needs you"), left_empty: T("aa.ans.from.leftEmpty", "Left empty"),
     };

@@ -45,6 +45,9 @@ QUESTIONS: dict[str, str] = {
     # (2026-11-17, autoapply/commonsense.py) "No" answers No on every form; "Yes" means some do:
     # the agent asks each time. Unanswered: the question stays the person's.
     "relatives": "Do any of your relatives work at companies you apply to?",
+    # (2026-11-18) Aliases, a maiden or former name: asked once. "None" fills "N/A" (or what the
+    # form asks for); unanswered, the form's question stays the person's.
+    "other_names": "What other names have you used?",
     "clearance": "Do you have an active security clearance?",
     "license": "Do you have a valid driver's license?",
     "gpa": "What is your GPA?",

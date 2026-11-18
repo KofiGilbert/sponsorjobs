@@ -6744,7 +6744,8 @@ def _common_sense(company: str = "", rec=None) -> dict:
     """What the planner and the ask route take for the common-sense screeners
     (autoapply/commonsense.py): ``adult`` (the saved profile shows the person is at least 18: a
     degree, or a job or school date 4 years back) and ``applied_here`` (the records' verdict on "have you applied to
-    this company before?", None when they could not be read or no company is known)."""
+    this company before?", None when they could not be read or no company is known) and
+    ``education`` (the highest degree level the profile shows as completed, "" for none)."""
     from autoapply import commonsense as _CS
     try:
         adult = _CS.adult_proof(_saved_full_profile() or {})
@@ -6756,7 +6757,19 @@ def _common_sense(company: str = "", rec=None) -> dict:
             applied = _CS.applied_before(company, _earlier_applications(rec))
         except Exception:      # noqa: BLE001
             applied = None
-    return {"adult": adult, "applied_here": applied}
+    # (2026-11-18) the highest completed degree: this application's tailored resume (what the
+    # form's Education section says) or the saved profile, whichever shows more
+    education = ""
+    try:
+        profs = [_saved_full_profile() or {}]
+        if rec:
+            d = _record_data(rec)
+            profs.append(d.get("render_profile") or d.get("profile") or {})
+        levels = [_CS.highest_education(p) for p in profs]
+        education = max(levels, key=lambda lv: _CS.EDU_RANK.get(lv, -1))
+    except Exception:          # noqa: BLE001 - no level then: the question stays the person's
+        education = ""
+    return {"adult": adult, "applied_here": applied, "education": education}
 
 
 def _salary_conflict():
@@ -7193,6 +7206,8 @@ def _setup_payload() -> dict:
             "covenants": S.yes_no(saved.get("@restrictive_covenants")),
             # "" (never answered), "No" (answered No everywhere) or "ask" (Yes, ask me each time)
             "relatives": {"No": "No", "Yes": "ask"}.get(S.yes_no(saved.get("@relatives_at_employer")), ""),
+            # "" (never answered: a form's alias question stays the person's), "None", or the names
+            "other_names": saved.get("@other_names") or "",
             "marketing": S.yes_no(saved.get("@marketing_optin")) or "No",
             "forced": "always" if S.yes_no(saved.get("@forced_consent")) == "Yes" else "ask",
             "terms": _terms_pref(),
@@ -7372,6 +7387,8 @@ def _setup_forms(f: dict) -> None:
             patch["over_18"] = S.yes_no(f.get("over_18"))
         if "forced" in f:
             _setup_answer(lib, "forced", "Yes" if f.get("forced") == "always" else "")
+        if "other_names" in f:                   # "None" (or the names); empty removes it
+            _setup_answer(lib, "other_names", " ".join(str(f.get("other_names") or "").split())[:120])
         if "relatives" in f:                     # "ask" is saved as Yes: some do, so ask each time
             _setup_answer(lib, "relatives", {"No": "No", "ask": "Yes"}.get(str(f.get("relatives") or ""), ""))
         if clearance is not None:

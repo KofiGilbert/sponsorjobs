@@ -386,11 +386,15 @@ function qsaSafe(sel, root) {
     for (const c of CATEGORIES) {
       if (c.re.test(sig)) {
         if (c.key === "name" && NAME_VETO.test(sig)) continue;
+        // (2026-11-18) "Phone Device Type" asks which KIND of phone, never the number: the
+        // number was offered to that list as its answer (autoapply/commonsense.py answers it).
+        if (c.key === "phone" && PHONE_KIND_RE.test(sig)) continue;
         return c.key;
       }
     }
     return null;
   }
+  const PHONE_KIND_RE = /(phone|telephone|number|device)[\s_-]*(device[\s_-]*)?type\b|type of (phone|telephone|device|number)/;
 
   const FILLABLE_TYPES = new Set(["text", "email", "tel", "url", "search", ""]);
 
@@ -1779,6 +1783,58 @@ function qsaSafe(sel, root) {
     const have = new Set(canon(value).split(" "));
     return canon(text).split(" ").some((w) => w && !have.has(w) && !NEUTRAL_WORDS.has(w));
   }
+  // ---- "How did you hear about us?": the choice for a saved answer no choice says the same as.
+  // The same rule as autoapply/planner.py (match_option strict, then generic_sources), kept in
+  // step by tests/fixtures/heard_about_cases.json: a choice that says the same and adds no
+  // qualifier; else, for an answer that is itself a job board or the web, a generic board or
+  // "Internet" choice ("Job board", "Job Sites"), the list's catch-all board ("Other Job Board"),
+  // "Other", then a general board the list names by its exact name; for any other answer "Other"
+  // only. Never a choice that adds a source the person did not give ("College Job Board").
+  const gn = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9+#$ ]+/g, " ").replace(/\s+/g, " ").trim();
+  const BOARDISH = new Set("job jobs board boards online internet web website websites site sites posting postings search engine".split(" "));
+  const GENERIC_BOARD_RE = /^((online|internet|web) )?job (board|site|website|posting)s?( (site|website))?$|^(online|internet|web) (job )?(board|site|posting|search)s?$|^(the )?(internet|online|web|websites?)$/;
+  const OTHER_BOARD_RE = /^other ((online|internet|web) )?job (board|site|website|posting)s?$|^((online|internet|web) )?job (board|site|website|posting)s? other$/;
+  const GENERIC_OTHER_RE = /^other( source| sources| please specify)?$/;
+  const NAMED_BOARDS = ["indeed", "glassdoor", "ziprecruiter", "monster", "careerbuilder", "simplyhired", "dice",
+    "handshake", "wellfound", "angellist", "built in", "linkedin", "linkedin jobs"];
+  function gnAdds(answer, option) {
+    const have = new Set(gn(answer).split(" "));
+    return gn(option).split(" ").some((w) => w && !have.has(w) && !NEUTRAL_WORDS.has(w));
+  }
+  function genericSources(answer, options) {
+    const opts = (options || []).map((o) => String(o)).filter((o) => o.trim());
+    const words = gn(answer).split(" ").filter(Boolean);
+    const boardish = words.length > 0 && words.every((w) => BOARDISH.has(w));
+    let out = [];
+    if (boardish) {
+      out = out.concat(opts.filter((o) => GENERIC_BOARD_RE.test(gn(o))));
+      out = out.concat(opts.filter((o) => OTHER_BOARD_RE.test(gn(o))));
+    }
+    out = out.concat(opts.filter((o) => GENERIC_OTHER_RE.test(gn(o))));
+    if (boardish) for (const b of NAMED_BOARDS) out = out.concat(opts.filter((o) => gn(o) === b));
+    return [...new Set(out)];
+  }
+  // The one choice that says the same as the answer (planner.match_option, strict), else null.
+  function sameSource(answer, options) {
+    const opts = (options || []).map((o) => String(o)).filter((o) => o.trim());
+    const a = gn(answer);
+    if (!opts.length || !a) return null;
+    const eq = opts.find((o) => gn(o) === a);
+    if (eq) return eq;
+    const pre = opts.filter((o) => gn(o) && (gn(o).startsWith(a) || a.startsWith(gn(o))) && !gnAdds(a, o));
+    if (pre.length === 1) return pre[0];
+    if (pre.length) return null;
+    const aw = a.split(" ");
+    const same = opts.filter((o) => { const ow = gn(o).split(" "); return aw.every((w) => ow.includes(w)) && !gnAdds(a, o); });
+    return same.length === 1 ? same[0] : null;
+  }
+  // The choices to try for a how-did-you-hear answer, best first ([] = none: the person is asked).
+  function heardChoices(answer, options) {
+    const same = sameSource(answer, options);
+    return same ? [same] : genericSources(answer, options);
+  }
+  const isHeardLabel = (label) => answerKeyForLabel(label) === "hear_about_us";
+
   // Score an option's text for a wanted value: exact > starts with > is a prefix of > contains
   // as whole words > shares the first part ("Chicago" of "Chicago, IL"). Shorter wins a tie.
   // ``strict`` (answerScorer: a saved ANSWER against a list of choices): "contains" counts only
@@ -1939,6 +1995,123 @@ function qsaSafe(sel, root) {
     return { ok: false, why: "did-not-stick" };
   }
 
+  // A how-did-you-hear dropdown: the choice heardChoices names, through a TWO-LEVEL list too.
+  // Workday's source prompt lists categories first ("Job Sites"); a click on one opens its own
+  // choices ("Job Board: Indeed", ..., "Other Job Board") with a back arrow. A picked choice that
+  // does not stick but changes the list is such a category: the pick is made among its choices
+  // by the same rule; when they hold nothing acceptable the back arrow returns to the first
+  // list for the next candidate ("Other"). Nothing fits: {ok:false, why:"no-match"}, as before
+  // (a Workday form, 2026-11-18: "Job board" was refused for ten steps, then asked).
+  // Cost (2026-11-18, fills ran past the shell's 40 s cap): the pick runs only for a field whose
+  // own label is a how-did-you-hear question, within HEARD_BUDGET_MS in all (and never past the
+  // running phase's own budget), gives up after HEARD_OPEN_MS when the list never opens, and
+  // always leaves the list closed. It shares the engine's machinery with every other dropdown:
+  // a field it could not answer is remembered in the per-control miss memory (missedBefore /
+  // noteMiss, keyed "heard:<answer>") so the next fill pass does not open it again, the list it
+  // read is kept for the form read, and it reports to the heartbeat.
+  const HEARD_TRIES = 3;
+  const HEARD_BUDGET_MS = 4000;
+  const HEARD_OPEN_MS = 1200;
+  const _heardStats = { picks: 0, skipped: 0, ms: 0 };
+  const heardStats = () => Object.assign({}, _heardStats);
+  const heardWant = (answer) => ({ text: answer, memo: "heard:" + gn(answer) });
+  async function settledOptions(el, ms) {
+    const until = Date.now() + ms;
+    let opts = optionsFor(el), last = -1;
+    while (Date.now() < until && (!opts.length || opts.length !== last || loading(el))) {
+      if (over()) break;
+      last = opts.length; await sleep(STEP_MS); opts = optionsFor(el);
+    }
+    return opts;
+  }
+  const choiceText = (o) => String(o.textContent || "").replace(/\s+/g, " ").trim();
+  const listKey = (opts) => opts.map(choiceText).join("|");
+  function backButtonFor(el) {
+    const lb = listboxFor(el);
+    const all = qsaDeep("[data-automation-id='backButton']").filter(boxShown);
+    let node = lb;
+    for (let i = 0; node && i < 4; i++, node = node.parentElement) {
+      const near = all.find((b) => node.contains(b));
+      if (near) return near;
+    }
+    return all.length ? all[all.length - 1] : null;
+  }
+  // {ok:true, value} | {ok:false, why}: "answered" (it has a value), "no-list" (the list never
+  // opened), "no-match" (no choice fits, or this field already missed this answer: skipped).
+  async function pickHeard(el, want) {
+    if (comboValue(el)) return { ok: false, why: "answered" };
+    const answer = String((want && want.text) || "");
+    const memo = heardWant(answer);
+    if (missedBefore(el, memo)) { _heardStats.skipped++; _beat.skipped++; return { ok: false, why: "no-match", skipped: true }; }
+    if (over()) return { ok: false, why: "over-budget" };       // the phase is out of time: not a miss
+    _heardStats.picks++;
+    tick();
+    // its own 4 s, and never past what the running phase (fillAsync / applyOpsAsync) has left
+    const t0 = Date.now(), deadline = _deadline ? Math.min(t0 + HEARD_BUDGET_MS, _deadline) : t0 + HEARD_BUDGET_MS;
+    const left = (ms) => Math.max(0, Math.min(ms, deadline - Date.now()));
+    let res = { ok: false, why: "no-match" };
+    try {
+      res = await heardPick(el, answer, left);
+    } catch (e) { res = { ok: false, why: "no-match" }; }
+    try { await closeCombo(el); } catch (e) { /* fine */ }
+    if (!res.ok) {
+      if (over()) res = { ok: false, why: "over-budget" };       // cut short by the phase: tried again with time
+      else noteMiss(el, memo, res.why !== "no-list");           // a list that showed its choices: the miss stands
+    }
+    _heardStats.ms += Date.now() - t0;
+    return res;
+  }
+  async function heardPick(el, answer, left) {
+    await openCombo(el);
+    const top = await settledOptions(el, left(HEARD_OPEN_MS));
+    if (!top.length) return { ok: false, why: "no-list" };
+    // the list as it opened is kept, so the form read does not open this dropdown again
+    if (!_comboOptions.has(el)) _comboOptions.set(el, top.map(choiceText).filter(Boolean).slice(0, 40));
+    const topKey = listKey(top);
+    const hit = (o) => {
+      try { if (o.scrollIntoView) o.scrollIntoView({ block: "nearest" }); } catch (e) { /* fine */ }
+      fire(o, "mouseover"); fire(o, "mousemove"); press(o);
+    };
+    const stuck = async (o, ms) => {
+      const label = optionText(o), until = Date.now() + ms;
+      while (Date.now() < until) {
+        if (sameChoice(comboValue(el), label)) return true;
+        await sleep(STEP_MS);
+      }
+      return sameChoice(comboValue(el), label);
+    };
+    for (const c of heardChoices(answer, top.map(choiceText)).slice(0, HEARD_TRIES)) {
+      if (!left(1)) break;                                   // out of time: leave it
+      let opts = optionsFor(el);
+      if (listKey(opts) !== topKey) { await openCombo(el); opts = await settledOptions(el, left(600)); }
+      const o = opts.find((x) => choiceText(x) === c);
+      if (!o || listKey(opts) !== topKey) continue;
+      hit(o);
+      let leaves = null;
+      const label = optionText(o), until = Date.now() + left(1200);
+      while (Date.now() < until) {
+        await sleep(STEP_MS);
+        if (sameChoice(comboValue(el), label)) return { ok: true, value: c };
+        const now = optionsFor(el);
+        if (now.length && listKey(now) !== topKey) { leaves = await settledOptions(el, left(400)); break; }
+      }
+      if (!leaves || !leaves.length) continue;
+      // A category: its own choices, by the same rule.
+      const pick = heardChoices(answer, leaves.map(choiceText))[0];
+      const lo = pick ? leaves.find((x) => choiceText(x) === pick) : null;
+      if (lo) {
+        hit(lo);
+        if (await stuck(lo, left(800))) return { ok: true, value: pick };
+      }
+      const back = backButtonFor(el);
+      if (back) {
+        press(back);
+        for (let i = 0; i < 20 && left(1) && listKey(optionsFor(el)) !== topKey; i++) await sleep(STEP_MS);
+      } else await closeCombo(el);
+    }
+    return { ok: false, why: "no-match" };
+  }
+
   // ---- ARIA radio groups (and Yes/No button pairs with aria-pressed), ARIA checkboxes
   function ariaRadioGroups() {
     const groups = new Map();
@@ -2087,19 +2260,28 @@ function qsaSafe(sel, root) {
       if (r === undefined) {
         let value = "";
         let answer = false;
+        let key = "";
         if (/\blocation\b/.test(q)) value = f.location;
         else {
-          const key = categorize(el, signature(el) || q);
+          key = categorize(el, signature(el) || q);
           if (key) value = f[key];
           // A saved answer ("How did you hear about us?": "Job board") is matched strictly: never
           // a choice that adds a qualifier it did not have ("College Job Board").
           answer = TEXT_ANSWERS.some((a) => a.key === key);
         }
+        // (2026-11-18) "How did you hear about us?" as a dropdown: the saved answer
+        // (payload.answers, the one fillTextAnswers types into a text box) picked from the list
+        // by pickHeard, so the page's own fill answers it with no model step.
+        if (!value && isHeardLabel(q) && payload.answers && String(payload.answers.hear_about_us || "").trim()) {
+          value = String(payload.answers.hear_about_us).trim();
+          key = "hear_about_us"; answer = true;
+        }
         if (!value) continue;
-        r = { kind: "fields", text: value, score: answer ? answerScorer(value) : valueScorer(value), freeText: true, answer };
+        r = { kind: "fields", text: value, score: answer ? answerScorer(value) : valueScorer(value), freeText: true, answer,
+              heard: key === "hear_about_us" };
       }
       _from = widgetFrom(r);
-      const res = await pickCombo(el, r);
+      const res = r.heard ? await pickHeard(el, r) : await pickCombo(el, r);
       if (res.ok) { out[r.kind]++; out.filled++; markFilled(controlOf(el)); }
     }
     for (const g of ariaRadioGroups()) {
@@ -2124,7 +2306,15 @@ function qsaSafe(sel, root) {
     const text = String(op.text == null ? "" : op.text);
     if (kind === "combobox") {
       if (!text) return "skipped";
-      const r = await pickCombo(el, { text, score: valueScorer(text) });
+      // A how-did-you-hear list: the planned choice may be a category of a two-level list. A
+      // list that never opened to a click gets the plain pick (it types to load), as before;
+      // a field that already missed this answer is not opened again.
+      const want = { text, score: valueScorer(text) };
+      let r;
+      if (isHeardLabel(widgetLabel(el))) {
+        r = await pickHeard(el, want);
+        if (!r.ok && r.why === "no-list") r = await pickCombo(el, want);
+      } else r = await pickCombo(el, want);
       if (r.ok) { markFilled(controlOf(el)); return "filled"; }
       return "skipped";
     }
@@ -2662,6 +2852,7 @@ function qsaSafe(sel, root) {
     fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, closeSearch, extractFormAsync,
     cleanLabel, readBack, fileListed, fileListing: fileListingAt, dropDuplicateFiles, dropUnsizedCopy, fileCopies, sizeReadings, sizeMatches, applyOpsAsync, leftover, pageSignature, setRefPrefix, takeFillLog,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
+    pickHeard, heardChoices, genericSources, sameSource, isHeardLabel, heardStats,
     fillProgress, openCounts, lastExtract,
     // recipes: the per-system table, success detection, continue hints, corrections
     setRecipes, recipes: () => RECIPES, recipeFor, globToRe, highlightSubmit, continueButton,

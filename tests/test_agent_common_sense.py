@@ -475,14 +475,368 @@ def test_apply_setup_asks_relatives_once_with_no_default(app):
 def test_the_new_strings_are_in_all_five_locales_with_no_dashes():
     for lang in ("de", "en", "es", "fr", "pt"):
         d = json.loads((ROOT / "ui" / "static" / "locales" / f"{lang}.json").read_text(encoding="utf-8"))
-        for k in ("setup.relatives", "setup.relativesAsk", "aa.ans.from.tracker"):
+        for k in ("setup.relatives", "setup.relativesAsk", "aa.ans.from.tracker", "aa.ans.from.commonSense"):
             assert d.get(k), (lang, k)
             assert "—" not in d[k] and "–" not in d[k]
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
-    assert 'suT("setup.relatives"' in js and 'T("aa.ans.from.tracker"' in js
+    assert 'suT("setup.relatives"' in js and 'T("aa.ans.from.tracker"' in js and 'T("aa.ans.from.commonSense"' in js
 
 
 def test_the_shell_keeps_the_rule_origins_for_review_answers():
     js = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
-    assert 'new Set(["grounded", "neutral", "history", "tracker", "consent"])' in js
-    assert 'tracker: "from your tracker"' in js
+    assert 'new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense"])' in js
+    assert 'tracker: "from your tracker"' in js and 'common_sense: "common sense"' in js
+
+
+# --------------------------------------------------------------------------- how did you hear
+HEARD = "How Did You Hear About Us?"
+# The choices under "Job Sites" on a Workday form's two-level source list (2026-11-18).
+JOB_SITES = ["BuiltIn", "College / University", "Compliance_HireAHero", "Compliance_JOFDAV", "Compliance_recruitABILITY",
+             "Compliance_USDiversity", "Financial Careers Training", "Glassdoor", "HACE", "Handshake", "IDES",
+             "Job Board: CareerBuilder", "Job Board: Indeed", "Job Board: Monster", "Other Job Board"]
+
+
+def test_a_job_board_answer_lands_on_the_lists_generic_board_choice():
+    from autoapply.planner import generic_source, generic_sources, literal_for
+    assert generic_source("Job board", JOB_SITES) == "Other Job Board"
+    assert generic_sources("Job board", JOB_SITES) == ["Other Job Board", "Glassdoor", "Handshake"]
+    assert literal_for("@heard_about", "Job board", JOB_SITES) == "Other Job Board"
+    # the first list of the same form: the board-like category, then nothing else
+    assert generic_sources("Job board", ["Career Fair", "Employee Referral", "Job Sites", "Social Media"]) == ["Job Sites"]
+    # a plain generic board before the catch-all one, and both before "Other"
+    assert generic_sources("Job board", ["Other", "Other Job Board", "Job Board"]) == ["Job Board", "Other Job Board", "Other"]
+    # never a choice that adds a source the person did not give
+    for bad in (["College Job Board"], ["Compliance_HireAHero", "University Career Center", "Staffing Agency"],
+                ["Job Board: Indeed", "Job Board: Monster"]):
+        assert literal_for("@heard_about", "Job board", bad) is None
+    # only on a how-did-you-hear question
+    assert literal_for("", "Job board", JOB_SITES) is None
+
+
+def test_python_and_the_page_side_share_the_how_did_you_hear_cases():
+    # the same file drives extension/autofill_core.js heardChoices in tests/test_agent_view.js
+    from autoapply.planner import literal_for
+    cases = json.loads((ROOT / "tests" / "fixtures" / "heard_about_cases.json").read_text(encoding="utf-8"))["cases"]
+    assert len(cases) >= 15
+    for c in cases:
+        assert literal_for("@heard_about", c["answer"], c["options"]) == c["want"], c
+
+
+def test_with_nothing_saved_how_did_you_hear_is_a_job_board(lib):
+    assert (CS.HEARD_KEY, CS.HEARD_DEFAULT, CS.HEARD_ORIGIN) == ("@heard_about", "Job board", "common_sense")
+    assert normalize(HEARD) == CS.HEARD_KEY
+    assert _plan(HEARD, _ctx(lib), options=JOB_SITES) == ([("Other Job Board", "common_sense")], [])
+    assert _plan(HEARD, _ctx(lib), options=[], kind="text") == ([("Job board", "common_sense")], [])
+    assert known_answer(HEARD, JOB_SITES, library=lib) == ("Other Job Board", "common_sense")
+    assert known_answer(HEARD, [], library=lib) == ("Job board", "common_sense")
+    # a list with no choice for it stays the person's
+    assert _plan(HEARD, _ctx(lib), options=["College Job Board", "Staffing Agency"]) == ([], ["f"])
+    # a saved answer always wins
+    lib.save(HEARD, "LinkedIn")
+    assert _plan(HEARD, _ctx(lib), options=["Indeed", "LinkedIn", "Other"]) == ([("LinkedIn", "library")], [])
+    assert known_answer(HEARD, ["Indeed", "LinkedIn", "Other"], library=lib) == ("LinkedIn", "library")
+    assert _plan(HEARD, _ctx(lib), options=[], kind="text") == ([("LinkedIn", "library")], [])
+
+
+# --------------------------------------------------------------------------- worked here, by the short name
+WORKED_GROUP = "Have you worked for Globex or any of our companies in the past?"
+
+
+@pytest.mark.parametrize("label,company", [
+    (WORKED_GROUP, "Globex"),
+    (WORKED_GROUP, "Globex Financial Corporation"),          # the record's long name, the form's short one
+    (WORKED_GROUP, "Hale Community Bank"),                   # a company of the group: "our companies"
+    ("Have you worked for Globex before?", "Globex Hale LLP"),
+    ("Have you previously been employed by Globex or any of its affiliates?", "Globex Financial Group"),
+    ("Have you ever worked for Globex or one of its subsidiaries?", "Globex Hale LLP"),
+    ("Previously employed by Globex?", "Globex Financial Corp."),
+    ("Are you a current or former Globex employee?", "Globex Financial Corporation"),
+    ("Are you a former employee of Globex?", "Globex Hale LLP"),
+])
+def test_worked_here_is_recognised_by_the_short_name_and_the_group(label, company, lib):
+    assert worked_here_question(label, company)
+    ctx = _ctx(lib, company=company)
+    assert _plan(label, ctx) == ([("No", "history")], [])
+    assert _plan(label, ctx, kind="radio") == ([("No", "history")], [])
+    assert known_answer(label, YN, library=lib, per_company=True, worked_here=("No", "history"),
+                        company=company) == ("No", "history")
+
+
+@pytest.mark.parametrize("label,company", [
+    ("Have you worked for Initech in the past?", "Globex Financial Corporation"),       # another employer
+    ("Have you worked for First Republic before?", "First National Bank"),             # "First" names no one
+    ("Have you worked for any other companies in the past?", "Globex"),
+    ("Do you know anyone who has worked for Globex or any of our companies?", "Globex"),
+    ("Has a relative worked for Globex or any of our companies in the past?", "Globex"),
+    ("Why do you want to work for Globex or one of our companies?", "Globex"),
+])
+def test_worked_here_is_never_read_into_another_question(label, company):
+    assert not worked_here_question(label, company)
+
+
+def test_a_worked_here_yes_from_the_resume_still_waits_and_a_saved_answer_wins(lib):
+    # the company is in the work history: the Yes is confirmed once by the person, never sent unasked
+    assert _plan(WORKED_GROUP, _ctx(lib, company="Globex Financial Corporation", worked_here=("Yes", "confirm"))) == ([], ["f"])
+    # their own answer for this company
+    assert _plan(WORKED_GROUP, _ctx(lib, company="Globex Financial Corporation",
+                                    worked_here=("Yes", "library"))) == ([("Yes", "library")], [])
+
+
+# --------------------------------------------------------------------------- highest education
+EDU = "What is the highest level of education you have completed?"
+EDU_OPTS = ["No High School Diploma", "High School Diploma or GED", "Some College, No Degree", "Associate Degree (AA, AS)",
+            "Bachelor's Degree (BA, BS)", "Master's Degree (MA, MS)", "Doctorate (PhD)"]
+EDU_DAY = dt.date(2026, 11, 18)
+
+
+def _edu(*entries):
+    return {"education": [{"school": "Example State University", "degree": d, "date": w} for d, w in entries]}
+
+
+def test_the_highest_completed_degree_is_read_from_the_profile():
+    hi = lambda *e: CS.highest_education(_edu(*e), EDU_DAY)      # noqa: E731
+    assert hi(("MSc Data Science", "2021"), ("BSc Economics", "2018")) == "masters"
+    assert hi(("BSc Economics", "2014 - 2018")) == "bachelors"
+    assert hi(("Associate of Arts", "2012")) == "associates"
+    assert hi(("PhD Physics", "May 2020"), ("MS Physics", "2016")) == "doctorate"
+    assert hi(("High School Diploma", "2010")) == "high school"
+    assert hi(("MBA", "")) == "masters"                           # no date: on the resume as held
+    # a degree still in progress or expected is not completed: the one below it counts
+    assert hi(("MSc Data Science", "Expected 2027"), ("BSc Economics", "2018")) == "bachelors"
+    assert hi(("Master of Science", "Sept 2025 - Present"), ("BA History", "2015 - 2019")) == "bachelors"
+    assert hi(("PhD Candidate, Physics", "2022"), ("MS Physics", "2021")) == "masters"
+    assert hi(("MSc Data Science", "2025 - 2027"), ("BSc Economics", "2018")) == "bachelors"
+    assert hi(("BSc Economics", "2024 - Present")) == ""
+    assert hi(("Data Bootcamp", "2020")) == "" and CS.highest_education({}, EDU_DAY) == ""
+
+
+@pytest.mark.parametrize("level,want", [
+    ("doctorate", "Doctorate (PhD)"), ("masters", "Master's Degree (MA, MS)"), ("bachelors", "Bachelor's Degree (BA, BS)"),
+    ("associates", "Associate Degree (AA, AS)"), ("high school", "High School Diploma or GED"),
+])
+def test_the_exact_workday_list_takes_the_choice_for_the_level(level, want, lib):
+    assert CS.education_option(level, EDU_OPTS) == want
+    assert _plan(EDU, _ctx(lib, education=level), options=EDU_OPTS) == ([(want, "history")], [])
+    assert known_answer(EDU, EDU_OPTS, library=lib, education=level) == (want, "history")
+
+
+def test_a_choice_is_matched_loosely_and_never_overstates():
+    opt = CS.education_option
+    assert opt("masters", ["High school", "Undergraduate degree", "Graduate degree"]) == "Graduate degree"
+    assert opt("masters", ["GED", "Bachelors", "Masters", "PhD"]) == "Masters"
+    assert opt("masters", ["Bachelor's", "Master's Degree (MA, MS, MBA)", "Professional degree (JD, MD)"]) == "Master's Degree (MA, MS, MBA)"
+    assert opt("bachelors", ["High school", "2-year degree", "4-year degree", "Postgraduate"]) == "4-year degree"
+    assert opt("bachelors", ["Some college", "College degree", "Some graduate school", "Graduate degree"]) == "College degree"
+    assert opt("doctorate", ["Bachelor's", "Master's", "Doctorate (PhD)"]) == "Doctorate (PhD)"
+    assert opt("associates", ["High School", "Associate Degree (AA, AS)", "Bachelor's"]) == "Associate Degree (AA, AS)"
+    # no choice for the level: the nearest lower one, never a higher one
+    assert opt("masters", ["High School Diploma or GED", "Bachelor's Degree (BA, BS)", "Doctorate (PhD)"]) == "Bachelor's Degree (BA, BS)"
+    assert opt("bachelors", ["High School Diploma", "Some College, No Degree", "Master's Degree"]) == "Some College, No Degree"
+    assert opt("doctorate", ["Bachelor's", "Master's", "Professional degree (JD, MD)"]) == "Master's"
+    assert opt("high school", ["No High School Diploma", "Bachelor's Degree"]) is None      # never "no diploma", never more
+    assert opt("bachelors", ["Master's Degree", "Doctorate", "Other"]) is None
+    assert opt("", EDU_OPTS) is None
+
+
+@pytest.mark.parametrize("label", [
+    EDU, "Highest level of education completed", "What is your highest level of education attained?",
+    "Highest level of education achieved", "Highest degree earned", "What is the highest degree you have obtained?",
+    "Education level", "Please select your highest education level",
+])
+def test_the_common_wordings_are_one_question(label, lib):
+    assert CS.education_question(label) == "level"
+    assert _plan(label, _ctx(lib, education="masters"), options=EDU_OPTS) == ([("Master's Degree (MA, MS)", "history")], [])
+    # a text box, and a list whose choices were not read: the level in words
+    assert _plan(label, _ctx(lib, education="masters"), options=[], kind="text") == ([("Master's degree", "history")], [])
+    assert _plan(label, _ctx(lib, education="bachelors"), options=[]) == ([("Bachelor's degree", "history")], [])
+    assert known_answer(label, [], library=lib, education="masters") == ("Master's degree", "history")
+
+
+def test_do_you_have_a_degree_is_yes_or_no_from_the_level(lib):
+    q = "Do you have a bachelor's degree (or higher)?"
+    assert CS.education_question(q) == "bachelors"
+    for level, want in (("doctorate", "Yes"), ("masters", "Yes"), ("bachelors", "Yes"), ("associates", "No"), ("high school", "No")):
+        assert _plan(q, _ctx(lib, education=level)) == ([(want, "history")], [])
+        assert _plan(q, _ctx(lib, education=level), kind="radio") == ([(want, "history")], [])
+        assert known_answer(q, YN, library=lib, education=level) == (want, "history")
+    assert _plan("Have you earned a master's degree?", _ctx(lib, education="bachelors")) == ([("No", "history")], [])
+    assert _plan("Do you have a high school diploma or GED?", _ctx(lib, education="masters")) == ([("Yes", "history")], [])
+    assert _plan("Do you have a 4-year college degree?", _ctx(lib, education="masters")) == ([("Yes", "history")], [])
+
+
+@pytest.mark.parametrize("label", [
+    "Do you have a bachelor's degree in Accounting?",            # the field decides
+    "What is the minimum education level required for this role?",
+    "What is your mother's highest level of education?",
+    "Are you currently pursuing a degree?",
+    "Field of study", "Which university did you attend?", "What is your GPA?",
+])
+def test_another_education_question_is_never_answered_from_the_level(label, lib):
+    assert CS.education_question(label) == ""
+    acts, _left = _plan(label, _ctx(lib, education="masters"), options=EDU_OPTS)
+    assert not [a for a in acts if a[1] == "history"]
+
+
+def test_no_completed_degree_stays_a_question_and_a_saved_answer_wins(lib):
+    assert CS.education_answer(EDU, EDU_OPTS, "") is None
+    acts, _left = _plan(EDU, _ctx(lib, education=""), options=EDU_OPTS)
+    assert acts == []                                             # nothing known: never a guess
+    assert known_answer(EDU, EDU_OPTS, library=lib, education="") is None
+    lib.save(EDU, "Bachelor's Degree (BA, BS)")
+    assert _plan(EDU, _ctx(lib, education="masters"), options=EDU_OPTS) == ([("Bachelor's Degree (BA, BS)", "library")], [])
+    assert known_answer(EDU, EDU_OPTS, library=lib, education="masters") == ("Bachelor's Degree (BA, BS)", "library")
+
+
+def test_a_page_whose_only_field_is_the_education_question_is_planned(app):
+    # (2026-11-18) the plan route said "Could not plan this form confidently" three times: no
+    # rule knew the question, so the plan was empty. It is now one known action.
+    mod, _rid = app
+    prof = {"identity": {"name": "Sam Example"},
+            "education": [{"school": "Example State University", "degree": "MSc Data Science", "date": "2021"},
+                          {"school": "Example State University", "degree": "BSc Economics", "date": "2018"}]}
+    rid = _add(mod, CO, {"status": "approved", "render_profile": prof})
+    assert mod._common_sense(CO, mod._get_record(rid))["education"] == "masters"
+    d = _post(mod, "/api/autoapply/plan", {"url": "https://example.wd1.myworkdayjobs.com/x/job/1/apply", "record_id": rid,
+                                           "fields": [{"ref": "w1", "label": EDU, "type": "select", "widget": "combobox",
+                                                       "options": EDU_OPTS, "required": True}]})
+    assert d["ok"] is True and d["left"] == [], d
+    assert [(o["ref"], o["op"], o["text"], o["from"]) for o in d["ops"]] == [("w1", "select", "Master's Degree (MA, MS)", "history")]
+    # the model path: the answer placeholder for the open label (a text answer, picked from the
+    # list by the page script's strict match), and the heard-about and worked-here ones beside it
+    rec = mod._get_record(rid)
+    got = mod._known_answers_for([EDU, "How Did You Hear About Us?"], rec, mod._record_data(rec), {})
+    assert got.get(EDU) == "Master's degree" and got.get("How Did You Hear About Us?") == "Job board", got
+    assert mod._common_sense(CO, None)["education"] == ""         # no profile, no record: nothing known
+
+
+# --------------------------------------------------------------------------- phone device type
+PHONE_TYPE = "Phone Device Type"
+
+
+@pytest.mark.parametrize("options,want", [
+    (["Home", "Mobile", "Telephone"], "Mobile"),                     # one Workday tenant
+    (["Fax", "Landline", "Mobile"], "Mobile"),                       # another
+    (["Home", "Work", "Cell"], "Cell"),
+    (["Landline", "Cellular", "Fax"], "Cellular"),
+    (["Home Phone", "Cell Phone", "Work Phone"], "Cell Phone"),
+    (["Home", "Personal Cell", "Work Cell"], "Personal Cell"),
+    (["Landline", "Mobile Phone"], "Mobile Phone"),
+    (["Work Mobile", "Mobile", "Home"], "Mobile"),                   # the plain one before a work line
+])
+def test_phone_device_type_takes_the_mobile_choice(options, want, lib):
+    assert CS.phone_type_question(PHONE_TYPE) and CS.mobile_option(options) == want
+    assert _plan(PHONE_TYPE, _ctx(lib), options=options) == ([(want, "common_sense")], [])
+    assert known_answer(PHONE_TYPE, options, library=lib) == (want, "common_sense")
+
+
+def test_phone_type_is_never_the_phone_number_and_a_saved_answer_wins_only_when_listed(lib):
+    from autoapply.planner import contact_key
+    # the cause (2026-11-18): the label read as the phone NUMBER, so the number was the "answer"
+    for label in (PHONE_TYPE, "Phone Type", "Type of phone", "Telephone type", "Phone Extension"):
+        assert contact_key(label) == "", label
+    for label in ("Phone", "Phone Number", "Mobile phone", "Cell"):
+        assert contact_key(label) == "phone", label
+    for label in (PHONE_TYPE, "Phone Type", "Type of phone", "Phone Device Type*"):
+        assert CS.phone_type_question(label), label
+    for label in ("Phone Number", "Phone", "Country Phone Code", "Device", "Type of employment"):
+        assert not CS.phone_type_question(label), label
+    ctx = _ctx(lib, applicant={"phone": "555-010-0000"})
+    acts, left = _plan(PHONE_TYPE, ctx, options=["Home", "Mobile", "Telephone"])
+    assert acts == [("Mobile", "common_sense")] and not left
+    # a list with no mobile choice at all stays a question; a text box says Mobile
+    assert _plan(PHONE_TYPE, _ctx(lib), options=["Home", "Work"]) == ([], ["f"])
+    assert _plan(PHONE_TYPE, _ctx(lib), options=[], kind="text") == ([("Mobile", "common_sense")], [])
+    assert _plan(PHONE_TYPE, _ctx(lib), options=[]) == ([("Mobile", "common_sense")], [])     # choices not read yet
+    # a saved answer that is one of the choices wins; one that is not falls back to mobile, never asked
+    lib.save(PHONE_TYPE, "Home")
+    assert _plan(PHONE_TYPE, _ctx(lib), options=["Home", "Mobile", "Telephone"]) == ([("Home", "library")], [])
+    assert _plan(PHONE_TYPE, _ctx(lib), options=["Fax", "Landline", "Mobile"]) == ([("Mobile", "common_sense")], [])
+    assert known_answer(PHONE_TYPE, ["Fax", "Landline", "Mobile"], library=lib) == ("Mobile", "common_sense")
+
+
+def test_the_page_engine_never_offers_the_phone_number_to_a_phone_type_list():
+    js = (ROOT / "extension" / "autofill_core.js").read_text(encoding="utf-8")
+    assert 'if (c.key === "phone" && PHONE_KIND_RE.test(sig)) continue;' in js
+
+
+# --------------------------------------------------------------------------- other names, connections
+ALIASES = "List any aliases or other name(s) you have used or currently use or indicate N/A."
+CONNECTIONS = ("List all close personal and professional connections employed by Globex Hale and their relationship "
+               "to you, or indicate N/A.")
+
+
+def test_other_names_are_never_guessed_and_filled_once_saved(lib):
+    assert CS.other_names_question(ALIASES) and normalize(S.QUESTIONS["other_names"]) == CS.OTHER_NAMES_KEY == "@other_names"
+    assert S.KEYS["other_names"] == "@other_names"
+    # nothing saved: the person's, never "N/A" by guess
+    assert _plan(ALIASES, _ctx(lib), options=[], kind="textarea") == ([], ["f"])
+    assert _plan(ALIASES, _ctx(lib), options=[], kind="text") == ([], ["f"])
+    assert known_answer(ALIASES, [], library=lib) is None
+    # the person said none in Apply setup: exactly what the question asks for
+    lib.save(S.QUESTIONS["other_names"], "None")
+    assert _plan(ALIASES, _ctx(lib), options=[], kind="textarea") == ([("N/A", "library")], [])
+    assert known_answer(ALIASES, [], library=lib) == ("N/A", "library")
+    assert _plan("Other names used. If none, write None.", _ctx(lib), options=[], kind="text") == ([("None", "library")], [])
+    assert _plan("Former or maiden name", _ctx(lib), options=[], kind="text") == ([("N/A", "library")], [])
+    assert _plan("Have you ever used another name?", _ctx(lib)) == ([("No", "library")], [])
+    # names they gave are written as given
+    lib.save(S.QUESTIONS["other_names"], "Sam Sample")
+    assert _plan(ALIASES, _ctx(lib), options=[], kind="textarea") == ([("Sam Sample", "library")], [])
+    assert _plan("Have you ever used another name?", _ctx(lib)) == ([("Yes", "library")], [])
+    for other in ("Preferred name", "First name", "Company name", "Name of your reference", "Emergency contact name"):
+        assert not CS.other_names_question(other), other
+
+
+def test_what_a_question_asks_for_when_there_is_nothing():
+    assert CS.none_word(ALIASES) == "N/A" and CS.none_word(CONNECTIONS) == "N/A"
+    assert CS.none_word("List any other names. If none, write None.") == "None"
+    assert CS.none_word('Please enter "N/A" if not applicable') == "N/A"
+    assert CS.none_word("List your previous names (write n/a if none)") == "n/a"
+    assert CS.none_word("Other names used") == "N/A"                  # it names no word: N/A
+    for said in ("None", "none.", "N/A", "n/a", "No", "Not applicable"):
+        assert CS.said_none(said), said
+    assert not CS.said_none("Sam Sample") and not CS.said_none("")
+
+
+def test_connections_employed_here_as_a_list_follow_the_standing_no_on_relatives(lib):
+    assert CS.relatives_list_question(CONNECTIONS) and not CS.relatives_question(CONNECTIONS)
+    # nothing saved, or "Yes, ask me each time": theirs to list
+    assert _plan(CONNECTIONS, _ctx(lib), options=[], kind="textarea") == ([], ["f"])
+    assert known_answer(CONNECTIONS, [], library=lib) is None
+    lib.save(S.QUESTIONS["relatives"], "Yes")
+    assert _plan(CONNECTIONS, _ctx(lib), options=[], kind="textarea") == ([], ["f"])
+    # a standing No: what the question asks for
+    lib.save(S.QUESTIONS["relatives"], "No")
+    assert _plan(CONNECTIONS, _ctx(lib), options=[], kind="textarea") == ([("N/A", "library")], [])
+    assert _plan(CONNECTIONS, _ctx(lib), options=[], kind="text") == ([("N/A", "library")], [])
+    assert known_answer(CONNECTIONS, [], library=lib) == ("N/A", "library")
+    assert _plan("Please list any relatives who work at Globex Hale. If none, write None.", _ctx(lib), options=[],
+                 kind="textarea") == ([("None", "library")], [])
+    # the Yes / No form still gets its No, as before
+    assert _plan(RELATIVES, _ctx(lib)) == ([("No", "library")], [])
+    # never a follow-up to a Yes, a reference, a client, a public official
+    for other in ("If yes, please list the names of your relatives employed by Globex Hale.",
+                  "List your references and their relationship to you",
+                  "List all clients of Globex Hale you have worked with",
+                  "List any relatives who are government officials"):
+        assert not CS.relatives_list_question(other), other
+        acts, _left = _plan(other, _ctx(lib), options=[], kind="textarea")
+        assert acts == [], other
+
+
+def test_apply_setup_asks_other_names_once_in_five_locales(app):
+    mod, _rid = app
+    c = mod.app.test_client()
+    get = lambda: c.get("/api/apply-setup", headers=H).get_json()["forms"]["other_names"]     # noqa: E731
+    save = lambda v: c.post("/api/apply-setup/save", json={"step": "forms", "fields": {"other_names": v}}, headers=H)  # noqa: E731
+    assert get() == ""                                                        # unanswered: no default
+    assert save("None").status_code == 200 and get() == "None"
+    assert save("Sam Sample").status_code == 200 and get() == "Sam Sample"
+    assert save("").status_code == 200 and get() == ""                        # cleared again
+    for lang in ("de", "en", "es", "fr", "pt"):
+        d = json.loads((ROOT / "ui" / "static" / "locales" / f"{lang}.json").read_text(encoding="utf-8"))
+        for k in ("setup.otherNames", "setup.otherNamesPh"):
+            assert d.get(k), (lang, k)
+            assert "—" not in d[k] and "–" not in d[k]
+    js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'suInput("other_names", suT("setup.otherNames"' in js
