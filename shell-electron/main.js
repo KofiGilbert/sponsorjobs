@@ -18,6 +18,8 @@ const fs = require("fs");
 const http = require("http");
 const path = require("path");
 const frames = require("./frames");
+const fillBudget = require("./fill_budget");
+const paneGuard = require("./pane_guard");
 const { isNewPage, pageMessage, wallMessage } = require("./pagewatch");
 const { createAgent } = require("./agent");
 const uploads = require("./uploads");
@@ -153,6 +155,9 @@ function setPaneQuiet(on) {
   on = !!on;
   if (on === paneQuiet) return;
   if (on) {
+    // the run takes the pane: a teardown armed by an earlier close is called off
+    clearTimeout(paneReap);
+    paneReap = null;
     // The person's own page in the Browser tab is never taken over: a quiet run starts only when
     // the pane is closed (agent:batch refuses otherwise).
     paneQuiet = true;
@@ -292,10 +297,23 @@ function closePane() {
   paneReap = setTimeout(destroyPane, PANE_REAP_MS);
 }
 
+// Never a pane a run is using (pane_guard.js): a quiet run's pane is not "open", and a run
+// resumed on the same page never re-opened it, so a reaper armed by an earlier close used to
+// destroy the pane under the running agent (2026-11-18). It is asked again a minute later.
+function paneInUse() {
+  let busy = false;
+  try { busy = typeof agent !== "undefined" && !!agent && agent.busy(); } catch (e) { busy = false; }
+  return paneQuiet || busy;
+}
 function destroyPane() {
   clearTimeout(paneReap);
   paneReap = null;
   if (!pane || paneOpen) return;
+  if (!paneGuard.mayReap({ hasPane: !!pane, open: paneOpen, quiet: paneQuiet, busy: paneInUse() })) {
+    paneReap = setTimeout(destroyPane, PANE_REAP_MS);
+    if (paneReap.unref) paneReap.unref();
+    return;
+  }
   disarmSuccessWatch();
   disarmPageWatch();
   const p = pane;
@@ -909,7 +927,10 @@ function sumPre(list) {
 // reports {filled, left:[labels]} for this page, saves that on the application record, and keeps
 // watching for the person's Next so the following page fills itself (never clicking Next or
 // Submit itself).
-const PLAN_MS = Number(process.env.SJ_AGENT_PLAN_MS) > 0 ? Number(process.env.SJ_AGENT_PLAN_MS) : 25000;
+// The fill's time limits (fill_budget.js): a cap per phase, an overall cap, and the page's
+// heartbeat, instead of one stopwatch over everything.
+const FILL_CAPS = fillBudget.caps(process.env);
+const PLAN_MS = FILL_CAPS.plan;
 let _fillPhase = "";
 function fillPhase() { return _fillPhase; }
 async function runAutoApplyOnPane(recordId, opts) {
@@ -953,6 +974,31 @@ async function runAutoApplyOnPane(recordId, opts) {
     // inside fillAsync), 4. the model plan for whatever is STILL empty. Deterministic first, the
     // model last, and the model only ever sees field structure, never the person's data.
     const t0 = Date.now(), ms = {};
+    // (2026-11-18) Each page-side phase runs under its own cap and is told it (so the engine
+    // returns what it filled), while the shell reads the engine's heartbeat: a phase that is
+    // still moving runs to its cap, one that went silent is given up as stalled. ``cut``: the
+    // first phase that ran out of time; the fill still returns its report (``timed_out``).
+    const C = FILL_CAPS;
+    let cut = null;
+    const counts = { engine_filled: 0, ops_filled: 0, planned: 0, pending: 0, from_memory: 0, opens: 0 };
+    const beatMain = () => wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.fillProgress ? window.TailorAutofill.fillProgress() : null", true);
+    const beatIn = (ctx) => () => fr.eval(ctx, "window.TailorAutofill && window.TailorAutofill.fillProgress ? window.TailorAutofill.fillProgress() : null");
+    // run(name, phase key, start(budgetMs), beat): the phase's value, or null when it was cut
+    const run = async (name, key, start, beat) => {
+      if (cut && cut.stalled) return null;                  // the page stopped answering: nothing more is asked of it
+      const capMs = fillBudget.room(C, key, Date.now() - t0);
+      if (!capMs) { cut = cut || { phase: name, stalled: false }; return null; }
+      const r = await fillBudget.runPhase({ name, capMs, stallMs: C.stall, pollMs: C.poll, graceMs: C.grace, start, beat });
+      if (r.timedOut) { cut = cut && cut.stalled ? cut : { phase: name, stalled: r.stalled }; return null; }
+      if (r.value && r.value.timed_out) cut = cut || { phase: name, stalled: false };
+      return r.value;
+    };
+    const tally = (rep) => {
+      if (!rep) return;
+      counts.from_memory += rep.from_memory || 0;
+      counts.opens += rep.opens || 0;
+      counts.pending += rep.pending || 0;
+    };
     // Each phase's time, and the phase running now (fillPhase), so a fill that runs past the
     // agent's cap says WHERE it stood ("fill timed out while the AI planned 112 fields").
     const lap = (k, next) => { ms[k] = (ms[k] || 0) + (Date.now() - (lap.at || t0)); lap.at = Date.now(); _fillPhase = next || ""; };
@@ -960,10 +1006,12 @@ async function runAutoApplyOnPane(recordId, opts) {
     const payload = await fetchAutofillPayload(recordId);
     lap("payload", "filling the page");
     const havePayload = !!(payload && payload.loaded !== false);
-    const fillExpr = havePayload ? `window.TailorAutofill.fillAsync(${JSON.stringify(payload)})` : "null";
+    const fillExpr = (budgetMs) => (havePayload
+      ? `window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })})` : "null");
     const pres = [];
     if (havePayload) {
-      try { pres.push(await wc.executeJavaScript(fillExpr, true)); } catch (e) { /* fill what we can below */ }
+      try { pres.push(await run("filling the page", "engine", (b) => wc.executeJavaScript(fillExpr(b), true), beatMain)); } catch (e) { /* fill what we can below */ }
+      tally(pres[0]);
       if (pres[0] && pres[0].keys && pres[0].keys.length) await typeKeyOps(wc, pres[0].keys);
       if (pres[0] && pres[0].searches && pres[0].searches.length) pres[0].filled = (pres[0].filled || 0) + await searchPicks(wc, pres[0].searches);
     }
@@ -974,19 +1022,36 @@ async function runAutoApplyOnPane(recordId, opts) {
       const b = await fr.eval(ctx, "window.TailorAutofill.pageBlocker()");
       if (b === "auth") continue;                          // a sign-in inside the frame: theirs
       liveFrames.push(ctx);
-      if (havePayload) pres.push(await fr.eval(ctx, fillExpr));
+      if (havePayload) {
+        const p = await run("filling the page", "engine", (b) => fr.eval(ctx, fillExpr(b)), beatIn(ctx));
+        pres.push(p); tally(p);
+      }
     }
     const pre = sumPre(pres);
+    counts.engine_filled = pre.filled;
 
-    const extract = "window.TailorAutofill.extractFormAsync({ onlyEmpty: true })";
-    let fields = (await wc.executeJavaScript(extract, true)) || [];
-    for (const ctx of liveFrames) fields = fields.concat((await fr.eval(ctx, extract)) || []);
+    // The form read: ONE cap across the page and its frames (each is told what is left of it).
+    const extractEnds = Date.now() + (fillBudget.room(C, "extract", Date.now() - t0) || 0);
+    const extract = () => `window.TailorAutofill.extractFormAsync(${JSON.stringify({ onlyEmpty: true, budgetMs: Math.max(1, extractEnds - Date.now() - C.grace) })})`;
+    const readForm = async (start, beat) => {
+      const capMs = extractEnds - Date.now();
+      if (capMs < 500 || (cut && cut.stalled)) {
+        // no time left to open dropdowns: the fields as they stand (a plain, fast read)
+        if (!(cut && cut.stalled)) { cut = cut || { phase: "reading the form", stalled: false }; return (await start("window.TailorAutofill.extractForm({ onlyEmpty: true })").catch(() => null)) || []; }
+        return [];
+      }
+      const r = await fillBudget.runPhase({ name: "reading the form", capMs, stallMs: C.stall, pollMs: C.poll, graceMs: 0, start: () => start(extract()), beat });
+      if (r.timedOut) { cut = cut && cut.stalled ? cut : { phase: "reading the form", stalled: r.stalled }; return []; }
+      return r.value || [];
+    };
+    let fields = await readForm((expr) => wc.executeJavaScript(expr, true), beatMain);
+    for (const ctx of liveFrames) fields = fields.concat(await readForm((expr) => fr.eval(ctx, expr), beatIn(ctx)));
     lap("extract", fields.length ? "the AI planned " + fields.length + " fields" : "checking what is left");
 
     let applied = { filled: 0, uploaded: 0, pending_upload: 0, skipped: 0 };
     const files = [];                                     // the agent's Review answers list
     let planReason = "", wantsLetter = false, letterAttached = false, declined = 0;
-    if (fields.length) {
+    if (fields.length && !(cut && cut.stalled) && fillBudget.room(C, "plan", Date.now() - t0)) {
       let plan = null;
       try {
         // Capped (PLAN_MS): a slow model call ends this page's plan with a reason instead of
@@ -995,7 +1060,7 @@ async function runAutoApplyOnPane(recordId, opts) {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" },
           body: JSON.stringify({ url, record_id: recordId, fields }),
-          signal: AbortSignal.timeout(PLAN_MS),
+          signal: AbortSignal.timeout(fillBudget.room(C, "plan", Date.now() - t0) || 1000),
         });
         plan = resp.ok ? await resp.json() : null;
       } catch (e) {
@@ -1012,10 +1077,11 @@ async function runAutoApplyOnPane(recordId, opts) {
         const resumePath = uploadPath.size ? (ref) => uploadPath.get(ref) || "" : "";
         letterAttached = ops.some((o) => o.op === "upload" && o.from === "letter");
         declined = ops.filter((o) => o.from === "eeo_decline").length;
-        const runOps = (list) => `window.TailorAutofill.applyOpsAsync(${JSON.stringify(list)})`;
+        const runOps = (list, budgetMs) => `window.TailorAutofill.applyOpsAsync(${JSON.stringify(list)}, ${JSON.stringify({ budgetMs })})`;
         const reports = [];
+        counts.planned = ops.length;
         if (routed.main.length) {
-          const rep = await wc.executeJavaScript(runOps(routed.main), true);
+          const rep = await run("filling the planned fields", "ops", (b) => wc.executeJavaScript(runOps(routed.main, b), true), beatMain);
           reports.push(rep);
           if (rep && (rep.uploads || []).length && resumePath) {
             const seen = [];
@@ -1024,7 +1090,7 @@ async function runAutoApplyOnPane(recordId, opts) {
           }
         }
         for (const [ctx, list] of routed.byFrame) {
-          const rep = await fr.eval(ctx, runOps(list));
+          const rep = await run("filling the planned fields", "ops", (b) => fr.eval(ctx, runOps(list, b)), beatIn(ctx));
           reports.push(rep);
           if (rep && (rep.uploads || []).length && resumePath) {
             for (const ref of rep.uploads) {
@@ -1038,7 +1104,9 @@ async function runAutoApplyOnPane(recordId, opts) {
           applied.filled += (rep && rep.filled) || 0;
           applied.skipped += (rep && rep.skipped) || 0;
           applied.pending_upload += ((rep && rep.uploads) || []).length;
+          tally(rep);
         }
+        counts.ops_filled = applied.filled;
         applied.pending_upload = Math.max(0, applied.pending_upload - applied.uploaded);
         lap("ops", "checking what is left");
       } else {
@@ -1046,6 +1114,15 @@ async function runAutoApplyOnPane(recordId, opts) {
       }
     }
 
+    // (2026-11-18) The page stopped answering during the fill (no heartbeat): nothing more is
+    // asked of it. The agent treats this, and only this, as a hang (its reload ladder).
+    if (cut && cut.stalled) {
+      lap("leftover", "");
+      const stalled = { ok: false, reason: "stalled", timed_out: true, stalled: true, timed_out_phase: cut.phase, page,
+                        filled: pre.filled + applied.filled, left: [], ms, counts };
+      console.log("[fill] " + fillBudget.fillLogLine(stalled));
+      return stalled;
+    }
     // What is still blank and needs the person, across the page and its frames.
     let left = (await wc.executeJavaScript("window.TailorAutofill.leftover()", true)) || [];
     for (const ctx of liveFrames) left = left.concat((await fr.eval(ctx, "window.TailorAutofill.leftover()")) || []);
@@ -1071,7 +1148,11 @@ async function runAutoApplyOnPane(recordId, opts) {
       if (blocker === "captcha") return { ok: false, reason: "blocked", blocker, page };
       return { ok: false, reason: "no-fields", page };
     }
-    if (!filled && !applied.uploaded && planReason) return { ok: false, reason: planReason, page, left, wants_letter: wantsLetter };
+    // one line per fill: the phase timings and the counts (never a value or a label)
+    const cost = { filled, left, ms, counts, timed_out: !!cut, timed_out_phase: cut ? cut.phase : "", stalled: false };
+    console.log("[fill] " + fillBudget.fillLogLine(cost));
+    if (!filled && !applied.uploaded && planReason) return { ok: false, reason: planReason, page, left, wants_letter: wantsLetter, ms, counts,
+                                                             timed_out: !!cut, timed_out_phase: cut ? cut.phase : "" };
     const report = { page, url: wc.getURL() || url, filled, left, system: pre.system };
     recordFillReport(recordId, report);
     if (!opts.quiet) sendProgress(Object.assign({ record_id: recordId || null, message: pageMessage(page, filled, left) }, report));
@@ -1080,7 +1161,10 @@ async function runAutoApplyOnPane(recordId, opts) {
              declined,
              system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
              continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
-             captcha: pre.captcha, ms,
+             captcha: pre.captcha, ms, counts,
+             // a phase ran out of time while the page was still answering: what was filled
+             // stands, and the caller carries on from the page as it is (fill_budget.js)
+             timed_out: !!cut, timed_out_phase: cut ? cut.phase : "",
              ...(opts.answers ? { answers, files } : {}) };
   } catch (err) {
     return { ok: false, reason: "inject-failed" };
@@ -1288,7 +1372,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 });
 
 // ------------------------------------------------------------- the apply agent
-// "Apply for me" (docs/apply-agent.md): the agent drives the pane itself, from the job page to
+// "Assisted apply" (docs/apply-agent.md): the agent drives the pane itself, from the job page to
 // the review page, and stops at Submit; Send presses it (auto-submit sites with Autonomous on
 // are pressed without asking). One run at a time.
 const agent = createAgent({

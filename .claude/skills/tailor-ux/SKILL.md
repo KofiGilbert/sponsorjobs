@@ -351,7 +351,7 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   The bar says "Paused: waiting on your answer." and keeps the choices; an answer says "I carry on
   with the application for X as soon as the browser is free." The standing choice on terms a site
   requires is ONE bar question before the first run ("Yes, accept them for me" primary, "No, ask me
-  first" ghost), never mid-run and never ticked for the person. "Apply for me to all N" is a link
+  first" ghost), never mid-run and never ticked for the person. "Assisted apply to all N" is a link
   button on Waiting on you beside Approve all; the batch ends with one bar line ("Done with 3
   applications: 1 ready to send, 2 paused, waiting on you.") and "See them" (Needs you).
   A job left Ready to send keeps a "Send" row action on Waiting on you; when its page is gone, that
@@ -521,3 +521,26 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   tracker" (an "applied here before" answer from the person's earlier applications). Not yet
   checked at Kofi's window (no app run on the 8 GB builder); check at 76% zoom and 100% before
   release.
+- 2026-11-18: The Inbox is its own sidebar item between Tracker and Projects (an envelope, with
+  the unread count in the `nav-badge`; the badge's ink is now `--accent-ink`, white on the dark
+  theme's near-white accent could not be read). The page is the Jobs board's 1320 column: title,
+  one line naming the address with an underlined "Copy address", the Jobs filter bar (search,
+  "Unread only" outlined in ink when on, Mark all read, Refresh), then the label filter as a row
+  of quiet pills with counts (All, Application received, Not this time, Interview request, Action
+  needed, Other) and Archived at the far end. Two panes that fill the height and scroll inside
+  themselves: a framed row list in the Auto-apply grammar (hairlines, selected row on surface-2
+  with the ink edge; unread is an ink dot, a heavier name and subject, and a word for screen
+  readers) and a reader in the Jobs detail card. Label chips use existing tokens only: received
+  `--good`, a rejection muted and worded "Not this time" (never red), interview in ink with an
+  ink-2 outline, action `--flag`, other neutral. A mail body sits on a WHITE page with dark text
+  in both themes (mail HTML assumes white), in a sandboxed frame fitted to its content. Delete
+  asks in the page in a surface-2 row ("Delete this message? This cannot be undone."), never a
+  dialog; Archive toasts with Undo. No reply or compose, and no button that cannot act. Empty
+  states are a title, one line, at most one button: no address ("Get an address", the page's
+  one primary, opens Settings, Connections, Email), no mail yet, nothing matches ("Show all
+  mail", ghost). Offline is one muted `.feed-note` line. Under 860px of page width it is one
+  pane with an "Inbox" back link (`.tpl-back`), by container query so it also holds beside the
+  in-app browser. Tracker's job panel gains an underlined "N messages" link that opens the Inbox
+  on that application's mail; Settings, Connections, Email gains "Copies to my own e-mail".
+  Not yet checked at Kofi's window (no app run on the 8 GB builder); check at 76% zoom and 100%,
+  dark and light, before release.

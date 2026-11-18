@@ -67,9 +67,9 @@ function fakePane(start, hooks) {
   hooks = hooks || {};
   const P = { at: start, hang: new Set(), reloads: 0, backs: 0, destroyed: false, checks: 0, acts: [], navs: [], listeners: {}, hist: [] };
   const wc = {
-    getURL: () => PAGES[P.at].url, isDestroyed: () => P.destroyed,
+    getURL: () => { if (P.gone) throw new TypeError("Object has been destroyed"); return PAGES[P.at].url; }, isDestroyed: () => P.destroyed,
     on: (ev, fn) => { (P.listeners[ev] = P.listeners[ev] || []).push(fn); }, removeListener: () => {}, session: null,
-    reload: () => { P.reloads++; if (hooks.onReload) hooks.onReload(P); },
+    reload: () => { if (P.gone) throw new TypeError("Object has been destroyed"); P.reloads++; if (hooks.onReload) hooks.onReload(P); },
     navigationHistory: { canGoBack: () => true, goBack: () => { P.backs++; if (hooks.onBack) hooks.onBack(P); },
                          getActiveIndex: () => P.hist.length - 1, getEntryAtIndex: (i) => ({ url: P.hist[i] || "" }) },
     executeJavaScript: async (expr) => {
@@ -117,7 +117,7 @@ function setup(start, brain, hooks) {
     openInPane: (u) => { opened.push(u); if (hooks && hooks.onOpen) hooks.onOpen(P, u); else P.at = "job"; },
     waitPaneLoad: async () => {},
     autofillCore: () => "", agentViewSource: () => "",
-    runAutoApplyOnPane: async () => { if (P.hang.has("fill")) return never(); return { ok: true, filled: P.at === "form" ? 2 : 0, left: P.at === "form" ? ["ZIP code"] : [] }; },
+    runAutoApplyOnPane: async () => { if (hooks && hooks.fill) { const f = hooks.fill(P); if (f !== undefined) return f; } if (P.hang.has("fill")) return never(); return { ok: true, filled: P.at === "form" ? 2 : 0, left: P.at === "form" ? ["ZIP code"] : [] }; },
     sendProgress: (info) => progress.push(JSON.parse(JSON.stringify(info))),
     acquireDebugger: () => null, frames: {},
     applyDecision: async () => ({ fill: true, click_submit: false }),
@@ -464,6 +464,53 @@ const walk = (P, a) => {
 
   console.log("section 10 at " + Math.round((Date.now() - T0) / 1000) + " s");
   // ---- 10. the debug log never carries a secret --------------------------------------------
+  console.log("fill budget at " + Math.round((Date.now() - T0) / 1000) + " s");
+  // ---- (2026-11-18) a fill that ran out of time is not a hang; a destroyed pane is not an error ----
+  {
+    // every fill reports "out of time, still moving": what it filled is kept, the run carries on
+    // from the page as it stands, the page is never reloaded and the ladder is never used
+    let fills = 0;
+    const { agent, P, progress } = setup("job", plainBrain, { onAct: walk,
+      fill: (p) => { fills++; return { ok: true, filled: p.at === "form" ? 2 : 0, left: p.at === "form" ? ["ZIP code"] : [], timed_out: true,
+                                       timed_out_phase: "filling the planned fields", ms: { engine: 28000, ops: 38000 },
+                                       counts: { engine_filled: 1, ops_filled: 1, planned: 4, pending: 2, from_memory: 3, opens: 5 } }; } });
+    const r = await agent.run(71, { url: PAGES.job.url, company: "Acme" });
+    assert(r.ok && r.ready, "a slow fill still ends ready " + JSON.stringify(r));
+    assert(fills >= 2 && P.reloads === 0 && P.backs === 0, "no reload for a slow fill: fills=" + fills + " reloads=" + P.reloads);
+    const f = feedLines(progress, 71);
+    assert(!f.some((l) => /Trying another way|did not answer/.test(l)), "the ladder is not used " + f.join(" | "));
+    const log = fs.readFileSync(path.join(TMP, "sj-agent.log"), "utf8");
+    assert(/fill ran out of time while filling the planned fields: kept \d+ filled, carrying on/.test(log), "the carry-on is logged");
+    assert(/fill cost: filled=\d+ left=\d+ engine_filled=1 ops_filled=1 planned=4 pending=2 from_memory=3 opens=5 total_ms=66000 engine_ms=28000 ops_ms=38000 timed_out=filling the planned fields/.test(log), "one cost line per fill");
+  }
+  {
+    // the page stopped answering during the fill (no heartbeat): that IS a hang, the ladder reloads
+    let n = 0;
+    const { agent, P, progress } = setup("job", plainBrain, { onAct: walk,
+      fill: () => (n++ === 0 ? { ok: false, reason: "stalled", timed_out: true, stalled: true, timed_out_phase: "filling the page", filled: 0, left: [] } : undefined) });
+    const r = await agent.run(72, { url: PAGES.job.url, company: "Acme" });
+    assert(r.ok && r.ready, "a stalled fill is recovered " + JSON.stringify(r));
+    const f = feedLines(progress, 72);
+    assert(f.some((l) => /^retry: Trying another way/.test(l)) && f.some((l) => /did not answer/.test(l)), "a stalled fill goes to the ladder " + f.join(" | "));
+    assert(/hang: fill stalled while filling the page/.test(fs.readFileSync(path.join(TMP, "sj-agent.log"), "utf8")), "logged as a stall");
+  }
+  {
+    // the pane is destroyed in the middle of the action loop (wc.getURL() throws "Object has been
+    // destroyed"): the ordinary "pane closed" stop, never reason "error"
+    const { agent, P, progress } = setup("job", plainBrain, { onAct: (p, a) => { walk(p, a); if (p.at === "form") { p.gone = true; p.destroyed = true; } } });
+    const r = await agent.run(73, { url: PAGES.job.url, company: "Acme" });
+    assert(!r.ok && r.reason === "no-page", "a destroyed pane stops as no-page " + JSON.stringify(r));
+    assert(progress.some((x) => x.record_id === 73 && x.state === "stopped" && /browser pane closed/i.test(x.message || "")), "said as the pane closed");
+    assert(P.gone, "the pane went away mid-run");
+  }
+  {
+    // ... and inside the recovery ladder (wc.reload() on a destroyed pane), after a stalled fill
+    const { agent, P } = setup("job", plainBrain, { onAct: walk,
+      fill: (p) => { p.gone = true; return { ok: false, reason: "stalled", timed_out: true, stalled: true, timed_out_phase: "filling the page", filled: 0, left: [] }; } });
+    const r = await agent.run(74, { url: PAGES.job.url, company: "Acme" });
+    assert(!r.ok && r.reason === "no-page", "a destroyed pane in the ladder stops as no-page " + JSON.stringify(r));
+    assert(P.reloads === 0, "nothing was reloaded");
+  }
   {
     const log = fs.readFileSync(path.join(TMP, "sj-agent.log"), "utf8");
     assert(log.length > 0 && /reply:/.test(log), "the debug log was written");

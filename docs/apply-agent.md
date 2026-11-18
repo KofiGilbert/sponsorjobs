@@ -1,4 +1,4 @@
-# The apply agent: "Apply for me"
+# The apply agent: "Assisted apply"
 
 > The spec for the in-app agent that applies to a job the way a person would: opens the job,
 > clicks Apply, signs in (or creates the portal account), works through every page, uploads the
@@ -205,7 +205,7 @@ it is the Send path above. Belt and braces.
   for 600 ms, or at 8 s; report which fired. (browser-use has no such wait; that is why the
   Workday page showed up blank on 2026-10-27.)
 - Per step: one brain call (90 s cap), actions 25 s each, every other call into the pane
-  20 s (`SJ_AGENT_PANE_MS`), the fill engine 40 s (`SJ_AGENT_FILL_MS`). `MAX_STEPS = 60`
+  20 s (`SJ_AGENT_PANE_MS`), the fill engine by phase (2026-11-18, `shell-electron/fill_budget.js`: engine 30 s, form read 15 s, plan 30 s, ops 40 s, 120 s overall with `SJ_AGENT_FILL_MS` as the override; a phase that is still filling is cut at its cap and keeps what it filled, one whose page gave no heartbeat for 15 s is a hang). `MAX_STEPS = 60`
   (`SJ_AGENT_MAX_STEPS`), `MAX_FAILED_STEPS = 4` in a row (a failed step = an action error or
   an empty reply) -> the recovery ladder, never a stop (section 13).
 - Loop detector: the hash of `(op, index, text)` over the last 12 actions; the same hash 3
@@ -220,7 +220,10 @@ it is the Send path above. Belt and braces.
 
 ## 8. UI
 
-- The row button is **Apply for me** (replaces "Fill application"). The top-right action
+- The row button is **Assisted apply** (replaces "Fill application"; it was "Apply for me" until
+  2026-11-18, renamed because the person watches this run and presses Send, and walking away is
+  what Auto mode is). Its tooltip: "I fill the form while you watch. I ask you when I need an
+  answer, and you press Send." The top-right action
   becomes **Apply to all N** once Milestone 2 lands.
 - While it runs, the bar above the pane is the status line, few words:
   "Opening job", "Signing in", "Page 2 of 5 filled, 9 fields", "Ready to send" + **Send**,
@@ -354,11 +357,11 @@ died. Now nothing that only the person can give ever ends a run:
 
 - **The standing choice up front.** `accept_required_terms` is asked once in setup's "Questions
   every form asks" step (an unticked box) and, while still not made (`terms_decided` in the
-  review prefs), as one question on the bar before the first Apply for me or batch starts. It is
+  review prefs), as one question on the bar before the first Assisted apply or batch starts. It is
   never made for the person; leaving the box unticked decides nothing.
 - **Single runs** ask live and wait (chunks of 20 s: `/ask` or `/terms` with `park`, then
   `/ask/wait`; Stop closes the ask between chunks with `/ask/close`). Past the wait the job parks.
-- **Batches** (`agent.batch`, "Apply for me to all" on Waiting on you) never wait: an unknown
+- **Batches** (`agent.batch`, "Assisted apply to all" on Waiting on you) never wait: an unknown
   question or consent not given parks the job at once (`no_wait`) and the next job starts. ONE
   digest (`/api/autoapply/agent/digest`) goes to Telegram at the end, and every 30 minutes while
   the batch runs when something new parked, with buttons for up to three jobs.
@@ -369,7 +372,7 @@ died. Now nothing that only the person can give ever ends a run:
   is open) saves as usual and marks the job ready; the shell polls `/api/autoapply/agent/parked`,
   takes it, and re-runs it one at a time, behind any run or batch: from the same page with its
   state when the pane is still there, else by opening the job again, the consent and answers
-  applied on the way through. A fresh Apply for me on a parked job replaces the park.
+  applied on the way through. A fresh Assisted apply on a parked job replaces the park.
 - **Send after being away.** A job left Ready to send keeps `agent_ready` on its record (the
   review page's fingerprint, `reviewSig`), and its Auto-apply row offers Send. When its page is
   gone (a batch moved on, a restart), ONE Send fills the job again from the saved answers
@@ -433,7 +436,7 @@ account, asked for a reset, and gave up when no mail came in 3 minutes. From 02:
 API key ran out of credits and every job parked "needs you" within 20 seconds.
 
 **Every call into the pane is capped.** `guard(promise, ms, what)` races the call with a
-timeout (`PANE_MS` 20 s; the fill 40 s; a brain call 90 s; CDP input events 6 s), with the
+timeout (`PANE_MS` 20 s; the fill 120 s overall with a cap per phase; a brain call 90 s; CDP input events 6 s), with the
 run's Stop flag (polled every 150 ms, so Stop takes effect inside a hung call), and with a
 navigation (`did-navigate` bumps `navEpoch`; a call to the old document is rejected instead of
 left pending, which Electron otherwise does). The run's `webContents` is wrapped in a proxy
@@ -716,7 +719,7 @@ stays one short line; the list opens on demand under the bar like Steps (`#bbAns
 
 ## 10. Milestones
 
-1. **One job, visible.** Apply for me on a queued Workday job -> job page -> Apply -> sign in or
+1. **One job, visible.** Assisted apply on a queued Workday job -> job page -> Apply -> sign in or
    create account -> pages filled -> review page -> "Ready to send" + Send. Offline proof on
    the mock ATS (`tests/fixtures/forms/multipage.html?wall=1` plus a job page in front of it),
    then a real-model run on the fixture, then Kofi's live run on Country Financial.
@@ -734,7 +737,7 @@ stays one short line; the list opens on demand under the bar like Steps (`#bbAns
   Submit-like clicks rejected; unknown index dropped; `done` alone; FakeLLM scripted run over
   the multipage fixture views reaches `ready_to_submit`.
 - `shell-electron/e2e-agent.mjs`: the real Electron app with `RESUME_AGENT_FAKE_LLM=1` on the
-  mock ATS: one click on Apply for me ends on "Ready to send"; Send submits the mock; a
+  mock ATS: one click on Assisted apply ends on "Ready to send"; Send submits the mock; a
   `?captcha=1` variant stops with the captcha message and no submit; `?skeleton=1` is reloaded
   by the ladder; `?activate=1` runs the Workday activation mail end to end (sections 18, 19).
 - `tests/test_agent_engineer.py` and `tests/js/test_agent_engineer.js` (sections 12 to 16): the
@@ -990,7 +993,7 @@ reads the same choice.
 | | Auto ("I'm away") | Assisted ("I'm here") | Hybrid ("I'm around") |
 |---|---|---|---|
 | Where it runs | in the background: the pane is kept out of view, no Browser tab, no bar | in the Browser tab | in the Browser tab |
-| What starts it | the app, on a timer, through the approved queue (Waiting on you) up to `daily_cap` a day, each application once a day | the person (Apply for me, Apply for me to all) | the person |
+| What starts it | the app, on a timer, through the approved queue (Waiting on you) up to `daily_cap` a day, each application once a day | the person (Assisted apply, Assisted apply to all) | the person |
 | Questions only the person knows | never asked: the job parks (Needs you) and the daily summary counts it | the guided ask on the page (section 27) | the guided ask, and the same questions on Telegram |
 | Who presses Submit | the agent, ONLY on the verified allowlist (`submit/allowlist.py`, one system today) and, with a threshold set, only at that match or better; everything else is filled and left at Ready to send | the person (Send) | the person (Send, in the app) |
 | Telegram | "Sent: Role at Company" per application it sent, and ONE daily summary | the Ready to send notice only; no asks, no digest | asks, the digest, the Ready to send notice |

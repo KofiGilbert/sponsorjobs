@@ -26,7 +26,7 @@ import {
 } from "./billing";
 import { agentSign, directory, DIRECTORY_PATH } from "./botauth";
 import { type Env, intVar } from "./env";
-import { aliasCreate, aliasDelete, aliasGet, inboxRead, receiveMail } from "./mail";
+import { aliasCreate, aliasDelete, aliasGet, aliasNotify, inboxRead, messagesRead, receiveMail } from "./mail";
 import {
   avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft, passActive, periodOf,
   planFor, QuotaExceeded, requireLlm, status, tierFor,
@@ -462,6 +462,8 @@ const ROUTES: Route[] = [
   ["GET", /^\/mail\/alias$/, ({ req, env }) => aliasGet(req, env)],
   ["DELETE", /^\/mail\/alias$/, ({ req, env }) => aliasDelete(req, env)],
   ["GET", /^\/mail\/inbox$/, ({ req, env, now }) => inboxRead(req, env, now)],
+  ["POST", /^\/mail\/alias\/notify$/, ({ req, env }) => aliasNotify(req, env)],
+  ["GET", /^\/mail\/messages$/, ({ req, env, now }) => messagesRead(req, env, now)],
   // Web Bot Auth for the apply agent (src/botauth.ts, docs/signed-agent.md): sign one page request,
   // and publish the key. The directory is also routed here from sponsorjobs.ai (wrangler.jsonc).
   ["POST", /^\/agent\/sign$/, ({ req, env, now }) => agentSign(req, env, now)],

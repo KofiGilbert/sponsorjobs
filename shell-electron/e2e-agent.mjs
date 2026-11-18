@@ -1,4 +1,4 @@
-/* End-to-end test of the apply agent ("Apply for me", docs/apply-agent.md), driving the REAL
+/* End-to-end test of the apply agent ("Assisted apply", docs/apply-agent.md), driving the REAL
  * Electron app against a mock application system (tests/fixtures/forms/mock_ats.html): a job
  * page, an account wall, three form pages, a review page, and the "received" page, all with no
  * URL change (like Workday).
@@ -8,7 +8,7 @@
  * Runs the engine with the test model (RESUME_AGENT_FAKE_LLM=1, a scripted brain), in a
  * throwaway data folder, so nothing real is touched and nothing is sent anywhere. The dev app
  * must be closed first (one engine port, one CDP port). Asserts on what the window shows:
- *  1. one click on Apply for me ends on "Ready to send", with the mock having seen Apply,
+ *  1. one click on Assisted apply ends on "Ready to send", with the mock having seen Apply,
  *     the sign-in, and every page, and the resume attached;
  *  2. Send presses the mock's Submit and the bar says Sent;
  *  3. a ?captcha=1 job stops at the review page with the captcha message and nothing submitted.
@@ -40,7 +40,7 @@
  *  The Terms of Use cover applying on the person's behalf (section 4): the first Auto-apply visit
  *  shows ONE line (no modal) and records the version; the person turns site notices off on the
  *  memory page's "What I may do for you" (so later sections still ask per site), and the first
- *  Apply for me never meets a terms question.
+ *  Assisted apply never meets a terms question.
  *  ... and (section 17) back from being away: Send on a Ready to send job whose page is gone fills
  *  it again from the saved answers and submits it in one click, asking nothing.
  *  ... and (sections 18 and 19, 2026-11-02, the Nelnet run) a ?skeleton=1 form page that never
@@ -275,7 +275,7 @@ check("Turn off on the memory page is the person's own choice", offNow && offNow
 await win.click("[data-nav=autoapply]");
 await win.waitForSelector(`.aa-row[data-id="${RID}"]`, { timeout: 30_000 });
 const label = await win.locator(`.aa-row[data-id="${RID}"] [data-act]`).first().textContent();
-check("the row button says Apply for me", /apply for me/i.test(label || ""), label);
+check("the row button says Assisted apply", /assisted apply/i.test(label || ""), label);
 await clickRow(RID);
 // Answers every form asks are missing in the fresh data folder: the bar asks once first.
 const gate = await waitBar(/before i apply/i, 30_000);

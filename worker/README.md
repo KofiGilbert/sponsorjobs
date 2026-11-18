@@ -33,6 +33,8 @@ implementation; it does not replace or change anything in `backend/`.
 | `POST /mail/alias` `{name?}` | the caller's `first.last@sponsorjobs.ai` alias for the apply agent, `{alias, forward_to}` (idempotent; `409 sign_in_first` without a verified e-mail) |
 | `GET /mail/alias`, `DELETE /mail/alias` | read or release the alias (`{alias, forward_to}`, both null when there is none) |
 | `GET /mail/inbox?after=<cursor>` | codes and links mailed to the alias in the last 30 minutes, `{events: [{cursor, kind, code, link, subject, sender, at}], cursor}`; `after` acknowledges |
+| `POST /mail/alias/notify` `{mode}` | what the person's own e-mail gets for each message: `forward` (default), `notice` or `off` |
+| `GET /mail/messages?after=<cursor>&limit=<n>` | whole messages for the in-app Inbox, oldest first, at most 25, `{messages, cursor, more}`; `after` acknowledges and deletes; kept until downloaded, 30 days at most |
 | `POST /agent/sign` `{method, authority, path}` | Web Bot Auth headers for one page request the apply agent makes: `{signature_input, signature, signature_agent, expires}` (60 s; 120 per account per minute, `429 rate_limited`; `503 not_configured` without `AGENT_SIGNING_KEY`) |
 | `GET /.well-known/http-message-signatures-directory` | the agent's public key (a signed JWKS); routed here from sponsorjobs.ai as well, the registered Signature-Agent |
 
@@ -61,8 +63,10 @@ Telegram bot with the billing link. Set `OWNER_TELEGRAM_CHAT_ID` (a secret) or r
 
 Mail aliases (`src/mail.ts`, `docs/mail-alias.md`): each student gets `first.last@sponsorjobs.ai`
 to give job portals. Email Routing's catch-all delivers to this Worker's `email` handler, which
-keeps only the one-time code or verification link for 30 minutes (so the apply agent can poll it)
-and forwards the whole message to the student's verified e-mail through Resend.
+keeps the one-time code or verification link for 30 minutes (so the apply agent can poll it),
+holds the whole message in `mail_messages` until the student's app has downloaded it for the
+in-app Inbox (30 days at most; attachment names only), and tells the student's verified e-mail
+through Resend: the whole message, a short notice, or nothing (`notify_mode`).
 
 Request signing for the apply agent (`src/botauth.ts`, `docs/signed-agent.md`): the agent identifies
 itself to job sites with RFC 9421 signatures in Cloudflare's Web Bot Auth shape. The Ed25519 key is

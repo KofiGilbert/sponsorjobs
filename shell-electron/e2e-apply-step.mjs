@@ -12,7 +12,7 @@
  *     one-page resume, and the review footer's one primary is Apply (Accept & Save is ghost,
  *     Download PDF stays);
  *  2. Apply saves the resume (the record and its PDF), makes the Auto-apply package (Waiting on
- *     you, the Tracker's Approved column), switches the pane to Browser and starts Apply for me;
+ *     you, the Tracker's Approved column), switches the pane to Browser and starts Assisted apply;
  *  3. the run is told in the chat (Applying to <role> at <company>, its steps) and on the bar;
  *     the agent clicks Apply on the mock, gets past the sign-in, fills every page, attaches the
  *     tailored resume, and stops at Submit with Send; nothing is submitted by the agent;
@@ -248,7 +248,7 @@ check("Accept & Save steps back to ghost, Download PDF stays", foot.acceptGhost 
 check("the footer line is one short line with no dashes", foot.note.length < 70 && !/[–—]/.test(foot.note), foot.note);
 await shot("apply-footer-1893");
 
-// ---- 5. Apply: save, package, Browser, Apply for me ----------------------------------------------
+// ---- 5. Apply: save, package, Browser, Assisted apply ----------------------------------------------
 await win.click("#applyBtn");
 const gate = await waitBar(/before i apply|opening|applying|signing|ready to send/i, 60_000);
 if (/before i apply/i.test(gate)) {       // a fresh data folder: the answers every form asks, once
@@ -324,7 +324,7 @@ check("nothing was saved before there is somewhere to apply",
 await win.fill("#composerInput", `Here it is: ${JOB}?again=7`);
 await win.press("#composerInput", "Enter");
 const run2 = await waitBar(/before i apply|opening|applying|signing|clicking|filled|ready to send/i, 60_000);
-check("the link in the chat starts Apply for me", run2 !== "", run2);
+check("the link in the chat starts Assisted apply", run2 !== "", run2);
 const ready2 = await waitBar(/ready to send|stopped|could not|needs you|have a look/i, 180_000);
 check("the pasted job's run also stops at Submit with Send", /ready to send/i.test(ready2), ready2);
 const c2 = await chatApply();
