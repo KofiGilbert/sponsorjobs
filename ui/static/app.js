@@ -6559,7 +6559,7 @@
   // assessment still says Assessment.
   const INBOX_LABEL_EN = { interview_request: "Interview request", rejection: "Rejection", offer: "Offer",
     question: "Question", acknowledgement: "Acknowledgement", assessment: "Assessment" };
-  const INBOX_LANE_EN = { thread: "Matched by email thread", domain: "Matched by sender's domain", company: "Matched by company name" };
+  const INBOX_LANE_EN = { thread: "Matched by email thread", domain: "Matched by sender's domain", role: "Matched by company and role", company: "Matched by company name" };
 
   function inboxLabel(sg) {
     const key = sg.kind === "assessment" ? "assessment" : (sg.label || { interview_invite: "interview_request",

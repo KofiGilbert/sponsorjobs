@@ -109,7 +109,8 @@ def test_build_matches_the_employer_and_proposes_the_stage():
     # becomes a suggestion.
     assert "m-noise" not in by_id and "m-friend" not in by_id
     # Each says how it was matched.
-    assert by_id["m-invite"]["matched_by"] == "company" and by_id["m-assess"]["label"] == "interview_request"
+    # (the invite names the role as well as the employer: the "role" lane)
+    assert by_id["m-invite"]["matched_by"] == "role" and by_id["m-assess"]["label"] == "interview_request"
 
 
 def test_no_suggestion_when_the_job_is_already_there_or_closed():

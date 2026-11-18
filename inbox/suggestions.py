@@ -13,7 +13,7 @@ Matching (inbox/matching.py) runs first: only mail tied to a tracked application
 thread, its sender's domain or the employer's name is read any further. Then one label per
 message (inbox/replies.py): the model's when one is available, the rules' otherwise. Personal
 mail that only names the employer never reaches the model. A plain acknowledgement matched by
-thread or domain is the one move the app makes by itself, shown in the strip with Undo.
+thread, domain, or company name together with the role, is the one move the app makes by itself, shown in the strip with Undo.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def build_suggestions(messages: list[dict], jobs: list[dict], llm=None,
     whether or not it becomes a suggestion, so the caller can remember it (thread matching, and
     never labelling the same message twice)."""
     from .replies import STAGE_FOR_LABEL, classify_reply, own_text, rules_reply
-    from .matching import COMPANY, DOMAIN, THREAD, match_application
+    from .matching import COMPANY, SURE_LANES, match_application
     from .matching import _FREE_MAIL  # noqa: PLC2701 - one list of personal mail domains
 
     out: list[dict] = []
@@ -113,7 +113,7 @@ def build_suggestions(messages: list[dict], jobs: list[dict], llm=None,
             "message_id": str(msg.get("id") or suggestion_id(msg))[:200],
             "thread_id": str(msg.get("thread_id") or "")[:200],
             "rfc_id": str(msg.get("rfc_id") or "")[:300],
-            "auto": bool(move and v.get("plain_ack") and lane in (THREAD, DOMAIN)),
+            "auto": bool(move and v.get("plain_ack") and lane in SURE_LANES),
             "status": "pending",
             "created_at": _now(),
         })
