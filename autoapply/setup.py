@@ -11,8 +11,8 @@ already owns the answer (there is no setup store of its own):
              relocation (work_auth.relocate), start date, notice period, the desired salary, and
              the rest of what the person wants (``apply_wants``)
 4. forms     the answer library's standing answers (how you heard, at least 18, non-compete,
-             marketing messages, forced consents, clearance, license, GPA, related degree,
-             current pay) and the standing consent to required notices
+             relatives at a company you apply to, marketing messages, forced consents, clearance,
+             license, GPA, related degree, current pay) and the standing consent to required notices
 5. selfid    the eight self-identification answers (autoapply/basics.py)
 6. apply     review every application, or send where the site allows it (the verified
              allowlist), the daily limit and Autopilot's daily number
@@ -42,6 +42,9 @@ QUESTIONS: dict[str, str] = {
     "covenants": "Do you have a non-compete or other restrictive covenant with a current or past employer?",
     "marketing": "May job sites send you marketing texts and emails?",
     "forced": "Accept a required consent whose only choice is yes?",
+    # (2026-11-17, autoapply/commonsense.py) "No" answers No on every form; "Yes" means some do:
+    # the agent asks each time. Unanswered: the question stays the person's.
+    "relatives": "Do any of your relatives work at companies you apply to?",
     "clearance": "Do you have an active security clearance?",
     "license": "Do you have a valid driver's license?",
     "gpa": "What is your GPA?",

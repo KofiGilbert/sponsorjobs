@@ -16,6 +16,11 @@
   choice (Yes, I acknowledge, I agree). Without that consent they are asked as before. A question
   that asks the person to DISCLOSE a fact (a criminal record, an existing non-compete, a
   termination) is never an acknowledgement: it is theirs.
+  (2026-11-17) Also an acknowledgement worded as a Yes / No choice: "Please select "Yes" to
+  acknowledge that you have received and understand this requirement", "Please be aware that
+  ..." with Yes and No as its choices, "I understand ...", "I acknowledge ...". Never a real
+  question that only contains "aware" ("Are you aware of any conflicts of interest?"), never a
+  marketing opt-in, never a non-compete or other covenant (a fact).
 
 Category rules on the question's words, never one site's markup (Phoenix Contact on Greenhouse,
 2026-11-17, asked about both kinds after 15 fields were filled).
@@ -179,6 +184,42 @@ _DISCLOSE = re.compile(
     r"|licen[cs]e|sponsor|visa|citizen|authori[sz]ed to work|relocat|salary|compensation|clearance"
     r"|failed (a |any )?(drug|background)|tested positive|refused (a |any )?(drug|background)", re.I)
 
+# (2026-11-17, a Workday "Application Questions" page) An acknowledgement worded as a Yes / No
+# choice: a notice followed by "Please select "Yes" to acknowledge that you have received and
+# understand this requirement", a "Please be aware that ..." statement with Yes and No as its
+# choices, a first-person "I understand ..." / "I acknowledge ..." statement. Statements only:
+# "Are you aware of any conflicts of interest?" asks a fact and is never one.
+_ACK_SELECT = re.compile(
+    r"\b(select|choose|check|click|answer|mark|indicate)\b[^.?]{0,30}?\byes\b[^.?]{0,40}?"
+    r"\bto (acknowledge|confirm (that )?you (have )?(read|received|reviewed|understand|understood))\b"
+    r"|\backnowledge (that )?(you|i) (have )?(read|received|reviewed|understand|understood)\b"
+    r"|\bby (selecting|choosing|checking|clicking|answering)\b[^.?]{0,40}?\b(i|you) (acknowledge|understand|confirm)\b", re.I)
+_ACK_STATED = re.compile(r"^\W*please (be aware|note|be advised|understand) that\b"
+                         r"|^\W*i (understand|acknowledge|have read)\b", re.I)
+# A statement the page view cut at its 80 characters (extension/agent_view.js MAX_LABEL) hides its
+# end, which may ask something: never taken for an acknowledgement.
+_VIEW_CUT = (75, 80)
+_ENDS = re.compile(r"[.?!\"')\u201d\u2019\u2026]\s*$")
+# A real question inside the notice ("... Are you willing to travel?"): only "Do you understand /
+# acknowledge / agree?" leaves it an acknowledgement.
+_ASKS = re.compile(r"\b(are|do|did|have|has|had|will|would|can|could|is|were|was) you\b([^.?!]*)\?", re.I)
+_ASKS_ACK = re.compile(r"^\s*(also |hereby |fully )?(understand|acknowledge|agree|accept|confirm)\b", re.I)
+
+
+def _stated_acknowledgement(lbl: str) -> bool:
+    """A notice the person is told to acknowledge with a Yes (the wordings of _ACK_SELECT),
+    asking nothing else, and neither a marketing opt-in nor a question a saved key answers."""
+    if is_optin(lbl):
+        return False
+    if not _ACK_SELECT.search(lbl):
+        if not _ACK_STATED.search(lbl) or (_VIEW_CUT[0] <= len(lbl) <= _VIEW_CUT[1] and not _ENDS.search(lbl)):
+            return False
+    if any(not _ASKS_ACK.search(m.group(2)) for m in _ASKS.finditer(lbl)):
+        return False
+    from autoapply.answers import normalize
+    return not normalize(lbl).startswith("@")
+
+
 _AFFIRM = re.compile(r"^\W*(yes\b|y\W*$|i (acknowledge|agree|understand|accept|certify|attest|consent|confirm|have read|will)\b"
                      r"|acknowledged?\b|agreed?\b|accept(ed)?\b|understood\b|confirm(ed)?\b|true\W*$)", re.I)
 _DENY = re.compile(r"\b(no|not|don'?t|do not|decline|disagree|refuse|won'?t|will not|unwilling)\b", re.I)
@@ -190,7 +231,7 @@ def is_acknowledgement(label: str) -> bool:
     lbl = " ".join(str(label or "").split())
     if not lbl or _DISCLOSE.search(lbl) or workauth.classify(lbl):
         return False
-    return bool(_ACK.search(lbl))
+    return bool(_ACK.search(lbl)) or _stated_acknowledgement(lbl)
 
 
 def affirm_option(options) -> str | None:

@@ -6704,6 +6704,61 @@ def _worked_here(company: str):
         return None
 
 
+def _earlier_applications(rec=None) -> list | None:
+    """The companies of the person's EARLIER applications, from their own records: every saved
+    application marked applied (or further along) and every Tracker card that was applied to,
+    leaving out the application being filled (``rec``) and its Tracker card. None when the
+    records could not be read: then "have you applied here before?" stays a question."""
+    from submit.tracker import effective_stage
+    out: list = []
+    rid = (rec or {}).get("id")
+    try:
+        recs = _records()
+        try:
+            rows = recs.list(limit=10000)
+        finally:
+            recs.close()
+        for r in rows:
+            if rid is not None and r.get("id") == rid:
+                continue
+            d = _record_data(r)
+            if effective_stage(d) in _SENT_STAGES or d.get("applied_at") or d.get("status") == "applied":
+                out.append(str(r.get("company") or ""))
+        mine = _board_key(rec)[0] if rec else ""
+        w = _watchlist()
+        try:
+            for j in w.board_jobs():
+                if mine and j.get("source_id") == mine:
+                    continue
+                if j.get("applied_at") or j.get("stage") in _SENT_STAGES or j.get("furthest_stage") in _SENT_STAGES:
+                    out.append(str(j.get("company") or ""))
+        finally:
+            w.close()
+    except Exception:          # noqa: BLE001 - unreadable records answer nothing
+        traceback.print_exc()
+        return None
+    return [c for c in out if c.strip()]
+
+
+def _common_sense(company: str = "", rec=None) -> dict:
+    """What the planner and the ask route take for the common-sense screeners
+    (autoapply/commonsense.py): ``adult`` (a job or school date in the saved profile proves the
+    person is at least 18) and ``applied_here`` (the records' verdict on "have you applied to
+    this company before?", None when they could not be read or no company is known)."""
+    from autoapply import commonsense as _CS
+    try:
+        adult = _CS.adult_proof(_saved_full_profile() or {})
+    except Exception:          # noqa: BLE001 - no proof then: the question stays the person's
+        adult = False
+    applied = None
+    if str(company or "").strip():
+        try:
+            applied = _CS.applied_before(company, _earlier_applications(rec))
+        except Exception:      # noqa: BLE001
+            applied = None
+    return {"adult": adult, "applied_here": applied}
+
+
 def _salary_conflict():
     """The one question two disagreeing salaries become (applicant/facts.py), or None."""
     from applicant import facts as _F
@@ -7136,6 +7191,8 @@ def _setup_payload() -> dict:
             "heard": saved.get("@heard_about") or "",
             "over_18": S.yes_no(saved.get("@over_18")),
             "covenants": S.yes_no(saved.get("@restrictive_covenants")),
+            # "" (never answered), "No" (answered No everywhere) or "ask" (Yes, ask me each time)
+            "relatives": {"No": "No", "Yes": "ask"}.get(S.yes_no(saved.get("@relatives_at_employer")), ""),
             "marketing": S.yes_no(saved.get("@marketing_optin")) or "No",
             "forced": "always" if S.yes_no(saved.get("@forced_consent")) == "Yes" else "ask",
             "terms": _terms_pref(),
@@ -7315,6 +7372,8 @@ def _setup_forms(f: dict) -> None:
             patch["over_18"] = S.yes_no(f.get("over_18"))
         if "forced" in f:
             _setup_answer(lib, "forced", "Yes" if f.get("forced") == "always" else "")
+        if "relatives" in f:                     # "ask" is saved as Yes: some do, so ask each time
+            _setup_answer(lib, "relatives", {"No": "No", "ask": "Yes"}.get(str(f.get("relatives") or ""), ""))
         if clearance is not None:
             _setup_answer(lib, "clearance", clearance)
         if gpa is not None:
@@ -14014,7 +14073,7 @@ def autoapply_plan():
                            cover_letter=str(data.get("cover_letter") or ""), cover_letter_path=letter,
                            applicant=applicant, resume_path=resume, job_country=_job_country(data),
                            company=company, eeo_decline=_eeo_decline(), accept_notices=_accept_notices(),
-                           **_recall_ctx(company, data))
+                           **_common_sense(company, rec), **_recall_ctx(company, data))
         res = plan_known(fields, ctx)
         open_ = res.left + [f for f in res.rest if (f.type or "").lower() != "file"]
         if open_ and ctx.per_company:
@@ -14159,7 +14218,8 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
                            drafted=[x for x in ((data or {}).get("screening") or []) if isinstance(x, dict)],
                            cover_letter="", applicant=applicant, resume_path="",
                            job_country=_job_country(data or {}), company=company,
-                           eeo_decline=_eeo_decline(), accept_notices=_accept_notices(), **recall)
+                           eeo_decline=_eeo_decline(), accept_notices=_accept_notices(),
+                           **_common_sense(company, rec), **recall)
         if recall:
             # (Phase 4) new wordings: the cached mapping (or one call for the page)
             mapped, confirm, none = _label_maps([{"label": lab} for lab in labels], company, lib)
@@ -14879,7 +14939,8 @@ def autoapply_agent_ask():
     for x in raw[:12 if batch else 6]:
         if not isinstance(x, dict):
             continue
-        q = " ".join(str(x.get("question") or "").split())[:300]
+        whole = " ".join(str(x.get("question") or "").split())[:1500]
+        q = whole[:300]
         if not q:
             continue
         given = x.get("all_options") if isinstance(x.get("all_options"), list) else (x.get("options") or [])
@@ -14888,7 +14949,7 @@ def autoapply_agent_ask():
         it = {"question": q, "options": AK.order_options(q, cleaned), "all_options": every,
               "partial": bool(x.get("partial")) or len(cleaned) > len(every),
               "hint": " ".join(str(x.get("hint") or "").split())[:400],
-              "context": AK.trim_label(x.get("context") or b.get("context") or "", 120),
+              "context": AK.trim_label(x.get("context") or b.get("context") or "", 120), "full": whole,
               "answer": None, "origin": "", "force": force_all or any(AK.same_question(q, f) for f in forced)}
         dup = next((o for o in items if AK.same_question(o["question"], q)), None)
         if dup is None:
@@ -14897,6 +14958,8 @@ def autoapply_agent_ask():
         # The same question twice (a Workday "Error-" link cuts it short): asked once, in full.
         if len(q) > len(dup["question"]):
             dup["question"] = q
+        if len(whole) > len(dup.get("full") or ""):
+            dup["full"] = whole
         if not dup["all_options"] and every:
             dup.update(options=it["options"], all_options=every, partial=it["partial"])
         dup["force"] = dup["force"] or it["force"]
@@ -14922,6 +14985,7 @@ def autoapply_agent_ask():
             eeo_decline = _eeo_decline()
             wa = _work_auth()
             notices = _accept_notices()
+            sense = _common_sense(company, rec)
             if recall:
                 # (Phase 4) wordings no rule knows: the cached mapping, or one call for the page
                 mapped, confirm, none = _label_maps(
@@ -14935,10 +14999,12 @@ def autoapply_agent_ask():
                 k = AK.known_answer(it["question"], it["page_options"], partial=it["partial"], library=lib,
                                     work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"],
                                     mapped=mapped, confirm=confirm, company=company,
-                                    eeo_fallback=bool(b.get("known_only")), accept_notices=notices, **recall) if recall else \
+                                    eeo_fallback=bool(b.get("known_only")), accept_notices=notices, **sense,
+                                    full=it["full"], **recall) if recall else \
                     AK.known_answer(it["question"], it["page_options"], partial=it["partial"], library=lib,
                                     work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"],
-                                    eeo_fallback=bool(b.get("known_only")), accept_notices=notices)
+                                    eeo_fallback=bool(b.get("known_only")), accept_notices=notices,
+                                    company=company, full=it["full"], **sense)
                 if k:
                     it["answer"], it["origin"] = k
             # Before anything is asked: what the person's saved facts answer (one call per page,
@@ -14955,6 +15021,8 @@ def autoapply_agent_ask():
                         it["answer"], it["origin"], it["fact"] = g["answer"], "grounded", g["kind"]
         finally:
             lib.close()
+    for it in items:
+        it.pop("full", None)                       # read by the standing rules only, never kept
     reword = _rewords(items, recall, confirm, company, country)
     conflict = _salary_conflict() if "@salary" in recall.get("hold", ()) else None
     stale = _stale_salary() if recall and country == "US" else None

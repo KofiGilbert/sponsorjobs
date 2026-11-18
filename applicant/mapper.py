@@ -163,6 +163,11 @@ def rule_known(label: str, company: str = "") -> bool:
     from autoapply.planner import worked_here_question
     if any(worked_here_question(x, company) or consents.is_optin(x) or consents.is_acknowledgement(x) for x in (lab, label)):
         return True
+    # (2026-11-17) applied here before (the records), relatives employed here (a standing answer
+    # from Apply setup, else the person's): autoapply/commonsense.py, never a mapped key
+    from autoapply import commonsense
+    if any(commonsense.applied_question(x, company) or commonsense.relatives_question(x) for x in (lab, label)):
+        return True
     if _LETTER.search(lab) or _RESUME.search(lab) or A.is_per_job(lab, company) or _FURNITURE.search(lab):
         return True
     if countries.named_in(lab) and re.search(r"citizen|national", lab, re.I):

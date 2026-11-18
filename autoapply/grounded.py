@@ -117,6 +117,11 @@ def eligible(question: str, options=(), *, company: str = "", has_salary: bool =
         return False                                   # a self-identification list by its choices
     if _ESSAY.search(q) or is_per_job(q, company):
         return False
+    # (2026-11-17) at least 18, applied here before, relatives employed here: their own rules
+    # (autoapply/commonsense.py) answer them or leave them to the person, never this call
+    from autoapply import commonsense
+    if commonsense.is_adult_question(q) or commonsense.applied_question(q, company) or commonsense.relatives_question(q):
+        return False
     if _SALARY.search(q) and not has_salary:
         return False
     return True
