@@ -1,8 +1,8 @@
 """Common-sense screeners: five required Yes / No selects a Workday "Application Questions" page
 asked after everything else was filled (2026-11-17). Four need no person:
 
-1. "Are you at least 18 years old?": Yes when a job or school date in the saved profile lies 18
-   years back (or the saved answer says so); no dates, no guess;
+1. "Are you at least 18 years old?": Yes when the saved profile shows it (a degree finished or
+   started a year ago, or a job or school date 4 years back; or the saved answer); else no guess;
 2. "Have you previously applied for employment with <company> ...?": from the person's own
    records (No when the Tracker holds no earlier application there, Yes when it does);
 3. an acknowledgement worded as a Yes / No choice ("Please be aware that ...", "Please select
@@ -48,10 +48,8 @@ PIIA = ("As a condition of hire, candidates who receive an offer of employment t
         "this requirement.")
 PAGE = [ADULT, RELATIVES, APPLIED, OUTSIDE, PIIA]
 
-OLD = {"experience": [{"org": "Initech", "roles": [{"title": "Analyst", "dates": "March 2006 - June 2010"}]}],
-       "education": [{"school": "Example State University", "degree": "BSc Economics", "date": "2005"}]}
-YOUNG = {"experience": [{"org": "Initech", "roles": [{"title": "Intern", "dates": "June 2024 - Present"}]}],
-         "education": [{"school": "Example State University", "degree": "BSc Economics", "date": "2021 - 2025"}]}
+OLD = {"experience": [{"org": "Initech", "roles": [{"title": "Analyst", "dates": "March 2019 - June 2022"}]}],
+       "education": [{"school": "Example State University", "degree": "BSc Economics", "date": "2018"}]}
 
 
 @pytest.fixture()
@@ -106,14 +104,41 @@ def test_the_inverse_or_another_age_is_never_answered_from_dates(label, lib):
     assert not acts
 
 
-def test_a_date_eighteen_years_back_proves_it_and_no_dates_prove_nothing():
-    assert CS.adult_proof(OLD, TODAY)
-    assert not CS.adult_proof(YOUNG, TODAY)                     # nothing 18 years back: no guess
+def _job(dates):
+    return {"experience": [{"org": "Initech", "roles": [{"title": "Analyst", "dates": dates}]}]}
+
+
+def _school(degree, date, school="Example State University"):
+    return {"education": [{"school": school, "degree": degree, "date": date}]}
+
+
+def test_a_finished_or_year_old_degree_proves_it():
+    assert CS.adult_proof(_school("Bachelor of Science in Economics", "2021 - 2025"), TODAY)    # finished last year
+    assert CS.adult_proof(_school("BSc Economics", "May 2026"), TODAY)                          # one date, past
+    assert CS.adult_proof(_school("MBA", "September 2025 - Present"), TODAY)                    # started a year ago
+    assert CS.adult_proof(_school("Associate of Arts", "2024 - 2027"), TODAY)
+    assert CS.adult_proof(_school("College Diploma in Accounting", "2025"), TODAY)
+    assert not CS.adult_proof(_school("Bachelor of Science", "September 2026 - Present"), TODAY)   # just started
+    assert not CS.adult_proof(_school("Bachelor of Science", "Expected May 2027"), TODAY)
+    assert not CS.adult_proof(_school("Bachelor of Science", ""), TODAY)                        # no date
+
+
+def test_high_school_alone_with_a_recent_date_stays_a_question():
+    assert not CS.adult_proof(_school("High School Diploma", "2025", "Example High"), TODAY)
+    # the school's name alone is never a degree
+    assert not CS.adult_proof(_school("", "2025", "Example State University"), TODAY)
+    assert not CS.adult_proof(_school("Certificate", "2025", "Example University College"), TODAY)
+
+
+def test_a_first_job_four_years_back_proves_it_and_two_years_does_not():
+    assert CS.adult_proof(_job("October 2021 - Present"), TODAY)                # 5 years ago
+    assert CS.adult_proof(_job("November 2022 - Present"), TODAY)               # exactly 4
+    assert not CS.adult_proof(_job("December 2022 - Present"), TODAY)           # a month short of 4
+    assert not CS.adult_proof(_job("November 2024 - Present"), TODAY)           # 2 years ago, no degree
+    assert not CS.adult_proof(_job("2022 - Present"), TODAY)                    # no month: December
+    assert CS.adult_proof(_job("2021 - Present"), TODAY)
     assert not CS.adult_proof({}, TODAY) and not CS.adult_proof({"experience": [{"org": "Initech"}]}, TODAY)
-    # the month matters at the edge: November 2008 is not yet 18 full years before 17 November 2026
-    edge = lambda d: {"education": [{"school": "Example High", "date": d}]}     # noqa: E731
-    assert CS.adult_proof(edge("October 2008"), TODAY) and not CS.adult_proof(edge("November 2008"), TODAY)
-    assert CS.adult_proof(edge("2007"), TODAY) and not CS.adult_proof(edge("2008"), TODAY)   # no month: December
+    assert CS.JOB_YEARS >= 4
 
 
 def test_without_proof_it_stays_a_question_and_a_saved_answer_wins(lib):

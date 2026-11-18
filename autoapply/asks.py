@@ -134,7 +134,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     outside the US; ``wa_ended``: the job country's status ended on that date (applicant/expiry.py).
 
     (2026-11-17, autoapply/commonsense.py) ``adult``: the saved profile proves the person is at
-    least 18 (origin "history"); ``applied_here``: the records' verdict on "have you applied to
+    least 18, by a degree or a date 4 years back (origin "history"); ``applied_here``: the records' verdict on "have you applied to
     this company before?" (origin "tracker"); a standing No on relatives employed by the company
     (``@relatives_at_employer``, origin "library"). ``full``: the question's whole wording when
     ``question`` was cut short (a long notice whose "Please select Yes to acknowledge" comes
@@ -234,7 +234,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         if not hit and key in (withhold or ()):
             return None
     if not hit and adult and COMMON.is_adult_question(q):
-        v = fit("Yes")                       # a job or school date 18 years back proves it
+        v = fit("Yes")                       # the profile shows it: a degree, or a date 4 years back
         if v:
             return v, "history"
     if not hit and q in ctx.mapped:

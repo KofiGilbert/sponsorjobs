@@ -4,9 +4,11 @@ stops for them (a Workday "Application Questions" page asked five; four needed n
 
 * **At least 18 / legal working age** ("Are you at least 18 years old?", "Are you over 18?",
   "Are you 18 years of age or older?", "Are you of legal age to work?"): the person's saved
-  answer first (``@over_18``, as before); with none, Yes when the saved profile PROVES it: a job
-  or a school date that lies at least 18 years before today (``adult_proof``). No dates, or none
-  that old: it stays a question. Never a No, never a guess.
+  answer first (``@over_18``, as before); with none, Yes when the saved profile shows it
+  (``adult_proof``): a higher-education entry (a bachelor's, master's, doctorate, associate
+  degree, a university or college diploma) finished or started at least a year ago, or a job or
+  school date at least 4 years before today. A high-school-only profile with a recent date, or a
+  first job 2 years ago, stays a question. Never a No, never a guess.
 * **Previously applied to / interviewed with this company** ("Have you previously applied for
   employment with Acme or any of its predecessor firms?"): from the person's own records: No
   when the Tracker and the saved applications hold no earlier application to this company, Yes
@@ -33,7 +35,6 @@ from autoapply.history import parse_span
 
 ADULT_KEY = "@over_18"
 RELATIVES_KEY = "@relatives_at_employer"
-ADULT_YEARS = 18
 
 # A question that asks for a detail, never a yes or no ("If yes, when did you apply?").
 _NOT_YES_NO = re.compile(
@@ -59,38 +60,67 @@ def is_adult_question(label: str) -> bool:
     return bool(lbl) and not _NOT_ADULT.search(lbl) and normalize(lbl) == ADULT_KEY
 
 
-def _points(profile: dict):
-    """Every (year, month) the saved profile's jobs and schools state (month 0 when unknown)."""
+def _texts(profile: dict):
+    """(kind, degree text, date text) for every job ("job") and school ("school") in the profile."""
     prof = profile if isinstance(profile, dict) else {}
-    texts = []
     for org in prof.get("experience") or []:
         if not isinstance(org, dict):
             continue
-        texts.append(org.get("dates"))
+        yield "job", "", org.get("dates")
         for role in org.get("roles") or []:
             if isinstance(role, dict):
-                texts.append(role.get("dates"))
+                yield "job", "", role.get("dates")
     for ed in prof.get("education") or []:
         if isinstance(ed, dict):
-            texts.extend((ed.get("date"), ed.get("dates")))
-    for t in texts:
-        if not str(t or "").strip():
-            continue
-        span = parse_span(t)
-        for p in (span.get("start"), span.get("end")):
-            if p and p.get("y"):
-                yield int(p["y"]), int(p.get("m") or 0)
+            for t in (ed.get("date"), ed.get("dates")):
+                yield "school", str(ed.get("degree") or ""), t
+
+
+# Higher education by the DEGREE's own words (never the school's name): a bachelor's, master's,
+# MBA, doctorate, associate degree, or a university or college diploma.
+_HIGHER_LEVELS = frozenset({"doctorate", "masters", "bachelors", "associates"})
+_HIGHER = re.compile(r"\b(university|college|graduate|postgraduate|undergraduate|higher national) (degree|diploma)\b"
+                     r"|\b(degree|diploma)\b[^,;]{0,40}\b(university|college)\b", re.I)
+_NOT_HIGHER = re.compile(r"\bhigh school\b|\bsecondary\b|\bged\b", re.I)
+JOB_YEARS = 4          # a job or school date this far back: at least 18 now in practice (never lower)
+
+
+def _higher_education(degree: str) -> bool:
+    from autoapply.history import degree_level
+    d = _squash(degree)
+    if not d or _NOT_HIGHER.search(d):
+        return False
+    return degree_level(d) in _HIGHER_LEVELS or bool(_HIGHER.search(d))
 
 
 def adult_proof(profile: dict, today: _dt.date | None = None) -> bool:
-    """True when a job or school date in the saved profile lies at least 18 years before today:
-    the person was alive then, so they are at least 18 now. A date with no month counts as that
-    year's December. False with no dates, or none that old (it stays a question)."""
+    """True when the saved profile shows the person is at least 18:
+
+    (a) a higher-education entry (by its degree's words) whose date is in the past: finished, or
+        started at least a year ago; or
+    (b) a job or school date at least 4 years before today.
+    A date with no month counts as that year's December. False with no dates, a high-school-only
+    profile with a recent date, or a first job under 4 years ago (it stays a question)."""
     today = today or _dt.date.today()
-    cutoff = (today.year - ADULT_YEARS, today.month)
-    for y, m in _points(profile):
-        if 1900 <= y and (y, m or 12) < cutoff:
-            return True
+    now = (today.year, today.month)
+    key = lambda p: (int(p["y"]), int(p.get("m") or 0) or 12)      # noqa: E731
+    back = lambda years: (today.year - years, today.month)         # noqa: E731
+    for kind, degree, text in _texts(profile):
+        if not str(text or "").strip():
+            continue
+        span = parse_span(text)
+        start, end = span.get("start"), span.get("end")
+        pts = [key(p) for p in (start, end) if p and p.get("y") and int(p["y"]) >= 1900]
+        if any(p <= back(JOB_YEARS) for p in pts):
+            return True                                             # (b)
+        if kind == "school" and _higher_education(degree) and start and start.get("y"):
+            ranged = bool(end) or bool(span.get("current"))
+            if end and key(end) < now:
+                return True                                         # finished
+            if not ranged and key(start) < now:
+                return True                                         # one date, in the past: finished
+            if ranged and key(start) <= back(1):
+                return True                                         # started at least a year ago
     return False
 
 

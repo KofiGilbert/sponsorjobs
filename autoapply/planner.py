@@ -677,7 +677,7 @@ class KnownContext:
     # (autoapply/consents.py). Marketing opt-ins are declined unless @marketing_optin says yes.
     accept_notices: bool = False
     # (2026-11-17, autoapply/commonsense.py) ``adult``: the saved profile proves the person is
-    # at least 18 (a job or school date 18 years back); ``applied_here``: ("Yes" | "No",
+    # at least 18 (a degree, or a job or school date 4 years back); ``applied_here``: ("Yes" | "No",
     # "tracker") for "have you applied to this company before?" from the person's own records,
     # None when they could not be read (then it stays a question).
     adult: bool = False
@@ -949,7 +949,7 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.left.append(f)                         # a stale value: theirs to give again
                 continue
         if not hit and ctx.adult and commonsense.is_adult_question(label):
-            # (2026-11-17) no saved answer, and a job or school date 18 years back proves it
+            # (2026-11-17) no saved answer, and the profile shows it (a degree, or a date 4 years back)
             v = _literal(f, "Yes", qkey0)
             if v:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="history", sensitive=True))

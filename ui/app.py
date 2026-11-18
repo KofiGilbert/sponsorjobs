@@ -6742,8 +6742,8 @@ def _earlier_applications(rec=None) -> list | None:
 
 def _common_sense(company: str = "", rec=None) -> dict:
     """What the planner and the ask route take for the common-sense screeners
-    (autoapply/commonsense.py): ``adult`` (a job or school date in the saved profile proves the
-    person is at least 18) and ``applied_here`` (the records' verdict on "have you applied to
+    (autoapply/commonsense.py): ``adult`` (the saved profile shows the person is at least 18: a
+    degree, or a job or school date 4 years back) and ``applied_here`` (the records' verdict on "have you applied to
     this company before?", None when they could not be read or no company is known)."""
     from autoapply import commonsense as _CS
     try:
