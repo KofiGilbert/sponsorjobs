@@ -161,10 +161,13 @@ function askRoute(answers) {
       const n = stepBodies(brainPosts).length;
       if (n === 1) return NEEDS;                                           // the planner left three open
       if (b.answers && b.answers[TEXT_Q] && !P.vals[22]) {
-        // the person's answers came back as placeholders: fill them (and try a stand-in on the optional box)
-        return ok([{ op: "type", index: 25, text: "N/A" },
-                   { op: "type", index: 22, text: b.answers[TEXT_Q], placeholder: "answer_1" },
-                   { op: "click", index: 23 }]);
+        // the person's answers came back as placeholders: fill them. The brain also tried a stand-in
+        // ("N/A") on the optional box: since 2026-11-18 the ENGINE refuses that (the answer protocol,
+        // autoapply/protocol.py; tests/test_agent_first.py) and says why, where the shell used to.
+        return ok([{ op: "type", index: 22, text: b.answers[TEXT_Q], placeholder: "answer_1" },
+                   { op: "click", index: 23 }],
+                  { observations: ["Your type on [25] (LinkedIn profile) was not done: a stand-in such as N/A is an answer only where the question asks for it."],
+                    rejected: [{ index: 25, label: "LinkedIn profile", hard: "" }] });
       }
       return READY;                                                        // the rest is filled: at Submit
     };
@@ -197,8 +200,10 @@ function askRoute(answers) {
     // the brain was told: the step after the defer carries the two, and its nudge
     const b2 = stepBodies(s.posts)[1];
     assert(b2.deferred.length === 2 && b2.nudges.some((n) => /^Left for the person, asked at the end/.test(n)), "the brain hears what is left " + JSON.stringify(b2));
-    // no placeholder text ever typed
+    // no placeholder text ever typed, and the brain heard why on its next step
     assert(!s.P.acts.some((a) => a.op === "type" && isFiller(a.text)), "no stand-in typed " + JSON.stringify(s.P.acts));
+    assert(stepBodies(s.posts).some((b) => (b.observations || []).some((o) => /LinkedIn profile.*was not done/.test(o))),
+           "the refusal went back to the brain as an observation");
     // Review answers: 10 known, the neutral pick flagged, the optional box left empty
     const ready = s.progress.find((x) => x.state === "ready");
     const rows = ready.answers.rows;

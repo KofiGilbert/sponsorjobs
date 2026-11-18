@@ -103,9 +103,10 @@ const PARK_REASONS = new Set(["captcha", "phone-code", "needs-person"]);
 // rest of the form is filled, and everything left is asked ONCE, as one list, at Ready to send
 // (or on the one page that will not move on without it). The bar says so while it fills.
 const DEFER_LINE = "Filling everything I can; I'll ask what only you know at the end";
-// Placeholder text never typed on the brain's own word: an optional box stays EMPTY, a required
-// one waits for the person (2026-11-17: "In", "Not provided", "N/A"). The person's own saved
-// answer ({{answer_N}}) is theirs to give. Mirrors autoapply/asks.py _FILLER.
+// Placeholder text ("In", "Not provided", "N/A"; 2026-11-17). Whether the brain may type one is
+// the answer protocol's call now (autoapply/protocol.py: only where the question asks for it, with
+// the reason sent back otherwise); the shell no longer refuses it. Kept for the tests and the
+// Review answers checks. Mirrors autoapply/asks.py _FILLER.
 const FILLER_RE = /^\s*(?:n\s*\/\s*a|n\.a\.?|na|none|nil|null|not provided|not applicable|not available|no answer|unknown|tbd|tba|to be (?:determined|provided)|in|x+|\?+|-+|\.+|_+|test|placeholder|see resume|see cv)\s*[.!]?\s*$/i;
 const isFiller = (t) => { const s = String(t == null ? "" : t).replace(/\s+/g, " ").trim(); return !s || FILLER_RE.test(s); };
 const SUBMIT_RE = /^(submit( application)?|send( application)?|review and submit|complete application)$/i;
@@ -129,7 +130,9 @@ const DEBUG = process.env.SJ_AGENT_DEBUG === "1";
 const safeReply = (r) => {
   if (!r || typeof r !== "object") return r;
   const o = Object.assign({}, r);
-  if (Array.isArray(o.actions)) o.actions = o.actions.map((a) => (a && a.sensitive ? Object.assign({}, a, { text: "(secret)" }) : a));
+  if (Array.isArray(o.actions)) o.actions = o.actions.map((a) => (a && a.proof ? Object.assign({}, a, a.text != null ? { text: "(answer)" } : {}, a.option != null ? { option: "(answer)" } : {}, { proof: { source: a.proof.source, class: a.proof.class } })
+    : a && a.sensitive ? Object.assign({}, a, { text: "(secret)" }) : a));
+  if (Array.isArray(o.observations)) o.observations = "(" + o.observations.length + " observations)";
   // The Review answers rows hold the person's values (self-identification too): a count only.
   if (Array.isArray(o.answers)) o.answers = "(" + o.answers.length + " answers)";
   if (Array.isArray(o.files)) o.files = "(" + o.files.length + " files)";
@@ -628,11 +631,6 @@ function createAgent(deps) {
     // placeholder before an action leaves it, and this refuses anything that slipped through.
     if (["text", "option", "path"].some((k) => /\{\{|\}\}/.test(String(a[k] == null ? "" : a[k])))) {
       return { ok: false, note: "refused: an unrendered placeholder" };
-    }
-    // (Fill-through) A stand-in typed on the brain's own word ("N/A", "Not provided", a lone
-    // "In") never reaches the form: an optional box stays empty, a required one is the person's.
-    if (a.op === "type" && !a.placeholder && !a.sensitive && isFiller(a.text) && String(a.text || "").trim()) {
-      return { ok: false, note: "refused: placeholder text; leave an optional box empty, and a required one for the person" };
     }
     const expr = `window.TailorAgent.act(${JSON.stringify(a)})`;
     const ctx = v.frameOf.get(a.index);
@@ -1248,7 +1246,11 @@ function createAgent(deps) {
       const id = Math.random().toString(16).slice(2, 10);
       const n = open.length;
       const qs = open.map(askItem);
-      const shown = "I filled everything I could; " + (n === 1 ? "this one needs you." : "these " + n + " need you.");
+      // An Auto run (quiet) asks nothing: the job is set aside, and the reason names what it
+      // needs (a legal question with no saved answer, most often), so the person can save it once.
+      const named = open.slice(0, 3).map((d) => "\u201c" + String(d.question).slice(0, 80) + "\u201d").join(", ") + (n > 3 ? " and " + (n - 3) + " more" : "");
+      const shown = quiet ? "Set aside: no saved answer for " + named + ". Everything else is filled."
+                          : "I filled everything I could; " + (n === 1 ? "this one needs you." : "these " + n + " need you.");
       const ask = { id, question: qs[0].question, options: n === 1 ? qs[0].options : [], questions: qs, batch: true };
       feed.push("ask", "Asking you", n === 1 ? "1 field" : n + " fields, one at a time", { state: "asking", detail: where === "page" ? "this page will not move on without them" : "everything else is filled" });
       const body = { questions: qs, record_id: recordId, id, batch: true, force_questions: open.filter((d) => d.forced).map((d) => d.question),
@@ -1504,6 +1506,7 @@ function createAgent(deps) {
     let pendingImage = "";
     let toolFill = false;                // next step: the engine stands back, the brain fills
     let observations = [];
+    const rejects = new Map();           // question -> how often the answer protocol refused the brain's own answer
     let waits = 0;                       // the brain's plain waits in a row
     let blank = null;                    // { hash, since } while the page shows nothing to do
     let afterEmailLink = 0;              // the step an emailed link was opened: a careers home soon after is not the end
@@ -2106,6 +2109,23 @@ function createAgent(deps) {
           continue;
         }
         if (reply.refused) pendingNudges.push("You reported ready_to_submit but " + reply.refused + ". Carry on with the application.");
+        // (Section 29, the agent decides) What the engine did not do in this reply goes back to
+        // the brain with its reason (a hard limit names itself), never as a silent strip. An
+        // answer of its own refused again for the same question is the person's: the brain is
+        // told to report needs-answers, and the third time the shell reports it itself, so the
+        // question takes the usual road (their material, then asked once at the end; an Auto run
+        // sets the job aside there and names it).
+        for (const o of (reply.observations || [])) observations.push(String(o).slice(0, 400));
+        if (Array.isArray(reply.rejected) && reply.rejected.length) {
+          const rj = noteRejected(rejects, reply.rejected);
+          dlog("step " + step + " answers refused:", { n: reply.rejected.length, nudge: rj.nudge.length, force: rj.force.length });
+          if (rj.force.length && !reply.done) {
+            reply.actions = [];
+            reply.done = { outcome: "blocked", reason: "needs-answers" };
+          } else if (rj.nudge.length) {
+            pendingNudges.push(rejectNudge(rj.nudge));
+          }
+        }
 
         // (#252) One quiet line per thing the guard removed from this page, with the sentence
         // it was hiding. ``say`` is push + a running update, so it reaches the open feed on
@@ -2527,7 +2547,7 @@ function createAgent(deps) {
             observations.push("Your " + a.op + " on [" + a.index + "] " + (line ? line.slice(0, 120) : "") + " did not work: " + ((r && r.note) || "no result")
               + ". Inspect it or do it another way.");
           }
-          dlog("step " + step + " act " + h + " ->", r);
+          dlog("step " + step + " act " + (a.proof ? [a.op, a.index, "(answer)"].join("|") : h) + " ->", r);
           if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") {
             if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
               return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });
@@ -2818,7 +2838,10 @@ function createAgent(deps) {
     // The person's own Send on a job whose page was gone: the form came out the same, so their
     // click submits it (on every site: it is their Send, not an auto-submit).
     const fd = feedOf(recordId);
+    // (Section 29) What the agent answered itself is kept on the application, sent or not.
+    const chosen = agentAnswers(answers);
     if (auto || opts.mode === "resend") {
+      if (chosen.length) deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, answers_only: true, agent_answers: chosen }).catch(() => null);
       if (fd) fd.push("send", "Sending", "your application", { detail: said });
       progress(recordId, "running", "Sending" + (said ? ". " + said : ""), { step });
       current = null;
@@ -2829,7 +2852,7 @@ function createAgent(deps) {
     // The engine keeps it on the record and sends the Ready to send notice on Telegram, once per
     // run (docs/notify.md): counts and the flagged lines only, never a self-identification value.
     // A quiet (Auto) run sends no notice: the daily summary counts it instead.
-    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep) },
+    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep), agent_answers: chosen },
                  opts.quiet ? {} : { notice: readyNotice(answers, wrote && wrote.startedAt) })).catch(() => null);
     const notes = (noted || []).slice(0, 3);
     // The bar stays ONE short line (2026-11-16, the owner: the Gusto line ran on for five
@@ -3450,6 +3473,9 @@ function addAnswer(ans, row) {
   if (!label || !value) return null;
   const r = { page: Number(row.page) || 1, label, value, from: String(row.from || "ai"), via: row.via || "fill" };
   if (FACT_KINDS.has(row.fact)) r.fact = row.fact;
+  // (Section 29) An answer the agent chose itself under the answer protocol: its evidence and
+  // class ride along, and the row is one to check.
+  if (row.agent) { r.agent = true; r.evidence = String(row.evidence || "").replace(/\s+/g, " ").trim().slice(0, 160); r.klass = String(row.klass || ""); }
   // The brain's own pick replaces its earlier word on the same question (typed, then picked);
   // the engine's lines stand (two "Job Title" boxes on one page are two answers).
   const at = ans.rows.findIndex((x) => x.page === r.page && sameLabel(x.label, r.label)
@@ -3518,7 +3544,32 @@ function brainAnswer(viewText, a, runAnswers, runOrigins) {
   const r = brainAnswerOf(viewText, a, runAnswers, runOrigins);
   const o = r && originFor(runOrigins, r.label);
   if (o && o.fact && r.from === o.from) r.fact = o.fact;
+  // (Section 29) The brain's own answer, checked by the engine (autoapply/protocol.py): where it
+  // came from (the label Review answers shows), the fact it cited, and that the agent chose it.
+  const p = r && a && a.proof;
+  if (p && AGENT_ORIGINS.has(p.origin)) { r.from = p.origin; r.agent = true; r.evidence = String(p.evidence || ""); r.klass = String(p.class || ""); delete r.fact; }
   return r;
+}
+const AGENT_ORIGINS = new Set(["profile", "history", "library", "common_sense"]);
+// Count the answers the answer protocol refused, by question: { nudge: [questions refused a second
+// time (a hard limit: the first)], force: [questions refused a third time (a hard limit: the
+// second)] }. ``counts``: the run's Map(question -> n).
+function noteRejected(counts, rejected) {
+  const nudge = [], force = [];
+  for (const x of rejected || []) {
+    const q = String((x && x.label) || "").replace(/\s+/g, " ").trim().slice(0, 160);
+    if (!q) continue;
+    const key = [...counts.keys()].find((k) => sameLabel(k, q)) || q;
+    const n = (counts.get(key) || 0) + (x.hard ? 2 : 1);
+    counts.set(key, n);
+    if (n >= 3) force.push(key);
+    else if (n >= 2) nudge.push(key);
+  }
+  return { nudge, force };
+}
+function rejectNudge(qs) {
+  return ("Your own answer was refused for: " + (qs || []).map((q) => "\u201c" + String(q).slice(0, 60) + "\u201d").join(", ")
+    + ". Do not try it again. If it is required, report needs-answers now (the person is asked at the end); if it is optional, leave it empty and carry on.").slice(0, 300);
 }
 function brainAnswerOf(viewText, a, runAnswers, runOrigins) {
   if (!a || a.index == null) return null;
@@ -3539,7 +3590,8 @@ function brainAnswerOf(viewText, a, runAnswers, runOrigins) {
   }
   if (a.op === "select") {
     const label = lineLabel(line);
-    return label ? { label, value: a.option || a.text || "", from: by(label, "ai") } : null;
+    // a saved value picked on a list ({{answer_N}} as the option) is the person's, like a typed one
+    return label ? { label, value: a.option || a.text || "", from: ph ? by(label, ph.startsWith("answer_") ? "library" : "profile") : by(label, "ai") } : null;
   }
   if (a.op !== "click") return null;
   if (/^\*?\[\d+\]<radio\b/.test(line)) {
@@ -3593,6 +3645,7 @@ function readyAnswers(ans, ctx) {
     const from = self && /^(eeo|library|profile|you)$/.test(r.from) ? "eeo" : r.from;
     const row = { page: r.page, label: r.label, value: r.value, from, flag: ANSWER_FLAGS.has(from) ? from : "", self_id: self, i };
     if (from === "grounded" && r.fact) row.fact = r.fact;
+    if (r.agent && !self) { row.agent = true; row.flag = "agent"; row.evidence = r.evidence || ""; row.klass = r.klass || ""; }
     return row;
   });
   // (Fill-through) What was left for the person and is still empty, and the optional boxes left
@@ -3623,6 +3676,13 @@ function readyAnswers(ans, ctx) {
   const flagged = rows.filter((r) => r.flag && r.flag !== "left_empty").length + files.filter((f) => f.flag).length;
   return { rows, files, flagged };
 }
+// (Section 29) The answers the agent chose itself, for the application's own record (kept on this
+// machine with the application, ui/app.py agent/ready): the question, what was put, where it came
+// from and the fact cited. Never a self-identification row (the protocol never answers one).
+function agentAnswers(list) {
+  return ((list && list.rows) || []).filter((r) => r.agent && !r.self_id).slice(0, 60)
+    .map((r) => ({ page: r.page, label: r.label, value: r.value, source: r.from, evidence: r.evidence || "", class: r.klass || "" }));
+}
 // The same list as one short Telegram message, WITHOUT self-identification values. The Ready to
 // send Telegram notice carries only its flagged lines (readyNotice).
 const ANSWER_FROM_WORDS = {
@@ -3638,7 +3698,7 @@ const ANSWER_FROM_WORDS = {
 function answerLine(r) {
   const v = r.from === "needs_you" || r.from === "left_empty" ? "(empty)"
     : r.self_id ? "(self-identification, shown only in the app)" : r.value;
-  return "\u2022 " + r.label + ": " + v + " (" + (ANSWER_FROM_WORDS[r.from] || r.from) + ")" + (r.flag ? " \u26a0" : "");
+  return "\u2022 " + r.label + ": " + v + " (" + (ANSWER_FROM_WORDS[r.from] || r.from) + (r.agent ? ", chosen by the agent" : "") + ")" + (r.flag ? " \u26a0" : "");
 }
 function fileLine(f) {
   const what = f.kind === "cover_letter" ? "Cover letter" : "Resume";
@@ -3796,6 +3856,6 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
-                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
+                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
                    isSigninView, isCreateView, authForm, pageErrors, createFailure, resetAllowed, createBlockedReason, insideView,
                    DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF };

@@ -254,6 +254,13 @@ test("a saved answer never lands on a choice that adds a qualifier (Phoenix Cont
   assert.strictEqual(other.ok, false, JSON.stringify(other));
   assert.ok(/^no choice on this list says the same/.test(other.note), other.note);
   assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "");
+  // (2026-11-18, the agent decides) the miss no longer says "do not pick one for them": it hands
+  // the list's own choices back, and the brain's own pick of one of them is applied as asked
+  assert.ok(/its options: .*College Job Board.*Company Website.*Other/.test(other.note), other.note);
+  assert.ok(/answer protocol/.test(other.note) && !/do not pick one for them/.test(other.note), other.note);
+  const own = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Company Website"})`);
+  assert.strictEqual(own.ok, true, JSON.stringify(own));
+  assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "Company Website");
   // a react-select: "States" is not "United States" (the loose contains match took it)
   const c = indices(v.text).find((i) => /<combobox label="Country"/.test(line(v.text, i)));
   const r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${c}, option: "States", answer: true})`);

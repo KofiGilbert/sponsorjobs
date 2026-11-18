@@ -1613,6 +1613,8 @@
   "aa.ans.from.tracker": "Tu seguimiento",
   "aa.ans.from.commonSense": "Sentido común",
   "aa.ans.flag.ai": "Lo eligió la IA. Revísalo.",
+  "aa.ans.flag.agent": "El agente respondió esto por su cuenta, a partir de: {e}. Revísalo.",
+  "aa.ans.flag.agentPlain": "El agente respondió esto por su cuenta. Revísalo.",
   "aa.ans.flag.closest": "Opcional. Elegido como la opción más cercana de la lista.",
   "aa.ans.flag.skills": "Opcional. Elegido de tus habilidades.",
   "aa.ans.flag.declined": "Rechazado, ninguna respuesta guardada la responde.",

@@ -894,21 +894,27 @@
         || null;
   }
 
-  // ``opts.answer``: the person's saved answer (the shell's {{answer_N}}), so a list that holds
-  // no choice saying the same says so and lists nothing to pick instead.
+  // ``opts.answer``: the person's saved answer (the shell's {{answer_N}}), matched STRICTLY: this
+  // is the fast path, with no model looking, so only a choice that says the same is picked. When
+  // none does, the list's own choices go back to the brain, which chooses one itself under the
+  // answer protocol (autoapply/protocol.py) or reports needs-answers (docs/apply-agent.md section
+  // 29; until 2026-11-18 this said "do not pick one for them" and the question went to the person).
+  // An option the brain names itself (no ``answer``) is applied as it asked.
   async function doSelect(el, option, opts0) {
     if (tagOf(el) === "LABEL") { const c = controlOfLabel(el); if (c) el = c; }
     const want = String(option == null ? "" : option);
     const answer = !!(opts0 && opts0.answer);
     const miss = (list) => answer
-      ? "no choice on this list says the same as the person's answer; do not pick one for them, report needs-answers"
+      ? "no choice on this list says the same as the saved answer; "
+        + (list ? "its options: " + list : "open it with list_options to read its options")
+        + ". Choose the closest one yourself under the answer protocol (source, evidence, class), or report needs-answers"
       : "no such option; options: " + list;
     const before = fingerprint();
-    // A how-did-you-hear question is the one place a saved answer no choice says the same as is
-    // still picked for the person: the choice that names no particular source ("Job board" is
-    // "Other Job Board", else "Other"), through Workday's two-level list too. The rule and the
-    // pick live in the engine (autofill_core.js heardChoices / pickHeard, the same as
-    // autoapply/planner.py generic_sources); every other question keeps the refusal.
+    // A how-did-you-hear question: the fast path still picks, with no model step, the choice that
+    // names no particular source ("Job board" is "Other Job Board", else "Other"), through
+    // Workday's two-level list too. The rule and the pick live in the engine (autofill_core.js
+    // heardChoices / pickHeard, the same as autoapply/planner.py generic_sources). It saves a
+    // step; it is no longer the only way this question gets answered (the brain picks otherwise).
     const E0 = T();
     let heard = false;
     try { heard = answer && !!E0 && typeof E0.heardChoices === "function" && E0.isHeardLabel(labelOf(el)); } catch (e) { heard = false; }
