@@ -3592,7 +3592,9 @@ body.cv-dragging * { cursor: grabbing !important; }
 .strat-new-more { font-size: 12.5px; color: var(--muted); padding: 6px 8px; }
 /* The count on the Jobs entry in the app sidebar: the sum over every saved search. */
 .nav-badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: inline-flex;
-  align-items: center; justify-content: center; font-size: 11px; font-weight: 700; line-height: 1; background: var(--accent, #2f6fed); color: #fff; }
+  align-items: center; justify-content: center; font-size: 11px; font-weight: 700; line-height: 1; background: var(--accent, #2f6fed);
+  /* The ink that belongs on the accent: white on the dark theme's near-white accent could not be read. */
+  color: var(--accent-ink, #fff); font-variant-numeric: tabular-nums; }
 .nav-badge[hidden] { display: none; }
 .app.is-rail .nav-badge { position: absolute; top: 6px; right: 8px; margin: 0; }
 .app.is-rail .nav-item { position: relative; }
@@ -5093,3 +5095,128 @@ a.cv-act { display: inline-flex; align-items: center; justify-content: center; t
   .su-row .fld { min-width: 0; width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .su-bar i { transition: none; } }
+
+/* ================================================================ Inbox (docs/mail-alias.md)
+   Mail to the person's SponsorJobs address. The Jobs board's column (1320px) and filter bar, a
+   row list in the Auto-apply grammar (one framed list, hairlines between rows, the selected row
+   on surface-2 with the ink edge), and a reader card like the Jobs detail. The page is a column
+   that fills the view, so the two panes scroll by themselves and the page never scrolls sideways.
+   No new colour: the unread dot is ink, the chips use the existing state tokens. */
+.view-inbox { display: flex; flex-direction: column; padding-bottom: 24px; }
+.view-inbox > * { flex: none; width: 100%; max-width: 1320px; margin-left: auto; margin-right: auto; }
+.view-inbox [hidden] { display: none !important; }
+.view-inbox .page-head { max-width: 1320px; margin-bottom: 16px; }
+.view-inbox .ib-addr { max-width: none; overflow-wrap: anywhere; }
+.view-inbox .ib-copy { text-decoration: underline; text-underline-offset: 2px; font-size: 13.5px; }
+.ib-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Controls: the Jobs filter bar, then the label filter as a row of quiet pills with counts. */
+.view-inbox .ib-bar .jf-search { flex: 1 1 280px; min-width: 200px; }
+.view-inbox .ib-bar .btn, .view-inbox .ib-bar .jf-toggle-btn { height: 40px; white-space: nowrap; flex: none; }
+.view-inbox .ib-bar .jf-toggle-btn { display: inline-flex; align-items: center; gap: 7px; }
+.view-inbox .ib-check { width: 13px; height: 13px; display: none; }
+.view-inbox .ib-bar .jf-toggle-btn[aria-pressed="true"] .ib-check { display: block; }
+/* A pressed filter is outlined in ink, not filled: the accent is not spent on a filter. */
+.view-inbox .ib-bar .jf-toggle-btn[aria-pressed="true"] { background: var(--surface); color: var(--ink); border-color: var(--ink-2); font-weight: 500; }
+.view-inbox .ib-bar .btn[aria-busy="true"] { color: var(--muted); cursor: progress; }
+.view-inbox .ib-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.ib-tab { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: var(--r-pill);
+  border: 1px solid var(--border); background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 500;
+  white-space: nowrap; cursor: pointer; transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.ib-tab:hover { color: var(--ink); border-color: var(--border-strong); }
+.ib-tab[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); border-color: var(--ink-2); }
+.ib-tab:focus-visible, .ib-row:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
+.view-inbox .link-btn:focus-visible, .view-inbox .jf-toggle-btn:focus-visible, .trk-p-msgs .link-btn:focus-visible,
+.ib-label-sel:focus-visible, .ib-notify-sel:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+.ib-tab-n { color: var(--faint); font-variant-numeric: tabular-nums; }
+.ib-tab[aria-pressed="true"] .ib-tab-n { color: var(--muted); }
+.ib-tab-end { margin-left: auto; }
+.view-inbox .ib-note .link-btn { text-decoration: underline; text-underline-offset: 2px; font-size: 12.5px; }
+
+/* The two panes. They share the height the page has left; each scrolls inside itself. */
+.view-inbox .ib-split { flex: 1 1 0; min-height: 420px; display: grid; gap: 18px;
+  grid-template-columns: minmax(340px, 2fr) minmax(0, 3fr); grid-template-rows: minmax(0, 1fr); }
+.ib-list-w { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; }
+.ib-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.ib-row { display: grid; grid-template-columns: 7px minmax(0, 1fr); gap: 10px; width: 100%; text-align: left;
+  padding: 12px 16px 12px 13px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer;
+  transition: background var(--dur) var(--ease); }
+.ib-row + .ib-row { border-top: 1px solid var(--border); }
+.ib-row:hover { background: var(--surface-2); }
+.ib-row:active { background: color-mix(in srgb, var(--ink) 7%, var(--surface)); transition: none; }
+.ib-row.is-active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--ink-2); }
+/* Unread is said three ways: the dot, the heavier name and subject, and a word for screen readers. */
+.ib-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 6px; }
+.ib-row.is-unread .ib-dot { background: var(--ink); }
+.ib-row-main { display: block; min-width: 0; }
+.ib-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.ib-from { flex: 1 1 auto; min-width: 0; font-size: 13.5px; font-weight: 500; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ib-row.is-unread .ib-from { font-weight: 700; color: var(--ink); }
+.ib-time { flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ib-subj, .ib-snip { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ib-subj { margin-top: 2px; font-size: 13.5px; color: var(--ink-2); }
+.ib-row.is-unread .ib-subj { font-weight: 600; color: var(--ink); }
+.ib-snip { margin-top: 2px; font-size: 12.5px; color: var(--muted); }
+.ib-row-meta { display: flex; align-items: center; gap: 8px; margin-top: 7px; min-width: 0; }
+.ib-co { min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ib-more { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; border-top: 1px solid var(--border); }
+
+/* Label chips. Received is the quiet positive; a rejection is muted, never an alarm; an interview
+   request is the one in ink; action needed takes the warning tone; other is neutral. */
+.ib-chip { flex: none; white-space: nowrap; border: 1px solid transparent; }
+.ib-chip-received { color: var(--good); background: var(--good-soft); }
+.ib-chip-rejected { color: var(--muted); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.ib-chip-interview { color: var(--ink); background: var(--accent-soft); border-color: var(--ink-2); }
+.ib-chip-action { color: var(--flag); background: var(--flag-soft); }
+.ib-chip-other { color: var(--ink-2); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+
+/* The reader: the Jobs detail card. */
+.ib-reader { min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 22px 24px; box-shadow: var(--shadow-sm); }
+.ib-r-empty { display: grid; place-items: center; height: 100%; min-height: 160px; text-align: center; color: var(--muted); font-size: 14px; }
+.ib-back { display: none; }
+.ib-r-subj { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }
+.ib-r-from { margin-top: 6px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.ib-r-from b { font-weight: 600; color: var(--ink-2); }
+.ib-r-app { margin-top: 4px; font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.ib-r-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding-bottom: 14px;
+  border-bottom: 1px solid var(--border); }
+.ib-r-acts .ib-r-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.ib-label-sel { padding: 5px 8px; font-size: 12.5px; max-width: 100%; cursor: pointer; }
+/* Delete asks in the page, in a surface-2 row, never a dialog. */
+.ib-confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; padding: 10px 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm); font-size: 13px; color: var(--ink-2); }
+.ib-confirm-t { flex: 1 1 220px; min-width: 0; }
+.ib-body { margin-top: 16px; }
+/* A mail body lives only in this frame. Mail HTML assumes a white page, so it gets one in both themes. */
+.ib-frame { display: block; width: 100%; min-height: 120px; border: 1px solid var(--border); border-radius: var(--r); background: #fff; }
+.ib-text { margin: 0; font: inherit; font-size: 14px; line-height: 1.6; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ib-att { margin-top: 12px; font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* Empty states: the app's .empty line, with a title above it and at most one action under it. */
+.view-inbox .ib-empty { padding: 72px 20px; }
+.ib-empty-t { font-size: 15px; font-weight: 600; color: var(--ink-2); }
+.ib-empty-d { max-width: 58ch; margin: 6px auto 0; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+.ib-empty .btn { margin-top: 16px; }
+
+/* Settings, Connections: what the person's own e-mail gets, under the Email row it belongs to. */
+.conn-row.ib-notify { border-top: 0; padding-top: 0; align-items: center; }
+.conn-row.ib-notify[hidden] { display: none; }
+.ib-notify-sel { width: auto; max-width: 100%; min-width: 0; cursor: pointer; }
+/* Tracker panel: "3 messages", a door to this job's mail. */
+.trk-p-msgs { margin-top: 10px; }
+.trk-p-msgs .link-btn { padding-left: 0; text-decoration: underline; text-underline-offset: 2px; }
+
+/* One pane when the page is narrow (its own width, so it also holds beside the in-app browser):
+   the list, or the open message with a back link to the list. */
+@container (max-width: 860px) {
+  .view-inbox .ib-split { grid-template-columns: minmax(0, 1fr); }
+  .view-inbox .ib-split .ib-reader { display: none; }
+  .view-inbox .ib-split.is-reading .ib-list-w { display: none; }
+  .view-inbox .ib-split.is-reading .ib-reader { display: block; }
+  .view-inbox .ib-back { display: inline-flex; }
+  .view-inbox .ib-tab-end { margin-left: 0; }
+}

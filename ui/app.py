@@ -8056,12 +8056,14 @@ def _int_arg(name: str, default: int) -> int:
 def inbox_messages():
     """The Inbox list, newest first, from the local store (so it works offline and with no
     address yet). Opening it starts a background download of new mail at most once a minute.
-    Query: label, unread=1, q, archived=0|1, page, per_page (50, at most 200)."""
+    Query: label, unread=1, q, archived=0|1, job_id (one application's mail), page, per_page
+    (50, at most 200)."""
     syncing = _mailbox_sync_soon()
     store = _mailbox()
     label = str(request.args.get("label") or "").strip().lower()
     rows, count = store.list(label=label, unread=request.args.get("unread") in ("1", "true"),
                              q=request.args.get("q") or "", archived=request.args.get("archived") in ("1", "true"),
+                             job_id=request.args.get("job_id") or "",
                              page=_int_arg("page", 1), per_page=_int_arg("per_page", 50))
     return _nostore(jsonify({"ok": True, "messages": [{k: r.get(k) for k in _MAILBOX_LIST_KEYS} for r in rows],
                              "count": count, "unread": store.unread_count(), "labels": store.label_counts(),
@@ -13020,6 +13022,32 @@ def inbox_dev_deliver():
     stored = fake_mailbox().deliver({"from": b.get("from", ""), "subject": b.get("subject", ""),
                                      "body": b.get("body", ""), "id": b.get("id", "")})
     return jsonify({"ok": True, "id": stored["id"]})
+
+
+@app.post("/api/inbox/dev/mail")
+def inbox_dev_mail():
+    """Put one message straight into the LOCAL mailbox (the Inbox screen's store), labelled and
+    matched the way a downloaded one is, so the screen can be checked with no broker. 404 unless
+    RESUME_AGENT_FAKE_MAILBOX=1 in a dev or test session, like /api/inbox/dev/deliver: this does
+    not exist in a shipped build. The broker's cursors are positive; these use negative ones and
+    never move the sync cursor, so a later real sync is not disturbed.
+    Body: {from, name, subject, text, html?, attachment_names?, at?}."""
+    if not _fake_mailbox_on():
+        return jsonify({"error": "Not found."}), 404
+    b = request.json or {}
+    names = [str(n) for n in (b.get("attachment_names") or []) if isinstance(n, str)]
+    store = _mailbox()
+    new = store.add_page([{"cursor": -time.time_ns(), "sender": str(b.get("from") or ""),
+                           "sender_name": str(b.get("name") or ""), "subject": str(b.get("subject") or ""),
+                           "text": str(b.get("text") or b.get("body") or ""), "html": b.get("html") or None,
+                           "at": b.get("at") or int(time.time()), "attachment_names": names}],
+                         0, _mail_alias())
+    with _MAILBOX["lock"]:         # file it exactly as a sync does, and say so, so no sync files it twice
+        fresh = store.ids_after(store.state("filed") or 0)
+        if fresh:
+            _mailbox_file(fresh)
+            store.set_state("filed", max(fresh))
+    return jsonify({"ok": True, "id": new[0] if new else None})
 
 
 _SUGGESTIONS_FILE = _DATA / "inbox_suggestions.json"

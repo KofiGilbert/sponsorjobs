@@ -112,6 +112,17 @@ Cloudflare Email Routing hands every message for the domain to the Worker's `ema
   remote images (tracking pixels), links limited to http, https and mailto.
 - The local routes are `/api/inbox/messages`, `/api/inbox/messages/<id>`,
   `/api/inbox/messages/read-all`, `/api/inbox/sync` and `/api/inbox/notify` in `ui/app.py`.
+- The Inbox screen (`#view-inbox`; `ui/static/inbox_view.js` for its pure parts, the rest in
+  `ui/static/app.js`) is a list and a reader, read only. The sanitised HTML is shown only inside
+  a frame with `sandbox="allow-same-origin"` (no scripts, forms or popups; same-origin so the page
+  can fit the frame's height and catch link clicks), whose own page carries
+  `default-src 'none'; style-src 'unsafe-inline'`, so nothing loads. A web link opens through
+  `/api/open`; a mail address is copied. `GET /api/inbox/messages?job_id=<source_id>` lists one
+  application's mail; the Tracker's job panel uses it for its "N messages" line.
+- Sample mail without the broker, in a dev session only (`RESUME_AGENT_DEV=1` and
+  `RESUME_AGENT_FAKE_MAILBOX=1`, 404 otherwise): `POST /api/inbox/dev/mail`
+  `{from, name, subject, text, html?, attachment_names?, at?}` writes one message into
+  `data/mailbox.db`, labelled and matched like a downloaded one.
 - Erase (Settings) deletes `data/mailbox.db`; Export includes the stored messages.
 
 ## Setup (owner, once)

@@ -227,9 +227,13 @@ class MailboxStore:
                 "attachment_names": _names(r["attachment_names"])}
 
     def list(self, *, label: str = "", unread: bool = False, q: str = "", archived: bool = False,
-             page: int = 1, per_page: int = 50) -> tuple[list[dict], int]:
-        """(one page of messages newest first, how many match in all)."""
+             job_id: str = "", page: int = 1, per_page: int = 50) -> tuple[list[dict], int]:
+        """(one page of messages newest first, how many match in all). ``job_id`` keeps only the
+        mail tied to that one application."""
         where, params = ["deleted=0", "archived=?"], [1 if archived else 0]
+        job_id = str(job_id or "").strip()[:400]
+        if job_id:
+            where.append("job_id=?"); params.append(job_id)
         if label in LABELS:
             where.append("label=?"); params.append(label)
         if unread:
