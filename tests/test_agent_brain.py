@@ -159,6 +159,94 @@ def test_submit_guard_turns_a_submit_click_into_ready_to_submit():
     assert "kofi@example.com" not in llm.calls[0] and "{{email}}" in llm.calls[0]
 
 
+# (2026-11-18) A Workday tenant labels its sign-in button "Submit": the page view the model got.
+SUBMIT_SIGNIN_PAGE = """URL: https://acme.wd5.myworkdayjobs.com/en-US/External/job/Analyst_R123/apply/applyManually
+Title: Sign In - Logo
+[Start of page]
+Sign In
+*[4]<input type=text label="Email Address" value="" required>
+*[5]<input type=password label="Password" value="" required>
+*[6]<button role=button>Submit</button>
+Don't have an account yet?
+*[7]<button>Create Account</button>
+*[8]<button>Forgot your password?</button>
+[End of page]"""
+SUBMIT_CREATE_PAGE = """URL: https://acme.wd5.myworkdayjobs.com/en-US/External/job/Analyst_R123/apply/applyManually
+Title: Create Account - Logo
+Create Account
+[4]<input type=text label="Email Address" value="" required>
+[5]<input type=password label="Password" value="" required>
+[6]<input type=password label="Verify New Password" value="" required>
+[7]<checkbox label="I agree" checked=false>
+[8]<button role=button>Submit</button>
+Already have an account?
+[9]<button>Sign In</button>"""
+_SIGNIN_REPLY = json.dumps({"memory": "sign in", "evaluation": "Sign-in form is open and fields are empty.",
+                            "actions": [{"op": "type", "index": 4, "text": "{{portal_email}}"},
+                                        {"op": "type", "index": 5, "text": "{{portal_password}}"},
+                                        {"op": "click", "index": 6}], "done": None})
+
+
+def test_submit_on_a_sign_in_form_is_the_sign_in_button_not_the_applications_submit():
+    assert brain.auth_form(SUBMIT_SIGNIN_PAGE) == {"email": 4, "passwords": [5], "button": 6}
+    out = step(_req(SUBMIT_SIGNIN_PAGE, 5), _Scripted(_SIGNIN_REPLY), APPLICANT, PORTAL, placeholders=PLACEHOLDERS)
+    assert out["done"] is None, out["done"]                 # was: ready_to_submit, actions dropped
+    a = out["actions"]
+    assert [(x["op"], x["index"]) for x in a] == [("type", 4), ("type", 5), ("click", 6)]
+    assert a[0]["text"] == PORTAL["email"] and a[1]["text"] == PORTAL["password"] and a[1]["sensitive"] is True
+    # the create-account variant, button also called Submit
+    assert brain.auth_form(SUBMIT_CREATE_PAGE) == {"email": 4, "passwords": [5, 6], "button": 8}
+    reply = json.dumps({"actions": [{"op": "type", "index": 4, "text": "{{portal_email}}"},
+                                    {"op": "type", "index": 5, "text": "{{portal_password}}"},
+                                    {"op": "type", "index": 6, "text": "{{portal_password}}"},
+                                    {"op": "click", "index": 8}], "done": None})
+    out = step(_req(SUBMIT_CREATE_PAGE, 5), _Scripted(reply), APPLICANT, PORTAL, placeholders=PLACEHOLDERS)
+    assert out["done"] is None and [x["index"] for x in out["actions"]] == [4, 5, 6, 8]
+
+
+def test_the_applications_submit_stays_guarded_everywhere_else():
+    # the real review page: no password box, so no exception
+    assert brain.auth_form(REVIEW_PAGE) is None
+    # a password box next to application fields is not a sign-in form: Submit stays the shell's
+    mixed = ('[3]<input type=text label="Email" value="">\n[4]<input type=password label="Password" value="">\n'
+             '[5]<file label="Resume">\n[6]<textarea label="Why us?" value="">\n[7]<button>Submit</button>')
+    assert brain.auth_form(mixed) is None
+    out = step(_req(mixed, 5), _Scripted(json.dumps({"actions": [{"op": "click", "index": 7}], "done": None})),
+               APPLICANT, PORTAL, placeholders=PLACEHOLDERS)
+    assert out["actions"] == []                              # never clicked
+    # a Submit that is not the form's own button (before the password box) stays guarded too
+    odd = ('[2]<button>Submit application</button>\n[3]<input type=text label="Email" value="">\n'
+           '[4]<input type=password label="Password" value="">\n[5]<button>Sign In</button>')
+    assert brain.auth_form(odd)["button"] == 5
+    assert brain.submit_guard([{"op": "click", "index": 2}], view_lines(odd), odd) is True
+    assert brain.submit_guard([{"op": "click", "index": 5}], view_lines(odd), odd) is False
+    # and a sign-in page is never "ready", whatever the model says
+    assert brain.not_ready(SUBMIT_SIGNIN_PAGE) == "the page has a password box"
+    assert "sign-in or create-account form" in SYSTEM_PROMPT
+
+
+def test_shell_signin_types_the_saved_account_with_no_model_call():
+    out = brain.shell_signin(SUBMIT_SIGNIN_PAGE, APPLICANT, PORTAL)
+    a = out["actions"]
+    assert out["ok"] is True and out["cost"] == 0.0 and out["done"] is None
+    assert [(x["op"], x["index"], x.get("placeholder")) for x in a] == [
+        ("type", 4, "portal_email"), ("type", 5, "portal_password"), ("click", 6, None)]
+    assert a[0]["sensitive"] is True and a[1]["sensitive"] is True and a[1]["text"] == PORTAL["password"]
+    assert brain.shell_signin(SUBMIT_SIGNIN_PAGE, APPLICANT, None)["reason"] == "no-account"
+    assert brain.shell_signin(REVIEW_PAGE, APPLICANT, PORTAL)["reason"] == "not-a-sign-in-form"
+
+
+def test_step_route_shell_signin_makes_no_model_call(A, monkeypatch):
+    mod, c, rid, _ = A
+    c.post("/api/autoapply/consent", json={"accounts": True})
+    c.post("/api/autoapply/agent/portal-account", json={"host": "acme.wd5.myworkdayjobs.com", "create": True})
+    monkeypatch.setattr(mod, "_make_llm", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no model call")))
+    d = c.post("/api/autoapply/agent/step", json={"record_id": rid, "url": WD, "view": SUBMIT_SIGNIN_PAGE,
+                                                  "shell_signin": True}).get_json()
+    assert d["ok"] is True and [(x["op"], x["index"]) for x in d["actions"]] == [("type", 4), ("type", 5), ("click", 6)]
+    assert d["actions"][0]["text"] == "kofi@example.com" and d["actions"][1]["sensitive"] is True
+
+
 def test_empty_reply_retries_three_times_with_backoff_then_says_no_reply():
     # (Section 13) A bad or empty reply is retried, with backoff and a nudge, before anything
     # else; the shell escalates on "no-reply", it never parks the job on it.
@@ -276,7 +364,8 @@ def test_portal_account_create_stores_and_get_never_returns_the_password(A):
     assert email == "kofi@example.com" and len(pw) == 16
     assert sum(ch in "!@#$%&*?" for ch in pw) == 2 and sum(ch.isalnum() for ch in pw) == 14
     g = c.get("/api/autoapply/agent/portal-account?host=acme.wd5.myworkdayjobs.com").get_json()
-    assert g == {"ok": True, "host": "acme.wd5.myworkdayjobs.com", "exists": True, "email": "kofi@example.com"}
+    assert g == {"ok": True, "host": "acme.wd5.myworkdayjobs.com", "exists": True, "email": "kofi@example.com",
+                 "confirmed": False}
     assert pw not in json.dumps(g)
     r = c.get("/api/autoapply/agent/portal-account?host=acme.wd5.myworkdayjobs.com&include_secret=1")
     assert r.status_code == 400 and pw not in r.get_data(as_text=True)

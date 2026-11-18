@@ -634,9 +634,12 @@ function createAgent(deps) {
     // list opens) and the options they show (click for real). Plain fields and buttons keep
     // the in-page path, which is faster and already proven on the mock and live forms.
     const line = viewLine(v.text, a.index);
+    // The button of a sign-in or create-account form is that form's own, even when the site
+    // calls it "Submit": never in a frame, and only on a page that is nothing but that form.
+    const authBtn = !ctx && a.op === "click" && (authForm(v.text) || {}).button === a.index;
     if (!ctx && a.op === "click") {
       const label = await wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => "");
-      if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
+      if (!authBtn && SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
       const social = socialRefused(label || lineName(line), v.text);
       if (social) return { ok: false, note: "refused: " + social };
       if (/^\*?\[\d+\]<(option|menuitem|li|div|span)\b/.test(line) || /role=(option|menuitem)/.test(line)) {
@@ -674,7 +677,7 @@ function createAgent(deps) {
     if (a.op === "click") {
       const label = await (ctx ? fr.eval(ctx, TEXT_JS(a.index))
                                : wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => ""));
-      if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
+      if (!authBtn && SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
       const social = socialRefused(label || lineName(line), v.text);
       if (social) return { ok: false, note: "refused: " + social };
     }
@@ -1501,7 +1504,11 @@ function createAgent(deps) {
     let noAsk = { hash: "", n: 0 };      // "needs-answers" with nothing to ask, on the same page
     let lastSignin = null;               // { host } after a click on Sign in: the next view says whether it worked
     const authOf = new Map();            // host -> { fails, created, reset, waited }
-    const auth = (h) => { if (!authOf.has(h)) authOf.set(h, { fails: 0, created: false, reset: false, waited: false }); return authOf.get(h); };
+    const auth = (h) => {
+      if (!authOf.has(h)) authOf.set(h, { fails: 0, created: false, reset: false, waited: false,
+                                          submits: 0, creates: 0, createsSeen: 0, createFails: 0, rotated: false, noAccount: false, confirmed: false, shellSignins: 0 });
+      return authOf.get(h);
+    };
     const mailOpened = new Set();        // hosts whose emailed link was opened this run
     const runUrls = new Set();           // every page this application has been on (back never leaves it)
     const stepSeen = new Map();          // page + actions -> times: the same step again is no progress
@@ -1578,7 +1585,7 @@ function createAgent(deps) {
             await settle(wc, before);
             note = r && r.ok ? "clicked " + lineName(viewLine(curV.text, idx)) : "the click did not work";
             if (name === "reset password") pendingNudges.push("Sign in failed. You are on the password reset: type {{portal_email}}, send the reset, then report await_email with reason link.");
-            else pendingNudges.push("Sign in failed. Create the account: {{portal_email}} and {{portal_password}} in every password box, then click Create account. If the site says the email already exists, use Forgot password.");
+            else pendingNudges.push("Sign in failed. Create the account: {{portal_email}} and {{portal_password}} in every password box, then click Create account. Use Forgot password only if the site says the email already exists, never for a password rule.");
           }
         } else if (name === "wait for the site's email") {
           auth(hostOf(before)).waited = true;
@@ -1622,8 +1629,10 @@ function createAgent(deps) {
       if (name === "back") return !!backTarget(wc);
       const h = hostOf(where());
       if (name === "create account") return !!(curV && buttonIndex(curV.text, CREATE_NAME_RE)) && !auth(h).created;
-      if (name === "reset password") return !!(curV && buttonIndex(curV.text, FORGOT_NAME_RE)) && !auth(h).reset;
-      if (name === "wait for the site's email") return !mailOpened.has(h) && !auth(h).waited;
+      // A password reset is for an account the site HAS: never from a create form that failed
+      // on its own validation (no account exists, so no reset mail can come).
+      if (name === "reset password") return !!(curV && buttonIndex(curV.text, FORGOT_NAME_RE)) && !auth(h).reset && resetAllowed(auth(h), curV.text);
+      if (name === "wait for the site's email") return !mailOpened.has(h) && !auth(h).waited && !auth(h).noAccount;
       if (name === "sign in again") return portals.size > 0;
       if (name === "fill the field myself") return !toolFill;
       return true;
@@ -1909,13 +1918,58 @@ function createAgent(deps) {
         // the site offers it (the account may be new to the site), then Forgot password (the
         // reset mail). Never the same sign-in over and over.
         const hereHost = hostOf(url);
-        const signinHere = isSigninView(v.text);
+        // A create-account form is not a sign-in form (Workday shows a "Sign In" link on it): a
+        // click that lands there is not a failed sign-in, and Forgot password is not its next step.
+        const createHere = isCreateView(v.text);
+        const authHere = isSigninView(v.text) || createHere;
+        const signinHere = authHere && !createHere;
         if (lastSignin && lastSignin.host === hereHost && signinHere) auth(hereHost).fails++;
         lastSignin = null;
         let forced = forcedNext; forcedNext = null;
         const A = auth(hereHost);
+        // (2026-11-18) The create form refused what was typed. The site's own error decides:
+        //   "already exists"  -> the account is there: sign in or reset (the ladder below);
+        //   a password rule   -> no account exists. One fresh password that meets the rule, saved
+        //                        by the engine (never for an account that worked before), one
+        //                        more try; then a truthful park, never a reset mail;
+        //   anything else     -> the brain fixes the form; three refusals park with the error.
+        if (createHere && A.creates > A.createsSeen) {
+          let errs = pageErrors(v.text);
+          if (!errs.length) {
+            try { const r = await wc.executeJavaScript("window.TailorAgent.readErrors ? window.TailorAgent.readErrors() : []", true); if (Array.isArray(r)) errs = r.map(String); }
+            catch (e) { if (e && e.stopped) throw e; }
+          }
+          const f = createFailure(errs);
+          if (f.kind) A.createsSeen = A.creates;
+          if (f.kind === "exists") { A.noAccount = false; A.exists = true; dlog("step " + step + " create account: the site says the account exists"); }
+          else if (f.kind) {
+            A.noAccount = true;
+            A.createFails++;
+            dlog("step " + step + " create account refused (" + f.kind + "):", f.text);
+            const blocked = createBlockedReason(opts.company || hereHost, f.text);
+            if (f.kind === "password-rule") {
+              if (A.rotated) return park("person", blocked, { url });
+              A.rotated = true;
+              const r = await guard(deps.postApp("/api/autoapply/agent/portal-account", { host: hereHost, rotate: true, error: f.text }), 30000, "portal")
+                .catch((e) => { if (e && e.stopped) throw e; return null; });
+              if (!(r && r.ok && r.rotated)) return park("person", blocked, { url });
+              portalNew.add(hereHost);
+              feed.push("signin", "Creating", "the account again with a password the site accepts");
+              pendingNudges.push("The site refused the saved password (" + f.text + "). A new password that meets the rule is saved for this site. Type {{portal_password}} into every password box again, then click Create account once. Do not use Forgot password: no account exists yet.");
+            } else if (A.createFails >= 3) return park("person", blocked, { url });
+            else pendingNudges.push("Create account was refused: " + f.text + ". Fix what the error names, then click Create account. Do not use Forgot password: no account exists yet.");
+          }
+        }
+        // A sign-in or a creation that WORKED (the application's own form is on screen, no
+        // password box): the engine marks the account as the site's, so its password is never
+        // rotated later.
+        if (!A.confirmed && A.submits > 0 && !authHere && sig.blocker !== "auth" && portals.has(hereHost) && insideView(v.text)) {
+          A.confirmed = true;
+          A.noAccount = false;
+          guard(deps.postApp("/api/autoapply/agent/portal-account", { host: hereHost, confirm: true }), 30000, "portal").catch(() => null);
+        }
         const codeBox = /<input[^>]*label="[^"]*\b(code|otp|passcode)\b/i.test(v.text) && !/label="[^"]*\b(zip|postal)\b/i.test(v.text);
-        if (!forced && !mailOpened.has(hereHost) && !A.waited && !codeBox && (signinHere || A.reset)
+        if (!forced && !mailOpened.has(hereHost) && !A.waited && !codeBox && (authHere || A.reset)
             && (VERIFY_RE.test(words) || (A.reset && !signinHere && MAILED_RE.test(words) && shape && shape.fields <= 1))) {
           A.waited = true;
           forced = { done: { outcome: "await_email", reason: "link" },
@@ -1926,8 +1980,8 @@ function createAgent(deps) {
           if (create && !A.created) {
             A.created = true;
             forced = { actions: [{ op: "click", index: create }], why: "sign in failed twice: creating the account", say: "creating the account",
-                       nudge: "Sign in failed twice. Create the account: {{portal_email}} and {{portal_password}} in every password box, then click Create account. If the site says the email already exists, use Forgot password." };
-          } else if (forgot && !A.reset) {
+                       nudge: "Sign in failed twice. Create the account: {{portal_email}} and {{portal_password}} in every password box, then click Create account. Use Forgot password only if the site says the email already exists, never for a password rule." };
+          } else if (forgot && !A.reset && resetAllowed(A, v.text)) {
             A.reset = true;
             forced = { actions: [{ op: "click", index: forgot }], why: "sign in failed: resetting the password", say: "resetting the password",
                        nudge: "Sign in failed. Type {{portal_email}}, send the reset, then report await_email with reason link." };
@@ -1988,6 +2042,14 @@ function createAgent(deps) {
           if (forced.nudge) pendingNudges.push(forced.nudge);
           reply = { ok: true, memory: "", evaluation: "(shell) " + forced.why, summary: "", plan,
                     actions: forced.actions || [], done: forced.done || null };
+          if (forced.signin) {
+            // The saved account, typed by the engine's own placeholders (the shell never holds
+            // the password) into this form, then the form's own button. No model call.
+            const r = await guard(deps.postApp("/api/autoapply/agent/step", { record_id: recordId, step, url, view: v.text, shell_signin: true }), 30000, "portal")
+              .catch((e) => { if (e && e.stopped) throw e; return null; });
+            if (r && r.ok && Array.isArray(r.actions) && r.actions.length) { reply.actions = r.actions; pendingNudges.push(forced.after); }
+            else pendingNudges.push("This is a sign-in form, not the review page. Type {{portal_email}} and {{portal_password}}, then click the form's own button (it may be called Submit).");
+          }
         } else try {
           reply = await guard(deps.postApp("/api/autoapply/agent/step", {
             record_id: recordId, step, max_steps: MAX_STEPS, url, lane: opts.lane || "assisted",
@@ -2039,6 +2101,15 @@ function createAgent(deps) {
           // (Section 14) Deterministic first: a sign-in page, a password box or a page with no
           // Submit control is never the review page, whatever the model said.
           const no = notReady(v.text);
+          // (2026-11-18) "Ready" on a sign-in form whose button is called Submit: the shell signs
+          // in itself with the saved account (twice at most per site), one attempt on the ladder.
+          if (no && authForm(v.text) && portals.has(hostOf(url)) && auth(hostOf(url)).shellSignins < 2) {
+            auth(hostOf(url)).shellSignins++;
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(ready_to_submit refused)"], results: ["this is a sign-in form; the shell signs in"] });
+            forcedNext = { signin: true, why: "ready reported on a sign-in form: signing in with the saved account", say: "signing in with your saved account",
+                           after: "You reported ready_to_submit but " + no + ": that was a sign-in form, and its button (even when called Submit) signs in. The shell signed in for you. Carry on with the application." };
+            continue;
+          }
           if (no) {
             pendingNudges.push("You reported ready_to_submit but " + no + ". Carry on with the application.");
             history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(ready_to_submit refused)"], results: [no] });
@@ -2398,12 +2469,27 @@ function createAgent(deps) {
               }
             }
           }
+          // Forgot password while the create form was refused on its own validation: no account
+          // exists, so the reset mail can never come. Held, with the reason.
+          if (a.op === "click" && !v.frameOf.has(a.index) && FORGOT_NAME_RE.test(lineName(viewLine(v.text, a.index)))
+              && !resetAllowed(auth(hostOf(url)), v.text)) {
+            observations.push("Held: Forgot password is only for an account the site already has. No account exists here yet: fix what the create form's error names, then click Create account.");
+            results.push("held: no account exists yet");
+            actFails.push(failWords("held"));
+            dlog("step " + step + " held: forgot password with no account");
+            break;
+          }
           const r = await act(wc, fr, v, a, opts.resumePath || "");
           if (a.op === "click" && r && r.ok && !v.frameOf.has(a.index)) {
             const nm = lineName(viewLine(v.text, a.index));
-            if (SIGNIN_NAME_RE.test(nm)) lastSignin = { host: hostOf(url) };
-            else if (CREATE_NAME_RE.test(nm)) auth(hostOf(url)).created = true;
-            else if (FORGOT_NAME_RE.test(nm)) auth(hostOf(url)).reset = true;
+            const au = auth(hostOf(url)), onCreate = isCreateView(v.text);
+            // The form's own button, whatever it is called ("Submit" on one Workday tenant).
+            const own = (authForm(v.text) || {}).button === a.index;
+            // "Sign In" on the create form is a link to the sign-in form, not a sign-in.
+            if (own && onCreate) { au.created = true; au.creates++; au.submits++; }
+            else if (own || SIGNIN_NAME_RE.test(nm)) { if (!onCreate) { lastSignin = { host: hostOf(url) }; au.submits++; } }
+            else if (CREATE_NAME_RE.test(nm)) { au.created = true; if (onCreate) { au.creates++; au.submits++; } }
+            else if (FORGOT_NAME_RE.test(nm)) au.reset = true;
           }
           if (a.placeholder === "email_code" && r && r.ok) emailCode = "";
           if (r && r.ok) {
@@ -2870,8 +2956,95 @@ function buttonIndex(viewText, re) {
   }
   return 0;
 }
-// A sign-in form: a password box and a Sign in button.
-const isSigninView = (t) => /^\*?\[\d+\]<input type=password\b/m.test(String(t || "")) && !!buttonIndex(t, SIGNIN_NAME_RE);
+// A sign-in or create-account form and nothing else (the same rule as autoapply/brain.py
+// auth_form): a password box, no application field (no file box, text area, dropdown or radio;
+// at most five other boxes) and, after the last password box, a button that is the form's own,
+// whatever the site calls it. {email, passwords, button} as view indices, or null.
+const AUTH_BUTTON_RE = /^(submit|continue|next|sign ?in|log ?in|create (an |my |your )?account|sign ?up|register)$/i;
+function authForm(t) {
+  const passwords = [], others = [], buttons = [];
+  for (const ln of elementLines(t)) {
+    const m = /^\*?\[(\d+)\]<(\w+)([^>]*)>/.exec(ln);
+    if (!m) continue;
+    const i = Number(m[1]), tag = m[2].toLowerCase(), attrs = m[3];
+    if (/^(textarea|select|combobox|radio|file)$/.test(tag) || (tag === "input" && /\btype=file\b/.test(attrs))) return null;
+    if (tag === "button") { buttons.push({ i, name: lineName(ln) }); continue; }
+    if (tag !== "input" || /search=true/.test(attrs) || /\btype=(hidden|checkbox|submit|button)\b/.test(attrs)) continue;
+    (/\btype=password\b/.test(attrs) ? passwords : others).push({ i, ln });
+  }
+  if (!passwords.length || others.length > 5) return null;
+  const last = passwords[passwords.length - 1].i;
+  const b = buttons.find((x) => x.i > last && AUTH_BUTTON_RE.test(x.name));
+  if (!b) return null;
+  const before = others.filter((o) => o.i < passwords[0].i);
+  const mail = before.find((o) => /label="[^"]*(e-?mail|user ?name|user ?id|login)/i.test(o.ln)) || before[before.length - 1];
+  return { email: mail ? mail.i : 0, passwords: passwords.map((x) => x.i), button: b.i };
+}
+// A sign-in form: a password box and a Sign in button, or the form's own button under another
+// name ("Submit").
+const isSigninView = (t) => /^\*?\[\d+\]<input type=password\b/m.test(String(t || "")) && (!!buttonIndex(t, SIGNIN_NAME_RE) || !!authForm(t));
+
+// A create-account form: two password boxes (the password and its repeat), or one under a
+// "Create Account" / "Sign up" / "Register" heading. Workday's has a "Sign In" link too, which
+// made it read as a sign-in form (2026-11-18: the ladder went to Forgot password from it).
+const CREATE_HEAD_RE = /^(Title: )?(create (an |my |your |a new )?account|sign ?up|register)( ?[-|:].*)?$/i;
+function isCreateView(t) {
+  const lines = String(t || "").split("\n");
+  const pw = lines.filter((ln) => /^\*?\[\d+\]<input type=password\b/.test(ln)).length;
+  if (pw >= 2) return true;
+  return pw === 1 && (!!buttonIndex(t, CREATE_NAME_RE) || !!authForm(t))
+    && lines.some((ln) => !/^\*?\[\d+\]</.test(ln) && !/^URL: /.test(ln) && CREATE_HEAD_RE.test(ln.trim()));
+}
+// The page's own error lines ("Error: Password must include: - A numeric character").
+function pageErrors(viewText) {
+  const out = [];
+  for (const ln of pageWords(viewText).split("\n")) {
+    const m = /^Error\b[:\s-]*(.+)$/i.exec(ln.trim());
+    const t = m ? m[1].replace(/^"|"$/g, "").trim().slice(0, 240) : "";
+    if (t && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
+// What a refused create form says. "exists": the site has an account for this e-mail (sign in or
+// reset). "password-rule": the password breaks a rule the site states. "validation": any other
+// form error. Only the first two words decide anything; a rule error is never "exists".
+const ACCOUNT_EXISTS_RE = /already (exists?|registered|in use|taken|been (used|registered|taken)|have an account|associated)|account (with|for) (this|that|the) e-?mail|e-?mail( address)? (is|has been) (already )?(taken|used|registered)|existing account|sign in instead/i;
+const PASSWORD_CLASS_RE = /(numeric|uppercase|upper case|lowercase|lower case|special|alphabetic) character|at least (one|1) (number|digit|letter|symbol|uppercase|lowercase|special)/i;
+const PASSWORD_WORDS_RE = /must|should|needs?\b|requirement|too (short|long|weak|common)|does(n't| not) meet|not (strong|valid|allowed)|invalid|at least|minimum|maximum|cannot|can't|may not|polic/i;
+// A password error that is not a rule: the two boxes differ, the box is empty, a wrong sign-in.
+const PASSWORD_OTHER_RE = /do(es)? not match|don't match|must match|must be the same|is required|required field|incorrect|wrong password/i;
+const isPasswordRule = (e) => !PASSWORD_OTHER_RE.test(e) && (PASSWORD_CLASS_RE.test(e) || (/password/i.test(e) && PASSWORD_WORDS_RE.test(e)));
+function createFailure(errors) {
+  const errs = (Array.isArray(errors) ? errors : [errors]).map((e) => String(e || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  const hit = (re) => errs.find((e) => re.test(e)) || "";
+  const exists = hit(ACCOUNT_EXISTS_RE);
+  if (exists) return { kind: "exists", text: exists };
+  const rule = errs.find(isPasswordRule) || "";
+  if (rule) return { kind: "password-rule", text: rule };
+  return errs.length ? { kind: "validation", text: errs[0] } : { kind: "", text: "" };
+}
+// Password reset is for an account the site has: not while the create form was refused on its
+// own validation (auth.noAccount), and not from a create form that has not said "already exists".
+function resetAllowed(a, viewText) {
+  if (a && a.noAccount) return false;
+  if (isCreateView(viewText) && !(a && a.exists)) return false;
+  return true;
+}
+// The park reason when the account cannot be created: the site's own error, nothing invented.
+function createBlockedReason(site, error) {
+  const e = String(error || "").replace(/\s+/g, " ").trim().replace(/[.\s]+$/, "");
+  return "I could not create an account on " + (site || "the site") + ": " + (e || "the site refused the form")
+    + ". Create the account on the page yourself, then press Continue.";
+}
+// Past the sign-in wall: the application's own form (two or more fields, no password box, not a
+// reset or verification page).
+function insideView(t) {
+  const lines = elementLines(t);
+  if (lines.some((ln) => /^\*?\[\d+\]<input type=password\b/.test(ln))) return false;
+  const words = pageWords(t) + "\n" + ((/^Title: (.*)$/m.exec(String(t || "")) || [])[1] || "");
+  if (FORGOT_NAME_RE.test(words) || VERIFY_RE.test(words) || MAILED_RE.test(words)) return false;
+  return lines.filter((ln) => /^\*?\[\d+\]<(input|select|textarea|combobox|radio|checkbox|file)\b/.test(ln) && !/search=true/.test(ln)).length >= 2;
+}
 
 // ---- a closed job (2026-11-02: Oracle, US Bank, Amazon) --------------------------------------
 // A posting that is gone says so in a short line of its own; a job description never does that
@@ -3593,4 +3766,5 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
+                   isSigninView, isCreateView, authForm, pageErrors, createFailure, resetAllowed, createBlockedReason, insideView,
                    DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF };

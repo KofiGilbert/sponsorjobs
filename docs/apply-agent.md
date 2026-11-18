@@ -513,7 +513,24 @@ straight to the email wait, without a model call, once per site until its link w
 does the "check your email" page after a reset request. Two failed sign-ins: the shell clicks
 Create account when the site offers it (the account may be new to the site), the next failure
 Forgot password (then the reset mail); four go up the ladder, whose menu on a sign-in page
-starts with `create account`, `reset password` and `wait for the site's email`. The same step
+starts with `create account`, `reset password` and `wait for the site's email`.
+(2026-11-18) A create-account form (two password boxes, or one under a "Create Account" heading)
+is not a sign-in form: landing on it is not a failed sign-in, and Forgot password is never its
+next step. When the create form is refused, the site's own error decides. "Already exists":
+the reset path stays open. A password rule ("Password must include: - A numeric character"):
+no account exists, so the engine saves one fresh password that meets the rule
+(`portal-account` with `rotate`, refused once a sign-in or creation ever worked on that host,
+which the shell records with `confirm`), the brain retries once, and a second refusal parks
+with "I could not create an account on <site>: <the site's error>". Any other form error
+parks the same way after three refusals. Reset and the email wait are off while no account
+exists. A sign-in or create-account form's own button is clicked whatever the site calls it
+(one Workday tenant labels it "Submit"): on a page that is nothing but that form (a password
+box, no file box, text area, dropdown or radio, at most five other boxes) the submit guard
+lets the first such button after the password box through, in the engine, the shell and the
+page script; the application's Submit stays guarded everywhere else. If the brain still
+reports ready_to_submit on such a form, the shell signs in itself (the step route with
+`shell_signin`, no model call, the saved account through the same placeholders), twice at
+most per site, each counted on the ladder. The same step
 on the same page coming round a third time (even with other steps between) goes up the ladder
 too, and the same page three steps in a row (was four). After an emailed link, the shell opens
 the job again only from a page with no field of its own that reads like a job search ("Search
