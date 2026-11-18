@@ -335,3 +335,37 @@ def test_erase_removes_the_mailbox_file_and_export_includes_it(A, monkeypatch):
     gone = A._erase_brain_and_answers()
     assert "mailbox.db" in gone and not A._mailbox_path().exists()
     assert c.get("/api/inbox/messages", headers=H).get_json()["count"] == 0
+
+
+# ---- what the Inbox screen added: one application's mail, and sample mail for a dev session ----
+def test_job_id_keeps_only_that_applications_mail(A, monkeypatch):
+    c = A.app.test_client()
+    put(A, ACME, "saved")
+    b = FakeBroker([mail(1, "Thank you for applying to Acme Robotics", RECEIVED_TEXT),
+                    mail(2, "Weekly digest", "Five new roles near Boston.", sender="news@jobboard.example", name="Job Board")])
+    wire(A, monkeypatch, b)
+    c.post("/api/inbox/sync", headers=H)
+    d = c.get("/api/inbox/messages?job_id=" + ACME["source_id"], headers=H).get_json()
+    assert d["count"] == 1 and [m["job_id"] for m in d["messages"]] == [ACME["source_id"]]
+    assert d["unread"] == 2                                        # the badge still counts the whole mailbox
+    assert c.get("/api/inbox/messages?job_id=careers::nobody", headers=H).get_json()["count"] == 0
+    assert c.get("/api/inbox/messages", headers=H).get_json()["count"] == 2
+
+
+def test_dev_mail_goes_into_the_local_mailbox_only_in_a_dev_session(A, monkeypatch):
+    c = A.app.test_client()
+    body = {"from": "jobs@acmerobotics.example", "name": "Acme Robotics Recruiting",
+            "subject": "Interview with Acme Robotics", "text": INTERVIEW_TEXT,
+            "html": "<p>Hello <b>Zoe</b></p><script>alert(1)</script>", "attachment_names": ["agenda.pdf"]}
+    monkeypatch.delenv("RESUME_AGENT_FAKE_MAILBOX", raising=False)
+    assert c.post("/api/inbox/dev/mail", json=body).status_code == 404
+    monkeypatch.setenv("RESUME_AGENT_FAKE_MAILBOX", "1")
+    out = c.post("/api/inbox/dev/mail", json=body).get_json()
+    assert out["ok"] is True and out["id"]
+    d = c.get("/api/inbox/messages", headers=H).get_json()         # no address needed
+    assert d["count"] == 1 and d["messages"][0]["label"] == "interview" and d["messages"][0]["has_attachments"] is True
+    m = c.get(f"/api/inbox/messages/{out['id']}", headers=H).get_json()["message"]
+    assert "<script" not in m["html_safe"] and "Zoe" in m["html_safe"] and m["attachment_names"] == ["agenda.pdf"]
+    # a second one is a second message, and the broker's cursor has not moved
+    assert c.post("/api/inbox/dev/mail", json={**body, "subject": "Another"}).get_json()["id"] != out["id"]
+    assert A._mailbox().cursor("") == 0 and A._mailbox().cursor(ALIAS) == 0
