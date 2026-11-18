@@ -717,6 +717,27 @@
   function submitLike(el) {
     return SUBMIT_RE.test(ownText(el));
   }
+  // The button of a sign-in or create-account form that happens to be called "Submit" (a
+  // Workday tenant, 2026-11-18): its form holds a password box and no application field (no
+  // file box, text area or dropdown, at most five other boxes). Only that; the application's
+  // Submit is never this.
+  function authSubmit(el) {
+    const PW = "input[type='password']";
+    let box = el.closest ? el.closest("form") : null;
+    if (!box || !box.querySelector(PW)) {
+      box = el.parentElement;
+      while (box && !box.querySelector(PW)) box = box.parentElement;
+    }
+    if (!box) return false;
+    const shown = (n) => !selfHidden(n) && boxShown(n);
+    if (!Array.from(box.querySelectorAll(PW)).some(shown)) return false;
+    if (Array.from(box.querySelectorAll("input[type='file'], textarea, select, [role='combobox'], [role='listbox'], [role='radio'], input[type='radio'], [contenteditable='true']")).some((n) => isFileInput(n) || shown(n))) return false;
+    const other = Array.from(box.querySelectorAll("input")).filter((n) => {
+      const t = String(n.type || "text").toLowerCase();
+      return !/^(password|hidden|checkbox|submit|button|search)$/.test(t) && shown(n);
+    });
+    return other.length <= 5;
+  }
   // A link to a privacy notice, terms or a poster opens a document or a "Data Privacy Agreement"
   // dialog, never the next step (Lam Research, 2026-10-30): the agent does not follow one. A
   // required box that names the notice is ticked instead, with the person's consent (termsItems).
@@ -791,7 +812,7 @@
     if (tagOf(el) === "LABEL") { const c = controlOfLabel(el); if (c) el = c; }
     if (tagOf(el) === "SELECT") return { ok: false, note: "use select", changed: false };
     if (isFileInput(el)) return { ok: false, note: "use upload", changed: false };
-    if (submitLike(el)) return { ok: false, note: "submit-guard", changed: false };
+    if (submitLike(el) && !authSubmit(el)) return { ok: false, note: "submit-guard", changed: false };
     if (policyLink(el)) return { ok: false, note: "policy-link: tick the box instead, never open the notice", changed: false };
     if (isDisabled(el)) return { ok: false, note: "disabled", changed: false };
     const before = fingerprint();

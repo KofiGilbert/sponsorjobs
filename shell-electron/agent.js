@@ -634,9 +634,12 @@ function createAgent(deps) {
     // list opens) and the options they show (click for real). Plain fields and buttons keep
     // the in-page path, which is faster and already proven on the mock and live forms.
     const line = viewLine(v.text, a.index);
+    // The button of a sign-in or create-account form is that form's own, even when the site
+    // calls it "Submit": never in a frame, and only on a page that is nothing but that form.
+    const authBtn = !ctx && a.op === "click" && (authForm(v.text) || {}).button === a.index;
     if (!ctx && a.op === "click") {
       const label = await wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => "");
-      if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
+      if (!authBtn && SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
       const social = socialRefused(label || lineName(line), v.text);
       if (social) return { ok: false, note: "refused: " + social };
       if (/^\*?\[\d+\]<(option|menuitem|li|div|span)\b/.test(line) || /role=(option|menuitem)/.test(line)) {
@@ -674,7 +677,7 @@ function createAgent(deps) {
     if (a.op === "click") {
       const label = await (ctx ? fr.eval(ctx, TEXT_JS(a.index))
                                : wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => ""));
-      if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
+      if (!authBtn && SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
       const social = socialRefused(label || lineName(line), v.text);
       if (social) return { ok: false, note: "refused: " + social };
     }
@@ -1503,7 +1506,7 @@ function createAgent(deps) {
     const authOf = new Map();            // host -> { fails, created, reset, waited }
     const auth = (h) => {
       if (!authOf.has(h)) authOf.set(h, { fails: 0, created: false, reset: false, waited: false,
-                                          submits: 0, creates: 0, createsSeen: 0, createFails: 0, rotated: false, noAccount: false, confirmed: false });
+                                          submits: 0, creates: 0, createsSeen: 0, createFails: 0, rotated: false, noAccount: false, confirmed: false, shellSignins: 0 });
       return authOf.get(h);
     };
     const mailOpened = new Set();        // hosts whose emailed link was opened this run
@@ -2039,6 +2042,14 @@ function createAgent(deps) {
           if (forced.nudge) pendingNudges.push(forced.nudge);
           reply = { ok: true, memory: "", evaluation: "(shell) " + forced.why, summary: "", plan,
                     actions: forced.actions || [], done: forced.done || null };
+          if (forced.signin) {
+            // The saved account, typed by the engine's own placeholders (the shell never holds
+            // the password) into this form, then the form's own button. No model call.
+            const r = await guard(deps.postApp("/api/autoapply/agent/step", { record_id: recordId, step, url, view: v.text, shell_signin: true }), 30000, "portal")
+              .catch((e) => { if (e && e.stopped) throw e; return null; });
+            if (r && r.ok && Array.isArray(r.actions) && r.actions.length) { reply.actions = r.actions; pendingNudges.push(forced.after); }
+            else pendingNudges.push("This is a sign-in form, not the review page. Type {{portal_email}} and {{portal_password}}, then click the form's own button (it may be called Submit).");
+          }
         } else try {
           reply = await guard(deps.postApp("/api/autoapply/agent/step", {
             record_id: recordId, step, max_steps: MAX_STEPS, url, lane: opts.lane || "assisted",
@@ -2090,6 +2101,15 @@ function createAgent(deps) {
           // (Section 14) Deterministic first: a sign-in page, a password box or a page with no
           // Submit control is never the review page, whatever the model said.
           const no = notReady(v.text);
+          // (2026-11-18) "Ready" on a sign-in form whose button is called Submit: the shell signs
+          // in itself with the saved account (twice at most per site), one attempt on the ladder.
+          if (no && authForm(v.text) && portals.has(hostOf(url)) && auth(hostOf(url)).shellSignins < 2) {
+            auth(hostOf(url)).shellSignins++;
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(ready_to_submit refused)"], results: ["this is a sign-in form; the shell signs in"] });
+            forcedNext = { signin: true, why: "ready reported on a sign-in form: signing in with the saved account", say: "signing in with your saved account",
+                           after: "You reported ready_to_submit but " + no + ": that was a sign-in form, and its button (even when called Submit) signs in. The shell signed in for you. Carry on with the application." };
+            continue;
+          }
           if (no) {
             pendingNudges.push("You reported ready_to_submit but " + no + ". Carry on with the application.");
             history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(ready_to_submit refused)"], results: [no] });
@@ -2463,8 +2483,11 @@ function createAgent(deps) {
           if (a.op === "click" && r && r.ok && !v.frameOf.has(a.index)) {
             const nm = lineName(viewLine(v.text, a.index));
             const au = auth(hostOf(url)), onCreate = isCreateView(v.text);
+            // The form's own button, whatever it is called ("Submit" on one Workday tenant).
+            const own = (authForm(v.text) || {}).button === a.index;
             // "Sign In" on the create form is a link to the sign-in form, not a sign-in.
-            if (SIGNIN_NAME_RE.test(nm)) { if (!onCreate) { lastSignin = { host: hostOf(url) }; au.submits++; } }
+            if (own && onCreate) { au.created = true; au.creates++; au.submits++; }
+            else if (own || SIGNIN_NAME_RE.test(nm)) { if (!onCreate) { lastSignin = { host: hostOf(url) }; au.submits++; } }
             else if (CREATE_NAME_RE.test(nm)) { au.created = true; if (onCreate) { au.creates++; au.submits++; } }
             else if (FORGOT_NAME_RE.test(nm)) au.reset = true;
           }
@@ -2933,8 +2956,33 @@ function buttonIndex(viewText, re) {
   }
   return 0;
 }
-// A sign-in form: a password box and a Sign in button.
-const isSigninView = (t) => /^\*?\[\d+\]<input type=password\b/m.test(String(t || "")) && !!buttonIndex(t, SIGNIN_NAME_RE);
+// A sign-in or create-account form and nothing else (the same rule as autoapply/brain.py
+// auth_form): a password box, no application field (no file box, text area, dropdown or radio;
+// at most five other boxes) and, after the last password box, a button that is the form's own,
+// whatever the site calls it. {email, passwords, button} as view indices, or null.
+const AUTH_BUTTON_RE = /^(submit|continue|next|sign ?in|log ?in|create (an |my |your )?account|sign ?up|register)$/i;
+function authForm(t) {
+  const passwords = [], others = [], buttons = [];
+  for (const ln of elementLines(t)) {
+    const m = /^\*?\[(\d+)\]<(\w+)([^>]*)>/.exec(ln);
+    if (!m) continue;
+    const i = Number(m[1]), tag = m[2].toLowerCase(), attrs = m[3];
+    if (/^(textarea|select|combobox|radio|file)$/.test(tag) || (tag === "input" && /\btype=file\b/.test(attrs))) return null;
+    if (tag === "button") { buttons.push({ i, name: lineName(ln) }); continue; }
+    if (tag !== "input" || /search=true/.test(attrs) || /\btype=(hidden|checkbox|submit|button)\b/.test(attrs)) continue;
+    (/\btype=password\b/.test(attrs) ? passwords : others).push({ i, ln });
+  }
+  if (!passwords.length || others.length > 5) return null;
+  const last = passwords[passwords.length - 1].i;
+  const b = buttons.find((x) => x.i > last && AUTH_BUTTON_RE.test(x.name));
+  if (!b) return null;
+  const before = others.filter((o) => o.i < passwords[0].i);
+  const mail = before.find((o) => /label="[^"]*(e-?mail|user ?name|user ?id|login)/i.test(o.ln)) || before[before.length - 1];
+  return { email: mail ? mail.i : 0, passwords: passwords.map((x) => x.i), button: b.i };
+}
+// A sign-in form: a password box and a Sign in button, or the form's own button under another
+// name ("Submit").
+const isSigninView = (t) => /^\*?\[\d+\]<input type=password\b/m.test(String(t || "")) && (!!buttonIndex(t, SIGNIN_NAME_RE) || !!authForm(t));
 
 // A create-account form: two password boxes (the password and its repeat), or one under a
 // "Create Account" / "Sign up" / "Register" heading. Workday's has a "Sign In" link too, which
@@ -2944,7 +2992,7 @@ function isCreateView(t) {
   const lines = String(t || "").split("\n");
   const pw = lines.filter((ln) => /^\*?\[\d+\]<input type=password\b/.test(ln)).length;
   if (pw >= 2) return true;
-  return pw === 1 && !!buttonIndex(t, CREATE_NAME_RE)
+  return pw === 1 && (!!buttonIndex(t, CREATE_NAME_RE) || !!authForm(t))
     && lines.some((ln) => !/^\*?\[\d+\]</.test(ln) && !/^URL: /.test(ln) && CREATE_HEAD_RE.test(ln.trim()));
 }
 // The page's own error lines ("Error: Password must include: - A numeric character").
@@ -3718,5 +3766,5 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
-                   isSigninView, isCreateView, pageErrors, createFailure, resetAllowed, createBlockedReason, insideView,
+                   isSigninView, isCreateView, authForm, pageErrors, createFailure, resetAllowed, createBlockedReason, insideView,
                    DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF };

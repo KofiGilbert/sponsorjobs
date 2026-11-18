@@ -61,6 +61,11 @@ function setup(first, onClick, brain, postOverride) {
       if (expr.includes("readErrors")) return [];
       if (expr.includes("TailorAgent.view(")) return { text: "URL: " + URL1 + "\n" + P.page };
       if (expr.includes("resumeInputOpen")) return false;
+      if (expr.includes("TailorAgent.element(")) {
+        const i = Number((/TailorAgent\.element\((\d+)\)/.exec(expr) || [])[1]);
+        const ln = P.page.split("\n").find((l) => new RegExp("^\\*?\\[" + i + "\\]<").test(l)) || "";
+        return /<(button|a)\b/.test(ln) ? A.lineName(ln) : "";
+      }
       if (expr.includes("TailorAgent.act(")) {
         const a = JSON.parse(expr.slice(expr.indexOf("(") + 1, expr.lastIndexOf(")")));
         if (a.op === "click") { P.clicks.push(a.index + ":" + (/^Title: (.*)$/m.exec(P.page) || [])[1]); const next = onClick(a.index, P); if (next) P.page = next; }
@@ -83,6 +88,7 @@ function setup(first, onClick, brain, postOverride) {
       posts.push([p, b]);
       const o = postOverride ? postOverride(p, b, P) : undefined;
       if (o !== undefined) return o;
+      if (p === "/api/autoapply/agent/step" && b.shell_signin) return engineSignin(P);
       if (p === "/api/autoapply/agent/step") return brain(P, b, posts);
       if (p === "/api/autoapply/agent/portal-account") return b.rotate ? { ok: true, rotated: true } : b.confirm ? { ok: true, confirmed: true } : { ok: true, created: true };
       if (p === "/api/autoapply/agent/ask") return { ok: false, reason: "stopped" };
@@ -91,6 +97,14 @@ function setup(first, onClick, brain, postOverride) {
   };
   return { agent: createAgent(deps), posts, progress, P };
 }
+// What the engine's shell_signin returns (autoapply/brain.py shell_signin, pinned in
+// tests/test_agent_brain.py): the saved account into the form's boxes, then its own button.
+const engineSignin = (P) => {
+  const f = A.authForm(P.page);
+  if (!f) return { ok: false, reason: "not-a-sign-in-form" };
+  return { ok: true, done: null, cost: 0, actions: [{ op: "type", index: f.email, placeholder: "portal_email", sensitive: true, text: "(secret)" }]
+    .concat(f.passwords.map((i) => ({ op: "type", index: i, placeholder: "portal_password", sensitive: true, text: "(secret)" })), [{ op: "click", index: f.button }]) };
+};
 const ok = (actions, extra) => Object.assign({ ok: true, summary: "Working on it", actions, done: null, cost: 0.01 }, extra || {});
 const stop = () => ok([], { done: { outcome: "blocked", reason: "captcha" } });       // ends a run
 const steps = (posts) => posts.filter(([p]) => p === "/api/autoapply/agent/step").map(([, b]) => b);
@@ -234,6 +248,87 @@ const log = () => fs.readFileSync(path.join(TMP, "sj-agent.log"), "utf8");
     await agent.run(7, { url: URL1, company: "Acme" });
     const c = portal(posts, "confirm");
     assert(c.length === 1 && c[0].host === HOST, "confirmed once: " + JSON.stringify(c));
+  }
+  // ---- 7. a sign-in button called "Submit" (the exact view of 2026-11-18, 16:34) --------------
+  const SUBMIT_SIGNIN = "Title: Sign In - Logo\n[Start of page]\n[1]<a>Skip to main content</a>\n[2]<a>Logo careers home</a>\n[3]<button>Back to Job Posting</button>\nAnalyst\nSign In\n"
+    + "*[4]<input type=text label=\"Email Address\" value=\"\" required>\n*[5]<input type=password label=\"Password\" value=\"\" required>\n"
+    + "*[6]<button role=button>Submit</button>\nDon't have an account yet?\n*[7]<button>Create Account</button>\n*[8]<button>Forgot your password?</button>\n[End of page]";
+  const REVIEW = "Title: Review\n[Start of page]\nReview\nMy Information\n[4]<input type=text label=\"First Name\" value=\"(filled)\" required>\n"
+    + "[5]<input type=text label=\"Phone\" value=\"(filled)\" required>\n[6]<button>Back</button>\n[7]<button>Submit</button>\n[End of page]";
+  const SIGN2 = [{ op: "type", index: 4, placeholder: "portal_email", sensitive: true, text: "(secret)" },
+                 { op: "type", index: 5, placeholder: "portal_password", sensitive: true, text: "(secret)" }, { op: "click", index: 6 }];
+  {
+    assert(JSON.stringify(A.authForm(SUBMIT_SIGNIN)) === JSON.stringify({ email: 4, passwords: [5], button: 6 }), "the form's own button is [6]: " + JSON.stringify(A.authForm(SUBMIT_SIGNIN)));
+    assert(isSigninView(SUBMIT_SIGNIN) && !isCreateView(SUBMIT_SIGNIN), "it is a sign-in form");
+    assert(A.authForm(REVIEW) === null && A.authForm(INSIDE) === null, "the review page and the application are not");
+    assert(A.authForm(SUBMIT_SIGNIN.replace("*[6]", "*[9]<textarea label=\"Cover note\" value=\"\">\n*[6]")) === null, "a password box beside an application field is not a sign-in form");
+    // a. the brain types the account and clicks Submit: the shell lets that click through
+    const onClick = (i, P) => (title(P) === "Sign In - Logo" && i === 6 ? INSIDE : "");
+    const brain = (P) => (title(P) === "My Information" ? stop() : ok(SIGN2));
+    const { agent, posts, P } = setup(SUBMIT_SIGNIN, onClick, brain);
+    await agent.run(8, { url: URL1, company: "Acme" });
+    assert(P.clicks.join() === "6:Sign In - Logo" && title(P) === "My Information", "clicked [6] and got in: " + P.clicks.join(", ") + " -> " + title(P));
+    assert(!steps(posts).some((b) => b.shell_signin), "the brain did it: no shell sign-in needed");
+    assert(portal(posts, "confirm").length === 1, "counted as a sign-in that worked");
+    assert(!/submit-guard/.test(log().split("\n").slice(-40).join("\n")), "no submit guard on the sign-in button");
+  }
+  {
+    // b. the safety net: the brain says ready_to_submit there (what came back 46 times): the
+    //    shell signs in itself through the engine, types both fields, clicks [6]. No reload loop.
+    const onClick = (i, P) => (title(P) === "Sign In - Logo" && i === 6 ? INSIDE : "");
+    const READY = ok([], { done: { outcome: "ready_to_submit", reason: "the application is at its submit button" } });
+    let asked = 0;
+    const brain = (P) => (title(P) === "My Information" ? stop() : (asked++, READY));
+    const { agent, posts, P } = setup(SUBMIT_SIGNIN, onClick, brain);
+    await agent.run(9, { url: URL1, company: "Acme" });
+    const net = posts.filter(([p, b]) => p === "/api/autoapply/agent/step" && b.shell_signin);
+    assert(asked === 1 && net.length === 1, "one ready, one shell sign-in: " + asked + " " + net.length);
+    assert(net[0][1].view.includes("<button role=button>Submit</button>") && !JSON.stringify(net[0][1]).includes("password\":"), "the engine gets the view, the shell holds no password");
+    assert(P.clicks.join() === "6:Sign In - Logo" && title(P) === "My Information", "signed in with [6]: " + P.clicks.join(", "));
+    const l = log().split("\n").slice(-60).join("\n");
+    assert(/type\|4\|\(secret\)/.test(l) && /type\|5\|\(secret\)/.test(l), "both fields typed, logged as (secret)");
+    assert(!/ladder reload|keeps reporting ready/.test(l), "no reload ladder");
+  }
+  {
+    // c. the saved account is wrong: the shell's sign-in counts on the ladder (two failures,
+    //    then Create account), it does not repeat for ever.
+    const bad = SUBMIT_SIGNIN.replace("Sign In\n*[4]", "Sign In\nError: Invalid credentials\n*[4]");
+    const onClick = (i, P) => (title(P) === "Sign In - Logo" && i === 6 ? bad : title(P) === "Sign In - Logo" && i === 7 ? create("") : "");
+    const READY = ok([], { done: { outcome: "ready_to_submit", reason: "the application is at its submit button" } });
+    const brain = (P) => (title(P) === "Create Account" ? stop() : READY);
+    const { agent, posts, P } = setup(SUBMIT_SIGNIN, onClick, brain);
+    await agent.run(10, { url: URL1, company: "Acme" });
+    assert(P.clicks.join() === "6:Sign In - Logo,6:Sign In - Logo,7:Sign In - Logo", "two shell sign-ins, then Create account: " + P.clicks.join(", "));
+    assert(posts.filter(([p, b]) => p === "/api/autoapply/agent/step" && b.shell_signin).length === 2, "two at most");
+  }
+
+  // ---- 8. a create-account form whose button is called "Submit" ------------------------------
+  {
+    const CREATE_SUBMIT = create("").replace("[7]<button role=button>Create Account</button>", "[7]<button role=button>Submit</button>");
+    assert(isCreateView(CREATE_SUBMIT) && A.authForm(CREATE_SUBMIT).button === 7 && A.authForm(CREATE_SUBMIT).passwords.join() === "5,6", "a create form, button [7]");
+    let rotated = false;
+    const refused = create(RULE).replace("[7]<button role=button>Create Account</button>", "[7]<button role=button>Submit</button>");
+    const onClick = (i, P) => (title(P) === "Create Account" && i === 7 ? (rotated ? INSIDE : refused) : "");
+    const brain = (P) => (title(P) === "My Information" ? stop() : ok(TYPE3));
+    const { agent, posts, P } = setup(CREATE_SUBMIT, onClick, brain, (p, b) => {
+      if (p === "/api/autoapply/agent/portal-account" && b.rotate) { rotated = true; return { ok: true, rotated: true }; }
+      return undefined;
+    });
+    await agent.run(11, { url: URL1, company: "Acme" });
+    assert(P.clicks.join() === "7:Create Account,7:Create Account" && title(P) === "My Information", "Submit created the account: " + P.clicks.join(", "));
+    assert(portal(posts, "rotate").length === 1, "and the password rule path still works behind a Submit button");
+  }
+
+  // ---- 9. the application's own Submit stays guarded: never clicked --------------------------
+  {
+    let n = 0;
+    const brain = () => (++n === 1 ? ok([{ op: "click", index: 7 }]) : stop());
+    const { agent, posts, P } = setup(REVIEW, () => "", brain);
+    await agent.run(12, { url: URL1, company: "Acme" });
+    assert(P.clicks.length === 0, "Submit on the review page never reached the page: " + P.clicks.join(", "));
+    assert(steps(posts).some((b) => JSON.stringify(b.nudges || []).includes("That was the Submit button: never click it")), "and the brain is told");
+    assert(!steps(posts).some((b) => b.shell_signin), "no shell sign-in on a page with no password box");
+    assert(A.notReady(REVIEW) === "" && A.notReady(SUBMIT_SIGNIN) === "the page has a password box", "the review page is ready; the sign-in page never is");
   }
   console.log("ok");
   process.exit(0);

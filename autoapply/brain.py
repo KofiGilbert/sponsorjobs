@@ -34,7 +34,7 @@ Rules:
 2. On a job page click Apply. Prefer "Apply manually", "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box with the matching placeholder and send it, one at a time; a question about the person with no placeholder is needs-answers.
 3. Comboboxes and autocompletes: type the value, then WAIT a step. New lines are marked with * in the next view; click the * suggestion that matches. Never press Enter.
 4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link; back, reload, reopen_job) LAST in the list. Anything after it would run on a page you have not seen.
-5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit.
+5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit. The one exception: on a sign-in or create-account form (a password box and no application fields) a button named Submit, Continue or Next is that form's own button, so click it after typing the account; never report ready_to_submit on a page with a password box.
 6. Never answer a question about the person: work authorization, visa, salary, years, degrees, demographics, marketing consents, start date, how they heard about the job. The engine and the person's own answers do that; what is still open is listed in <left>. Leave those fields alone. A self-identification question shows answered=true or value="(filled)" in place of its choice: it is answered.
 7. Never invent a value. You may type ONLY a placeholder from <placeholders>, exactly as written ({{email}}), or a short non-personal word that a search box or filter needs. Nothing else.
 8. An action that did not work is information, not a dead end: read <observations>, inspect the element, read_errors, or find the control you need, then do it another way (another control, the other input form, list_options then select, wait_for what you expect). Never repeat the same failed action more than once. Report blocked only for what a person must do in person: captcha, phone-code, an identity check, or needs-answers (rule 15).
@@ -670,10 +670,64 @@ def loop_nudges(history: list) -> list[str]:
             for k, n in counts.items() if n >= LOOP_REPEATS]
 
 
-def submit_guard(actions: list, lines: dict) -> bool:
-    """True when any click lands on a submit-like line (the model may not press it)."""
+# The button of a sign-in or create-account form, whatever the site calls it (a Workday tenant
+# labels its sign-in button "Submit", 2026-11-18).
+_AUTH_BUTTON = re.compile(r"^(submit|continue|next|sign ?in|log ?in|create (an |my |your )?account|sign ?up|register)$", re.I)
+_AUTH_EMAIL = re.compile(r"e-?mail|user ?name|user ?id|login", re.I)
+_APP_FIELD_TAGS = {"textarea", "select", "combobox", "radio", "file"}
+
+
+def auth_form(view: str, lines: dict | None = None) -> dict | None:
+    """{email, passwords, button} (view indices) when this view is a sign-in or create-account
+    form and nothing else: a password box, no application field (no file box, text area,
+    dropdown or radio; at most five other boxes) and, after the last password box, a button
+    that is the form's own. None otherwise, so the application's Submit stays guarded."""
+    lines = lines if lines is not None else view_lines(view)
+    passwords, others = [], []
+    for i in sorted(lines):
+        ln = lines[i]
+        tag, attrs = ln.get("tag") or "", ln.get("attrs") or ""
+        if tag in _APP_FIELD_TAGS or (tag == "input" and re.search(r"\btype=file\b", attrs)):
+            return None
+        if tag != "input" or "search=true" in attrs or re.search(r"\btype=(hidden|checkbox|submit|button)\b", attrs):
+            continue
+        (passwords if re.search(r"\btype=password\b", attrs) else others).append(i)
+    if not passwords or len(others) > 5:
+        return None
+    button = next((i for i in sorted(lines) if i > passwords[-1] and lines[i].get("tag") == "button"
+                   and _AUTH_BUTTON.match(_line_name(lines[i]))), None)
+    if button is None:
+        return None
+    before = [i for i in others if i < passwords[0]]
+    email = next((i for i in before if _AUTH_EMAIL.search(lines[i].get("label") or "")), before[-1] if before else None)
+    return {"email": email, "passwords": passwords, "button": button}
+
+
+def shell_signin(view: str, applicant: dict, portal: dict | None) -> dict:
+    """The sign-in the shell does itself, with no model call: the saved account typed into the
+    form's own boxes through the same placeholders the model uses, then the form's button."""
+    form = auth_form(view)
+    if not form:
+        return {"ok": False, "reason": "not-a-sign-in-form", "cost": 0.0}
+    if not (portal and portal.get("email") and portal.get("password")):
+        return {"ok": False, "reason": "no-account", "cost": 0.0}
+    acts = ([{"op": "type", "index": form["email"], "text": "{{portal_email}}"}] if form["email"] is not None else [])
+    acts += [{"op": "type", "index": i, "text": "{{portal_password}}"} for i in form["passwords"][:2]]
+    acts.append({"op": "click", "index": form["button"]})
+    notes: list[str] = []
+    actions = resolve_actions(acts, applicant, portal, {}, notes)
+    return {"ok": True, "memory": "", "evaluation": "(shell) signing in with the saved account", "summary": "Signing in",
+            "plan": [], "actions": actions, "done": None, "notes": notes, "cost": 0.0, "tries": 0}
+
+
+def submit_guard(actions: list, lines: dict, view: str = "") -> bool:
+    """True when any click lands on a submit-like line (the model may not press it). The button
+    of a sign-in or create-account form is not one, whatever it is called (``auth_form``)."""
+    form = auth_form(view, lines) if view else None
     for a in actions or []:
         if a.get("op") != "click":
+            continue
+        if form and a.get("index") == form["button"]:
             continue
         line = lines.get(a.get("index")) or {}
         if SUBMIT_RE.match(_line_name(line)):
@@ -854,7 +908,7 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
         out = _blocked("needs-person", reply["memory"], reply["evaluation"])
         out.update({"cost": cost, "tries": tries, "plan": reply.get("plan") or []})
         return out
-    if submit_guard(reply["actions"], lines):   # the model never presses Submit
+    if submit_guard(reply["actions"], lines, req.get("view") or ""):   # the model never presses Submit
         reply["actions"] = []
         reply["done"] = {"outcome": "ready_to_submit", "reason": "the application is at its submit button"}
     notes: list[str] = []

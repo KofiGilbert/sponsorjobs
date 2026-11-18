@@ -291,6 +291,31 @@ test("a styled checkbox (the real input at opacity 0 inside a drawn box) is list
   await page.close();
 });
 
+test("a sign-in form's own button called Submit is clicked; next to application fields it stays guarded", async ({ open }) => {
+  // (2026-11-18) A Workday tenant labels its sign-in button "Submit".
+  const page = await open("react_select.html");
+  await page.setContent(`<main><h2>Sign In</h2><div id="f">
+    <label>Email Address <input type="text" id="e"></label>
+    <label>Password <input type="password" id="p"></label>
+    <button id="go" onclick="window.__signed = true">Submit</button></div>
+    <button>Create Account</button><button>Forgot your password?</button></main>`);
+  await page.evaluate(AGENT);
+  let v = await page.evaluate("window.TailorAgent.view()");
+  let b = indices(v.text).find((i) => /<button[^>]*>Submit<\/button>/.test(line(v.text, i)));
+  assert.ok(b, v.text);
+  let r = await page.evaluate(`window.TailorAgent.act({op: "click", index: ${b}})`);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(await page.evaluate("window.__signed === true"), true, "the sign-in button was clicked");
+  // the same button beside an application field (a text area) is the application's Submit
+  await page.evaluate(`window.__signed = false; document.getElementById("f").insertAdjacentHTML("afterbegin", '<label>Why us? <textarea></textarea></label>')`);
+  v = await page.evaluate("window.TailorAgent.view()");
+  b = indices(v.text).find((i) => /<button[^>]*>Submit<\/button>/.test(line(v.text, i)));
+  r = await page.evaluate(`window.TailorAgent.act({op: "click", index: ${b}})`);
+  assert.deepStrictEqual([r.ok, r.note], [false, "submit-guard"]);
+  assert.strictEqual(await page.evaluate("window.__signed === true"), false, "never clicked");
+  await page.close();
+});
+
 test("the submit guard refuses Submit; submitButton() still finds it for the shell", async ({ open }) => {
   const page = await open("react_select.html");
   await page.evaluate(AGENT);

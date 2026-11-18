@@ -16730,6 +16730,12 @@ def autoapply_agent_step():
         "last_step": bool(b.get("last_step")), "image": image,
         "portal": {"account": bool(portal), "new": bool(b.get("portal_new"))},
     }
+    if b.get("shell_signin"):
+        # The shell signs in itself on a sign-in form (no model call): the saved account goes in
+        # through the same placeholders, resolved here, marked sensitive, never logged.
+        out = brain.shell_signin(view[:14000], values, portal)
+        out["placeholders"] = placeholders
+        return jsonify(out)
     resume = _resume_upload_path(rec) if rec else ""
     # (Phase 4) the redact guard on the page view: a control holding a stored legal or
     # self-identification value shows the model "(filled)", never the value
