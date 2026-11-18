@@ -277,9 +277,14 @@ class LLMBackend(Protocol):
         name and the start of its ad only, never anything about the person."""
 
     def agent_step(self, system: str, user: str) -> str:
-        """One step of the apply agent (autoapply/brain.py): the cached system prompt plus
-        the single state message, answered with the raw JSON text the brain validates. The
-        message carries the page view, placeholder NAMES and history only, never a value."""
+        """One step of the apply agent (autoapply/brain.py): the system prompt plus the single
+        state message, answered with the raw JSON text the brain validates. The message carries
+        the page view, placeholder NAMES and history only, never a contact value or a secret.
+        (2026-11-18) On a step with open questions the system prompt ends with ``<person>``: the
+        facts of the person's resume and saved profile the agent may answer from
+        (autoapply/material.py; never a legal or self-identification answer). A client that can
+        mark a prompt for caching also offers ``agent_step_blocks(blocks, user)``, which the
+        brain prefers: the same system prompt as its stable parts."""
 
 
 # --------------------------------------------------------------------------- #
@@ -2174,10 +2179,11 @@ class FakeLLM:
         create = _find(r"create (an )?account|sign up|register")
         if create is not None and "portal_email" not in placeholders:
             return _reply([{"op": "click", "index": create}], memory="no portal account yet")
-        # An open field the person has answered: <left> says "Label (type {{answer_n}})".
+        # An open field the person has answered: <left> says "Label (saved answer: type
+        # {{answer_n}})", or "Label (the engine suggests ...: type {{answer_n}})".
         left = _block("left")
         acts = []
-        for m in re.finditer(r"^(.*?) \(type (\{\{answer_\d+\}\})\)$", left, re.M):
+        for m in re.finditer(r"^(.*?) \([^()]*\btype (\{\{answer_\d+\}\})\)$", left, re.M):
             label, ph = m.group(1).strip().lower(), m.group(2)
             for idx, tag, attrs, _t in lines:
                 lm = re.search(r'label="([^"]*)"', attrs)

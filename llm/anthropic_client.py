@@ -2352,6 +2352,34 @@ class AnthropicLLM:
         twenty steps stays at a few cents. Goes through _complete, so BrokerLLM inherits it."""
         return self._complete(system, user, max_tokens=900, effort="low")
 
+    def agent_step_blocks(self, blocks: list, user: str) -> str:
+        """``agent_step`` with the system prompt as its stable parts (autoapply/brain.py
+        ``system_blocks``: the rules, then what the agent knows about the person), each marked
+        for prompt caching: the steps of one application read them from the cache instead of
+        paying for them again. BrokerLLM overrides the transport."""
+        create = {
+            "model": self.model, "max_tokens": 900,
+            "system": [{"type": "text", "text": str(b), "cache_control": {"type": "ephemeral"}} for b in blocks if str(b or "").strip()],
+            "messages": [{"role": "user", "content": user}],
+        }
+        if supports_effort(self.model):
+            create["output_config"] = {"effort": "low"}
+        try:
+            msg = self._client.messages.create(**create)
+        except Exception as exc:
+            if "output_config" in create and "effort" in str(exc).lower():
+                create.pop("output_config", None)
+                msg = self._client.messages.create(**create)
+            else:
+                raise
+        u = getattr(msg, "usage", None)
+        read = int(getattr(u, "cache_read_input_tokens", 0) or 0) if u else 0
+        wrote = int(getattr(u, "cache_creation_input_tokens", 0) or 0) if u else 0
+        self.last_usage = ({"input": int(getattr(u, "input_tokens", 0) or 0) + read + wrote,
+                            "output": int(getattr(u, "output_tokens", 0) or 0),
+                            "cache_read": read, "cache_write": wrote} if u else None)
+        return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip()
+
     def agent_step_image(self, system: str, user: str, image_b64: str) -> str:
         """A reflection step of the apply agent (docs/apply-agent.md section 13) with a
         screenshot of the pane: the page as the person would see it, when the text view was not
