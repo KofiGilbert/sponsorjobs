@@ -4725,7 +4725,7 @@
      applying for the job part?"). A built one-page resume in the desktop app offers Apply as the
      footer's one primary; Accept & Save steps back to ghost and Download stays. Apply saves the
      resume exactly as Accept & Save does, makes it this job's Auto-apply package (Waiting on you)
-     and starts Apply for me on it in the Browser tab: the same aaFill run as the Auto-apply queue,
+     and starts Assisted apply on it in the Browser tab: the same aaFill run as the Auto-apply queue,
      with the same stops (Send at Submit, questions on the bar, captcha and sign-in walls handed
      to the person, LinkedIn and bot-banning sites never driven). The run is told in the chat. A
      pasted description with no link asks once in the chat for the application link. */
@@ -11166,8 +11166,11 @@
     answer: ["aa.act.answer", "Answer and continue"], continue: ["aa.act.continue", "Continue"],
     // left on its review page by the agent (also once the page is gone: Send fills it again)
     send: ["aa.send", "Send"] };
-  const AA_AGENT_ACT = { fill: ["aa.act.apply", "Apply for me"], signin: ["aa.act.apply", "Apply for me"],
+  const AA_AGENT_ACT = { fill: ["aa.act.apply", "Assisted apply"], signin: ["aa.act.apply", "Assisted apply"],
     finish: ["aa.act.finish", "Open and finish"] };
+  // What the button means, on hover: the visible run, not the walk-away one (that is Auto).
+  const aaApplyTip = () => T("aa.act.applyTip", "I fill the form while you watch. I ask you when I need an answer, and you press Send.");
+  const aaActTip = a => (AA_HAS_AGENT() && (a === "fill" || a === "signin")) ? aaApplyTip() : "";
   const aaActName = a => T(...((AA_HAS_AGENT() && AA_AGENT_ACT[a]) || AA_ACT[a] || AA_ACT.view));
   const AA_REASON = { needs_signin: ["aa.reason.signin", "Needs your sign-in"],
     form_blocker: ["aa.reason.form", "A form question needs you"],
@@ -11333,7 +11336,7 @@
         <div class="aa-q aa-conf-line" title="${esc(it.confirmation.subject || "")}">${esc(T("aa.confirmed", "Confirmation received"))}</div>` : ""}</div>
       <span class="aa-stage ${cls}"${it.stage_detail && it.stage_detail !== text ? ` title="${esc(it.stage_detail)}"` : ""}><span class="pip"></span><span class="aa-stage-x">${esc(text)}</span></span>
       <span class="aa-match">${it.match != null ? `${it.match}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
-      <div class="aa-act"><button class="btn btn-ghost btn-sm${primaryish ? " aa-fillbtn" : ""}" type="button" data-act="${act}">${esc(aaActName(act))}</button></div>
+      <div class="aa-act"><button class="btn btn-ghost btn-sm${primaryish ? " aa-fillbtn" : ""}" type="button" data-act="${act}"${aaActTip(act) ? ` title="${esc(aaActTip(act))}"` : ""}>${esc(aaActName(act))}</button></div>
     </div>`;
   }
 
@@ -11345,7 +11348,8 @@
     if (many) {
       const n = items.filter(x => x.action === "fill" || x.action === "signin").length;
       many.hidden = !(AA_HAS_AGENT() && t === "waiting" && n > 1);
-      many.textContent = T("aa.applyAll", "Apply for me to all {n}").replace("{n}", n);
+      many.textContent = T("aa.applyAll", "Assisted apply to all {n}").replace("{n}", n);
+      many.title = aaApplyTip();
     }
     all.hidden = !(t === "review" && items.length > 1);
     all.textContent = T("aa.approveAll", "Approve all {n}").replace("{n}", items.length);
@@ -12474,7 +12478,7 @@
           e.target.disabled = false;
           aaAgentBar({ state: "ready", record_id: info.record_id,
                        message: r && r.reason === "captcha" ? T("aa.agent.captcha", "The submit hit a captcha. Solve it on the page, then press Send again.")
-                              : r && r.reason === "page-gone" ? T("aa.agent.pageGone", "Another application used the browser since, so this page is gone. Press Apply for me on it to fill it again.")
+                              : r && r.reason === "page-gone" ? T("aa.agent.pageGone", "Another application used the browser since, so this page is gone. Press Assisted apply on it to fill it again.")
                               : T("aa.agent.nosend", "Could not find the Submit button. Press it on the page.") });
         } else {
           await api(`/api/record/${info.record_id}/status`, { status: "applied" }).catch(() => {});

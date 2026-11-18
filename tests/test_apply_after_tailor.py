@@ -2,7 +2,7 @@
 applying for the job part?"). The builder's review footer offers Apply for a built resume; Apply
 saves it exactly as Accept & Save does, makes it this job's Auto-apply package (the same record,
 approved: Waiting on you, the Tracker's Approved column) and hands the page that package's
-Auto-apply row, so the page starts Apply for me on it the way the Auto-apply queue does. A pasted
+Auto-apply row, so the page starts Assisted apply on it the way the Auto-apply queue does. A pasted
 description with no link asks once for the application link. No test reaches a real site."""
 
 from __future__ import annotations

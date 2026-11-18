@@ -3842,7 +3842,7 @@ def session_apply():
     one, what about the applying for the job part?"). It saves this resume exactly as Accept &
     Save does (the record and its PDF), makes that record the Auto-apply package for this job
     (approved: Waiting on you, the Tracker's Approved column), and returns its Auto-apply row so
-    the page starts Apply for me on it in the Browser tab, the same run as the Auto-apply queue.
+    the page starts Assisted apply on it in the Browser tab, the same run as the Auto-apply queue.
 
     Body {url?}: the application link the person gave in the chat, for a pasted description that
     had none. With no known link nothing is saved and the reply says ``need_url`` (the chat asks
@@ -15761,7 +15761,7 @@ def autoapply_agent_parked_continue(rid: int):
 def autoapply_agent_parked_take(rid: int):
     """The shell takes a parked job to re-run it (or to drop it, when it was declined or
     stopped): the entry leaves the list, answers and all. A job still waiting is not taken
-    unless body {drop: true} (a new Apply for me on it replaces the park)."""
+    unless body {drop: true} (a new Assisted apply on it replaces the park)."""
     b = request.json or {}
     _park_settle()
     with _PARK_LOCK:
@@ -16875,7 +16875,7 @@ def autoapply_agent_unavailable():
             ch = None
         if ch is not None:
             try:
-                ch.send(("Apply for me stopped: " if not b.get("batch") else "The batch stopped: ") + msg, None)
+                ch.send(("Assisted apply stopped: " if not b.get("batch") else "The batch stopped: ") + msg, None)
                 told = True
                 _AI_UNAVAILABLE_TOLD["at"] = time.time()
             except Exception:  # noqa: BLE001
