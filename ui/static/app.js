@@ -6808,7 +6808,7 @@
   const IB_POLL = 300000;          // the sidebar count, every 5 minutes while the app is open
   const IB = { f: { label: "", unread: false, q: "", archived: false, job: "", jobName: "" },
                page: 1, rows: [], count: 0, labels: {}, unread: 0, alias: null, loaded: false,
-               open: null, msg: null, stale: false, busy: false, lastSync: 0, seq: 0, again: null };
+               open: null, msg: null, stale: false, busy: false, lastSync: 0, seq: 0, again: null, top: false };
   let IB_WANT = null;              // the application the Inbox should open on next (Tracker's "N messages")
   const ibActive = () => !!$("#view-inbox")?.classList.contains("is-active");
 
@@ -6851,11 +6851,13 @@
 
   // Open the Inbox. From the sidebar it shows all mail; from a Tracker card, that application's.
   async function loadInbox(want) {
+    const was = IB.f.job;
     IB.f.job = want && want.job ? String(want.job) : "";
     IB.f.jobName = want && want.job ? String(want.jobName || "") : "";
     if (want && want.job) { IB.f.label = ""; IB.f.unread = false; IB.f.q = ""; IB.f.archived = false; }
     ibSyncControls();
-    await ibFetch();
+    // Coming back to the same list keeps its place; a different list starts at the top.
+    await ibFetch(IB.loaded && was === IB.f.job ? "refresh" : undefined);
     if (IB.alias && Date.now() - IB.lastSync > IB_SYNC_EVERY) ibSync(false);
   }
   function ibSyncControls() {
@@ -6874,6 +6876,7 @@
     catch { return false; }        // keep what is on screen
     if (seq !== IB.seq) return false;
     const got = d.messages || [];
+    if (!mode) IB.top = true;      // a new filter or search: the list starts at its top
     if (mode === "more") { IB.page = page; IB.rows = IB.rows.concat(got.filter(m => !IB.rows.some(r => r.id === m.id))); }
     else { IB.rows = got; if (mode !== "refresh") IB.page = 1; else IB.page = Math.max(1, Math.ceil(per / IB_PER)); }
     IB.loaded = true;
@@ -6990,9 +6993,11 @@
     const list = $("#ibList");
     if (!list) return;
     const held = list.contains(document.activeElement) ? document.activeElement.dataset.id : null;
-    const now = Date.now();
+    const now = Date.now(), top = list.scrollTop;
     list.innerHTML = IB.rows.map(m => ibRowHtml(m, now)).join("");
-    if (held) list.querySelector(`.ib-row[data-id="${held}"]`)?.focus();   // keep the keyboard's place
+    list.scrollTop = IB.top ? 0 : top;                                       // a refresh keeps the place in the list
+    IB.top = false;
+    if (held) list.querySelector(`.ib-row[data-id="${held}"]`)?.focus({ preventScroll: true });   // and the keyboard's place
     const more = IB.rows.length < IB.count;
     $("#ibMore").hidden = !more;
     if (more) $("#ibShown").textContent = ibT("mbox.shown", "{a} of {b}").replace("{a}", String(IB.rows.length)).replace("{b}", String(IB.count));
