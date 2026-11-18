@@ -858,6 +858,10 @@ async function typeKeyOps(wc, keys) {
 // one the engine names, click it, type a query with real keys, press Enter, and let the engine
 // pick the best REAL option it lists (searchChoice); the next query only when nothing fit. Both
 // are optional questions: nothing that fits leaves them empty. At most SEARCH_MS in all.
+// Some prompts open their list in a popup dialog with its own search box (a real Workday form,
+// 2026-11-18): the engine says where to click and which box takes the typing (searchTarget,
+// searchFocus), and closeSearch presses the popup's Done, checks that it is gone, and counts the
+// choices that really reached the page. A search that picked nothing is not run again there.
 const SEARCH_MS = 20000;
 async function searchPicks(wc, ops) {
   if (!ops || !ops.length) return 0;
@@ -876,13 +880,11 @@ async function searchPicks(wc, ops) {
       let got = 0;
       for (const q of (op.queries || [])) {
         if (Date.now() > until || got >= (op.max || 1)) break;
-        const box = await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (!el) return null;
-          try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
-          const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width }; })()`, true).catch(() => null);
+        const box = await wc.executeJavaScript(`window.TailorAutofill.searchTarget(${JSON.stringify(op.ref)})`, true).catch(() => null);
         if (!box || !(box.w > 0)) break;
         await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
         await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
-        await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (el && el.select) el.select(); })()`, true).catch(() => null);
+        await wc.executeJavaScript(`window.TailorAutofill.searchFocus(${JSON.stringify(op.ref)})`, true).catch(() => null);
         await key("Backspace", "Backspace", 8);
         for (const ch of String(q)) {
           await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
@@ -892,12 +894,14 @@ async function searchPicks(wc, ops) {
         await new Promise((r) => setTimeout(r, 1500));
         const spec = JSON.stringify({ kind: op.kind, want: op.want || [], items: op.items || [] });
         const r = await wc.executeJavaScript(`window.TailorAutofill.searchChoice(${JSON.stringify(op.ref)}, ${spec})`, true).catch(() => null);
-        if (r && r.ok) { got++; picked++; }
+        if (r && r.ok) got++;
       }
-      await wc.executeJavaScript(`(async () => { const el = document.querySelector(${sel}); if (el && el.value) {
+      const c = await wc.executeJavaScript(`(async () => { const el = document.querySelector(${sel}); if (el && el.value) {
           const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; set.call(el, "");
           el.dispatchEvent(new Event("input", { bubbles: true })); }
         return window.TailorAutofill.closeSearch(${JSON.stringify(op.ref)}); })()`, true).catch(() => null);
+      // what really reached the page once the list (or its popup) was closed
+      picked += (c && typeof c.picked === "number") ? c.picked : got;
     }
   } catch (e) {
     if (process.env.SJ_AGENT_DEBUG === "1") console.warn("searchPicks:", String(e && e.message || e));
@@ -1012,7 +1016,12 @@ async function runAutoApplyOnPane(recordId, opts) {
     if (havePayload) {
       try { pres.push(await run("filling the page", "engine", (b) => wc.executeJavaScript(fillExpr(b), true), beatMain)); } catch (e) { /* fill what we can below */ }
       tally(pres[0]);
-      if (pres[0] && pres[0].keys && pres[0].keys.length) await typeKeyOps(wc, pres[0].keys);
+      if (pres[0] && pres[0].keys && pres[0].keys.length) {
+        await typeKeyOps(wc, pres[0].keys);
+        // a typed date counts as filled only when the page holds it (the engine reads it back)
+        const kl = await wc.executeJavaScript("window.TailorAutofill.keysLanded()", true).catch(() => null);
+        if (kl && kl.landed) pres[0].filled = (pres[0].filled || 0) + kl.landed;
+      }
       if (pres[0] && pres[0].searches && pres[0].searches.length) pres[0].filled = (pres[0].filled || 0) + await searchPicks(wc, pres[0].searches);
     }
     lap("engine", "reading the form");

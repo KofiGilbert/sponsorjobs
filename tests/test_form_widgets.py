@@ -523,3 +523,155 @@ def test_real_application_forms_still_count_as_forms(tmp_path):
         r = run(tmp_path, page, [{"do": "inject"},
                                  {"do": "eval", "as": "form", "js": "window.TailorAutofill.applicationForm()"}])
         assert r["form"] is True, page
+
+
+# ------------------------------------------------------------------ Workday My Experience: popup prompts, dates, second pass
+# A real Workday form (2026-11-18) parked after twelve minutes: the engine opened Field of Study,
+# whose list is a POPUP DIALOG (title, Search box, "Options Expanded", Done), saw no list of its
+# own, called the dropdown closed and left the dialog over the form. Under the modal the shell
+# could not put the focus in a date segment, so From / To were never typed, yet every pass counted
+# them as filled again. The fixture (workday_experience_dialog.html) says which parts of its markup
+# are guesses. All names, dates and schools here are made up.
+XP_PAYLOAD = {
+    "fields": {"first_name": "Avery", "last_name": "Example", "email": "avery@example.com"},
+    "screening": {}, "eeo": {"decline": False},
+    "history": [
+        {"title": "Data Analyst", "company": "Northwind Labs", "location": "Springfield, IL",
+         "start": {"m": 3, "y": 2026}, "end": None, "current": True, "description": "Built weekly dashboards."},
+        {"title": "Business Analyst", "company": "Contoso Bank", "location": "Riverton, NY",
+         "start": {"m": 2, "y": 2018}, "end": {"m": 9, "y": 2024}, "current": False, "description": ""},
+    ],
+    "education": [
+        {"school": "Example State University", "degree": "MBA - Business Analytics", "level": "masters",
+         "field": "Business Analytics", "start": {"m": 9, "y": 2024}, "end": {"m": 12, "y": 2025}, "current": False},
+        {"school": "Sample College", "degree": "Bachelor of Arts in Economics and Sociology", "level": "bachelors",
+         "field": "Economics and Sociology", "start": {"m": 0, "y": 2011}, "end": {"m": 0, "y": 2015}, "current": False},
+    ],
+    "skills": ["Excel", "SQL", "Python"],
+}
+XP_PAGE = "workday_experience_dialog.html"
+
+
+def _xp_fill(payload=None):
+    return f"window.TailorAutofill.fillAsync({json.dumps(payload or XP_PAYLOAD)})"
+
+
+XP_ONE_PASS = [
+    {"do": "inject"},
+    {"do": "eval", "as": "rep", "js": _xp_fill()},
+    {"do": "eval", "as": "after_engine", "js": "window.fxValues()"},
+    {"do": "shellKeys", "from": "rep", "as": "keys"},
+    {"do": "shellSearch", "from": "rep", "as": "search"},
+    {"do": "eval", "as": "values", "js": "window.fxValues()"},
+]
+
+
+def test_workday_popup_field_of_study_is_picked_and_the_dialog_closed(tmp_path):
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS + [
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+        {"do": "eval", "as": "popups", "js": "window.TailorAutofill.pickerPopups().length"},
+    ])
+    v, rep = r["values"], r["rep"]
+    # the engine's own pass leaves nothing open, although Field of Study opened a popup dialog
+    assert r["after_engine"]["popupOpens"] >= 1 and r["after_engine"]["open"] is False
+    assert rep["left_open"] == 0
+    # the shell's search: the option the degree supports, by the engine's scorer, then Done
+    assert v["fields"] == [["Business Administration/Management"], ["Economics"]]
+    assert v["skills"] == ["Excel", "SQL"]                     # only skills the list offers
+    assert r["search"]["picked"] == 4 and all(c["ok"] for c in r["search"]["closes"])
+    assert v["open"] is False and r["popups"] == 0
+    assert v["schools"] == [["Example State University"], ["Sample College"]]
+    assert v["degrees"] == ["Masters", "Bachelors"]            # (the open dialog once blocked the second)
+    assert not any(x in r["left"] for x in ("From", "To", "Degree", "Field of Study")), r["left"]
+
+
+def test_workday_dates_are_typed_month_and_year_and_year_only_for_education(tmp_path):
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS)
+    v, rep = r["values"], r["rep"]
+    # month then year; no To for the job marked current; education takes the year alone
+    assert [k["text"] for k in rep["keys"]] == ["3", "2026", "2", "2018", "9", "2024", "2024", "2025", "2011", "2015"]
+    assert r["keys"]["typed"] == 10                            # every segment took the focus: no dialog in the way
+    assert r["keys"]["landed"] == {"landed": 7, "missed": 0}   # seven date groups, read back from the page
+    assert v["current"] == [True, False]
+    assert v["workDates"] == ["3/2026", "/", "2/2018", "9/2024"]
+    assert v["eduDates"] == ["2024", "2025", "2011", "2015"]
+
+
+def test_workday_second_pass_on_an_unchanged_page_does_nothing(tmp_path):
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS + [
+        {"do": "eval", "as": "rep2", "js": _xp_fill()},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+        {"do": "eval", "as": "rep3", "js": _xp_fill()},
+        {"do": "eval", "as": "values3", "js": "window.fxValues()"},
+    ])
+    assert r["rep"]["filled"] > 0
+    for rep, v in ((r["rep2"], r["values2"]), (r["rep3"], r["values3"])):
+        # counts, not a stopwatch: nothing filled, typed, searched or opened
+        assert rep["filled"] == 0 and rep["history"] == 0 and rep["widgets"] == 0, rep
+        assert rep["keys"] == [] and rep["searches"] == [] and rep["opens"] == 0 and rep["left_open"] == 0
+        assert v == r["values"]                                # no entry added twice, no popup opened, nothing changed
+    assert r["values"]["works"] == 2 and r["values"]["edus"] == 2
+
+
+def test_workday_popup_is_closed_when_no_option_matches_and_not_searched_again(tmp_path):
+    payload = json.loads(json.dumps(XP_PAYLOAD))
+    payload["education"] = [dict(payload["education"][0], degree="Master of Science in Marine Biology", field="Marine Biology")]
+    payload["skills"] = ["Welding"]
+    fill = _xp_fill(payload)
+    r = run(tmp_path, XP_PAGE, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": fill},
+        {"do": "shellKeys", "from": "rep", "as": "keys"},
+        {"do": "shellSearch", "from": "rep", "as": "search"},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "rep2", "js": fill},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+    ])
+    v = r["values"]
+    assert [s["kind"] for s in r["rep"]["searches"]] == ["field", "skills"]
+    assert r["search"]["picked"] == 0 and all(c["ok"] for c in r["search"]["closes"])
+    assert v["fields"] == [[]] and v["skills"] == [] and v["open"] is False       # left empty, never a guess
+    # the miss is remembered (the shared per-page memory): no second search, no popup opened again
+    assert r["rep2"]["searches"] == [] and r["rep2"]["from_memory"] >= 2 and r["rep2"]["opens"] == 0
+    assert r["values2"]["popupOpens"] == v["popupOpens"] and r["values2"]["open"] is False
+
+
+def test_workday_popup_without_a_done_button_is_closed_another_way(tmp_path):
+    # ?nodone=1: no Done; a script's Escape is ignored; a press on the backdrop closes it
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS, query="?nodone=1")
+    assert r["after_engine"]["popupOpens"] >= 1 and r["after_engine"]["open"] is False
+    assert r["rep"]["left_open"] == 0
+    assert r["values"]["open"] is False and all(c["ok"] for c in r["search"]["closes"])
+    assert r["values"]["fields"] == [["Business Administration/Management"], ["Economics"]]
+    assert r["keys"]["landed"] == {"landed": 7, "missed": 0}
+
+
+def test_workday_dates_that_were_never_typed_are_not_counted_or_queued_forever(tmp_path):
+    r = run(tmp_path, XP_PAGE, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _xp_fill()},
+        {"do": "eval", "as": "landed", "js": "window.TailorAutofill.keysLanded()"},   # the shell typed nothing
+        {"do": "eval", "as": "rep2", "js": _xp_fill()},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+    ])
+    assert r["landed"] == {"landed": 0, "missed": 7}
+    # 5 boxes of the current job, 3 of the earlier one, school and degree twice: no date among them
+    assert r["rep"]["history"] == 12, r["rep"]["history"]
+    assert r["rep2"]["filled"] == 0 and r["rep2"]["keys"] == [] and r["rep2"]["from_memory"] >= 10
+    assert "From" in r["left"] and "To" in r["left"]          # still the person's (or the agent's) to give
+
+
+def test_workday_planned_pick_on_a_popup_prompt_closes_the_dialog(tmp_path):
+    r = run(tmp_path, XP_PAGE, [
+        {"do": "inject"},
+        {"do": "eval", "as": "fields", "js": "window.TailorAutofill.extractFormAsync({onlyEmpty: true})"},
+        {"do": "eval", "as": "after_read", "js": "window.fxValues()"},
+        {"do": "eval", "as": "miss", "js": ops_js([["Field of Study", "select", "Zoology"]])},
+        {"do": "eval", "as": "after_miss", "js": "window.fxValues()"},
+        {"do": "eval", "as": "hit", "js": ops_js([["Field of Study", "select", "Accounting"]])},
+        {"do": "eval", "as": "after_hit", "js": "window.fxValues()"},
+    ])
+    assert r["after_read"]["open"] is False                    # the form read opened the popups and closed them
+    assert r["miss"]["filled"] == 0 and r["miss"]["left_open"] == 0 and r["after_miss"]["open"] is False
+    assert r["hit"]["filled"] == 1 and r["hit"]["left_open"] == 0
+    assert r["after_hit"]["fields"] == [["Accounting"]] and r["after_hit"]["open"] is False

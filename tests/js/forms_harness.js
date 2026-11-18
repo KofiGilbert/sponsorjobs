@@ -14,6 +14,10 @@
 //   {do:"framesUpload", refsFrom, file, as}  CDP file upload in each frame for refs in a prior result
 //   {do:"frameValues", as}          window.fxValues() of the first child frame (main world)
 //   {do:"keys", sel, text, enter?}   real key presses into a box (then Enter)
+//   {do:"shellKeys", from, as?}     what the shell's typeKeyOps does with a fill report's ``keys``: focus
+//                                   each named box, type it with real keys, then ask the engine what landed
+//   {do:"shellSearch", from, as?}   what the shell's searchPicks does with a report's ``searches``: a real
+//                                   click, the query in real keys, Enter, searchChoice, then closeSearch
 //   {do:"wait", ms}
 // Prints {results:{...}} as JSON.
 "use strict";
@@ -112,6 +116,44 @@ async function freePort() {
         await page.keyboard.press("Backspace");
         await page.keyboard.type(st.text);
         if (st.enter) await page.keyboard.press("Enter");
+      } else if (st.do === "shellKeys") {
+        // mirrors typeKeyOps + the keysLanded read in shell-electron/main.js
+        let typed = 0;
+        for (const k of ((results[st.from] || {}).keys || [])) {
+          const ok = await page.evaluate((ref) => { const el = document.querySelector('[data-tailor-ref="' + ref + '"]');
+            if (!el) return false; el.focus(); return document.activeElement === el; }, k.ref);
+          if (!ok) continue;
+          await page.keyboard.type(String(k.text));
+          typed++;
+        }
+        await page.evaluate(() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); });
+        const landed = await page.evaluate(() => (window.TailorAutofill.keysLanded ? window.TailorAutofill.keysLanded() : null));
+        if (st.as) results[st.as] = { typed, landed };
+      } else if (st.do === "shellSearch") {
+        // mirrors searchPicks in shell-electron/main.js
+        let picked = 0;
+        const closes = [];
+        for (const op of ((results[st.from] || {}).searches || [])) {
+          let got = 0;
+          for (const q of (op.queries || [])) {
+            if (got >= (op.max || 1)) break;
+            const box = await page.evaluate((ref) => window.TailorAutofill.searchTarget(ref), op.ref);
+            if (!box || !(box.w > 0)) break;
+            await page.mouse.click(box.x, box.y);
+            await page.evaluate((ref) => window.TailorAutofill.searchFocus(ref), op.ref);
+            await page.keyboard.press("Backspace");
+            await page.keyboard.type(String(q));
+            await page.keyboard.press("Enter");
+            await page.waitForTimeout(150);
+            const r = await page.evaluate(([ref, spec]) => window.TailorAutofill.searchChoice(ref, spec),
+              [op.ref, { kind: op.kind, want: op.want || [], items: op.items || [] }]);
+            if (r && r.ok) got++;
+          }
+          const c = await page.evaluate((ref) => window.TailorAutofill.closeSearch(ref), op.ref);
+          closes.push(c);
+          picked += (c && typeof c.picked === "number") ? c.picked : got;
+        }
+        if (st.as) results[st.as] = { picked, closes };
       } else if (st.do === "frameClick") {
         await page.frames()[1].click(st.sel);
       } else if (st.do === "wait") {

@@ -1,0 +1,175 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>My Experience (Workday-style fixture, popup prompts)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script>
+<style>
+.spin{width:44px}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.wd-overlay{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:50}
+.wd-dialog{position:absolute;left:120px;top:60px;width:420px;background:#fff;border:1px solid #666;padding:12px}
+.wd-dialog ul{max-height:260px;overflow:auto;list-style:none;padding:0;margin:8px 0}
+</style></head>
+<body>
+<!-- Modelled on a Workday "Apply Manually" My Experience page seen on 2026-11-18 (made-up data
+     only). What the run's log showed: "Work Experience N" blocks (Job Title, Company, Location,
+     "I currently work here", From / To as MM / YYYY date sections with a hidden "current value
+     is MM/YYYY" text, Role Description), "Education N" blocks (School or University, Degree,
+     Field of Study, Overall Result (GPA)), and a Field of Study prompt that opens a POPUP DIALOG
+     titled "Field of Study" holding a "Search" box, an "Options Expanded" list and a Done button,
+     which hid the rest of the page from the page view.
+     GUESSED markup (the log has no HTML): the element and attribute names below follow Workday's
+     known data-automation-id names (dateSectionMonth-input, dateSectionYear-input,
+     multiSelectContainer, selectedItem, searchBox, promptOption, popup); that the popup is
+     role=dialog aria-modal with the page behind it aria-hidden and a focus trap; that it closes
+     on Done (and, with ?nodone=1, has no Done and closes on a real Escape or a press on the
+     backdrop); that a choice shows as a pill on the page only after the popup closes; that the
+     page's own Field of Study box is a plain selectinput (no placeholder) while the popup's box
+     is the searchBox; and that education From / To are year-only sections. -->
+<div id="page">
+<h3>My Experience</h3>
+<div id="work" role="group" aria-labelledby="wh"><h4 id="wh">Work Experience</h4><div id="workList"></div>
+  <button type="button" id="addWork">Add Another</button></div>
+<div id="edu" role="group" aria-labelledby="eh"><h4 id="eh">Education</h4><div id="eduList"></div>
+  <button type="button" id="addEdu">Add Another</button></div>
+<div role="group" aria-labelledby="sk"><h4 id="sk">Skills</h4><div id="skills"></div></div>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+</div>
+<script>
+  const NODONE = /[?&]nodone=1/.test(location.search);
+  let seq = 0;
+  const h = (tag, attrs, kids) => { const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) { if (k === "text") e.textContent = v; else e.setAttribute(k, v); }
+    for (const c of kids || []) e.appendChild(c); return e; };
+  const field = (label, input) => { const id = "f" + (seq++); input.id = id;
+    return h("div", { "data-automation-id": "formField" }, [h("label", { for: id, text: label }), input]); };
+  // A date section: takes REAL keys only (a value set from script is thrown away).
+  function dateGroup(legend, prefix, parts, required) {
+    const fs = h("fieldset", { "data-date": prefix }, [h("legend", { text: legend + (required ? "*" : "") })]);
+    const wrap = h("div", { "data-automation-id": "dateInputWrapper" },
+      [h("span", { class: "sr", text: "current value is " + parts.map((p) => (p === "Month" ? "MM" : "YYYY")).join("/") })]);
+    for (const part of parts) {
+      const input = h("input", { type: "text", role: "spinbutton", class: "spin", "aria-label": part,
+        "data-automation-id": "dateSection" + part + "-input", id: prefix + "-dateSection" + part + "-input" });
+      if (required) input.setAttribute("aria-required", "true");
+      const shown = h("span", { "data-automation-id": "dateSection" + part + "-display", "aria-hidden": "true", text: part === "Month" ? "MM" : "YYYY" });
+      let kept = "";
+      input.addEventListener("input", (e) => {
+        if (e.isTrusted) kept = input.value.replace(/\D/g, "").slice(0, part === "Month" ? 2 : 4);
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, kept);
+        shown.textContent = kept || (part === "Month" ? "MM" : "YYYY");
+      });
+      wrap.appendChild(h("span", { "data-automation-id": "dateSection" + part }, [input, shown]));
+    }
+    fs.appendChild(wrap);
+    return fs;
+  }
+  // A multiselect search prompt whose list opens in a popup dialog over the page.
+  window.fx = { fos: [], opens: 0 };
+  window.PopupPrompt = function (host, cfg) {
+    const input = h("input", Object.assign({ type: "text", "data-uxi-widget-type": "selectinput", autocomplete: "off" }, cfg.inputAttrs || {}));
+    const pills = h("ul", { role: "listbox", "aria-label": "items selected", "data-automation-id": "selectedItemList" });
+    const id = "f" + (seq++); input.id = id;
+    const box = h("div", { "data-automation-id": "multiSelectContainer" }, [pills, input]);
+    host.appendChild(h("div", { "data-automation-id": "formField" }, [h("label", { for: id, text: cfg.label }), box]));
+    let overlay = null, dialog = null, search = null, ul = null, list = cfg.options.slice(0, 8);
+    const chosen = [], ticked = new Set();
+    const renderList = () => {
+      ul.textContent = "";
+      for (const o of list) {
+        const cb = h("input", { type: "checkbox" });
+        cb.checked = ticked.has(o);
+        const li = h("li", { role: "option", "aria-selected": String(ticked.has(o)) },
+          [h("div", { "data-automation-id": "promptOption", "data-automation-label": o }, [cb, h("span", { text: o })])]);
+        li.addEventListener("click", (e) => {
+          if (ticked.has(o)) ticked.delete(o); else ticked.add(o);
+          if (e.target !== cb) cb.checked = ticked.has(o);
+          li.setAttribute("aria-selected", String(ticked.has(o)));
+        });
+        ul.appendChild(li);
+      }
+    };
+    const close = () => {
+      if (!overlay) return;
+      for (const o of ticked) if (!chosen.includes(o)) { chosen.push(o); pills.appendChild(h("li", { role: "option", "data-automation-id": "selectedItem", text: o })); }
+      overlay.remove(); overlay = dialog = search = ul = null;
+      document.getElementById("page").removeAttribute("aria-hidden");
+    };
+    const open = () => {
+      if (overlay) return;
+      window.fx.opens++;
+      list = cfg.options.slice(0, 8);
+      search = h("input", { type: "text", "data-uxi-widget-type": "selectinput", "data-automation-id": "searchBox",
+                            placeholder: "Search", "aria-label": "Search", autocomplete: "off", id: "selectInputId-" + id });
+      ul = h("ul", { role: "listbox", "aria-label": "Options Expanded" });
+      const kids = [h("h2", { text: cfg.label }), search, ul];
+      if (!NODONE) { const done = h("button", { type: "button", text: "Done" }); done.addEventListener("click", close); kids.push(done); }
+      dialog = h("div", { role: "dialog", "aria-modal": "true", "aria-label": cfg.label, "data-automation-id": "popup", class: "wd-dialog" }, kids);
+      overlay = h("div", { class: "wd-overlay" }, [dialog]);
+      document.body.appendChild(overlay);
+      document.getElementById("page").setAttribute("aria-hidden", "true");
+      renderList();
+      search.addEventListener("keydown", (e) => {
+        if (!e.isTrusted) return;                          // a script's keys do nothing here
+        if (e.key === "Enter") { const q = search.value.toLowerCase(); list = cfg.options.filter((o) => o.toLowerCase().includes(q)); renderList(); }
+        if (e.key === "Escape" && NODONE) close();
+      });
+      if (NODONE) overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+      setTimeout(() => { if (search) search.focus(); }, 30);
+    };
+    input.addEventListener("mousedown", open);
+    document.addEventListener("focusin", (e) => {          // the focus trap of a modal
+      if (dialog && !dialog.contains(e.target) && search) search.focus();
+    });
+    return { get value() { return chosen.slice(); }, get open() { return !!overlay; }, input };
+  };
+  function workSection(n) {
+    const g = h("div", { role: "group", "aria-labelledby": "w" + n }, [h("h5", { id: "w" + n, text: "Work Experience " + n })]);
+    g.appendChild(field("Job Title*", h("input", { type: "text", "aria-required": "true", name: "jobTitle" })));
+    g.appendChild(field("Company*", h("input", { type: "text", "aria-required": "true", name: "companyName" })));
+    g.appendChild(field("Location", h("input", { type: "text", name: "location" })));
+    const cbid = "cw" + n;
+    const cb = h("input", { type: "checkbox", id: cbid, name: "currentlyWorkHere" });
+    g.appendChild(h("div", {}, [cb, h("label", { for: cbid, text: "I currently work here" })]));
+    g.appendChild(dateGroup("From", "workExperience-" + n + "--startDate", ["Month", "Year"], true));
+    const to = dateGroup("To", "workExperience-" + n + "--endDate", ["Month", "Year"], true);
+    g.appendChild(to);
+    cb.addEventListener("change", () => { to.style.display = cb.checked ? "none" : ""; });   // no To for the current job
+    g.appendChild(field("Role Description", h("textarea", { name: "roleDescription" })));
+    document.getElementById("workList").appendChild(g);
+  }
+  function eduSection(n) {
+    const g = h("div", { role: "group", "aria-labelledby": "e" + n }, [h("h5", { id: "e" + n, text: "Education " + n })]);
+    document.getElementById("eduList").appendChild(g);
+    window.fx["school" + n] = window.FixtureWidgets.WorkdayPrompt(g, { label: "School or University*",
+      options: ["Example State University", "Sample College", "Northfield Institute of Technology", "Riverton Community College"] });
+    window.fx["degree" + n] = window.FixtureWidgets.WorkdayListbox(g, { aid: "degree", label: "Degree",
+      options: ["GED", "High School", "Associates", "Bachelors", "Masters", "Doctorate"] });
+    window.fx.fos.push(window.PopupPrompt(g, { label: "Field of Study", inputAttrs: { "data-automation-id": "monikerSearchBox" },
+      options: ["Accounting", "Actuarial Science", "Advertising", "Aerospace Engineering", "African Studies",
+        "Agricultural Business and Management", "Agricultural Economics", "Anthropology",
+        "Business Administration/Management", "Business Communications", "Economics", "International Business", "Sociology"] }));
+    g.appendChild(field("Overall Result (GPA)", h("input", { type: "text", name: "gpa" })));
+    g.appendChild(dateGroup("From", "education-" + n + "--firstYearAttended", ["Year"], false));
+    g.appendChild(dateGroup("To", "education-" + n + "--lastYearAttended", ["Year"], false));
+  }
+  let works = 0, edus = 0;
+  workSection(++works); eduSection(++edus);
+  document.getElementById("addWork").addEventListener("click", () => setTimeout(() => workSection(++works), 120));
+  document.getElementById("addEdu").addEventListener("click", () => setTimeout(() => eduSection(++edus), 120));
+  window.fx.skills = window.PopupPrompt(document.getElementById("skills"), { label: "Type to Add Skills",
+    inputAttrs: { "data-automation-id": "searchBox", placeholder: "Search", enterkeyhint: "search" },
+    options: ["Agile", "Analytics", "Excel", "Power BI", "SQL", "Tableau"] });
+  const dates = (re) => [...document.querySelectorAll("fieldset[data-date]")].filter((f) => re.test(f.getAttribute("data-date")))
+    .map((f) => [...f.querySelectorAll("input")].map((i) => i.value).join("/"));
+  window.fxValues = () => ({
+    works, edus,
+    titles: [...document.querySelectorAll("[name=jobTitle]")].map((e) => e.value),
+    companies: [...document.querySelectorAll("[name=companyName]")].map((e) => e.value),
+    current: [...document.querySelectorAll("[name=currentlyWorkHere]")].map((e) => e.checked),
+    workDates: dates(/^workExperience/), eduDates: dates(/^education/),
+    schools: Object.keys(window.fx).filter((k) => /^school/.test(k)).map((k) => window.fx[k].value),
+    degrees: Object.keys(window.fx).filter((k) => /^degree/.test(k)).map((k) => window.fx[k].value),
+    fields: window.fx.fos.map((p) => p.value), skills: window.fx.skills.value,
+    popupOpens: window.fx.opens,
+    open: !!document.querySelector("[role=dialog], [data-automation-id=activeListContainer], .wd-popup"),
+  });
+</script>
+</body></html>
