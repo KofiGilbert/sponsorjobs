@@ -252,6 +252,132 @@ test("a saved answer never lands on a choice that adds a qualifier (Phoenix Cont
   await page.close();
 });
 
+// ------------------------------------------------------------------ the cost of a fill (2026-11-18)
+// Real long forms ran 30 to 45 s per fill and were cut by a 40 s stopwatch. The engine now
+// remembers what a dropdown already told it, stops waiting on a settled list, keeps to a budget
+// and reports a heartbeat. Bounds here are generous (several times the measured value).
+const PAYLOAD = { loaded: true,
+  fields: { first_name: "Sam", last_name: "Example", name: "Sam Example", email: "sam@example.com", phone: "555-010-0000",
+            city: "Springfield", state: "Illinois", country: "United States", zip: "62701", address: "1 Main St" },
+  answers: { years_experience: "5" }, screening: { work_authorized: "Yes", needs_sponsorship: "No" },
+  eeo: { decline: true }, history: [], education: [], skills: [] };
+const timedEval = (page, fn, arg) => page.evaluate(async ([src, a]) => {
+  const t = performance.now(); const r = await (0, eval)("(" + src + ")")(a); return { ms: Math.round(performance.now() - t), r };
+}, [fn.toString(), arg]);
+const opens = (page) => page.evaluate(() => window.TailorAutofill.openCounts().map((x) => x.n));
+
+test("fill cost: a second pass over an unchanged page costs next to nothing, and no dropdown is opened again", async ({ open }) => {
+  for (const [fx, firstMax] of [["react_select.html", 6000], ["greenhouse_live.html", 12000]]) {
+    const page = await open(fx);
+    await page.evaluate(CORE);
+    const p1 = await timedEval(page, (pl) => window.TailorAutofill.fillAsync(pl), PAYLOAD);
+    assert.ok(p1.r.ok && p1.r.filled > 0 && p1.r.timed_out === false, fx + " " + JSON.stringify(p1.r).slice(0, 200));
+    assert.ok(p1.ms < firstMax, fx + " pass 1 took " + p1.ms + " ms");
+    const x1 = await timedEval(page, () => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }));
+    assert.ok(x1.ms < 8500, fx + " form read took " + x1.ms + " ms");
+    const before = await opens(page);
+    assert.ok(Math.max(...before) <= 2, fx + ": at most one pick and one read per dropdown " + JSON.stringify(before));
+    // the agent fills again after every step: nothing on the page changed
+    const p2 = await timedEval(page, (pl) => window.TailorAutofill.fillAsync(pl), PAYLOAD);
+    assert.ok(p2.ms < 1500, fx + " pass 2 took " + p2.ms + " ms");
+    assert.ok(p2.r.from_memory >= 1 && p2.r.opens === 0, fx + " pass 2 came from memory " + JSON.stringify({ m: p2.r.from_memory, o: p2.r.opens }));
+    const x2 = await timedEval(page, () => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }));
+    assert.ok(x2.ms < 1500, fx + " second form read took " + x2.ms + " ms");
+    const p3 = await timedEval(page, (pl) => window.TailorAutofill.fillAsync(pl), PAYLOAD);
+    assert.ok(p3.ms < 1500, fx + " pass 3 took " + p3.ms + " ms");
+    const after = await opens(page);
+    // the one dropdown whose list only shows after typing is read once more by the form read (it
+    // holds no list to remember); nothing else is opened again
+    const again = after.reduce((n, v, i) => n + (v - before[i]), 0);
+    assert.ok(again <= 1, fx + ": opened again " + again + " times " + JSON.stringify(before) + " -> " + JSON.stringify(after));
+    assert.strictEqual(await page.evaluate(() => Array.from(document.querySelectorAll("[role='option']")).filter((o) => o.getBoundingClientRect().height > 0).length), 0, fx + ": every list is closed");
+    await page.close();
+  }
+});
+
+test("fill cost: a miss is remembered per field and wanted answer; a different answer or a changed form is tried again", async ({ open }) => {
+  const page = await open("react_select.html");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  const pick = (text) => timedEval(page, async (t) => {
+    const E = window.TailorAutofill;
+    const el = E.comboboxes().find((c) => !E.comboValue(c) && /country/i.test(c.getAttribute("aria-label") || (c.labels && c.labels[0] && c.labels[0].textContent) || c.id || ""))
+            || E.comboboxes().find((c) => !E.comboValue(c));
+    window.__el = window.__el || el;
+    const r = await E.pickCombo(window.__el, { text: t, score: E.answerScorer(t) });
+    return { why: r.why || "ok", skipped: !!r.skipped, n: E.openCounts()[E.comboboxes().indexOf(window.__el)].n };
+  }, text);
+  const a = await pick("Narnia");
+  assert.strictEqual(a.r.why, "no-match", JSON.stringify(a));
+  assert.ok(a.ms < 2500, "a settled list is not waited out: " + a.ms + " ms");      // was 2.5 s + 2 typed searches
+  const b = await pick("Narnia");
+  assert.ok(b.r.skipped && b.r.n === a.r.n && b.ms < 200, "the same miss is not tried again " + JSON.stringify(b));
+  const c = await pick("Atlantis");                                               // a different wanted answer
+  assert.ok(!c.r.skipped && c.r.n === a.r.n + 1, "a different answer is tried " + JSON.stringify(c));
+  const d = await pick("United States");                                          // and one the list has is still picked
+  assert.strictEqual(d.r.why, "ok", JSON.stringify(d));
+  await page.close();
+});
+
+test("fill cost: past its budget the engine starts nothing new and returns what it filled; the heartbeat moves while it works", async ({ open }) => {
+  // Greenhouse's slow location search (3.2 s per query): a 600 ms budget cuts the fill short
+  let page = await open("greenhouse_live.html");
+  await page.evaluate(CORE);
+  const cut = await timedEval(page, (pl) => window.TailorAutofill.fillAsync(pl, { budgetMs: 600 }), PAYLOAD);
+  assert.strictEqual(cut.r.timed_out, true, JSON.stringify(cut.r).slice(0, 200));
+  assert.ok(cut.r.ok && cut.r.filled >= 2, "what was filled stands " + cut.r.filled);
+  assert.ok(cut.ms < 2500, "it returned soon after its budget: " + cut.ms + " ms");
+  assert.strictEqual(await page.evaluate(() => Array.from(document.querySelectorAll("[role='option']")).filter((o) => o.getBoundingClientRect().height > 0).length), 0, "the list is closed");
+  // cut short is not a miss: with time, the same field is tried again
+  const full = await timedEval(page, (pl) => window.TailorAutofill.fillAsync(pl), PAYLOAD);
+  assert.strictEqual(full.r.timed_out, false);
+  assert.ok(full.r.opens >= 1, "the cut field was tried again " + JSON.stringify({ o: full.r.opens, m: full.r.from_memory }));
+  await page.close();
+
+  // the heartbeat: read while the fill runs, it moves; after the fill it rests
+  page = await open("greenhouse_live.html");
+  await page.evaluate(CORE);
+  const idle = await page.evaluate(() => window.TailorAutofill.fillProgress());
+  assert.strictEqual(idle.done, 0);
+  const running = page.evaluate((pl) => window.TailorAutofill.fillAsync(pl), PAYLOAD);
+  await page.waitForTimeout(300);
+  const mid = await page.evaluate(() => window.TailorAutofill.fillProgress());
+  assert.strictEqual(mid.phase, "engine", JSON.stringify(mid));
+  assert.ok(mid.at > 0 && mid.done >= 1, "fields done so far " + JSON.stringify(mid));
+  await running;
+  const end = await page.evaluate(() => window.TailorAutofill.fillProgress());
+  assert.ok(end.phase === "" && end.done >= mid.done && end.at >= mid.at, JSON.stringify(end));
+  await page.close();
+
+  // the plan's ops under a budget: the ones not reached are counted, the rest stands
+  page = await open("react_select.html");
+  await page.evaluate(CORE);
+  const fields = (await page.evaluate(() => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }))).filter((f) => f.widget === "combobox");
+  assert.ok(fields.length >= 3, "dropdowns: " + fields.length);
+  const ops = fields.map((f) => ({ ref: f.ref, op: "select", text: "Narnia", from: "ai" }));
+  const rep = await timedEval(page, (o) => window.TailorAutofill.applyOpsAsync(o, { budgetMs: 1 }), ops);
+  assert.strictEqual(rep.r.timed_out, true, JSON.stringify(rep.r));
+  assert.ok(rep.r.pending >= fields.length - 1 && rep.ms < 1500, JSON.stringify(rep));
+  const all = await timedEval(page, (o) => window.TailorAutofill.applyOpsAsync(o), ops);
+  assert.ok(all.r.timed_out === false && all.r.pending === 0, JSON.stringify(all.r));
+  const again = await timedEval(page, (o) => window.TailorAutofill.applyOpsAsync(o), ops);
+  assert.ok(again.ms < 500 && again.r.from_memory >= fields.length - 1 && again.r.opens === 0, "the same ops again come from memory " + JSON.stringify(again));
+  await page.close();
+});
+
+test("fill cost: the form read keeps to its cap and still returns the fields", async ({ open }) => {
+  const page = await open("verify_widgets.html");
+  await page.evaluate(CORE);
+  const cut = await timedEval(page, () => window.TailorAutofill.extractFormAsync({ onlyEmpty: true, budgetMs: 300 }));
+  assert.ok(cut.ms < 1200, "a 300 ms cap took " + cut.ms + " ms");
+  assert.ok(cut.r.length >= 1, "the fields are still returned");
+  const st = await page.evaluate(() => window.TailorAutofill.lastExtract());
+  assert.ok(st.opens <= 1, "no dropdown opened without time to read it " + JSON.stringify(st));
+  const full = await timedEval(page, () => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }));
+  assert.ok(full.ms < 8500 && full.r.length >= cut.r.length, "the full read " + full.ms + " ms");
+  await page.close();
+});
+
 test("a file input at opacity 0 (the upload button pattern) is still listed; click says use upload", async ({ open }) => {
   const page = await open("icims_inner.html");
   await page.evaluate(AGENT);

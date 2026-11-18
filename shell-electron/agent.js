@@ -30,7 +30,14 @@ const PRECHECK_MS = 25000;
 const PANE_MS = Math.max(1000, Number(process.env.SJ_AGENT_PANE_MS) || 20000);
 // Writing a cover letter for a cover letter box: one model call and a PDF build.
 const LETTER_MS = Number(process.env.SJ_AGENT_LETTER_MS) > 0 ? Number(process.env.SJ_AGENT_LETTER_MS) : 120000;
-const FILL_MS = Number(process.env.SJ_AGENT_FILL_MS) > 0 ? Number(process.env.SJ_AGENT_FILL_MS) : Math.max(PANE_MS, 40000);
+// (2026-11-18) The fill limits itself now (fill_budget.js: a cap per phase, an overall cap of
+// 120 s, the page's heartbeat) and returns what it filled when it runs out of time. FILL_MS is
+// only the backstop behind that: the overall cap (SJ_AGENT_FILL_MS still overrides it) plus a
+// margin, for a fill that never comes back at all.
+const { caps: fillCaps, fillOutcome, fillLogLine } = require("./fill_budget");
+const { paneGoneError } = require("./pane_guard");
+const FILL_OVERALL_MS = Math.max(PANE_MS, fillCaps(process.env).overall);
+const FILL_MS = FILL_OVERALL_MS + Math.min(10000, Math.round(FILL_OVERALL_MS / 4));
 // A page with nothing to do on it (a skeleton, "Loading", no fields) for this long is a hang.
 const HANG_MS = Math.max(1000, (Number(process.env.SJ_AGENT_HANG_S) || 45) * 1000);
 const MAX_WAITS = 3;                 // the brain's plain waits in a row before the shell escalates
@@ -1397,6 +1404,7 @@ function createAgent(deps) {
     const hashes = [];
     const pageHashes = [];
     let failed = 0;
+    let slowFills = 0;                   // fills that ran out of time but kept their work (never a ladder try)
     let page = (S && S.page) || 1;
     let fr = null;
     let disarmSigning = () => {};
@@ -1781,6 +1789,20 @@ function createAgent(deps) {
               throw e;
             });
           dlog("step " + step + " fill:", rep);
+          dlog("step " + step + " fill cost: " + fillLogLine(rep));
+          // (2026-11-18) Out of time is not a hang. Only a fill whose page stopped answering (no
+          // heartbeat) goes to the reload ladder; one that was still filling keeps its work and
+          // the run carries on from the page as it stands, using none of the ladder's tries.
+          const outcome = fillOutcome(rep);
+          if (outcome === "hang") {
+            const e = new Error("fill stalled while " + (rep.timed_out_phase || "filling the page"));
+            e.hang = true;
+            throw e;
+          }
+          if (outcome === "carry") {
+            slowFills++;
+            dlog("step " + step + " fill ran out of time while " + (rep.timed_out_phase || "filling") + ": kept " + (rep.filled || 0) + " filled, carrying on");
+          }
           noteFill(rep);
           // A cover letter box and no letter yet: write one for this job (the Review page's
           // drafter), then fill again so it is attached, never the resume. Once per run; a
@@ -2486,6 +2508,14 @@ function createAgent(deps) {
       return park("person", "I ran out of steps (" + MAX_STEPS + ") on this one: " + (lastState() || "no progress") + ".", { url: where() });
     } catch (e) {
       if (st.stop || (e && e.stopped)) return stopped("stopped", "Stopped.");
+      // (2026-11-18) The pane was destroyed under the run ("Object has been destroyed" from any
+      // call on its webContents): the ordinary "pane closed" stop, never an uncaught error.
+      let gone = paneGoneError(e);
+      if (!gone) { try { gone = !!wcNow && typeof wcNow.isDestroyed === "function" && wcNow.isDestroyed(); } catch (x) { gone = true; } }
+      if (gone) {
+        dlog("pane gone:", String(e && e.message || e));
+        return stopped("no-page", "The browser pane closed.");
+      }
       console.error("apply agent:", e && e.stack || e);
       return stopped("error", "Something went wrong: " + String(e && e.message || e).slice(0, 100));
     }

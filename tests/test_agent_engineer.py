@@ -380,3 +380,11 @@ def test_real_pages_under_node():
                          cwd=str(ROOT), timeout=120)
     assert out.returncode == 0, out.stdout + out.stderr
     assert out.stdout.strip().endswith("ok")
+
+
+def test_fill_budget_under_node():
+    # the fill's phase caps, heartbeat, partial result and the pane guard (2026-11-18)
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_fill_budget.js")], capture_output=True, text=True,
+                         cwd=str(ROOT), timeout=120)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert out.stdout.strip().endswith("ok")
