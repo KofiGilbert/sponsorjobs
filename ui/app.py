@@ -7857,7 +7857,8 @@ def inbox_alias_release():
 # from the broker and kept on this machine (inbox/store.py). The broker holds a message only
 # until this app has it. Nothing here logs a subject or a body. ----
 MAILBOX_SYNC_EVERY = 60.0        # opening the Inbox pulls new mail at most this often
-_MAILBOX = {"store": None, "path": None, "thread": None, "last": 0.0, "lock": threading.Lock()}
+_MAILBOX = {"store": None, "path": None, "thread": None, "last": 0.0, "lock": threading.Lock(),
+            "open": threading.Lock()}
 _NOTIFY_MODES = ("forward", "notice", "off")
 
 
@@ -7869,14 +7870,15 @@ def _mailbox():
     """The local mailbox store, one per data directory (reopened when a test moves _DATA)."""
     from inbox.store import MailboxStore
     path = _mailbox_path()
-    if _MAILBOX["store"] is None or _MAILBOX["path"] != path:
-        if _MAILBOX["store"] is not None:
-            try:
-                _MAILBOX["store"].close()
-            except Exception:      # noqa: BLE001
-                pass
-        _MAILBOX["store"], _MAILBOX["path"] = MailboxStore(path), path
-    return _MAILBOX["store"]
+    with _MAILBOX["open"]:         # a request and the background sync may both ask first
+        if _MAILBOX["store"] is None or _MAILBOX["path"] != path:
+            if _MAILBOX["store"] is not None:
+                try:
+                    _MAILBOX["store"].close()
+                except Exception:  # noqa: BLE001
+                    pass
+            _MAILBOX["store"], _MAILBOX["path"] = MailboxStore(path), path
+        return _MAILBOX["store"]
 
 
 def _mailbox_forget() -> None:
