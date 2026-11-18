@@ -1150,6 +1150,28 @@
     }
     return out.slice(0, 15);
   }
+  // A file box whose own area already lists an attached file (Workday and others empty the
+  // input once the upload lands and show the file as a row with a Delete / Remove button). The
+  // box is then answered: holding Next for it kept a finished page from moving on (2026-11-17,
+  // a Workday "My Experience" page with the resume from an earlier run still attached).
+  function fileShownAttached(el) {
+    let box = el.parentElement;
+    for (let i = 0; box && i < 6; i++, box = box.parentElement) {
+      let inputs = 0;
+      try { inputs = box.querySelectorAll("input[type='file']").length; } catch (e) { return false; }
+      if (inputs > 1) return false;                       // grew past this box into its neighbours
+      let rows = [];
+      try { rows = Array.from(box.querySelectorAll("[data-automation-id^='file-upload-item'], [data-automation-id='file-upload-successful'], button, [role='button']")); }
+      catch (e) { return false; }
+      for (const r of rows) {
+        const id = attrOf(r, "data-automation-id") || "";
+        if (/^file-upload-(item|successful)/.test(id)) return true;
+        const t = norm(attrOf(r, "aria-label") || r.textContent || "");
+        if (/^(delete|remove)\b/.test(t)) return true;
+      }
+    }
+    return false;
+  }
   // Before a page-changing click: the required fields still empty and the errors shown, so the
   // shell can hold the click once and say so instead of letting the site refuse it.
   function pageCheck() {
@@ -1177,7 +1199,7 @@
       let filled;
       if (kind === "select") { const v = selectValue(el); filled = !!v && !isPlaceholder(v); }
       else if (kind === "combobox") filled = !!comboValue(el);
-      else if (kind === "file") filled = !!(el.files && el.files.length);
+      else if (kind === "file") filled = !!(el.files && el.files.length) || fileShownAttached(el);
       else filled = String(el.value != null ? el.value : el.textContent || "") !== "";
       if (filled) continue;
       const lab = cleanLabel(labelOf(el)).slice(0, 80) || kind;

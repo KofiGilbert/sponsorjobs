@@ -381,6 +381,27 @@ test("required radio and checkbox groups show in the page check until one is cho
   await page.close();
 });
 
+test("a required file box that already lists an attached file is not empty in the page check", async ({ open }) => {
+  const page = await open("verify_widgets.html");
+  await page.evaluate(AGENT);
+  await page.evaluate(`(() => {
+    const f = document.querySelector("form") || document.body;
+    const mk = (label, listed) => {
+      const box = document.createElement("div");
+      box.innerHTML = '<label>' + label + '<input type="file" required></label>'
+        + (listed ? '<div><span>resume.pdf</span><button type="button" aria-label="Delete resume.pdf">x</button></div>' : '');
+      f.appendChild(box);
+    };
+    mk("Upload your resume", true);
+    mk("Upload a transcript", false);
+  })()`);
+  await page.evaluate("window.TailorAgent.view()");
+  const pc = await page.evaluate("window.TailorAgent.pageCheck()");
+  assert.ok(!pc.required_empty.some((x) => /resume/i.test(x)), JSON.stringify(pc));     // listed: answered
+  assert.ok(pc.required_empty.some((x) => /transcript/i.test(x)), JSON.stringify(pc));  // nothing attached: still held
+  await page.close();
+});
+
 test("a box whose click does not take is reported, never ok", async ({ open }) => {
   const page = await open("verify_widgets.html");
   await page.evaluate(AGENT);
