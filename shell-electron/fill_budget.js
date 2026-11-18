@@ -128,7 +128,8 @@ function fillLogLine(rep) {
                  "planned=" + (c.planned || 0), "pending=" + (c.pending || 0),
                  "from_memory=" + (c.from_memory || 0), "opens=" + (c.opens || 0),
                  "total_ms=" + total];
-  for (const k of ["payload", "engine", "extract", "plan", "ops", "leftover"]) if (ms[k] != null) parts.push(k + "_ms=" + ms[k]);
+  if (c.left_open) parts.push("left_open=" + c.left_open);      // popups of ours that would not close
+  for (const k of ["payload", "engine", "keys", "search", "extract", "plan", "ops", "leftover"]) if (ms[k] != null) parts.push(k + "_ms=" + ms[k]);
   if (r.timed_out) parts.push("timed_out=" + (r.timed_out_phase || "yes") + (r.stalled ? " stalled" : ""));
   return parts.join(" ");
 }

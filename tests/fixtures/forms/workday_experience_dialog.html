@@ -22,7 +22,15 @@
      on Done (and, with ?nodone=1, has no Done and closes on a real Escape or a press on the
      backdrop); that a choice shows as a pill on the page only after the popup closes; that the
      page's own Field of Study box is a plain selectinput (no placeholder) while the popup's box
-     is the searchBox; and that education From / To are year-only sections. -->
+     is the searchBox; and that education From / To are year-only sections.
+     Variants for what a real page may do instead (all invented, to pin the engine's limits):
+       ?nodone=1  the popup has no Done; a real Escape or a press on the backdrop closes it
+       ?stuck=1   the popup never closes, whatever is pressed
+       ?modal=1   an unrelated dialog (aria-modal, with a list, a search box and a Done that does
+                  nothing) is on the page the whole time
+       ?sep=1     a typed date is kept outside the box: the box reads back empty, the text beside
+                  it shows "03" / "2026" and the hidden text says "current value is 03/2026"
+       ?nokeys=1  the date sections take no keys at all -->
 <div id="page">
 <h3>My Experience</h3>
 <div id="work" role="group" aria-labelledby="wh"><h4 id="wh">Work Experience</h4><div id="workList"></div>
@@ -33,7 +41,8 @@
 <button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
 </div>
 <script>
-  const NODONE = /[?&]nodone=1/.test(location.search);
+  const flag = (k) => new RegExp("[?&]" + k + "=1").test(location.search);
+  const NODONE = flag("nodone"), STUCK = flag("stuck"), MODAL = flag("modal"), SEP = flag("sep"), NOKEYS = flag("nokeys");
   let seq = 0;
   const h = (tag, attrs, kids) => { const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs || {})) { if (k === "text") e.textContent = v; else e.setAttribute(k, v); }
@@ -43,8 +52,11 @@
   // A date section: takes REAL keys only (a value set from script is thrown away).
   function dateGroup(legend, prefix, parts, required) {
     const fs = h("fieldset", { "data-date": prefix }, [h("legend", { text: legend + (required ? "*" : "") })]);
-    const wrap = h("div", { "data-automation-id": "dateInputWrapper" },
-      [h("span", { class: "sr", text: "current value is " + parts.map((p) => (p === "Month" ? "MM" : "YYYY")).join("/") })]);
+    const sr = h("span", { class: "sr" });
+    const wrap = h("div", { "data-automation-id": "dateInputWrapper" }, [sr]);
+    const state = {};
+    const say = () => { sr.textContent = "current value is " + parts.map((p) => (state[p] ? state[p].padStart(p === "Month" ? 2 : 4, "0") : (p === "Month" ? "MM" : "YYYY"))).join("/"); };
+    say();
     for (const part of parts) {
       const input = h("input", { type: "text", role: "spinbutton", class: "spin", "aria-label": part,
         "data-automation-id": "dateSection" + part + "-input", id: prefix + "-dateSection" + part + "-input" });
@@ -52,9 +64,11 @@
       const shown = h("span", { "data-automation-id": "dateSection" + part + "-display", "aria-hidden": "true", text: part === "Month" ? "MM" : "YYYY" });
       let kept = "";
       input.addEventListener("input", (e) => {
-        if (e.isTrusted) kept = input.value.replace(/\D/g, "").slice(0, part === "Month" ? 2 : 4);
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, kept);
-        shown.textContent = kept || (part === "Month" ? "MM" : "YYYY");
+        if (e.isTrusted && !NOKEYS) kept = (SEP ? kept + input.value : input.value).replace(/\D/g, "").slice(0, part === "Month" ? 2 : 4);
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, SEP ? "" : kept);
+        shown.textContent = kept ? kept.padStart(SEP && part === "Month" ? 2 : 1, "0") : (part === "Month" ? "MM" : "YYYY");
+        state[part] = kept; say();
+        fs.setAttribute("data-kept", parts.map((p) => state[p] || "").join("/"));
       });
       wrap.appendChild(h("span", { "data-automation-id": "dateSection" + part }, [input, shown]));
     }
@@ -87,7 +101,7 @@
       }
     };
     const close = () => {
-      if (!overlay) return;
+      if (!overlay || STUCK) return;
       for (const o of ticked) if (!chosen.includes(o)) { chosen.push(o); pills.appendChild(h("li", { role: "option", "data-automation-id": "selectedItem", text: o })); }
       overlay.remove(); overlay = dialog = search = ul = null;
       document.getElementById("page").removeAttribute("aria-hidden");
@@ -157,8 +171,18 @@
   window.fx.skills = window.PopupPrompt(document.getElementById("skills"), { label: "Type to Add Skills",
     inputAttrs: { "data-automation-id": "searchBox", placeholder: "Search", enterkeyhint: "search" },
     options: ["Agile", "Analytics", "Excel", "Power BI", "SQL", "Tableau"] });
+  if (MODAL) {                                             // not a prompt's popup: it was here first and stays
+    const dead = h("button", { type: "button", text: "Done" });
+    document.body.appendChild(h("div", { role: "dialog", "aria-modal": "true", "aria-label": "Site assistant", id: "bystander",
+        style: "position:fixed;right:8px;bottom:8px;width:220px;background:#fff;border:1px solid #999;padding:6px;z-index:40" },
+      [h("input", { type: "text", "data-automation-id": "searchBox", "aria-label": "Ask a question" }),
+       h("ul", { role: "listbox", "aria-label": "Suggestions" }, [h("li", { role: "option", text: "Benefits" }), h("li", { role: "option", text: "Locations" })]),
+       dead]));
+    window.fx.bystanderPresses = 0;
+    for (const ty of ["mousedown", "click", "keydown"]) document.getElementById("bystander").addEventListener(ty, () => { window.fx.bystanderPresses++; });
+  }
   const dates = (re) => [...document.querySelectorAll("fieldset[data-date]")].filter((f) => re.test(f.getAttribute("data-date")))
-    .map((f) => [...f.querySelectorAll("input")].map((i) => i.value).join("/"));
+    .map((f) => f.getAttribute("data-kept") || [...f.querySelectorAll("input")].map((i) => i.value).join("/"));
   window.fxValues = () => ({
     works, edus,
     titles: [...document.querySelectorAll("[name=jobTitle]")].map((e) => e.value),
@@ -168,8 +192,8 @@
     schools: Object.keys(window.fx).filter((k) => /^school/.test(k)).map((k) => window.fx[k].value),
     degrees: Object.keys(window.fx).filter((k) => /^degree/.test(k)).map((k) => window.fx[k].value),
     fields: window.fx.fos.map((p) => p.value), skills: window.fx.skills.value,
-    popupOpens: window.fx.opens,
-    open: !!document.querySelector("[role=dialog], [data-automation-id=activeListContainer], .wd-popup"),
+    popupOpens: window.fx.opens, bystanderPresses: window.fx.bystanderPresses || 0,
+    open: !!document.querySelector(".wd-overlay, [data-automation-id=activeListContainer], .wd-popup"),
   });
 </script>
 </body></html>

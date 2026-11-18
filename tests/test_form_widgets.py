@@ -569,7 +569,6 @@ XP_ONE_PASS = [
 def test_workday_popup_field_of_study_is_picked_and_the_dialog_closed(tmp_path):
     r = run(tmp_path, XP_PAGE, XP_ONE_PASS + [
         {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
-        {"do": "eval", "as": "popups", "js": "window.TailorAutofill.pickerPopups().length"},
     ])
     v, rep = r["values"], r["rep"]
     # the engine's own pass leaves nothing open, although Field of Study opened a popup dialog
@@ -578,8 +577,9 @@ def test_workday_popup_field_of_study_is_picked_and_the_dialog_closed(tmp_path):
     # the shell's search: the option the degree supports, by the engine's scorer, then Done
     assert v["fields"] == [["Business Administration/Management"], ["Economics"]]
     assert v["skills"] == ["Excel", "SQL"]                     # only skills the list offers
-    assert r["search"]["picked"] == 4 and all(c["ok"] for c in r["search"]["closes"])
-    assert v["open"] is False and r["popups"] == 0
+    s = r["search"]
+    assert s["picked"] == 4 and s["fields"] == 3 and s["left_open"] == 0 and not s["timed_out"] and not s["dead"]
+    assert v["open"] is False
     assert v["schools"] == [["Example State University"], ["Sample College"]]
     assert v["degrees"] == ["Masters", "Bachelors"]            # (the open dialog once blocked the second)
     assert not any(x in r["left"] for x in ("From", "To", "Degree", "Field of Study")), r["left"]
@@ -587,11 +587,11 @@ def test_workday_popup_field_of_study_is_picked_and_the_dialog_closed(tmp_path):
 
 def test_workday_dates_are_typed_month_and_year_and_year_only_for_education(tmp_path):
     r = run(tmp_path, XP_PAGE, XP_ONE_PASS)
-    v, rep = r["values"], r["rep"]
+    v, rep, k = r["values"], r["rep"], r["keys"]
     # month then year; no To for the job marked current; education takes the year alone
-    assert [k["text"] for k in rep["keys"]] == ["3", "2026", "2", "2018", "9", "2024", "2024", "2025", "2011", "2015"]
-    assert r["keys"]["typed"] == 10                            # every segment took the focus: no dialog in the way
-    assert r["keys"]["landed"] == {"landed": 7, "missed": 0}   # seven date groups, read back from the page
+    assert [x["text"] for x in rep["keys"]] == ["3", "2026", "2", "2018", "9", "2024", "2024", "2025", "2011", "2015"]
+    assert k["typed"] == 10 and k["of"] == 10                  # every segment took the focus: no dialog in the way
+    assert k["landed"] == 7 and k["missed"] == 0               # seven date groups, read back from the page
     assert v["current"] == [True, False]
     assert v["workDates"] == ["3/2026", "/", "2/2018", "9/2024"]
     assert v["eduDates"] == ["2024", "2025", "2011", "2015"]
@@ -629,7 +629,7 @@ def test_workday_popup_is_closed_when_no_option_matches_and_not_searched_again(t
     ])
     v = r["values"]
     assert [s["kind"] for s in r["rep"]["searches"]] == ["field", "skills"]
-    assert r["search"]["picked"] == 0 and all(c["ok"] for c in r["search"]["closes"])
+    assert r["search"]["picked"] == 0 and r["search"]["left_open"] == 0
     assert v["fields"] == [[]] and v["skills"] == [] and v["open"] is False       # left empty, never a guess
     # the miss is remembered (the shared per-page memory): no second search, no popup opened again
     assert r["rep2"]["searches"] == [] and r["rep2"]["from_memory"] >= 2 and r["rep2"]["opens"] == 0
@@ -641,9 +641,9 @@ def test_workday_popup_without_a_done_button_is_closed_another_way(tmp_path):
     r = run(tmp_path, XP_PAGE, XP_ONE_PASS, query="?nodone=1")
     assert r["after_engine"]["popupOpens"] >= 1 and r["after_engine"]["open"] is False
     assert r["rep"]["left_open"] == 0
-    assert r["values"]["open"] is False and all(c["ok"] for c in r["search"]["closes"])
+    assert r["values"]["open"] is False and r["search"]["left_open"] == 0
     assert r["values"]["fields"] == [["Business Administration/Management"], ["Economics"]]
-    assert r["keys"]["landed"] == {"landed": 7, "missed": 0}
+    assert r["keys"]["landed"] == 7 and r["keys"]["missed"] == 0
 
 
 def test_workday_dates_that_were_never_typed_are_not_counted_or_queued_forever(tmp_path):
@@ -675,3 +675,111 @@ def test_workday_planned_pick_on_a_popup_prompt_closes_the_dialog(tmp_path):
     assert r["miss"]["filled"] == 0 and r["miss"]["left_open"] == 0 and r["after_miss"]["open"] is False
     assert r["hit"]["filled"] == 1 and r["hit"]["left_open"] == 0
     assert r["after_hit"]["fields"] == [["Accounting"]] and r["after_hit"]["open"] is False
+
+
+# The first version of the popup handling made the fill on the real page never return (two
+# minutes at a time, 2026-11-18). Each case below is a page that does not behave: the fill still
+# returns inside its budget, says what went wrong, and does not try the same thing again.
+XP_BUDGET_MS = 6000
+
+
+def _xp_timed(payload=None, budget=XP_BUDGET_MS):
+    """fillAsync under a budget, with the wall time it really took and its debug trace."""
+    return ("(async () => { const t = performance.now(); const r = await window.TailorAutofill.fillAsync("
+            f"{json.dumps(payload or XP_PAYLOAD)}, {{budgetMs: {budget}, debug: true}});"
+            " return Object.assign(r, {wall_ms: Math.round(performance.now() - t)}); })()")
+
+
+def test_workday_popup_that_never_closes_is_reported_once_and_left_alone(tmp_path):
+    r = run(tmp_path, XP_PAGE, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _xp_timed()},
+        {"do": "shellKeys", "from": "rep", "as": "keys"},
+        {"do": "shellSearch", "from": "rep", "as": "search"},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "rep2", "js": _xp_timed()},
+        {"do": "shellKeys", "from": "rep2", "as": "keys2"},
+        {"do": "shellSearch", "from": "rep2", "as": "search2"},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+        {"do": "eval", "as": "read", "js": "(async () => { const t = performance.now(); await window.TailorAutofill.extractFormAsync({onlyEmpty: true, budgetMs: 4000});"
+                                           " return Math.round(performance.now() - t); })()"},
+        {"do": "eval", "as": "values3", "js": "window.fxValues()"},
+    ], query="?stuck=1")
+    rep, rep2 = r["rep"], r["rep2"]
+    # the first popup the engine opened would not close: one close cycle, reported, and the pass returns
+    assert rep["left_open"] == 1 and rep["wall_ms"] < XP_BUDGET_MS + 2000, rep["wall_ms"]
+    assert sum(1 for line in rep["trace"] if "popup-stuck" in line) == 1, rep["trace"]
+    assert r["values"]["popupOpens"] == 1 and r["values"]["open"] is True
+    # the shell's searches return at once for the stuck control and never hang
+    assert r["search"]["picked"] == 0 and not r["search"]["dead"] and r["search"]["ms"] < 20000
+    # the second pass, and the form read, do not open or try to close anything again
+    assert rep2["left_open"] == 1 and rep2["opens"] == 0 and rep2["wall_ms"] < 1500, rep2
+    assert not any("popup-" in line and "left-open" not in line for line in rep2["trace"]), rep2["trace"]
+    assert r["values2"]["popupOpens"] == 1 and r["values3"]["popupOpens"] == 1
+    assert r["read"] < 6000
+    # what does not need the list is still filled
+    assert r["values"]["titles"] == ["Data Analyst", "Business Analyst"]
+
+
+def test_workday_an_unrelated_dialog_on_the_page_is_never_touched(tmp_path):
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS + [
+        {"do": "eval", "as": "popups", "js": "window.TailorAutofill.pickerPopups().length"},
+        {"do": "eval", "as": "rep2", "js": _xp_timed()},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+    ], query="?modal=1")
+    v = r["values"]
+    assert r["popups"] == 1                                    # it LOOKS like a picker popup, and it was here first
+    assert v["bystanderPresses"] == 0 and r["values2"]["bystanderPresses"] == 0   # never pressed, never "closed"
+    assert r["rep"]["left_open"] == 0 and r["search"]["left_open"] == 0
+    # and the prompts' own popups are still found, used and closed
+    assert v["fields"] == [["Business Administration/Management"], ["Economics"]] and v["skills"] == ["Excel", "SQL"]
+    assert v["open"] is False and r["keys"]["landed"] == 7
+    assert r["rep2"]["filled"] == 0 and r["rep2"]["opens"] == 0 and r["rep2"]["wall_ms"] < 1500
+
+
+def test_workday_dates_kept_outside_the_box_count_as_landed_and_are_not_typed_twice(tmp_path):
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS + [
+        {"do": "eval", "as": "rep2", "js": _xp_fill()},
+        {"do": "shellKeys", "from": "rep2", "as": "keys2"},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+    ], query="?sep=1")
+    # the boxes read back empty; the page shows "03" / "2026" and says "current value is 03/2026"
+    assert r["keys"]["typed"] == 10 and r["keys"]["landed"] == 7 and r["keys"]["missed"] == 0
+    assert r["values"]["workDates"] == ["3/2026", "/", "2/2018", "9/2024"]
+    assert r["rep2"]["keys"] == [] and r["keys2"]["typed"] == 0            # nothing typed on top of a date
+    assert r["values2"]["workDates"] == r["values"]["workDates"] and r["values2"]["eduDates"] == ["2024", "2025", "2011", "2015"]
+
+
+def test_workday_dates_that_never_land_are_typed_at_most_twice(tmp_path):
+    steps = [{"do": "inject"}]
+    for i in range(1, 5):
+        steps += [{"do": "eval", "as": f"rep{i}", "js": _xp_timed()},
+                  {"do": "shellKeys", "from": f"rep{i}", "as": f"keys{i}"},
+                  {"do": "shellSearch", "from": f"rep{i}", "as": f"search{i}"}]
+    steps.append({"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"})
+    r = run(tmp_path, XP_PAGE, steps, query="?nokeys=1")
+    typed = [r[f"keys{i}"]["typed"] for i in range(1, 5)]
+    assert typed[0] == 10 and r["keys1"]["landed"] == 0 and r["keys1"]["missed"] == 7
+    assert sum(1 for t in typed if t) <= 2 and typed[2] == 0 and typed[3] == 0, typed   # twice at most, then left
+    assert r["rep3"]["keys"] == [] and r["rep4"]["keys"] == [] and r["rep4"]["filled"] == 0
+    assert all(r[f"rep{i}"]["wall_ms"] < XP_BUDGET_MS + 2000 for i in range(1, 5))
+    assert "From" in r["left"] and "To" in r["left"]
+
+
+def test_workday_fill_returns_inside_a_small_budget_with_what_it_has(tmp_path):
+    r = run(tmp_path, XP_PAGE, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _xp_timed(budget=600)},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+    ])
+    rep = r["rep"]
+    assert rep["timed_out"] is True and rep["wall_ms"] < 600 + 2500, rep["wall_ms"]
+    assert rep["left_open"] == 0 and r["values"]["open"] is False          # cut short, and still nothing left open
+    assert r["values"]["titles"][0] == "Data Analyst"                      # what it had is kept
+
+
+def test_shell_real_input_jobs_always_return():
+    """Typing the dates and searching a list (shell-electron/fill_keys.js) under node: a call that
+    never answers, a slow page, nothing fitting and a field named twice all return, bounded."""
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_fill_keys.js")], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stderr[-2000:]

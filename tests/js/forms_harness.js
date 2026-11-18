@@ -14,10 +14,10 @@
 //   {do:"framesUpload", refsFrom, file, as}  CDP file upload in each frame for refs in a prior result
 //   {do:"frameValues", as}          window.fxValues() of the first child frame (main world)
 //   {do:"keys", sel, text, enter?}   real key presses into a box (then Enter)
-//   {do:"shellKeys", from, as?}     what the shell's typeKeyOps does with a fill report's ``keys``: focus
-//                                   each named box, type it with real keys, then ask the engine what landed
-//   {do:"shellSearch", from, as?}   what the shell's searchPicks does with a report's ``searches``: a real
-//                                   click, the query in real keys, Enter, searchChoice, then closeSearch
+//   {do:"shellKeys", from, as?, opts?}    the shell's date typing (shell-electron/fill_keys.js typeKeys) on a
+//                                         fill report's ``keys``, with real keys -> its report + debug lines
+//   {do:"shellSearch", from, as?, opts?}  the shell's list search (fill_keys.js searchPicks) on a report's
+//                                         ``searches``: real clicks and keys -> its report + debug lines
 //   {do:"wait", ms}
 // Prints {results:{...}} as JSON.
 "use strict";
@@ -92,7 +92,8 @@ async function freePort() {
   const { chromium } = findPlaywright();
   const browser = await chromium.launch({ args: ["--remote-debugging-port=" + port, "--site-per-process"] });
   const results = {};
-  let cdp = null, ctxs = [];
+  let cdp = null, ctxs = [], inputCdp = null;
+  const fillKeys = require(path.resolve(__dirname, "..", "..", "shell-electron", "fill_keys.js"));
   try {
     const page = await browser.newPage({ viewport: { width: 1100, height: 1400 } });
     let q = sc.query || "";
@@ -116,44 +117,16 @@ async function freePort() {
         await page.keyboard.press("Backspace");
         await page.keyboard.type(st.text);
         if (st.enter) await page.keyboard.press("Enter");
-      } else if (st.do === "shellKeys") {
-        // mirrors typeKeyOps + the keysLanded read in shell-electron/main.js
-        let typed = 0;
-        for (const k of ((results[st.from] || {}).keys || [])) {
-          const ok = await page.evaluate((ref) => { const el = document.querySelector('[data-tailor-ref="' + ref + '"]');
-            if (!el) return false; el.focus(); return document.activeElement === el; }, k.ref);
-          if (!ok) continue;
-          await page.keyboard.type(String(k.text));
-          typed++;
-        }
-        await page.evaluate(() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); });
-        const landed = await page.evaluate(() => (window.TailorAutofill.keysLanded ? window.TailorAutofill.keysLanded() : null));
-        if (st.as) results[st.as] = { typed, landed };
-      } else if (st.do === "shellSearch") {
-        // mirrors searchPicks in shell-electron/main.js
-        let picked = 0;
-        const closes = [];
-        for (const op of ((results[st.from] || {}).searches || [])) {
-          let got = 0;
-          for (const q of (op.queries || [])) {
-            if (got >= (op.max || 1)) break;
-            const box = await page.evaluate((ref) => window.TailorAutofill.searchTarget(ref), op.ref);
-            if (!box || !(box.w > 0)) break;
-            await page.mouse.click(box.x, box.y);
-            await page.evaluate((ref) => window.TailorAutofill.searchFocus(ref), op.ref);
-            await page.keyboard.press("Backspace");
-            await page.keyboard.type(String(q));
-            await page.keyboard.press("Enter");
-            await page.waitForTimeout(150);
-            const r = await page.evaluate(([ref, spec]) => window.TailorAutofill.searchChoice(ref, spec),
-              [op.ref, { kind: op.kind, want: op.want || [], items: op.items || [] }]);
-            if (r && r.ok) got++;
-          }
-          const c = await page.evaluate((ref) => window.TailorAutofill.closeSearch(ref), op.ref);
-          closes.push(c);
-          picked += (c && typeof c.picked === "number") ? c.picked : got;
-        }
-        if (st.as) results[st.as] = { picked, closes };
+      } else if (st.do === "shellKeys" || st.do === "shellSearch") {
+        // the shell's own code (shell-electron/fill_keys.js) over this page: real keys and clicks
+        if (!inputCdp) inputCdp = await page.context().newCDPSession(page);
+        const driver = { evalJs: (expr) => page.evaluate(expr), send: (m, p) => inputCdp.send(m, p) };
+        const lines = [];
+        const o = Object.assign({ log: (l) => lines.push(l), resultsMs: 150 }, st.opts || {});
+        const rep = results[st.from] || {};
+        const r = st.do === "shellKeys" ? await fillKeys.typeKeys(driver, rep.keys, o) : await fillKeys.searchPicks(driver, rep.searches, o);
+        r.lines = lines;
+        if (st.as) results[st.as] = r;
       } else if (st.do === "frameClick") {
         await page.frames()[1].click(st.sel);
       } else if (st.do === "wait") {

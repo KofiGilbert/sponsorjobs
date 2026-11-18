@@ -821,92 +821,33 @@ async function openFrameSession(wc) {
   }
 }
 
-// Type into boxes that take only real key presses (Workday's date segments: a value set from
-// script shows but is not kept, so Next says "Invalid Date"). The engine names them ({ref, text}),
-// empty ones only; each is focused and typed with real key events, then left with a blur.
-// Main frame only.
-async function typeKeyOps(wc, keys) {
-  if (!keys || !keys.length) return 0;
-  const release = acquireDebugger(wc);
-  if (!release) { if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps: debugger busy"); return 0; }
-  let n = 0;
-  try {
-    const dbg = wc.debugger;
-    for (const k of keys) {
-      const sel = JSON.stringify('[data-tailor-ref="' + k.ref + '"]');
-      const ok = await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (!el) return false;
-        try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
-        el.focus(); return document.activeElement === el; })()`, true).catch(() => false);
-      if (!ok) continue;
-      // The engine only names EMPTY boxes, so nothing is cleared first: a Backspace in an empty
-      // date segment steps back into the one before it and erases that.
-      for (const ch of String(k.text)) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
-      }
-      n++;
-    }
-    await wc.executeJavaScript("(() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); })()", true).catch(() => null);
-  } catch (e) {                                  // what was typed stands; the rest is left on the page
-    if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps:", String(e && e.message || e));
-  } finally { release(); }
-  if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps: typed " + n + " of " + keys.length);
-  return n;
+// Real input for a fill (fill_keys.js): typing date segments, and searching lists that filter
+// only on a real Enter. Both are bounded there (a cap per call and per job, each field once) and
+// always return; SJ_AGENT_DEBUG=1 prints one line per sub-step (positions and times, never a
+// label or a value). Main frame only.
+const fillKeys = require("./fill_keys");
+const debugLine = process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null;
+function inputDriver(wc) {
+  return { evalJs: (expr) => wc.executeJavaScript(expr, true),
+           send: (method, params) => wc.debugger.sendCommand(method, params) };
 }
-
-// Search lists that filter only on a real Enter (Workday's Field of Study and Skills): for each
-// one the engine names, click it, type a query with real keys, press Enter, and let the engine
-// pick the best REAL option it lists (searchChoice); the next query only when nothing fit. Both
-// are optional questions: nothing that fits leaves them empty. At most SEARCH_MS in all.
-// Some prompts open their list in a popup dialog with its own search box (a real Workday form,
-// 2026-11-18): the engine says where to click and which box takes the typing (searchTarget,
-// searchFocus), and closeSearch presses the popup's Done, checks that it is gone, and counts the
-// choices that really reached the page. A search that picked nothing is not run again there.
-const SEARCH_MS = 20000;
-async function searchPicks(wc, ops) {
-  if (!ops || !ops.length) return 0;
+async function typeKeyOps(wc, keys, capMs) {
+  const none = { typed: 0, of: (keys || []).length, landed: 0, missed: 0, timed_out: false, dead: false, ms: 0 };
+  if (!keys || !keys.length) return none;
   const release = acquireDebugger(wc);
-  if (!release) return 0;
-  const dbg = wc.debugger;
-  const key = async (k, code, vk) => {
-    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, windowsVirtualKeyCode: vk });
-    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: k, code, windowsVirtualKeyCode: vk });
-  };
-  const until = Date.now() + SEARCH_MS;
-  let picked = 0;
-  try {
-    for (const op of ops) {
-      const sel = JSON.stringify('[data-tailor-ref="' + op.ref + '"]');
-      let got = 0;
-      for (const q of (op.queries || [])) {
-        if (Date.now() > until || got >= (op.max || 1)) break;
-        const box = await wc.executeJavaScript(`window.TailorAutofill.searchTarget(${JSON.stringify(op.ref)})`, true).catch(() => null);
-        if (!box || !(box.w > 0)) break;
-        await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
-        await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
-        await wc.executeJavaScript(`window.TailorAutofill.searchFocus(${JSON.stringify(op.ref)})`, true).catch(() => null);
-        await key("Backspace", "Backspace", 8);
-        for (const ch of String(q)) {
-          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
-          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
-        }
-        await key("Enter", "Enter", 13);
-        await new Promise((r) => setTimeout(r, 1500));
-        const spec = JSON.stringify({ kind: op.kind, want: op.want || [], items: op.items || [] });
-        const r = await wc.executeJavaScript(`window.TailorAutofill.searchChoice(${JSON.stringify(op.ref)}, ${spec})`, true).catch(() => null);
-        if (r && r.ok) got++;
-      }
-      const c = await wc.executeJavaScript(`(async () => { const el = document.querySelector(${sel}); if (el && el.value) {
-          const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; set.call(el, "");
-          el.dispatchEvent(new Event("input", { bubbles: true })); }
-        return window.TailorAutofill.closeSearch(${JSON.stringify(op.ref)}); })()`, true).catch(() => null);
-      // what really reached the page once the list (or its popup) was closed
-      picked += (c && typeof c.picked === "number") ? c.picked : got;
-    }
-  } catch (e) {
-    if (process.env.SJ_AGENT_DEBUG === "1") console.warn("searchPicks:", String(e && e.message || e));
-  } finally { release(); }
-  return picked;
+  if (!release) { if (debugLine) debugLine("typeKeyOps: debugger busy"); return none; }
+  try { return await fillKeys.typeKeys(inputDriver(wc), keys, { log: debugLine, keysMs: Math.min(fillKeys.KEYS_MS, capMs || fillKeys.KEYS_MS) }); }
+  catch (e) { if (debugLine) debugLine("typeKeyOps: " + String(e && e.message || e)); return none; }
+  finally { release(); }
+}
+async function searchPicks(wc, ops, capMs) {
+  const none = { picked: 0, fields: 0, left_open: 0, timed_out: false, dead: false, ms: 0 };
+  if (!ops || !ops.length) return none;
+  const release = acquireDebugger(wc);
+  if (!release) return none;
+  try { return await fillKeys.searchPicks(inputDriver(wc), ops, { log: debugLine, searchMs: Math.min(fillKeys.SEARCH_MS, capMs || fillKeys.SEARCH_MS) }); }
+  catch (e) { if (debugLine) debugLine("searchPicks: " + String(e && e.message || e)); return none; }
+  finally { release(); }
 }
 
 // What one fill run did on one page, summed over the top page and its frames.
@@ -1011,18 +952,33 @@ async function runAutoApplyOnPane(recordId, opts) {
     lap("payload", "filling the page");
     const havePayload = !!(payload && payload.loaded !== false);
     const fillExpr = (budgetMs) => (havePayload
-      ? `window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })})` : "null");
+      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
     const pres = [];
     if (havePayload) {
       try { pres.push(await run("filling the page", "engine", (b) => wc.executeJavaScript(fillExpr(b), true), beatMain)); } catch (e) { /* fill what we can below */ }
       tally(pres[0]);
-      if (pres[0] && pres[0].keys && pres[0].keys.length) {
-        await typeKeyOps(wc, pres[0].keys);
+      if (pres[0] && debugLine) for (const line of (pres[0].trace || [])) debugLine("engine: " + line);
+      // Real input, after the engine's pass: each bounded, each field once, and a page that stops
+      // answering ends it at once (the fill carries on to its report).
+      if (pres[0] && pres[0].left_open) counts.left_open = pres[0].left_open;
+      // what the fill's overall cap still allows the real-input jobs (0: skipped)
+      const inputRoom = () => Math.max(0, C.overall - (Date.now() - t0) - 3000);
+      if (pres[0] && pres[0].keys && pres[0].keys.length && inputRoom() >= 1000) {
+        lap("engine", "typing the dates");
         // a typed date counts as filled only when the page holds it (the engine reads it back)
-        const kl = await wc.executeJavaScript("window.TailorAutofill.keysLanded()", true).catch(() => null);
-        if (kl && kl.landed) pres[0].filled = (pres[0].filled || 0) + kl.landed;
+        const kr = await typeKeyOps(wc, pres[0].keys, inputRoom());
+        pres[0].filled = (pres[0].filled || 0) + kr.landed;
+        if (kr.timed_out) cut = cut || { phase: "typing the dates", stalled: kr.dead };
+        lap("keys", "filling the page");
       }
-      if (pres[0] && pres[0].searches && pres[0].searches.length) pres[0].filled = (pres[0].filled || 0) + await searchPicks(wc, pres[0].searches);
+      if (pres[0] && pres[0].searches && pres[0].searches.length && !(cut && cut.stalled) && inputRoom() >= 1000) {
+        lap("engine", "searching a list");
+        const sr = await searchPicks(wc, pres[0].searches, inputRoom());
+        pres[0].filled = (pres[0].filled || 0) + sr.picked;
+        counts.left_open = (counts.left_open || 0) + sr.left_open;
+        if (sr.timed_out) cut = cut || { phase: "searching a list", stalled: sr.dead };
+        lap("search", "filling the page");
+      }
     }
     lap("engine", "reading the form");
     fr = await openFrameSession(wc);
