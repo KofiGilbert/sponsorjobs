@@ -6476,6 +6476,7 @@
         ${trkStageSelect(j, 'id="trkPanelStage"')}
         ${j.url ? `<a class="btn btn-ghost btn-sm" href="${esc(j.url)}" target="_blank" rel="noopener">${esc(trkT("tracker.posting", "Job posting"))}</a>` : ""}
       </div>
+      <div class="trk-p-msgs" id="trkPanelMsgs" hidden></div>
       <div class="trk-p-sec">
         <div class="trk-p-h">${esc(trkT("tracker.followUp", "Follow-up"))}</div>
         <div class="trk-p-row"><input class="fld" id="trkPanelFu" type="date" value="${esc(j.follow_up_at || "")}"><span class="prof-dim ${j.follow_up_due ? "trk-due" : ""}">${j.follow_up_due ? esc(trkT("tracker.dueNow", "Due now")) : ""}</span></div>
@@ -6514,6 +6515,7 @@
     $("#trkPanelClose").addEventListener("click", closeTrackerPanel);
     $("#trkPanelUndo")?.addEventListener("click", () => trkUndo(sid));
     trkBindMail(sid, j);
+    trkPanelMessages(sid, j);
     $("#trkPanelStage").addEventListener("change", (e) => trkMove(sid, e.target.value));
     $("#trkPanelFu").addEventListener("change", async (e) => {
       try {
@@ -6794,6 +6796,491 @@
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && TRK_OPEN) closeTrackerPanel(); });
   refreshTrackerDot();
 
+  /* ---------------------------------------------------------------- Inbox (docs/mail-alias.md)
+     Mail sent to the person's SponsorJobs address, read from the local mailbox (/api/inbox/messages).
+     A list and a reader; read only, no reply or compose. The pure parts (label names, times, the
+     row model, the empty state, the page a mail body is shown in) live in inbox_view.js and are
+     tested under node. A mail body is shown ONLY inside the sandboxed frame ibFrame builds. */
+  const ibT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  const IBV = window.SJInboxView;
+  const IB_PER = 50;               // rows per page ("Show more" loads the next 50)
+  const IB_SYNC_EVERY = 60000;     // opening the Inbox asks the server for new mail at most once a minute
+  const IB_POLL = 300000;          // the sidebar count, every 5 minutes while the app is open
+  const IB = { f: { label: "", unread: false, q: "", archived: false, job: "", jobName: "" },
+               page: 1, rows: [], count: 0, labels: {}, unread: 0, alias: null, loaded: false,
+               open: null, msg: null, stale: false, busy: false, lastSync: 0, seq: 0, again: null };
+  let IB_WANT = null;              // the application the Inbox should open on next (Tracker's "N messages")
+  const ibActive = () => !!$("#view-inbox")?.classList.contains("is-active");
+
+  // Plain fetches, not api(): a background count must never become "the last call" the outage
+  // screen retries, and an unreachable mail server is a quiet line here, not that screen.
+  async function ibGet(url) {
+    const r = await fetch(url);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || "failed");
+    return d;
+  }
+  async function ibSend(url, method, body) {
+    const r = await fetch(url, { method, headers: { "Content-Type": "application/json" },
+                                 body: body === undefined ? undefined : JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || "failed");
+    return d;
+  }
+  async function ibCopyText(text, done) {
+    try { await navigator.clipboard.writeText(text); toast(done); }
+    catch { toast(text); }         // the clipboard is closed to us: show it, so it can still be read
+  }
+
+  // The count on the sidebar entry: unread mail, hidden at zero.
+  function ibSetBadge(n) {
+    IB.unread = Math.max(0, Number(n) || 0);
+    const b = $("#navInboxBadge");
+    if (b) {
+      b.hidden = !IB.unread;
+      b.textContent = IB.unread > 99 ? "99+" : String(IB.unread);
+      b.title = IB.unread === 1 ? ibT("mbox.unread1", "1 unread message")
+                                : ibT("mbox.unreadN", "{n} unread messages").replace("{n}", String(IB.unread));
+    }
+    const all = $("#ibReadAll");
+    if (all) all.disabled = !IB.unread;
+  }
+  async function refreshInboxBadge() {
+    try { ibSetBadge((await ibGet("/api/inbox/messages?per_page=1")).unread); } catch { /* keep the last count */ }
+  }
+
+  // Open the Inbox. From the sidebar it shows all mail; from a Tracker card, that application's.
+  async function loadInbox(want) {
+    IB.f.job = want && want.job ? String(want.job) : "";
+    IB.f.jobName = want && want.job ? String(want.jobName || "") : "";
+    if (want && want.job) { IB.f.label = ""; IB.f.unread = false; IB.f.q = ""; IB.f.archived = false; }
+    ibSyncControls();
+    await ibFetch();
+    if (IB.alias && Date.now() - IB.lastSync > IB_SYNC_EVERY) ibSync(false);
+  }
+  function ibSyncControls() {
+    const s = $("#ibSearch");
+    if (s && s.value !== IB.f.q) s.value = IB.f.q;
+    $("#ibUnread")?.setAttribute("aria-pressed", IB.f.unread ? "true" : "false");
+  }
+
+  // mode: undefined (first page), "more" (the next 50), "refresh" (what is on screen, again).
+  async function ibFetch(mode) {
+    const seq = ++IB.seq;
+    const page = mode === "more" ? IB.page + 1 : 1;
+    const per = mode === "refresh" ? Math.min(200, IB_PER * IB.page) : IB_PER;
+    let d;
+    try { d = await ibGet("/api/inbox/messages?" + IBV.listQuery({ ...IB.f, page, per })); }
+    catch { return false; }        // keep what is on screen
+    if (seq !== IB.seq) return false;
+    const got = d.messages || [];
+    if (mode === "more") { IB.page = page; IB.rows = IB.rows.concat(got.filter(m => !IB.rows.some(r => r.id === m.id))); }
+    else { IB.rows = got; if (mode !== "refresh") IB.page = 1; else IB.page = Math.max(1, Math.ceil(per / IB_PER)); }
+    IB.loaded = true;
+    IB.count = Number(d.count) || 0;
+    IB.labels = d.labels || {};
+    IB.alias = d.alias || null;
+    ibSetBadge(d.unread);
+    ibPaint();
+    // The engine started its own download for this request: look again once it has had time.
+    if (d.syncing && !IB.busy) {
+      clearTimeout(IB.again);
+      IB.again = setTimeout(() => { if (ibActive() && !IB.busy) ibFetch("refresh"); }, 4000);
+    }
+    return true;
+  }
+
+  // Ask the server for new mail now and wait. Offline is not an error: the saved mail stays, with one quiet line.
+  async function ibSync(manual) {
+    if (IB.busy) return;
+    IB.busy = true; IB.lastSync = Date.now();
+    const b = $("#ibRefresh");
+    if (b) { b.disabled = true; b.setAttribute("aria-busy", "true"); b.textContent = ibT("mbox.refreshing", "Checking…"); }
+    let d = null;
+    try { d = await ibSend("/api/inbox/sync", "POST", {}); } catch { d = null; }
+    IB.busy = false;
+    if (b) { b.disabled = false; b.removeAttribute("aria-busy"); b.textContent = ibT("mbox.refresh", "Refresh"); }
+    const hadAlias = !!IB.alias;
+    IB.stale = hadAlias && !(d && d.synced);
+    if (ibActive()) await ibFetch("refresh");
+    else if (d) ibSetBadge(d.unread);
+    if (manual && !IB.stale) {
+      const n = d ? Number(d.new) || 0 : 0;
+      toast(!n ? ibT("mbox.upToDate", "No new mail")
+               : n === 1 ? ibT("mbox.new1", "1 new message") : ibT("mbox.newN", "{n} new messages").replace("{n}", String(n)));
+    }
+  }
+
+  function ibPaint() {
+    if (!$("#ibSplit")) return;
+    const kind = IBV.emptyKind({ rows: IB.rows.length, filter: IB.f, alias: IB.alias });
+    $("#ibAddr").hidden = !IB.alias;
+    if (IB.alias) $("#ibAddrText").textContent = ibT("mbox.addr", "Mail sent to {alias} shows here.").replace("{alias}", IB.alias);
+    $("#ibBar").hidden = kind === "noaddr";
+    $("#ibTabs").hidden = kind === "noaddr";
+    ibPaintTabs();
+    ibPaintNote();
+    $("#ibSplit").hidden = !!kind;
+    $("#ibEmpty").hidden = !kind;
+    if (kind) { ibPaintEmpty(kind); return; }
+    ibPaintList();
+    ibPaintReader();
+  }
+
+  // The label filter: All and the five labels, each with its count, then Archived.
+  function ibPaintTabs() {
+    const host = $("#ibTabs");
+    if (!host) return;
+    const f = IB.f;
+    const tab = (v, name, n, on, cls) => `<button class="ib-tab${cls || ""}" type="button" data-ib-tab="${v}" aria-pressed="${on ? "true" : "false"}">`
+      + `${esc(name)}${n == null ? "" : ` <span class="ib-tab-n">${n}</span>`}</button>`;
+    host.innerHTML = tab("", ibT("mbox.all", "All"), IBV.totalOf(IB.labels), !f.archived && !f.label)
+      + IBV.LABELS.map(l => tab(l, IBV.labelName(l, ibT), Number(IB.labels[l]) || 0, !f.archived && f.label === l)).join("")
+      + tab("archived", ibT("mbox.archived", "Archived"), null, f.archived, " ib-tab-end");
+  }
+
+  // One muted line above the list: saved mail while the server cannot be reached, and whose mail
+  // this is when the Inbox was opened from an application.
+  function ibPaintNote() {
+    const note = $("#ibNote");
+    if (!note) return;
+    const parts = [];
+    if (IB.stale) parts.push(`<span>${esc(ibT("mbox.stale", "Showing saved mail. I could not reach the server just now."))}</span>`);
+    if (IB.f.job) {
+      const about = IB.f.jobName ? ibT("mbox.forJob", "Mail about {job}.").replace("{job}", IB.f.jobName)
+                                 : ibT("mbox.forJobPlain", "Mail about one application.");
+      parts.push(`<span>${esc(about)}</span> <button class="link-btn" type="button" data-ib-all>${esc(ibT("mbox.showAll", "Show all mail"))}</button>`);
+    }
+    note.hidden = !parts.length;
+    note.innerHTML = parts.join(" ");
+  }
+
+  function ibPaintEmpty(kind) {
+    const host = $("#ibEmpty");
+    let t, d, btn = "";
+    if (kind === "noaddr") {
+      t = ibT("mbox.empty.noaddrT", "No SponsorJobs address yet");
+      d = ibT("mbox.empty.noaddr", "You get a SponsorJobs address when the agent first applies for you. Mail from employers will show here.");
+      btn = `<button class="btn btn-primary" type="button" data-ib-getaddr>${esc(ibT("mail.get", "Get an address"))}</button>`;
+    } else if (kind === "nomail") {
+      t = ibT("mbox.empty.nomailT", "No mail yet");
+      d = ibT("mbox.empty.nomail", "Mail from employers to {alias} will show here.").replace("{alias}", IB.alias || "");
+    } else {
+      t = ibT("mbox.empty.noresultsT", "Nothing matches");
+      d = ibT("mbox.empty.noresults", "No mail fits this filter or search.");
+      btn = `<button class="btn btn-ghost" type="button" data-ib-all>${esc(ibT("mbox.showAll", "Show all mail"))}</button>`;
+    }
+    host.innerHTML = `<div class="ib-empty-t">${esc(t)}</div><p class="ib-empty-d">${esc(d)}</p>${btn}`;
+  }
+
+  function ibRowHtml(m, now) {
+    const r = IBV.rowModel(m, now, ibT);
+    const on = m.id === IB.open;
+    return `<button class="ib-row${r.unread ? " is-unread" : ""}${on ? " is-active" : ""}" type="button" data-id="${r.id}"${on ? ' aria-current="true"' : ""}>
+        <span class="ib-dot" aria-hidden="true"></span>
+        <span class="ib-row-main">
+          <span class="ib-row-top"><span class="ib-from">${r.unread ? `<span class="ib-sr">${esc(ibT("mbox.unread", "Unread"))}: </span>` : ""}${esc(r.from)}</span><span class="ib-time">${esc(r.time)}</span></span>
+          <span class="ib-subj">${esc(r.subject)}</span>
+          ${r.snippet ? `<span class="ib-snip">${esc(r.snippet)}</span>` : ""}
+          <span class="ib-row-meta"><span class="${r.chip}">${esc(r.labelText)}</span>${r.company ? `<span class="ib-co">${esc(r.company)}</span>` : ""}</span>
+        </span>
+      </button>`;
+  }
+  function ibPaintList() {
+    const list = $("#ibList");
+    if (!list) return;
+    const held = list.contains(document.activeElement) ? document.activeElement.dataset.id : null;
+    const now = Date.now();
+    list.innerHTML = IB.rows.map(m => ibRowHtml(m, now)).join("");
+    if (held) list.querySelector(`.ib-row[data-id="${held}"]`)?.focus();   // keep the keyboard's place
+    const more = IB.rows.length < IB.count;
+    $("#ibMore").hidden = !more;
+    if (more) $("#ibShown").textContent = ibT("mbox.shown", "{a} of {b}").replace("{a}", String(IB.rows.length)).replace("{b}", String(IB.count));
+  }
+  // One row changed (opened, read): repaint just that row, so the list keeps its scroll and focus.
+  function ibRepaintRow(id) {
+    const m = IB.rows.find(r => r.id === id), el = $("#ibList")?.querySelector(`.ib-row[data-id="${id}"]`);
+    if (!m || !el) return;
+    const had = document.activeElement === el;
+    el.outerHTML = ibRowHtml(m, Date.now());
+    if (had) $("#ibList").querySelector(`.ib-row[data-id="${id}"]`)?.focus();
+  }
+
+  async function ibOpen(id) {
+    const before = IB.open;
+    IB.open = id; IB.msg = null;
+    if (before != null && before !== id) ibRepaintRow(before);
+    ibRepaintRow(id);
+    $("#ibSplit").classList.add("is-reading");
+    ibPaintReader();
+    let d;
+    try { d = await ibGet("/api/inbox/messages/" + id); }
+    catch {
+      if (IB.open === id) { ibCloseReader(); toast(ibT("mbox.openFail", "Couldn't open that message.")); ibFetch("refresh"); }
+      return;
+    }
+    if (IB.open !== id) return;
+    IB.msg = d.message;
+    ibPaintReader();
+    const back = $("#ibBack");
+    if (back && back.offsetParent !== null) back.focus();       // one pane: the keyboard follows into the message
+    if (!d.message.read) {
+      try { await ibSend("/api/inbox/messages/" + id, "POST", { read: true }); } catch { return; }
+      const row = IB.rows.find(r => r.id === id);
+      if (row && !row.read) { row.read = true; ibSetBadge(IB.unread - 1); ibRepaintRow(id); }
+      if (IB.msg && IB.msg.id === id) IB.msg.read = true;
+    }
+  }
+  function ibCloseReader(focusRow) {
+    const id = IB.open;
+    IB.open = null; IB.msg = null;
+    $("#ibSplit")?.classList.remove("is-reading");
+    if (id != null) ibRepaintRow(id);
+    ibPaintReader();
+    if (focusRow && id != null) $("#ibList")?.querySelector(`.ib-row[data-id="${id}"]`)?.focus();
+  }
+
+  // The mail body's frame. sandbox carries no allow-scripts, allow-forms, allow-popups or
+  // top-navigation, so nothing in a message can run, submit, open a window or leave the frame;
+  // allow-same-origin only lets THIS page measure the content and catch a link click. The page
+  // inside (IBV.frameDoc) loads nothing: no images, no fonts, no remote styles.
+  function ibFrame(html) {
+    const f = document.createElement("iframe");
+    f.className = "ib-frame";
+    f.setAttribute("sandbox", "allow-same-origin");
+    f.setAttribute("referrerpolicy", "no-referrer");
+    f.title = ibT("mbox.bodyTitle", "Message");
+    f.srcdoc = IBV.frameDoc(html);
+    f.addEventListener("load", () => {
+      let doc = null;
+      try { doc = f.contentDocument; } catch { doc = null; }
+      if (!doc || !doc.documentElement) return;
+      // Height fitted to the content, so the reader scrolls as one page (no scrollbar inside a scrollbar).
+      const fit = () => {
+        try { f.style.height = "0px"; f.style.height = Math.max(120, doc.documentElement.scrollHeight) + "px"; } catch { /* keep the height */ }
+      };
+      fit();
+      if (window.ResizeObserver) {
+        let w = f.clientWidth;
+        const ro = new ResizeObserver(() => {
+          if (!f.isConnected) { ro.disconnect(); return; }
+          if (f.clientWidth !== w) { w = f.clientWidth; fit(); }     // only a width change re-flows the mail
+        });
+        ro.observe(f);
+      }
+      // A link never loads inside the frame: a web link opens in the person's browser the way the
+      // app's other external links do; a mail address is copied (there is no compose here).
+      const onLink = (e) => {
+        const a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+        if (!a) return;
+        e.preventDefault();
+        if (e.type !== "click") return;
+        const act = IBV.linkAction(a.getAttribute("href"));
+        if (act.kind === "open") acOpen(act.url);
+        else if (act.kind === "copy" && act.text) ibCopyText(act.text, ibT("mbox.addrCopied", "Address copied"));
+      };
+      doc.addEventListener("click", onLink);
+      doc.addEventListener("auxclick", onLink);
+    });
+    return f;
+  }
+
+  // The reader is rebuilt only when it shows something else (another message, or none): a list
+  // refresh must not reload the mail's frame and throw the person back to the top of a message
+  // they are reading. ``force`` rebuilds it anyway (a new language, a label change that failed).
+  function ibPaintReader(force) {
+    const host = $("#ibReader");
+    if (!host) return;
+    const m = IB.msg;
+    const key = m ? "m:" + m.id : (IB.open != null ? "opening" : "none");
+    if (!force && host.dataset.key === key) return;
+    host.dataset.key = key;
+    if (!m) {
+      host.innerHTML = `<div class="ib-r-empty">${esc(IB.open != null ? ibT("mbox.opening", "Opening…") : ibT("mbox.pick", "Select a message to read it."))}</div>`;
+      return;
+    }
+    const who = IBV.senderName(m) || ibT("mbox.unknownSender", "Unknown sender");
+    const addr = m.sender && m.sender !== who ? ` <span>&lt;${esc(m.sender)}&gt;</span>` : "";
+    const app = m.application;
+    const appLine = app ? [app.role, app.company, app.status ? trkStageName(app.status) : ""].filter(Boolean).join(" · ") : "";
+    const names = (m.attachment_names || []).filter(Boolean);
+    host.innerHTML = `
+      <button class="btn btn-ghost btn-back tpl-back ib-back" id="ibBack" type="button">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>${esc(ibT("nav.inbox", "Inbox"))}</span>
+      </button>
+      <h2 class="ib-r-subj">${esc(String(m.subject || "").trim() || ibT("mbox.noSubject", "(no subject)"))}</h2>
+      <div class="ib-r-from"><b>${esc(who)}</b>${addr} · ${esc(IBV.fullTime(m.at))}</div>
+      ${appLine ? `<div class="ib-r-app">${esc(appLine)}</div>` : ""}
+      <div class="ib-r-acts">
+        <label><span class="ib-sr">${esc(ibT("mbox.labelMenu", "Label"))}</span>
+          <select class="fld ib-label-sel" id="ibLabelSel">${IBV.LABELS.map(l =>
+            `<option value="${l}"${l === m.label ? " selected" : ""}>${esc(IBV.labelName(l, ibT))}</option>`).join("")}</select></label>
+        ${app && app.job_id ? `<button class="btn btn-ghost btn-sm" id="ibViewApp" type="button">${esc(ibT("mbox.viewApp", "View application"))}</button>` : ""}
+        <span class="ib-r-right">
+          <button class="btn btn-ghost btn-sm" id="ibArchive" type="button">${esc(m.archived ? ibT("mbox.unarchive", "Move to Inbox") : ibT("mbox.archive", "Archive"))}</button>
+          <button class="btn btn-danger-ghost btn-sm" id="ibDelete" type="button">${esc(ibT("mbox.delete", "Delete"))}</button>
+        </span>
+      </div>
+      <div class="ib-confirm" id="ibConfirm" hidden>
+        <span class="ib-confirm-t">${esc(ibT("mbox.deleteAsk", "Delete this message? This cannot be undone."))}</span>
+        <button class="btn btn-ghost btn-sm" id="ibDelYes" type="button">${esc(ibT("mbox.delete", "Delete"))}</button>
+        <button class="btn btn-ghost btn-sm" id="ibDelNo" type="button">${esc(ibT("mbox.cancel", "Cancel"))}</button>
+      </div>
+      <div class="ib-body" id="ibBody"></div>
+      ${names.length ? `<p class="ib-att">${esc(ibT("mbox.attachments", "Attachments are not kept: {names}.").replace("{names}", names.join(", ")))}</p>` : ""}`;
+    const body = $("#ibBody");
+    if (m.html_safe) body.appendChild(ibFrame(m.html_safe));
+    else {
+      const pre = document.createElement("pre");
+      pre.className = "ib-text";
+      pre.textContent = m.text || ibT("mbox.noBody", "This message has no text.");
+      body.appendChild(pre);
+    }
+    host.scrollTop = 0;
+    const id = m.id;
+    $("#ibBack").addEventListener("click", () => ibCloseReader(true));
+    $("#ibLabelSel").addEventListener("change", (e) => ibSetLabel(id, e.target.value));
+    $("#ibViewApp")?.addEventListener("click", () => { navTo("tracker"); openTrackerPanel(app.job_id); });
+    $("#ibArchive").addEventListener("click", () => ibArchive(id, !m.archived));
+    $("#ibDelete").addEventListener("click", () => { $("#ibConfirm").hidden = false; $("#ibDelNo").focus(); });
+    $("#ibDelNo").addEventListener("click", () => { $("#ibConfirm").hidden = true; $("#ibDelete").focus(); });
+    $("#ibDelYes").addEventListener("click", () => ibDelete(id));
+  }
+
+  // The person's own label: it sticks (the server never relabels a message they labelled).
+  async function ibSetLabel(id, label) {
+    try {
+      const d = await ibSend("/api/inbox/messages/" + id, "POST", { label });
+      if (IB.msg && IB.msg.id === id) IB.msg = d.message;
+    } catch { toast(ibT("mbox.fail", "Couldn't do that, try again.")); ibPaintReader(true); }   // the menu goes back to the truth
+    await ibFetch("refresh");
+  }
+  async function ibArchive(id, to) {
+    try { await ibSend("/api/inbox/messages/" + id, "POST", { archived: to }); }
+    catch { toast(ibT("mbox.fail", "Couldn't do that, try again.")); return; }
+    if (IB.open === id) ibCloseReader();
+    await ibFetch("refresh");
+    toast(to ? ibT("mbox.archivedDone", "Archived") : ibT("mbox.unarchivedDone", "Moved to Inbox"), {
+      label: ibT("mbox.undo", "Undo"),
+      run: async () => {
+        try { await ibSend("/api/inbox/messages/" + id, "POST", { archived: !to }); } catch { /* the list says what is true */ }
+        ibFetch("refresh");
+      },
+    });
+  }
+  async function ibDelete(id) {
+    try { await ibSend("/api/inbox/messages/" + id, "DELETE"); }
+    catch { toast(ibT("mbox.fail", "Couldn't do that, try again.")); return; }
+    if (IB.open === id) ibCloseReader();
+    await ibFetch("refresh");
+    toast(ibT("mbox.deleted", "Deleted"));
+  }
+  function ibShowAll() {
+    IB.f = { label: "", unread: false, q: "", archived: false, job: "", jobName: "" };
+    ibSyncControls();
+    ibFetch();
+  }
+
+  // Controls. Each change asks the server again from the first page.
+  let IB_SEARCH_T = null;
+  $("#ibSearch")?.addEventListener("input", (e) => {
+    clearTimeout(IB_SEARCH_T);
+    IB_SEARCH_T = setTimeout(() => { IB.f.q = e.target.value.trim(); ibFetch(); }, 250);
+  });
+  $("#ibUnread")?.addEventListener("click", () => { IB.f.unread = !IB.f.unread; ibSyncControls(); ibFetch(); });
+  $("#ibTabs")?.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-ib-tab]");
+    if (!b) return;
+    const v = b.dataset.ibTab;
+    IB.f.archived = v === "archived";
+    IB.f.label = v === "archived" ? "" : v;
+    ibPaintTabs();
+    ibFetch();
+  });
+  $("#ibReadAll")?.addEventListener("click", async () => {
+    try { await ibSend("/api/inbox/messages/read-all", "POST", {}); }
+    catch { toast(ibT("mbox.fail", "Couldn't do that, try again.")); return; }
+    if (IB.msg) IB.msg.read = true;
+    ibFetch("refresh");
+  });
+  $("#ibRefresh")?.addEventListener("click", () => ibSync(true));
+  $("#ibMoreBtn")?.addEventListener("click", () => ibFetch("more"));
+  $("#ibCopy")?.addEventListener("click", () => { if (IB.alias) ibCopyText(IB.alias, ibT("mbox.addrCopied", "Address copied")); });
+  $("#ibNote")?.addEventListener("click", (e) => { if (e.target.closest("[data-ib-all]")) ibShowAll(); });
+  $("#ibEmpty")?.addEventListener("click", (e) => {
+    if (e.target.closest("[data-ib-all]")) ibShowAll();
+    // The address is made in one place, Settings, Connections, Email: open it there.
+    else if (e.target.closest("[data-ib-getaddr]")) CARD_NAV.connections();
+  });
+  // The list: a click (or Enter, or Space, on the focused row) opens; Up and Down move between rows.
+  $("#ibList")?.addEventListener("click", (e) => {
+    const row = e.target.closest(".ib-row");
+    if (row) ibOpen(Number(row.dataset.id));
+  });
+  $("#ibList")?.addEventListener("keydown", (e) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+    const rows = [...$("#ibList").querySelectorAll(".ib-row")];
+    if (!rows.length) return;
+    const i = rows.indexOf(document.activeElement);
+    const n = e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1
+      : Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)));
+    e.preventDefault();
+    rows[n].focus();
+    rows[n].scrollIntoView({ block: "nearest" });
+  });
+  document.addEventListener("i18n:changed", () => {
+    ibSetBadge(IB.unread);
+    if (IB.loaded) { ibPaint(); ibPaintReader(true); }
+  });
+  // The sidebar count: soon after launch, then every 5 minutes (the engine downloads new mail on
+  // the same rhythm). The open Inbox refreshes its list on the same tick.
+  setTimeout(refreshInboxBadge, 3000);
+  setInterval(() => {
+    if (document.hidden) return;
+    if (ibActive()) ibFetch("refresh"); else refreshInboxBadge();
+  }, IB_POLL);
+
+  // Tracker's job panel: "3 messages", a door to this application's mail in the Inbox.
+  async function trkPanelMessages(sid, j) {
+    let n = 0;
+    try { n = Number((await ibGet("/api/inbox/messages?" + IBV.listQuery({ job: sid, per: 1 }))).count) || 0; }
+    catch { return; }
+    const host = $("#trkPanelMsgs");
+    if (!host || TRK_OPEN !== sid || !n) return;
+    host.innerHTML = `<button class="link-btn" type="button">${esc(IBV.countText(n, ibT))}</button>`;
+    host.hidden = false;
+    host.firstChild.addEventListener("click", () => {
+      closeTrackerPanel();
+      IB_WANT = { job: sid, jobName: [j.title, coName(j)].filter(Boolean).join(" · ") };
+      navTo("inbox");
+    });
+  }
+
+  // Settings, Connections: what the person's own e-mail gets for each message (/api/inbox/notify).
+  async function mailNotifyLoad(alias) {
+    const row = $("#mailNotifyRow"), sel = $("#mailNotify");
+    if (!row || !sel) return;
+    row.hidden = !alias;
+    if (!alias) return;
+    try {
+      const d = await ibGet("/api/inbox/notify");
+      if (d.mode) { sel.value = d.mode; sel.dataset.was = d.mode; }
+    } catch { /* keep what is shown */ }
+  }
+  $("#mailNotify")?.addEventListener("change", async (e) => {
+    const sel = e.target, was = sel.dataset.was || "forward";
+    sel.disabled = true;
+    try {
+      const d = await ibSend("/api/inbox/notify", "POST", { mode: sel.value });
+      sel.value = d.mode; sel.dataset.was = d.mode;
+      toast(ibT("mbox.notify.saved", "Saved"));
+    } catch {
+      sel.value = was;
+      toast(ibT("mbox.notify.fail", "Couldn't save that. Check your connection and try again."));
+    } finally { sel.disabled = false; }
+  });
+
   /* nav */
   document.querySelectorAll(".nav-item").forEach(n => n.addEventListener("click", () => {
     teardownCvi();   // leaving via the sidebar ends any in-progress live interview (no leaked meter or pane)
@@ -6804,6 +7291,7 @@
     else if (n.dataset.nav === "templates") { loadTemplates(); showView("templates"); }
     else if (n.dataset.nav === "jobs") { loadJobsFeed(); showView("jobs"); }
     else if (n.dataset.nav === "tracker") { loadTracker(); showView("tracker"); }
+    else if (n.dataset.nav === "inbox") { const want = IB_WANT; IB_WANT = null; loadInbox(want); showView("inbox"); }
     else if (n.dataset.nav === "autoapply") { loadAutoApply(); showView("autoapply"); }
     else if (n.dataset.nav === "projects") { loadProjects(); showView("projects"); }
     else if (n.dataset.nav === "prep") { loadPreps(); showView("prep"); }
@@ -10717,6 +11205,7 @@
         ? "Applications use this address. Codes and links reach the agent; the full emails and recruiter replies land in your real inbox."
         : (imapOn ? "SponsorJobs reads only your applications' verification codes, links and recruiter replies. It never sends mail." : "");
         $("#gmDetail").hidden = !(alias || imapOn); }
+      mailNotifyLoad(alias);
     } catch { /* leave */ }
     try {
       const gh = await fetch("/api/github/status").then(r => r.json());
@@ -10753,6 +11242,7 @@
       }
     } finally { b.disabled = false; }
     renderConnections();
+    if (ibActive()) loadInbox();               // the Inbox behind Settings: its address line and empty state follow
   });
   // Email over IMAP with a Gmail app password: the advanced path for people who want their own
   // inbox read directly. Nothing leaves this machine. The link shows the form; Disconnect

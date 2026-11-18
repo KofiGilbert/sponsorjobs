@@ -35,6 +35,11 @@
           <span class="nav-label" data-i18n="nav.tracker">Tracker</span>
           <span class="nav-due-dot" id="trackerNavDot" hidden title="A follow-up is due"></span>
         </button>
+        <button class="nav-item" data-nav="inbox" title="Inbox" data-i18n-title="nav.inbox">
+          <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M3.8 7.6l8.2 6 8.2-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="nav-label" data-i18n="nav.inbox">Inbox</span>
+          <span class="nav-badge" id="navInboxBadge" hidden></span>
+        </button>
         <button class="nav-item" data-nav="projects" title="Projects">
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a1.5 1.5 0 0 1 1.5-1.5h4.3L11 8h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
           <span class="nav-label" data-i18n="nav.projects">Projects</span>
@@ -800,6 +805,48 @@
 
         <div class="trk-scrim" id="trkScrim" hidden></div>
         <aside class="trk-panel" id="trkPanel" hidden aria-label="Job details"><!-- injected --></aside>
+      </section>
+
+      <!-- ============ INBOX ============
+           Mail sent to the person's SponsorJobs address, downloaded once and kept on this machine
+           (docs/mail-alias.md). Two panes on a wide page, list then reader; one pane with a back
+           link on a narrow one. Read only: there is no reply or compose in this version. A mail
+           body is only ever shown inside the sandboxed frame the reader builds. -->
+      <section class="view view-inbox" id="view-inbox">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title" data-i18n="nav.inbox">Inbox</h1>
+            <p class="page-sub ib-addr" id="ibAddr" hidden><span id="ibAddrText"></span>
+              <button class="link-btn ib-copy" id="ibCopy" type="button" data-i18n="mbox.copy">Copy address</button></p>
+          </div>
+        </header>
+
+        <div class="jobs-filters ib-bar" id="ibBar">
+          <label class="jf-search">
+            <svg class="jf-ic" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14 14l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <input class="jf-input" id="ibSearch" type="search" placeholder="Search mail" data-i18n-ph="mbox.search" aria-label="Search mail" data-i18n-aria="mbox.search" autocomplete="off" />
+          </label>
+          <button class="jf-toggle-btn" id="ibUnread" type="button" aria-pressed="false">
+            <svg class="ib-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span data-i18n="mbox.unreadOnly">Unread only</span>
+          </button>
+          <button class="btn btn-ghost" id="ibReadAll" type="button" data-i18n="mbox.readAll">Mark all read</button>
+          <button class="btn btn-ghost" id="ibRefresh" type="button" data-i18n="mbox.refresh">Refresh</button>
+        </div>
+        <div class="ib-tabs" id="ibTabs" role="group" aria-label="Show" data-i18n-aria="mbox.show"><!-- label filter injected --></div>
+        <p class="feed-note ib-note" id="ibNote" hidden></p>
+
+        <div class="ib-split" id="ibSplit">
+          <div class="ib-list-w">
+            <div class="ib-list" id="ibList" role="group" aria-label="Messages" data-i18n-aria="mbox.messages"><!-- rows injected --></div>
+            <div class="ib-more" id="ibMore" hidden>
+              <span class="fp-count" id="ibShown"></span>
+              <button class="btn btn-ghost btn-sm" id="ibMoreBtn" type="button" data-i18n="mbox.more">Show more</button>
+            </div>
+          </div>
+          <article class="ib-reader" id="ibReader" aria-label="Message" data-i18n-aria="mbox.bodyTitle"><!-- the open message --></article>
+        </div>
+        <div class="empty ib-empty" id="ibEmpty" hidden><!-- empty state injected --></div>
       </section>
 
       <!-- ============ AUTO-APPLY ============
@@ -1584,6 +1631,19 @@
             <button class="btn btn-ghost" id="gmAlias" type="button">Get an address</button>
           </div>
           <p class="conn-detail" id="gmDetail" hidden></p>
+          <!-- What the person's own e-mail gets for each message to the address (/api/inbox/notify).
+               Shown once there is an address. -->
+          <div class="conn-row ib-notify" id="mailNotifyRow" hidden>
+            <div class="conn-hd">
+              <label class="conn-name" for="mailNotify" data-i18n="mbox.notify.title">Copies to my own e-mail</label>
+              <div class="conn-desc" data-i18n="mbox.notify.help">What your own e-mail gets for each message. Your Inbox here keeps every message either way.</div>
+            </div>
+            <select class="set-num ib-notify-sel" id="mailNotify">
+              <option value="forward" data-i18n="mbox.notify.forward">Forward every message</option>
+              <option value="notice" data-i18n="mbox.notify.notice">Send a short notice</option>
+              <option value="off" data-i18n="mbox.notify.off">Do not send</option>
+            </select>
+          </div>
           <p class="conn-detail"><a href="#" id="gmHelp">Advanced: use your own inbox instead</a></p>
           <form class="conn-form" id="gmForm" hidden autocomplete="off">
             <ol class="nt-steps">
@@ -1760,7 +1820,7 @@
           <div class="set-row">
             <div class="set-row-t">
               <div class="set-row-n" data-i18n="set.privacyTitle">Your data stays on this machine</div>
-              <div class="set-row-d" data-i18n="set.privacyBody">Your profile, resumes and applications live in a local folder. Signing in with an email code is optional and only links your pass. Passes and the included AI run through our server, which keeps only usage counts for billing. The community edition can use your own AI key instead. Live interviews stream between you and Tavus.</div>
+              <div class="set-row-d" data-i18n="set.privacyBody">Your profile, resumes and applications live in a local folder. Signing in with an email code is optional and only links your pass. Passes and the included AI run through our server, which keeps only usage counts for billing. The community edition can use your own AI key instead. Live interviews stream between you and Tavus. Mail sent to your SponsorJobs address is held on our server only until this app downloads it, 30 days at most. After that it lives on this machine.</div>
             </div>
           </div>
           <div class="set-row">
@@ -2026,6 +2086,8 @@
   <script src="{{ url_for('static', filename='vendor/highlight-11.11.1.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/highlight-dockerfile-11.11.1.min.js') }}"></script>
   <script src="{{ url_for('static', filename='timekeeper.js') }}"></script>
+  <!-- The Inbox screen's pure parts (labels, times, rows, the sandboxed mail page), node-tested. -->
+  <script src="{{ url_for('static', filename='inbox_view.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
