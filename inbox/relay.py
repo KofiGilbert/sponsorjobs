@@ -1,9 +1,10 @@
 """The SponsorJobs mail alias, read through the broker (docs/mail-alias.md).
 
 Each person can take an address on our domain (first.last@sponsorjobs.ai) and apply with it. A
-job site's verification link or one-time code lands there; the broker's Email Worker keeps ONLY
-the extracted code or link for 30 minutes and forwards the whole message to the person's real
-inbox. The app polls ``GET /mail/inbox?after=<cursor>`` with its own account token, so nothing
+job site's verification link or one-time code lands there; the broker's Email Worker keeps the
+extracted code or link for 30 minutes for the apply agent, and holds the whole message only
+until this app has downloaded it into the local mailbox (``sync`` below, inbox/store.py), 30
+days at most. The app polls ``GET /mail/inbox?after=<cursor>`` with its own account token, so nothing
 about the person's real mailbox is ever touched (CLAUDE.md section 5, read-first and by consent).
 
 ``RelayMailbox`` turns those events into the same message dicts inbox/service.py and
@@ -65,6 +66,73 @@ def claim_alias(fetch, name: str = "") -> dict:
 def release_alias(fetch) -> dict:
     out = fetch("DELETE", "/mail/alias") or {}
     return {"ok": not out.get("error"), "error": out.get("error")}
+
+
+def notify_mode(fetch) -> dict:
+    """{ok, mode} for what the person's own e-mail gets for each message to the alias:
+    "forward" (the whole message), "notice" (a short note) or "off". mode is None with no alias."""
+    out = fetch("GET", "/mail/alias") or {}
+    if out.get("error") and not out.get("alias"):
+        return {"ok": False, "mode": None, "error": out.get("error")}
+    return {"ok": True, "mode": out.get("notify_mode") or ("forward" if out.get("alias") else None)}
+
+
+def set_notify_mode(fetch, mode: str) -> dict:
+    out = fetch("POST", "/mail/alias/notify", {"mode": mode}) or {}
+    if out.get("error"):
+        return {"ok": False, "mode": None, "error": out.get("error")}
+    return {"ok": True, "mode": out.get("notify_mode") or mode}
+
+
+# ---- the in-app mailbox: whole messages, downloaded once and then kept locally ---------------
+
+MAX_PAGES = 40          # one sync never asks for more than this many pages (25 messages each)
+
+
+def fetch_messages(fetch, after: int = 0) -> dict:
+    """One page of the messages the broker holds for this account: {messages, cursor, more}.
+    ``after`` ACKNOWLEDGES: the broker deletes every message with a cursor up to it, so only
+    ever pass a cursor whose messages are already written to disk. Raises RuntimeError when the
+    broker answers with an error."""
+    out = fetch("GET", f"/mail/messages?after={max(0, int(after or 0))}") or {}
+    if out.get("error"):
+        raise RuntimeError(str(out.get("error")))
+    msgs = [m for m in (out.get("messages") or []) if isinstance(m, dict)]
+    try:
+        cursor = int(out.get("cursor") or 0)
+    except (TypeError, ValueError):
+        cursor = 0
+    for m in msgs:
+        try:
+            cursor = max(cursor, int(m.get("cursor") or 0))
+        except (TypeError, ValueError):
+            pass
+    return {"messages": msgs, "cursor": cursor, "more": bool(out.get("more"))}
+
+
+def sync(fetch, store, alias: str = "") -> dict:
+    """Download every message the broker holds into the local store. Returns {new: [local ids],
+    pages}.
+
+    Crash-safe by order: a page is asked for with the cursor of the LAST page that is already
+    committed locally (that is what acknowledges it, and lets the broker delete it), the new
+    page is committed together with its cursor in one transaction, and only the following call
+    acknowledges it. A crash between a fetch and its write therefore loses nothing: the broker
+    still holds the page and the next sync gets it again, where the cursor's uniqueness in the
+    store keeps it from being stored twice. The loop ends on an empty page, so the last call of
+    a sync is the one that acknowledges the final page: nothing downloaded stays on the broker.
+    """
+    new: list[int] = []
+    pages = 0
+    after = store.cursor(alias)
+    while pages < MAX_PAGES:
+        page = fetch_messages(fetch, after)
+        pages += 1
+        if not page["messages"]:
+            break
+        new += store.add_page(page["messages"], page["cursor"], alias)
+        after = store.cursor(alias)
+    return {"new": new, "pages": pages}
 
 
 def event_message(ev: dict) -> dict:
