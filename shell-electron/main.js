@@ -1288,7 +1288,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 });
 
 // ------------------------------------------------------------- the apply agent
-// "Apply for me" (docs/apply-agent.md): the agent drives the pane itself, from the job page to
+// "Assisted apply" (docs/apply-agent.md): the agent drives the pane itself, from the job page to
 // the review page, and stops at Submit; Send presses it (auto-submit sites with Autonomous on
 // are pressed without asking). One run at a time.
 const agent = createAgent({

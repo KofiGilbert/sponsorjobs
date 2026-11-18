@@ -1,6 +1,6 @@
 """The apply agent's Ready to send notice on Telegram (docs/notify.md, "Ready to send").
 
-When "Apply for me" leaves an application on its review page, the shell posts the hand-over to
+When "Assisted apply" leaves an application on its review page, the shell posts the hand-over to
 the engine (``/api/autoapply/agent/ready``) with a small notice: how many fields the run filled,
 how many lines deserve a look, and those lines in the Review answers list's own words (built by
 ``readyNotice`` in shell-electron/agent.js, never a self-identification value). This module turns

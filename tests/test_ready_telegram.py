@@ -1,6 +1,6 @@
 """The Ready to send notice on Telegram (docs/notify.md "Ready to send", notify/ready.py).
 
-When Apply for me leaves an application on its review page, the shell posts the hand-over to
+When Assisted apply leaves an application on its review page, the shell posts the hand-over to
 /api/autoapply/agent/ready with a notice (shell-electron/agent.js readyNotice: how many fields it
 filled, how many lines deserve a look, and those lines, never a self-identification value). The
 engine sends ONE message per run through the active channel:

@@ -118,7 +118,7 @@ function setup(extra) {
     const done = s.progress.find((x) => x.state === "batch-done");
     assert(done && done.message === "Done with 2 applications: 1 sent, 1 stopped.", "summary " + (done && done.message));
     assert(s.progress.some((x) => x.record_id === 2 && /^Application 2 of 2: Opening the job$/.test(x.message)), "numbered");
-    // while a batch runs, a single Apply for me waits its turn
+    // while a batch runs, a single Assisted apply waits its turn
     const s2 = setup({});
     const p = s2.agent.batch([{ recordId: 3, url: "https://jobs.example.com/job/3" }]);
     const busy = await s2.agent.run(4, { url: "https://jobs.example.com/job/4" });

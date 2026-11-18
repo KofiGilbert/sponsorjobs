@@ -351,7 +351,7 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   The bar says "Paused: waiting on your answer." and keeps the choices; an answer says "I carry on
   with the application for X as soon as the browser is free." The standing choice on terms a site
   requires is ONE bar question before the first run ("Yes, accept them for me" primary, "No, ask me
-  first" ghost), never mid-run and never ticked for the person. "Apply for me to all N" is a link
+  first" ghost), never mid-run and never ticked for the person. "Assisted apply to all N" is a link
   button on Waiting on you beside Approve all; the batch ends with one bar line ("Done with 3
   applications: 1 ready to send, 2 paused, waiting on you.") and "See them" (Needs you).
   A job left Ready to send keeps a "Send" row action on Waiting on you; when its page is gone, that

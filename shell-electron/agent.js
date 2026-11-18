@@ -1,4 +1,4 @@
-// The apply agent's loop: "Apply for me" (docs/apply-agent.md).
+// The apply agent's loop: "Assisted apply" (docs/apply-agent.md).
 //
 // Drives the in-app browser pane the way a person would: opens the job, clicks Apply, signs in
 // or creates the portal account, works through every page, uploads the resume, and STOPS at
@@ -977,7 +977,7 @@ function createAgent(deps) {
           if (r && r.reason === "parked") return { park: { kind: "terms", question: needsLine(run.company, title), ask } };
           if (!r || r.ok === false) {
             return { stop: { reason: "needs-consent", message: needsLine(run.company, title)
-                             + " I did not accept it. Press Apply for me again to answer." } };
+                             + " I did not accept it. Press Assisted apply again to answer." } };
           }
           if (r.decision !== "accept") {
             return { stop: { reason: "terms-declined", message: "Stopped. You chose not to accept "
@@ -1085,7 +1085,7 @@ function createAgent(deps) {
     else { feed.batchAt = batch ? opts.batchAt || null : null; feed.autonomous = !!opts.autonomous; }
     while (feeds.size > 20) feeds.delete(feeds.keys().next().value);
     if (!R) {
-      // A fresh Apply for me on a parked job replaces the park (its question closes).
+      // A fresh Assisted apply on a parked job replaces the park (its question closes).
       parked.delete(String(recordId));
       await deps.postApp("/api/autoapply/agent/parked/" + encodeURIComponent(recordId) + "/take", { drop: true }).catch(() => null);
     }
@@ -2309,7 +2309,7 @@ function createAgent(deps) {
           if (!got || got.ok === false) {
             if (got && got.reason === "not-connected") {
               return stopped("verify-email", "The site emailed you a " + (done.reason === "code" ? "code" : "link")
-                + ". Connect your email in Settings so this finishes by itself, or do that step yourself and press Apply for me again.", { url });
+                + ". Connect your email in Settings so this finishes by itself, or do that step yourself and press Assisted apply again.", { url });
             }
             awaitInfo = { kind: done.reason === "code" ? "code" : "link", host: hostOf(url), since: startedAt };
             feed.mark("done", "it did not arrive");
@@ -2553,7 +2553,7 @@ function createAgent(deps) {
     }
   }
 
-  // ---- a batch: "Apply for me" on several jobs while the person is away ---------------------
+  // ---- a batch: "Assisted apply" on several jobs while the person is away ---------------------
   // One job after another in the pane. Nothing waits on the person: a job that needs them parks
   // (its question stays open) and the next one starts. ONE digest goes to Telegram when the batch
   // ends (and every 30 minutes while it runs, when something new parked). jobs: [{ recordId, url,
@@ -3577,11 +3577,11 @@ function blockedMessage(reason, left) {
       const qs = (left || []).map((x) => (typeof x === "string" ? x : (x && x.label) || "")).filter(Boolean).slice(0, 3);
       const list = qs.length ? " " + qs.map((q) => "\u201c" + q.slice(0, 90) + "\u201d").join(", ") + "." : "";
       return "This application needs " + (qs.length === 1 ? "an answer" : "answers") + " only you can give:" + list
-        + " Add " + (qs.length === 1 ? "it" : "them") + " under Settings, Applying, Your answers, then press Apply for me again.";
+        + " Add " + (qs.length === 1 ? "it" : "them") + " under Settings, Applying, Your answers, then press Assisted apply again.";
     }
-    case "captcha": return "This page has a captcha. Solve it, then press Apply for me again.";
-    case "verify-email": return "The site sent you a verification email. Click its link, then press Apply for me again.";
-    case "phone-code": return "The site wants a code from your phone. Enter it, then press Apply for me again.";
+    case "captcha": return "This page has a captcha. Solve it, then press Assisted apply again.";
+    case "verify-email": return "The site sent you a verification email. Click its link, then press Assisted apply again.";
+    case "phone-code": return "The site wants a code from your phone. Enter it, then press Assisted apply again.";
     case "not-a-job": return "This link does not lead to an application.";
     case "left-site": return "The site sent me somewhere else. Stopped.";
     default: return "This one needs you. Have a look at the page.";
