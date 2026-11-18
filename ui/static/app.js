@@ -7032,7 +7032,8 @@
     if (!d.message.read) {
       try { await ibSend("/api/inbox/messages/" + id, "POST", { read: true }); } catch { return; }
       const row = IB.rows.find(r => r.id === id);
-      if (row && !row.read) { row.read = true; ibSetBadge(IB.unread - 1); ibRepaintRow(id); }
+      ibSetBadge(IB.unread - 1);
+      if (row) { row.read = true; ibRepaintRow(id); }
       if (IB.msg && IB.msg.id === id) IB.msg.read = true;
     }
   }
