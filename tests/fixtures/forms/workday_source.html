@@ -9,7 +9,8 @@
      its own choices under a header with a back arrow (backButton) and the category's name. A
      choice is div[menuItem][role=option][aria-label="<text> not checked"] > div[promptLeafNode] >
      div[promptOption]. A pick adds a selectedItem pill and closes the list. The categories
-     other than "Job Sites" are made up; ?cats=<json> replaces the lists, ?label= the question. -->
+     other than "Job Sites" are made up; ?cats=<json> replaces the lists, ?label= the question,
+     ?never=1 makes a list that never opens. -->
 <h3 id="head">My Information</h3>
 <div id="host"></div>
 <button type="button" data-automation-id="pageFooterNextButton">Next</button>
@@ -35,9 +36,12 @@
   document.getElementById("host").appendChild(h("div", { "data-automation-id": "formField-source" }, [
     h("label", { for: "source--source", text: LABEL + "*" }),
     h("div", { "data-automation-id": "multiSelectContainer" }, [pills, input])]));
-  let pop = null; const chosen = [], opened = [];
+  let pop = null, shows = 0; const chosen = [], opened = [];
+  const NEVER = qs.get("never") === "1";               // ?never=1: the list never opens
   function close() { if (pop) pop.remove(); pop = null; input.setAttribute("aria-expanded", "false"); }
   function show(cat) {
+    shows++;
+    if (NEVER) return;
     if (pop) pop.remove();
     const lb = h("div", { role: "listbox" });
     const kids = [];
@@ -77,5 +81,6 @@
   window.fxValue = () => chosen.slice();
   window.fxOpened = () => opened.slice();
   window.fxOpen = () => !!pop;
+  window.fxShows = () => shows;
 </script>
 </body></html>

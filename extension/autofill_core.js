@@ -1895,7 +1895,17 @@ function qsaSafe(sel, root) {
   // by the same rule; when they hold nothing acceptable the back arrow returns to the first
   // list for the next candidate ("Other"). Nothing fits: {ok:false, why:"no-match"}, as before
   // (a Workday form, 2026-11-18: "Job board" was refused for ten steps, then asked).
+  // Cost (2026-11-18, fills ran past the shell's 40 s cap): the pick runs only for a field whose
+  // own label is a how-did-you-hear question, within HEARD_BUDGET_MS in all, gives up after
+  // HEARD_OPEN_MS when the list never opens, always leaves the list closed, and a field it could
+  // not answer is remembered (_heardMiss) so the next fill pass does not open it again.
   const HEARD_TRIES = 3;
+  const HEARD_BUDGET_MS = 4000;
+  const HEARD_OPEN_MS = 1200;
+  const _heardMiss = new WeakMap();          // control -> the answer (gn) it could not place
+  const _heardStats = { picks: 0, skipped: 0, ms: 0 };
+  const heardStats = () => Object.assign({}, _heardStats);
+  const heardMissed = (el, answer) => _heardMiss.get(el) === gn(answer);
   async function settledOptions(el, ms) {
     const until = Date.now() + ms;
     let opts = optionsFor(el), last = -1;
@@ -1916,15 +1926,28 @@ function qsaSafe(sel, root) {
     }
     return all.length ? all[all.length - 1] : null;
   }
+  // {ok:true, value} | {ok:false, why}: "answered" (it has a value), "no-list" (the list never
+  // opened), "no-match" (no choice fits, or this field already missed this answer: skipped).
   async function pickHeard(el, want) {
     if (comboValue(el)) return { ok: false, why: "answered" };
     const answer = String((want && want.text) || "");
+    if (heardMissed(el, answer)) { _heardStats.skipped++; return { ok: false, why: "no-match", skipped: true }; }
+    _heardStats.picks++;
+    const t0 = Date.now(), deadline = t0 + HEARD_BUDGET_MS;
+    const left = (ms) => Math.max(0, Math.min(ms, deadline - Date.now()));
+    let res = { ok: false, why: "no-match" };
+    try {
+      res = await heardPick(el, answer, left);
+    } catch (e) { res = { ok: false, why: "no-match" }; }
+    try { await closeCombo(el); } catch (e) { /* fine */ }
+    if (!res.ok) _heardMiss.set(el, gn(answer));
+    _heardStats.ms += Date.now() - t0;
+    return res;
+  }
+  async function heardPick(el, answer, left) {
     await openCombo(el);
-    const top = await settledOptions(el, WIDGET_WAIT_MS);
-    if (!top.length) {                       // a list that only loads as you type: the plain pick
-      await closeCombo(el);
-      return pickCombo(el, want);
-    }
+    const top = await settledOptions(el, left(HEARD_OPEN_MS));
+    if (!top.length) return { ok: false, why: "no-list" };
     const topKey = listKey(top);
     const hit = (o) => {
       try { if (o.scrollIntoView) o.scrollIntoView({ block: "nearest" }); } catch (e) { /* fine */ }
@@ -1939,18 +1962,19 @@ function qsaSafe(sel, root) {
       return sameChoice(comboValue(el), label);
     };
     for (const c of heardChoices(answer, top.map(choiceText)).slice(0, HEARD_TRIES)) {
+      if (!left(1)) break;                                   // out of time: leave it
       let opts = optionsFor(el);
-      if (listKey(opts) !== topKey) { await openCombo(el); opts = await settledOptions(el, 600); }
+      if (listKey(opts) !== topKey) { await openCombo(el); opts = await settledOptions(el, left(600)); }
       const o = opts.find((x) => choiceText(x) === c);
       if (!o || listKey(opts) !== topKey) continue;
       hit(o);
       let leaves = null;
-      const label = optionText(o), until = Date.now() + 1500;
+      const label = optionText(o), until = Date.now() + left(1200);
       while (Date.now() < until) {
         await sleep(STEP_MS);
-        if (sameChoice(comboValue(el), label)) { await closeCombo(el); return { ok: true, value: c }; }
+        if (sameChoice(comboValue(el), label)) return { ok: true, value: c };
         const now = optionsFor(el);
-        if (now.length && listKey(now) !== topKey) { leaves = await settledOptions(el, 400); break; }
+        if (now.length && listKey(now) !== topKey) { leaves = await settledOptions(el, left(400)); break; }
       }
       if (!leaves || !leaves.length) continue;
       // A category: its own choices, by the same rule.
@@ -1958,15 +1982,14 @@ function qsaSafe(sel, root) {
       const lo = pick ? leaves.find((x) => choiceText(x) === pick) : null;
       if (lo) {
         hit(lo);
-        if (await stuck(lo, 800)) { await closeCombo(el); return { ok: true, value: pick }; }
+        if (await stuck(lo, left(800))) return { ok: true, value: pick };
       }
       const back = backButtonFor(el);
       if (back) {
         press(back);
-        for (let i = 0; i < 20 && listKey(optionsFor(el)) !== topKey; i++) await sleep(STEP_MS);
+        for (let i = 0; i < 20 && left(1) && listKey(optionsFor(el)) !== topKey; i++) await sleep(STEP_MS);
       } else await closeCombo(el);
     }
-    await closeCombo(el);
     return { ok: false, why: "no-match" };
   }
 
@@ -2154,9 +2177,15 @@ function qsaSafe(sel, root) {
     const text = String(op.text == null ? "" : op.text);
     if (kind === "combobox") {
       if (!text) return "skipped";
-      // A how-did-you-hear list: the planned choice may be a category of a two-level list.
+      // A how-did-you-hear list: the planned choice may be a category of a two-level list. A
+      // list that never opened to a click gets the plain pick (it types to load), as before;
+      // a field that already missed this answer is not opened again.
       const want = { text, score: valueScorer(text) };
-      const r = isHeardLabel(widgetLabel(el)) ? await pickHeard(el, want) : await pickCombo(el, want);
+      let r;
+      if (isHeardLabel(widgetLabel(el))) {
+        r = await pickHeard(el, want);
+        if (!r.ok && r.why === "no-list") r = await pickCombo(el, want);
+      } else r = await pickCombo(el, want);
       if (r.ok) { markFilled(controlOf(el)); return "filled"; }
       return "skipped";
     }
@@ -2674,7 +2703,7 @@ function qsaSafe(sel, root) {
     fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, closeSearch, extractFormAsync,
     cleanLabel, readBack, fileListed, fileListing: fileListingAt, dropDuplicateFiles, dropUnsizedCopy, fileCopies, sizeReadings, sizeMatches, applyOpsAsync, leftover, pageSignature, setRefPrefix, takeFillLog,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
-    pickHeard, heardChoices, genericSources, sameSource, isHeardLabel,
+    pickHeard, heardChoices, genericSources, sameSource, isHeardLabel, heardStats,
     // recipes: the per-system table, success detection, continue hints, corrections
     setRecipes, recipes: () => RECIPES, recipeFor, globToRe, highlightSubmit, continueButton,
     detectSuccess, watchSuccess, stopSuccessWatch, watchCorrections, takeCorrections,

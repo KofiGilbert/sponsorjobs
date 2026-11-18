@@ -382,6 +382,90 @@ test("how did you hear: a category with nothing acceptable is left by the back a
   await page.close();
 });
 
+test("how did you hear: the pick costs nothing on other dropdowns, stays in its budget, is not repeated, and leaves the list closed", async ({ open }) => {
+  const PAY = { fields: { country: "United States" }, answers: { hear_about_us: "Job board" } };
+  const stats = (page) => page.evaluate(() => window.TailorAutofill.heardStats());
+  const timed = (page, expr) => page.evaluate(async (e) => { const t = performance.now(); const r = await eval(e); return { ms: performance.now() - t, r }; }, expr);
+  const fill = "window.TailorAutofill.fillWidgets(" + JSON.stringify(PAY) + ")";
+
+  // 1. pages with several dropdowns and no how-did-you-hear question: the pick never runs, for
+  //    the engine's fill, the form read, or a plan op on every dropdown (a count, not a stopwatch)
+  for (const fx of ["verify_widgets.html", "phenom_lam.html", "workday_experience.html", SOURCE + srcQuery({ "Job Sites": ["Other Job Board"], "Other": null }, "Which office referred you?")]) {
+    const page = await open(fx);
+    await page.evaluate(CORE);
+    await page.evaluate(fill);
+    const fields = await page.evaluate(() => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }));
+    const combos = fields.filter((f) => f.widget === "combobox");
+    assert.ok(combos.length >= 1, fx + ": " + combos.length + " dropdowns");
+    assert.ok(!combos.some((f) => /hear about/i.test(f.label)), fx);
+    await page.evaluate((ops) => window.TailorAutofill.applyOpsAsync(ops), combos.slice(0, 3).map((f) => ({ ref: f.ref, op: "select", text: "Job board", from: "ai" })));
+    assert.deepStrictEqual(await stats(page), { picks: 0, skipped: 0, ms: 0 }, fx);
+    await page.close();
+  }
+
+  // 1b. pages with other dropdowns AND a how-did-you-hear one (react-select, Greenhouse): the
+  //     pick runs for that one field only, once over three fill passes, inside its budget
+  for (const fx of ["react_select.html", "greenhouse_live.html"]) {
+    const page = await open(fx);
+    await page.evaluate(CORE);
+    for (let i = 0; i < 3; i++) await page.evaluate(fill);
+    const st = await stats(page);
+    assert.ok(st.picks <= 1, fx + " " + JSON.stringify(st));
+    assert.ok(st.ms < 4500, fx + " " + JSON.stringify(st));
+    await page.close();
+  }
+
+  // 2. the two-level list: one pick, well under the 4 s budget, the list closed
+  let page = await open(SOURCE);
+  await page.evaluate(CORE);
+  let t = await timed(page, fill);
+  assert.strictEqual(t.r.filled, 1, JSON.stringify(t));
+  assert.ok(t.ms < 2000, "two-level pick took " + Math.round(t.ms) + " ms");
+  assert.strictEqual((await stats(page)).picks, 1);
+  assert.strictEqual(await page.evaluate("window.fxOpen()"), false);
+  await page.close();
+
+  // 3. a list that never opens: given up early, never the full budget, and not opened again on
+  //    the next fill passes or by the plan's op for the same answer
+  page = await open(SOURCE, "?never=1");
+  await page.evaluate(CORE);
+  t = await timed(page, fill);
+  assert.strictEqual(t.r.filled, 0, JSON.stringify(t));
+  assert.ok(t.ms < 2500, "a list that never opens took " + Math.round(t.ms) + " ms");
+  const shows = await page.evaluate("window.fxShows()");
+  for (let i = 0; i < 3; i++) {
+    t = await timed(page, fill);
+    assert.ok(t.ms < 500, "pass " + (i + 2) + " took " + Math.round(t.ms) + " ms");
+  }
+  const f3 = (await page.evaluate(() => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }))).find((f) => /How Did You Hear/.test(f.label));
+  const shows2 = await page.evaluate("window.fxShows()");                    // the form read opens it once, as on main
+  t = await timed(page, "window.TailorAutofill.applyOpsAsync(" + JSON.stringify([{ ref: f3.ref, op: "select", text: "Job board", from: "library" }]) + ")");
+  assert.ok(t.ms < 500, "the plan op took " + Math.round(t.ms) + " ms");
+  assert.strictEqual(await page.evaluate("window.fxShows()"), shows2);
+  let st = await stats(page);
+  assert.strictEqual(st.picks, 1, JSON.stringify(st));
+  assert.strictEqual(st.skipped, 4, JSON.stringify(st));
+  assert.ok(shows <= 4, "opened " + shows + " times");
+  await page.close();
+
+  // 4. a list with no choice for the answer: refused once in well under the budget, closed, and
+  //    the next passes do not open it again
+  page = await open(SOURCE, srcQuery({ "Job Sites": ["College Job Board", "Compliance_HireAHero"], "Recruiter": ["Staffing Agency"] }));
+  await page.evaluate(CORE);
+  t = await timed(page, fill);
+  assert.strictEqual(t.r.filled, 0, JSON.stringify(t));
+  assert.ok(t.ms < 2500, "a refusal took " + Math.round(t.ms) + " ms");
+  assert.strictEqual(await page.evaluate("window.fxOpen()"), false);
+  const n4 = await page.evaluate("window.fxShows()");
+  for (let i = 0; i < 3; i++) await page.evaluate(fill);
+  assert.strictEqual(await page.evaluate("window.fxShows()"), n4);
+  st = await stats(page);
+  assert.strictEqual(st.picks, 1, JSON.stringify(st));
+  assert.strictEqual(st.skipped, 3, JSON.stringify(st));
+  assert.ok(st.ms < 4000, JSON.stringify(st));
+  await page.close();
+});
+
 test("a file input at opacity 0 (the upload button pattern) is still listed; click says use upload", async ({ open }) => {
   const page = await open("icims_inner.html");
   await page.evaluate(AGENT);
