@@ -1849,18 +1849,21 @@ function createAgent(deps) {
         curV = v;
         // (2026-11-02) A closed job, before any model call: the posting's own short line says it
         // is gone and there is no Apply control and no field. Zero AI cost, no "needs you".
+        // (2026-11-17) The site itself says this job was already applied to (the person sent it
+        // by hand, or an earlier run did): it is Applied, not "not a job". Checked on every page,
+        // because Workday only says so AFTER the sign-in form. Zero AI cost.
+        {
+          const sent = alreadyApplied(v.text);
+          if (sent) {
+            dlog("step " + step + " already applied:", sent);
+            return appliedStop(sent, url);
+          }
+        }
         if (!formReached) {
           const gone = closedJob(v.text);
           if (gone) {
             dlog("step " + step + " closed:", gone);
             return closedStop(gone, url, false);
-          }
-          // (2026-11-17) The site itself says this job was already applied to (the person sent
-          // it by hand, or an earlier run did): it is Applied, not "not a job". Zero AI cost.
-          const sent = alreadyApplied(v.text);
-          if (sent) {
-            dlog("step " + step + " already applied:", sent);
-            return appliedStop(sent, url);
           }
           if (elementLines(v.text).some((ln) => /^\*?\[\d+\]<(input|select|textarea|combobox|radio|checkbox|file)\b/.test(ln) && !/search=true/.test(ln))) formReached = true;
         }
