@@ -232,15 +232,43 @@ def names_company(label: str, company: str) -> bool:
         and bool(re.search(r"\b" + re.escape(core) + r"\b", _n(label)))
 
 
+# "Have you worked for Acme or any of our companies in the past?" (a Workday form, 2026-11-18):
+# "our companies" is the employer asking about itself and its group, whatever name the record holds.
+_OURS = re.compile(r"\b(our|its|their) (family of |group of |affiliated |related |subsidiary |parent )?"
+                   r"(compan(y|ies)|affiliates?|subsidiar(y|ies)|brands|entities|businesses|banks|firms?)\b", re.I)
+# A first word that names no one ("First National Bank", "American Express"): never a match alone.
+_COMMON_FIRST = frozenset("first american national general united new the bank north south east west global "
+                          "international advanced applied pacific atlantic central capital".split())
+
+
+def _names(core: str, who: str) -> bool:
+    """Does ``who`` (the words after "worked for") name the company ``core``: its whole name, or
+    its distinctive first words the way a form shortens it ("Acme" for "Acme Financial")."""
+    w, parts = _n(who), core.split()
+    if not core or not w:
+        return False
+    for n in range(len(parts), 0, -1):
+        head = " ".join(parts[:n])
+        if n == 1 and (len(head) < 4 or head in _COMMON_FIRST) and len(parts) > 1:
+            break
+        if n < len(parts) and len(head) < 4:
+            break
+        if re.search(r"\b" + re.escape(head) + r"\b", w):
+            return True
+    return False
+
+
 def worked_here_question(label: str, company: str) -> bool:
     """True when ``label`` asks whether the person works or worked at ``company`` by its name:
     "Have you ever worked at Gusto", "Are you a current or former Phoenix Contact employee?",
-    "Previously employed by Acme?", "Have you worked for Acme before?". Never a question about
-    someone else ("Are you related to a current Acme employee?")."""
+    "Previously employed by Acme?", "Have you worked for Acme before?"; by its short name ("Acme"
+    for a record that says "Acme Financial Corporation"); or as the employer's own group ("Have
+    you worked for Acme or any of our companies in the past?"). Never a question about someone
+    else ("Are you related to a current Acme employee?")."""
     lbl, core = str(label or ""), _company_core(company)
     if len(core) < 3 or _SOMEONE_ELSE.search(lbl) or _WISH.search(lbl):
         return False
-    has = lambda who: bool(who) and bool(re.search(r"\b" + re.escape(core) + r"\b", _n(who)))  # noqa: E731
+    has = lambda who: bool(who) and (_names(core, who) or bool(_OURS.search(who)))  # noqa: E731
     for m in _EMPLOYEE_OF.finditer(lbl):
         if has(m.group("who") or m.group("who2") or m.group("who3")):
             return True
@@ -404,7 +432,11 @@ _NEUTRAL = frozenset("a an the and or s job jobs online internet web website web
 # the person did not give ("College Job Board" for "Job board", Phoenix Contact on Greenhouse,
 # 2026-11-05). The job board ones only for an answer that is itself a board or the web.
 _GENERIC_BOARD = re.compile(r"^((online|internet|web) )?job (board|site|website|posting)s?( (site|website))?$"
-                            r"|^(online|internet|web) (job )?(board|site|posting|search)s?$|^(the )?(internet|online|web)$")
+                            r"|^(online|internet|web) (job )?(board|site|posting|search)s?$|^(the )?(internet|online|web|websites?)$")
+# The catch-all board of a list that names boards one by one ("Job Board: Indeed", ..., "Other Job
+# Board"; a Workday form, 2026-11-18): "other" names no source, so it is generic too, after a plain one.
+_OTHER_BOARD = re.compile(r"^other ((online|internet|web) )?job (board|site|website|posting)s?$"
+                          r"|^((online|internet|web) )?job (board|site|website|posting)s? other$")
 _GENERIC_OTHER = re.compile(r"^other( source| sources| please specify)?$")
 # Job boards by name, the general ones first (generic_source's last resort for a "Job board" answer).
 _NAMED_BOARDS = ("indeed", "glassdoor", "ziprecruiter", "monster", "careerbuilder", "simplyhired", "dice",
@@ -420,28 +452,40 @@ def adds_qualifier(answer: str, option: str) -> bool:
     return any(w not in have and w not in _NEUTRAL for w in _n(option).split())
 
 
-def generic_source(answer: str, options) -> str | None:
-    """For a how-did-you-hear question: the choice that names no particular source, when no
-    choice says the same as the saved answer. A generic job board or "Internet" choice for an
-    answer that is itself a job board or the web, else "Other". None when the list has neither
-    (the person is asked)."""
+def generic_sources(answer: str, options) -> list:
+    """For a how-did-you-hear question: the choices that name no particular source, best first,
+    when no choice says the same as the saved answer. For an answer that is itself a job board
+    or the web: 1. a generic job board or "Internet" choice ("Job board", "Job Sites"), 2. the
+    list's catch-all board ("Other Job Board"), 3. "Other", 4. a general job board the list
+    names by its exact name (never "Built In Colorado"). For any other answer: "Other" only.
+    Never a choice that adds a source the person did not give ("College Job Board"). Mirrored in
+    extension/autofill_core.js genericSources and extension/agent_view.js."""
     opts = [str(o) for o in (options or []) if str(o).strip()]
     words = set(_n(answer).split())
-    if words and words <= _BOARDISH:
-        hit = next((o for o in opts if _GENERIC_BOARD.match(_n(o))), None)
-        if hit:
-            return hit
-    hit = next((o for o in opts if _GENERIC_OTHER.match(_n(o))), None)
-    if hit or not (words and words <= _BOARDISH):
-        return hit
-    # (2026-11-16, Gusto on Greenhouse: LinkedIn, Glassdoor, Indeed, Facebook, ... and no "Job board"
-    # or "Other") A job-board answer on a list of named sources only: the closest is a job board
-    # the list names, the general boards first, by its exact name (never "Built In Colorado").
-    for board in _NAMED_BOARDS:
-        hit = next((o for o in opts if _n(o) == board), None)
-        if hit:
-            return hit
-    return None
+    boardish = bool(words) and words <= _BOARDISH
+    out = []
+    if boardish:
+        out += [o for o in opts if _GENERIC_BOARD.match(_n(o))]
+        out += [o for o in opts if _OTHER_BOARD.match(_n(o))]
+    out += [o for o in opts if _GENERIC_OTHER.match(_n(o))]
+    if boardish:
+        # (2026-11-16, Gusto on Greenhouse: LinkedIn, Glassdoor, Indeed, Facebook, ... and no "Job
+        # board" or "Other") A job-board answer on a list of named sources only: the closest is a
+        # job board the list names, the general boards first.
+        for board in _NAMED_BOARDS:
+            out += [o for o in opts if _n(o) == board]
+    seen, uniq = set(), []
+    for o in out:
+        if o not in seen:
+            seen.add(o)
+            uniq.append(o)
+    return uniq
+
+
+def generic_source(answer: str, options) -> str | None:
+    """The first of generic_sources, None when the list has none (the person is asked)."""
+    got = generic_sources(answer, options)
+    return got[0] if got else None
 
 
 def match_option(answer: str, options, *, strict: bool = False) -> str | None:
@@ -947,6 +991,13 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             hit = keyed(ctx, qkey0, hit)                   # (Phase 4) withheld, or this country's
             if not hit and qkey0 in ctx.withhold:
                 out.left.append(f)                         # a stale value: theirs to give again
+                continue
+        if not hit and qkey0 == commonsense.HEARD_KEY:
+            # (2026-11-18) nothing saved: someone applying through a job app found it on a job board
+            v = _literal(f, commonsense.HEARD_DEFAULT, qkey0)
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin=commonsense.HEARD_ORIGIN,
+                                              sensitive=True))
                 continue
         if not hit and ctx.adult and commonsense.is_adult_question(label):
             # (2026-11-17) no saved answer, and the profile shows it (a degree, or a date 4 years back)

@@ -1,0 +1,24 @@
+{
+  "_comment": "How did you hear about us: the choice for a saved answer, one rule in two places. Python: autoapply/planner.py literal_for('@heard_about', answer, options). JS: extension/autofill_core.js heardChoices(answer, options)[0]. want null = no choice is picked (the person is asked).",
+  "cases": [
+    {"answer": "Job board", "want": "Other Job Board", "options": ["BuiltIn", "College / University", "Compliance_HireAHero", "Compliance_JOFDAV", "Compliance_recruitABILITY", "Compliance_USDiversity", "Financial Careers Training", "Glassdoor", "HACE", "Handshake", "IDES", "Job Board: CareerBuilder", "Job Board: Indeed", "Job Board: Monster", "Other Job Board"]},
+    {"answer": "Job board", "want": "Job Sites", "options": ["Career Fair", "Employee Referral", "Job Sites", "Social Media"]},
+    {"answer": "Job board", "want": "Job Board", "options": ["Other Job Board", "Job Board", "Other"]},
+    {"answer": "Job board", "want": "Online job board", "options": ["LinkedIn", "Indeed", "Online job board"]},
+    {"answer": "Job board", "want": "Other Job Board", "options": ["Other", "Other Job Board", "Indeed"]},
+    {"answer": "Job board", "want": "Other", "options": ["Job Board: Indeed", "Other"]},
+    {"answer": "Job board", "want": "Other", "options": ["College Job Board", "Indeed", "LinkedIn", "Company Website", "Employee Referral", "Other"]},
+    {"answer": "Job board", "want": "Indeed", "options": ["LinkedIn", "Glassdoor", "Indeed", "Facebook"]},
+    {"answer": "Job board", "want": "Internet", "options": ["Newspaper", "Internet", "Other"]},
+    {"answer": "Job board", "want": "Website", "options": ["Recruiter", "Website"]},
+    {"answer": "Job board", "want": null, "options": ["College Job Board"]},
+    {"answer": "Job board", "want": null, "options": ["College Job Board", "Compliance_HireAHero", "Staffing Agency", "University Career Center"]},
+    {"answer": "Job board", "want": null, "options": ["Built In Colorado", "Company Blog"]},
+    {"answer": "Job board", "want": null, "options": ["Job Board: Indeed", "Job Board: Monster"]},
+    {"answer": "LinkedIn", "want": "LinkedIn", "options": ["Indeed", "LinkedIn", "Other"]},
+    {"answer": "LinkedIn", "want": "Other", "options": ["College Job Board", "Internet", "Other"]},
+    {"answer": "LinkedIn", "want": null, "options": ["College Job Board", "Internet"]},
+    {"answer": "A friend told me", "want": null, "options": ["LinkedIn", "Indeed"]},
+    {"answer": "A friend told me", "want": "Other (please specify)", "options": ["LinkedIn", "Other (please specify)"]}
+  ]
+}

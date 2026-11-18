@@ -233,6 +233,10 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         hit = keyed(ctx, key, hit)
         if not hit and key in (withhold or ()):
             return None
+    if not hit and key == COMMON.HEARD_KEY:
+        v = fit(COMMON.HEARD_DEFAULT)        # nothing saved: found on a job board (common sense)
+        if v:
+            return v, COMMON.HEARD_ORIGIN
     if not hit and adult and COMMON.is_adult_question(q):
         v = fit("Yes")                       # the profile shows it: a degree, or a date 4 years back
         if v:

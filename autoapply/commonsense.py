@@ -21,6 +21,11 @@ stops for them (a Workday "Application Questions" page asked five; four needed n
   question for the person. Never a default. A question about a government or public official, a
   competitor, a client or a referral is another question and stays theirs.
 
+* **How did you hear about us?**: the person's saved answer first (``@heard_about``); with
+  none, "Job board" (``HEARD_DEFAULT``, origin ``common_sense``): someone applying through a job
+  app found the job on a job board. On a list, the choice that says so is picked by
+  autoapply/planner.py generic_sources ("Job board", "Other Job Board", else "Other").
+
 Acknowledgements worded as a Yes / No choice live in autoapply/consents.py. Category rules on the
 question's words, never one site's markup. Pure: the caller (ui/app.py) reads the stores.
 """
@@ -35,6 +40,9 @@ from autoapply.history import parse_span
 
 ADULT_KEY = "@over_18"
 RELATIVES_KEY = "@relatives_at_employer"
+HEARD_KEY = "@heard_about"
+HEARD_DEFAULT = "Job board"        # with nothing saved; a saved answer always wins
+HEARD_ORIGIN = "common_sense"
 
 # A question that asks for a detail, never a yes or no ("If yes, when did you apply?").
 _NOT_YES_NO = re.compile(

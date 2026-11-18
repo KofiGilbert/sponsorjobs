@@ -12096,6 +12096,7 @@
       consent: T("aa.ans.from.consent", "Your consent to required notices"),
       optin: T("aa.ans.from.optin", "Declined marketing messages"),
       tracker: T("aa.ans.from.tracker", "Your tracker"),
+      common_sense: T("aa.ans.from.commonSense", "Common sense"),
       neutral: T("aa.ans.from.neutral", "Neutral choice"),
       needs_you: T("aa.ans.from.needsYou", "Needs you"), left_empty: T("aa.ans.from.leftEmpty", "Left empty"),
     };

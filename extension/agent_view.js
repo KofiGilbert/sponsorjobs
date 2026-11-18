@@ -883,9 +883,22 @@
       ? "no choice on this list says the same as the person's answer; do not pick one for them, report needs-answers"
       : "no such option; options: " + list;
     const before = fingerprint();
+    // A how-did-you-hear question is the one place a saved answer no choice says the same as is
+    // still picked for the person: the choice that names no particular source ("Job board" is
+    // "Other Job Board", else "Other"), through Workday's two-level list too. The rule and the
+    // pick live in the engine (autofill_core.js heardChoices / pickHeard, the same as
+    // autoapply/planner.py generic_sources); every other question keeps the refusal.
+    const E0 = T();
+    let heard = false;
+    try { heard = answer && !!E0 && typeof E0.heardChoices === "function" && E0.isHeardLabel(labelOf(el)); } catch (e) { heard = false; }
     if (tagOf(el) === "SELECT") {
       const opts = Array.from(el.options || []);
-      const hit = choiceFor(opts, want, (o) => o.textContent);
+      let hit = null;
+      if (heard) {
+        const texts = opts.map((o) => cleanText(o.textContent));
+        const c = E0.heardChoices(want, texts.filter((t, i) => String(opts[i].value || "") !== ""))[0];
+        hit = c ? opts[texts.indexOf(c)] : null;
+      } else hit = choiceFor(opts, want, (o) => o.textContent);
       if (!hit) return { ok: false, note: miss(optionList(opts)), changed: false };
       setValue(el, hit.value);
       await sleep(40);
@@ -897,6 +910,12 @@
       return { ok: false, note: "use click", changed: false };
     }
     const E = T();
+    if (heard && typeof E.pickHeard === "function") {
+      let r = null;
+      try { r = await E.pickHeard(el, { text: want, score: E.answerScorer(want) }); } catch (e) { r = null; }
+      if (r && r.ok) return { ok: true, note: "", changed: fingerprint() !== before };
+      if (r && r.why === "no-match") return { ok: false, note: miss(""), changed: fingerprint() !== before };
+    }
     if (E && typeof E.pickCombo === "function" && typeof E.valueScorer === "function") {
       let r = null;
       // The strict scorer: a choice that holds the words plus a qualifier is never picked.

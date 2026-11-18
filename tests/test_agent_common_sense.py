@@ -475,14 +475,108 @@ def test_apply_setup_asks_relatives_once_with_no_default(app):
 def test_the_new_strings_are_in_all_five_locales_with_no_dashes():
     for lang in ("de", "en", "es", "fr", "pt"):
         d = json.loads((ROOT / "ui" / "static" / "locales" / f"{lang}.json").read_text(encoding="utf-8"))
-        for k in ("setup.relatives", "setup.relativesAsk", "aa.ans.from.tracker"):
+        for k in ("setup.relatives", "setup.relativesAsk", "aa.ans.from.tracker", "aa.ans.from.commonSense"):
             assert d.get(k), (lang, k)
             assert "—" not in d[k] and "–" not in d[k]
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
-    assert 'suT("setup.relatives"' in js and 'T("aa.ans.from.tracker"' in js
+    assert 'suT("setup.relatives"' in js and 'T("aa.ans.from.tracker"' in js and 'T("aa.ans.from.commonSense"' in js
 
 
 def test_the_shell_keeps_the_rule_origins_for_review_answers():
     js = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
-    assert 'new Set(["grounded", "neutral", "history", "tracker", "consent"])' in js
-    assert 'tracker: "from your tracker"' in js
+    assert 'new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense"])' in js
+    assert 'tracker: "from your tracker"' in js and 'common_sense: "common sense"' in js
+
+
+# --------------------------------------------------------------------------- how did you hear
+HEARD = "How Did You Hear About Us?"
+# The choices under "Job Sites" on a Workday form's two-level source list (2026-11-18).
+JOB_SITES = ["BuiltIn", "College / University", "Compliance_HireAHero", "Compliance_JOFDAV", "Compliance_recruitABILITY",
+             "Compliance_USDiversity", "Financial Careers Training", "Glassdoor", "HACE", "Handshake", "IDES",
+             "Job Board: CareerBuilder", "Job Board: Indeed", "Job Board: Monster", "Other Job Board"]
+
+
+def test_a_job_board_answer_lands_on_the_lists_generic_board_choice():
+    from autoapply.planner import generic_source, generic_sources, literal_for
+    assert generic_source("Job board", JOB_SITES) == "Other Job Board"
+    assert generic_sources("Job board", JOB_SITES) == ["Other Job Board", "Glassdoor", "Handshake"]
+    assert literal_for("@heard_about", "Job board", JOB_SITES) == "Other Job Board"
+    # the first list of the same form: the board-like category, then nothing else
+    assert generic_sources("Job board", ["Career Fair", "Employee Referral", "Job Sites", "Social Media"]) == ["Job Sites"]
+    # a plain generic board before the catch-all one, and both before "Other"
+    assert generic_sources("Job board", ["Other", "Other Job Board", "Job Board"]) == ["Job Board", "Other Job Board", "Other"]
+    # never a choice that adds a source the person did not give
+    for bad in (["College Job Board"], ["Compliance_HireAHero", "University Career Center", "Staffing Agency"],
+                ["Job Board: Indeed", "Job Board: Monster"]):
+        assert literal_for("@heard_about", "Job board", bad) is None
+    # only on a how-did-you-hear question
+    assert literal_for("", "Job board", JOB_SITES) is None
+
+
+def test_python_and_the_page_side_share_the_how_did_you_hear_cases():
+    # the same file drives extension/autofill_core.js heardChoices in tests/test_agent_view.js
+    from autoapply.planner import literal_for
+    cases = json.loads((ROOT / "tests" / "fixtures" / "heard_about_cases.json").read_text(encoding="utf-8"))["cases"]
+    assert len(cases) >= 15
+    for c in cases:
+        assert literal_for("@heard_about", c["answer"], c["options"]) == c["want"], c
+
+
+def test_with_nothing_saved_how_did_you_hear_is_a_job_board(lib):
+    assert (CS.HEARD_KEY, CS.HEARD_DEFAULT, CS.HEARD_ORIGIN) == ("@heard_about", "Job board", "common_sense")
+    assert normalize(HEARD) == CS.HEARD_KEY
+    assert _plan(HEARD, _ctx(lib), options=JOB_SITES) == ([("Other Job Board", "common_sense")], [])
+    assert _plan(HEARD, _ctx(lib), options=[], kind="text") == ([("Job board", "common_sense")], [])
+    assert known_answer(HEARD, JOB_SITES, library=lib) == ("Other Job Board", "common_sense")
+    assert known_answer(HEARD, [], library=lib) == ("Job board", "common_sense")
+    # a list with no choice for it stays the person's
+    assert _plan(HEARD, _ctx(lib), options=["College Job Board", "Staffing Agency"]) == ([], ["f"])
+    # a saved answer always wins
+    lib.save(HEARD, "LinkedIn")
+    assert _plan(HEARD, _ctx(lib), options=["Indeed", "LinkedIn", "Other"]) == ([("LinkedIn", "library")], [])
+    assert known_answer(HEARD, ["Indeed", "LinkedIn", "Other"], library=lib) == ("LinkedIn", "library")
+    assert _plan(HEARD, _ctx(lib), options=[], kind="text") == ([("LinkedIn", "library")], [])
+
+
+# --------------------------------------------------------------------------- worked here, by the short name
+WORKED_GROUP = "Have you worked for Globex or any of our companies in the past?"
+
+
+@pytest.mark.parametrize("label,company", [
+    (WORKED_GROUP, "Globex"),
+    (WORKED_GROUP, "Globex Financial Corporation"),          # the record's long name, the form's short one
+    (WORKED_GROUP, "Hale Community Bank"),                   # a company of the group: "our companies"
+    ("Have you worked for Globex before?", "Globex Hale LLP"),
+    ("Have you previously been employed by Globex or any of its affiliates?", "Globex Financial Group"),
+    ("Have you ever worked for Globex or one of its subsidiaries?", "Globex Hale LLP"),
+    ("Previously employed by Globex?", "Globex Financial Corp."),
+    ("Are you a current or former Globex employee?", "Globex Financial Corporation"),
+    ("Are you a former employee of Globex?", "Globex Hale LLP"),
+])
+def test_worked_here_is_recognised_by_the_short_name_and_the_group(label, company, lib):
+    assert worked_here_question(label, company)
+    ctx = _ctx(lib, company=company)
+    assert _plan(label, ctx) == ([("No", "history")], [])
+    assert _plan(label, ctx, kind="radio") == ([("No", "history")], [])
+    assert known_answer(label, YN, library=lib, per_company=True, worked_here=("No", "history"),
+                        company=company) == ("No", "history")
+
+
+@pytest.mark.parametrize("label,company", [
+    ("Have you worked for Initech in the past?", "Globex Financial Corporation"),       # another employer
+    ("Have you worked for First Republic before?", "First National Bank"),             # "First" names no one
+    ("Have you worked for any other companies in the past?", "Globex"),
+    ("Do you know anyone who has worked for Globex or any of our companies?", "Globex"),
+    ("Has a relative worked for Globex or any of our companies in the past?", "Globex"),
+    ("Why do you want to work for Globex or one of our companies?", "Globex"),
+])
+def test_worked_here_is_never_read_into_another_question(label, company):
+    assert not worked_here_question(label, company)
+
+
+def test_a_worked_here_yes_from_the_resume_still_waits_and_a_saved_answer_wins(lib):
+    # the company is in the work history: the Yes is confirmed once by the person, never sent unasked
+    assert _plan(WORKED_GROUP, _ctx(lib, company="Globex Financial Corporation", worked_here=("Yes", "confirm"))) == ([], ["f"])
+    # their own answer for this company
+    assert _plan(WORKED_GROUP, _ctx(lib, company="Globex Financial Corporation",
+                                    worked_here=("Yes", "library"))) == ([("Yes", "library")], [])
