@@ -146,7 +146,7 @@ describe("POST/GET/DELETE /mail/alias", () => {
     const r = await createAlias(token, "Zoe Muller");
     expect(r.status).toBe(409);
     expect(r.data).toEqual({ error: "sign_in_first" });
-    expect((await getAlias(token)).data).toEqual({ alias: null, forward_to: null });
+    expect((await getAlias(token)).data).toEqual({ alias: null, forward_to: null, notify_mode: null });
   });
 
   it("makes first.last@sponsorjobs.ai forwarding to the verified e-mail, never one the client names", async () => {
@@ -186,8 +186,8 @@ describe("POST/GET/DELETE /mail/alias", () => {
     expect(sent).toHaveLength(1);
     const d = await dropAlias(s.token);
     expect(d.status).toBe(200);
-    expect(d.data).toEqual({ alias: null, forward_to: null });
-    expect((await getAlias(s.token)).data).toEqual({ alias: null, forward_to: null });
+    expect(d.data).toEqual({ alias: null, forward_to: null, notify_mode: null });
+    expect((await getAlias(s.token)).data).toEqual({ alias: null, forward_to: null, notify_mode: null });
     expect((await events(s.id)).results).toHaveLength(0);
     const m = await deliver(CODE_MAIL, s.alias);
     expect(m.rejected).toEqual(["No such address"]);

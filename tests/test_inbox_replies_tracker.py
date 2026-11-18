@@ -172,9 +172,12 @@ def test_match_order_thread_then_domain_then_company():
     # ATS: greenhouse mail, the job is on greenhouse under "contoso".
     job, lane = matching.match_application(eml("rejection_ats"), jobs)
     assert job["source_id"] == CONTOSO["source_id"] and lane == "domain"
-    # Company: fabrikam-mail.net is not Fabrikam's domain, but the name is in the From.
+    # Company: fabrikam-mail.net is not Fabrikam's domain, but the name is in the From. The
+    # mail names the role as well ("Product Analyst"), which makes it the surer "role" lane.
     job, lane = matching.match_application(eml("offer_company"), jobs)
-    assert job["source_id"] == FABRIKAM["source_id"] and lane == "company"
+    assert job["source_id"] == FABRIKAM["source_id"] and lane == "role"
+    nameonly = {**eml("offer_company"), "body": "We are pleased to make you an offer."}
+    assert matching.match_application(nameonly, jobs)[1] == "company"
     # Thread beats everything: a reply to a message tied to Contoso matches Contoso even though
     # it comes from northwind.com.
     threads = {"m:ack-1@northwind.com": CONTOSO["source_id"]}
@@ -214,7 +217,7 @@ def test_each_suggestion_records_how_it_was_matched():
     got = {s["source_id"]: (s["label"], s["matched_by"], s["stage"], s["auto"]) for s in out}
     assert got == {NORTHWIND["source_id"]: ("acknowledgement", "domain", "applied", True),
                    CONTOSO["source_id"]: ("rejection", "domain", "rejected", False),
-                   FABRIKAM["source_id"]: ("offer", "company", "offer", False)}
+                   FABRIKAM["source_id"]: ("offer", "role", "offer", False)}
 
 
 def test_an_acknowledgement_matched_only_by_name_waits_for_a_tap():
