@@ -14158,14 +14158,122 @@ def _portal_account(host: str) -> dict | None:
     return {"host": host, "email": email.strip(), "password": password}
 
 
-def _portal_password() -> str:
-    """16 characters: letters and digits plus two symbols from a set every portal accepts."""
+# Symbols every portal we have met accepts in a password (no quotes, slashes, spaces or brackets).
+_PORTAL_SYMBOLS = "!@#$%&*?"
+_PORTAL_PASSWORD_LEN = 16
+# A site's own words for "this password breaks our rule" (Workday: "Password must include: - A
+# numeric character"). Never "an account already exists": that is not a password rule.
+_PASSWORD_CLASS_RE = re.compile(
+    r"(numeric|uppercase|upper case|lowercase|lower case|special|alphabetic) character"
+    r"|at least (one|1) (number|digit|letter|symbol|uppercase|lowercase|special)", re.I)
+_PASSWORD_WORDS_RE = re.compile(
+    r"must|should|needs?\b|requirement|too (short|long|weak|common)|does(n't| not) meet|not (strong|valid|allowed)"
+    r"|invalid|at least|minimum|maximum|cannot|can't|may not|polic", re.I)
+# A password error that is not a rule: the two boxes differ, the box is empty, a wrong sign-in.
+_PASSWORD_OTHER_RE = re.compile(
+    r"do(es)? not match|don't match|must match|must be the same|is required|required field|incorrect|wrong password", re.I)
+_ACCOUNT_EXISTS_RE = re.compile(
+    r"already (exists?|registered|in use|taken|been (used|registered|taken)|have an account|associated)"
+    r"|account (with|for) (this|that|the) e-?mail|e-?mail( address)? (is|has been) (already |)(taken|used|registered)"
+    r"|existing account|sign in instead", re.I)
+
+
+def _is_password_rule_error(text: str) -> bool:
+    """The site refused the PASSWORD on a rule it states: not the account ("already exists"),
+    not a mismatch between the two boxes, not an empty box. Same test as the shell's."""
+    text = str(text or "")
+    if _ACCOUNT_EXISTS_RE.search(text) or _PASSWORD_OTHER_RE.search(text):
+        return False
+    return bool(_PASSWORD_CLASS_RE.search(text)
+                or (re.search(r"password", text, re.I) and _PASSWORD_WORDS_RE.search(text)))
+
+
+def _portal_password(length: int = _PORTAL_PASSWORD_LEN, symbols: str = _PORTAL_SYMBOLS) -> str:
+    """A portal password: ``length`` characters (16 unless a site caps it) that always hold an
+    uppercase letter, a lowercase letter, a digit and, unless the site forbids symbols, one or
+    two symbols from a set every portal accepts. Never the same character twice in a row."""
     import secrets
     import string
-    alphabet = string.ascii_letters + string.digits
-    chars = [secrets.choice(alphabet) for _ in range(14)] + [secrets.choice("!@#$%&*?") for _ in range(2)]
-    secrets.SystemRandom().shuffle(chars)
-    return "".join(chars)
+    length = max(8, int(length or _PORTAL_PASSWORD_LEN))
+    rng = secrets.SystemRandom()
+    while True:
+        chars = [secrets.choice(string.ascii_uppercase), secrets.choice(string.ascii_lowercase),
+                 secrets.choice(string.digits)]
+        if symbols:
+            chars += [secrets.choice(symbols) for _ in range(2 if length >= 12 else 1)]
+        alphabet = string.ascii_letters + string.digits
+        chars += [secrets.choice(alphabet) for _ in range(length - len(chars))]
+        rng.shuffle(chars)
+        # a letter first (some portals refuse a leading symbol or digit), no doubled character
+        if chars[0].isalpha() and all(a != b for a, b in zip(chars, chars[1:])):
+            return "".join(chars)
+
+
+def _password_weak(password: str) -> bool:
+    """A saved password the generator's own rule would never produce: no uppercase letter, no
+    lowercase letter or no digit (the pre-2026-11-18 generator could leave any of them out)."""
+    p = str(password or "")
+    return not (re.search(r"[A-Z]", p) and re.search(r"[a-z]", p) and re.search(r"\d", p))
+
+
+def _password_limits(error: str) -> tuple[int, str] | None:
+    """(length, symbols) for a fresh password that honours what the site's error says, where the
+    error says it plainly: a maximum length, "letters and numbers only", symbols it will not
+    take, or the symbols it does take. None when the stated rule cannot be met (a maximum under
+    8 characters)."""
+    e = str(error or "")
+    length, symbols = _PORTAL_PASSWORD_LEN, _PORTAL_SYMBOLS
+    caps = [int(n) for n in re.findall(
+        r"(?:maximum|max\.?|no more than|not more than|at most|up to|not exceed|exceed)\D{0,25}?(\d{1,3})\s*characters?", e, re.I)]
+    caps += [int(n) for n in re.findall(r"\d{1,2}\s*(?:-|to|and)\s*(\d{1,3})\s*characters?", e, re.I)]
+    caps += [int(n) - 1 for n in re.findall(r"(?:fewer|less|shorter) than\s*(\d{1,3})\s*characters?", e, re.I)]
+    if caps:
+        if min(caps) < 8:
+            return None
+        length = min(length, min(caps))
+    if re.search(r"(only|just) (contain |use |include )?(letters|alphanumeric)|alphanumeric (characters )?only"
+                 r"|letters and (numbers|digits) only|(no|without|not (contain|include|use)|cannot (contain|include|use)"
+                 r"|can't (contain|include|use)|must not (contain|include|use)) (any )?(special|symbol)", e, re.I):
+        return length, ""
+    # Symbols it names as refused ("cannot contain # or &"), then the ones it names as allowed
+    # ("a special character (!@$)"): only where the error spells them out.
+    m = re.search(r"(?:cannot|can't|may not|must not|not) (?:contain|include|use)[^.\n]{0,40}", e, re.I)
+    if m:
+        symbols = "".join(c for c in symbols if c not in m.group(0)) or symbols
+    m = re.search(r"(?:special characters?|symbols?)[^.\n(:]{0,30}[(:]\s*([^)\n]{1,60})", e, re.I)
+    if m:
+        named = [c for c in m.group(1) if not c.isalnum() and not c.isspace() and c not in ",;.'\"`\\|"]
+        if named:
+            keep = "".join(c for c in symbols if c in named)
+            symbols = keep or "".join(dict.fromkeys(named))
+    return length, symbols
+
+
+def _portal_ok_name(host: str) -> str:
+    """PORTALOK_<host> (not a secret, never a host name): set once a sign-in or an account creation on this host WORKED. A
+    password is never rotated for a host that has it (the site knows that password)."""
+    return "PORTALOK_" + _portal_cred_name(host)[len("PORTAL_"):]
+
+
+def _portal_confirmed(host: str) -> bool:
+    return bool(_cred(_portal_ok_name(str(host or "").strip().lower())))
+
+
+def _portal_rotate(host: str, error: str = "") -> dict:
+    """A fresh password for a host whose account the site never accepted. {ok, rotated} or
+    {ok: False, reason, message}. Refused when a sign-in or creation worked there before."""
+    acct = _portal_account(host)
+    if not acct:
+        return {"ok": False, "reason": "no-account", "message": "No portal account is saved for this site."}
+    if _portal_confirmed(host):
+        return {"ok": False, "reason": "account-in-use",
+                "message": "The saved account for this site has worked before, so its password stays as it is."}
+    limits = _password_limits(error)
+    if limits is None:
+        return {"ok": False, "reason": "password-rule",
+                "message": "The site's password rule is one I cannot meet safely."}
+    _save_cred(_portal_cred_name(host), f"{acct['email']}|{_portal_password(*limits)}")
+    return {"ok": True, "rotated": True, "host": host, "email": acct["email"]}
 
 
 def _agent_placeholders(applicant: dict, prof: dict, portal: dict | None) -> tuple[list[str], dict]:
@@ -16989,13 +17097,16 @@ def autoapply_agent_portal_account():
     host = _host(request.args.get("host") or request.args.get("url") or "")
     acct = _portal_account(host)
     return jsonify({"ok": True, "host": host, "exists": acct is not None,
-                    "email": acct["email"] if acct else ""})
+                    "email": acct["email"] if acct else "",
+                    "confirmed": bool(acct) and _portal_confirmed(host)})
 
 
 @app.post("/api/autoapply/agent/portal-account")
 @_guard
 def autoapply_agent_portal_account_create():
-    """Create (or reuse) the portal account for a host: body {host, email?, create: true}. The
+    """Create (or reuse) the portal account for a host: body {host, email?, create: true}; or
+    {host, confirm: true} once a sign-in or creation worked there; or {host, rotate: true, error}
+    when the site's create form refused the password on a rule (never after a confirm). The
     email is the person's own (recruiters reply to it); the password is generated here and
     stored under PORTAL_<host> in the credential store (App Lock custody when on). Refused when
     "Create portal accounts for me" is off. Returns {ok, email, created}; never the password."""
@@ -17005,12 +17116,35 @@ def autoapply_agent_portal_account_create():
     if not host or not fill_permitted(host):
         return jsonify({"ok": False, "reason": "fill-by-hand",
                         "message": "No portal account on this site."})
+    if b.get("confirm"):
+        # A sign-in or an account creation on this host worked: its password is now the site's.
+        if not _portal_account(host):
+            return jsonify({"ok": False, "reason": "no-account", "message": "No portal account is saved for this site."})
+        if not _portal_confirmed(host):
+            _save_cred(_portal_ok_name(host), "1")
+        return jsonify({"ok": True, "host": host, "confirmed": True})
+    if b.get("rotate"):
+        # The site's create form refused the password on a rule it states. Only for a password
+        # rule, only while no sign-in or creation ever worked on this host.
+        if not _portal_accounts_on():
+            return jsonify({"ok": False, "reason": "portal_accounts_off",
+                            "message": "Creating portal accounts is turned off in Auto-apply settings."})
+        if not _is_password_rule_error(str(b.get("error") or "")):
+            return jsonify({"ok": False, "reason": "not-a-password-rule",
+                            "message": "The site's error is not about the password."})
+        return jsonify(_portal_rotate(host, str(b.get("error") or "")))
     if not b.get("create"):
         return jsonify({"ok": False, "reason": "no-create", "message": "Send create: true."})
     if not _portal_accounts_on():
         return jsonify({"ok": False, "reason": "portal_accounts_off",
                         "message": "Creating portal accounts is turned off in Auto-apply settings."})
     existing = _portal_account(host)
+    if existing and _password_weak(existing["password"]) and not _portal_confirmed(host):
+        # A password saved by the old generator that most sites refuse (no digit, say), on a
+        # host where nothing ever worked with it: the site does not know it, so make a good one.
+        _save_cred(_portal_cred_name(host), f"{existing['email']}|{_portal_password()}")
+        return jsonify({"ok": True, "host": host, "email": existing["email"], "created": True,
+                        "regenerated": True})
     if existing:
         return jsonify({"ok": True, "host": host, "email": existing["email"], "created": False})
     email = str(b.get("email") or "").strip() or _application_email()

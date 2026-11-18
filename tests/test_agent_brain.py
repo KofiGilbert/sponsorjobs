@@ -276,7 +276,8 @@ def test_portal_account_create_stores_and_get_never_returns_the_password(A):
     assert email == "kofi@example.com" and len(pw) == 16
     assert sum(ch in "!@#$%&*?" for ch in pw) == 2 and sum(ch.isalnum() for ch in pw) == 14
     g = c.get("/api/autoapply/agent/portal-account?host=acme.wd5.myworkdayjobs.com").get_json()
-    assert g == {"ok": True, "host": "acme.wd5.myworkdayjobs.com", "exists": True, "email": "kofi@example.com"}
+    assert g == {"ok": True, "host": "acme.wd5.myworkdayjobs.com", "exists": True, "email": "kofi@example.com",
+                 "confirmed": False}
     assert pw not in json.dumps(g)
     r = c.get("/api/autoapply/agent/portal-account?host=acme.wd5.myworkdayjobs.com&include_secret=1")
     assert r.status_code == 400 and pw not in r.get_data(as_text=True)
