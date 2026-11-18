@@ -36,6 +36,7 @@ const page = (name) => fs.readFileSync(path.join(REAL, name + ".txt"), "utf8");
   assert(/already applied/.test(alreadyApplied("You have already applied to this position")), "second wording");
   assert(alreadyApplied("[1]<input type=text label=\"Have you already applied to this role?\">\nYou have already applied") === "", "a form asking about it");
   assert(alreadyApplied("[1]<button>Apply</button>\nYou have already applied for this job") === "", "Apply is still offered");
+  assert(/already applied for this job/.test(alreadyApplied(page("sidley_workday_already_applied"))), "the real Workday page, shown after sign-in");
   for (const name of ["barclays_workday_job", "gartner_workday_job", "oracle_closed", "upgrade_greenhouse_job"]) {
     assert(alreadyApplied(page(name)) === "", name + " is not already applied");
   }

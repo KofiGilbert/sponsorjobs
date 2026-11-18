@@ -1,0 +1,15 @@
+URL: https://sidley.wd501.myworkdayjo
+Title: Create Account
+[Start of page]
+[1]<a>Skip to main content</a>
+[2]<a>careers home</a>
+Sidley Careers
+[3]<button>main menu</button>
+Product Analyst
+You've already applied for this job.
+[4]<button>View My Applications</button>
+Follow Us
+[5]<a>LinkedIn</a>
+[6]<a>Global Recruitment Data Protection Notice to candidates looking for employment a</a>
+© 2026 Workday, Inc. All rights reserved.
+[End of page]
