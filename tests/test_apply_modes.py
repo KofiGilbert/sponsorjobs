@@ -208,6 +208,13 @@ def test_autos_queue_is_the_approved_ones_up_to_the_daily_limit_each_once_a_day(
     mod._set_prefs({"daily_cap": 10})
     rest = [j["recordId"] for j in _post(mod, "/api/autoapply/auto/plan")["jobs"]]
     assert len(rest) == 1 and not set(rest) & set(ids)                  # never the same one twice in a day
+    # An interrupted application (offline, AI unavailable, the Mac slept) goes back ONCE the same day
+    rel = _post(mod, "/api/autoapply/auto/release", {"ids": [ids[0], 999999]})
+    assert rel["released"] == [ids[0]]
+    again = [j["recordId"] for j in _post(mod, "/api/autoapply/auto/plan")["jobs"]]
+    assert again == [ids[0]]
+    assert _post(mod, "/api/autoapply/auto/release", {"ids": [ids[0]]})["released"] == []   # not a second time
+    assert _post(mod, "/api/autoapply/auto/plan")["jobs"] == []
 
 
 def test_a_send_by_the_agent_counts_only_when_the_engine_agrees(A):

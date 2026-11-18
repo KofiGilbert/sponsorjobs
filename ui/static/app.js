@@ -11503,7 +11503,15 @@
     if (!jobs.length) return;
     AA_AUTO.running = true;
     if (AA.board) aaRenderMode(AA.board.today);
-    try { await window.tailorShell.agentBatch(jobs, { quiet: true }); } catch { /* the next tick tries again */ }
+    let res = null;
+    try { res = await window.tailorShell.agentBatch(jobs, { quiet: true }); } catch { /* the next tick tries again */ }
+    // An application the batch never finished (offline, AI unavailable, stopped, never reached)
+    // goes back into today's queue once: the engine allows one retry a day.
+    const settled = new Set(((res && res.results) || [])
+      .filter(r => r && (r.ready || r.submitted || r.parked || r.closed))
+      .map(r => String(r.record_id != null ? r.record_id : r.recordId)));
+    const undone = jobs.map(j => j.recordId).filter(id => !settled.has(String(id)));
+    if (undone.length) { try { await api("/api/autoapply/auto/release", { ids: undone }); } catch { /* tomorrow then */ } }
     AA_AUTO.running = false;
     if (AA.board) aaRenderMode(AA.board.today);
     aaAutoNotices();

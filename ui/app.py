@@ -15939,8 +15939,9 @@ def autoapply_auto_plan():
     ts, today = _now_ts_today()
     cap = max(1, int(_prefs().get("daily_cap") or 40))
     state = _notify_state()
-    done = set(_auto_day(state.load(), today).get("ids") or [])
-    left = max(0, cap - len(done))
+    day = _auto_day(state.load(), today)
+    done = set(day.get("ids") or [])
+    left = max(0, cap - len(done | set(day.get("again") or [])))
     try:
         limit = max(1, min(10, int(b.get("limit") or 5)))
     except (TypeError, ValueError):
@@ -15966,6 +15967,36 @@ def autoapply_auto_plan():
     return jsonify({"ok": True, "mode": mode, "jobs": out, "left": max(0, left - len(out))})
 
 
+@app.post("/api/autoapply/auto/release")
+@_guard
+def autoapply_auto_release():
+    """Body {ids}. Applications a quiet Auto batch was handed but never finished (the connection
+    dropped, the AI was unavailable, the Mac slept, the person took the browser back) go back into
+    today's queue ONCE, so an interruption does not cost them the whole day. A second interruption
+    the same day leaves them for tomorrow: no retry loop, no repeated spend."""
+    ids = []
+    for x in ((request.json or {}).get("ids") or []):
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            pass
+    _ts, today = _now_ts_today()
+    out = {"released": []}
+
+    def _upd(d):
+        day = _auto_day(d, today)
+        again = day.setdefault("again", [])
+        for i in ids:
+            if i in day["ids"] and i not in again:
+                day["ids"] = [x for x in day["ids"] if x != i]
+                again.append(i)
+                out["released"].append(i)
+
+    if ids:
+        _notify_state().update(_upd)
+    return jsonify({"ok": True, "released": out["released"]})
+
+
 def _auto_sent_notice(rec: dict) -> str:
     """"Sent: Role at Company" for an application Auto sent by itself (notify/daily.py): Telegram
     when linked, else in the app; once per application; held through quiet hours."""
@@ -15984,6 +16015,23 @@ def _auto_sent_notice(rec: dict) -> str:
         return "failed"
 
 
+def _local_day(stamp) -> str:
+    """The LOCAL calendar day of a saved timestamp. Stamps are saved in UTC, and "today" is the
+    person's own day: comparing the first ten characters dropped every evening send (after 18:00
+    in Chicago the UTC date is already tomorrow)."""
+    from datetime import datetime, timezone
+    text = str(stamp or "").strip()
+    if not text:
+        return ""
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text[:10]
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone().date().isoformat()
+
+
 def _auto_counts() -> dict:
     """Today's numbers for the daily summary, from the records: sent for the person today,
     waiting at Ready to send, and paused on something only the person can answer."""
@@ -16000,7 +16048,7 @@ def _auto_counts() -> dict:
         st = app_stage(d)
         park = d.get("agent_park") if isinstance(d.get("agent_park"), dict) else None
         if st["stage"] == "submitted":
-            if st["how"] == "auto" and str(d.get("applied_at") or (d.get("submission") or {}).get("at") or "")[:10] == today:
+            if st["how"] == "auto" and _local_day(d.get("applied_at") or (d.get("submission") or {}).get("at")) == today:
                 sent += 1
         elif st["stage"] == "skipped":
             continue
