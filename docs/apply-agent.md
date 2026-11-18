@@ -205,7 +205,7 @@ it is the Send path above. Belt and braces.
   for 600 ms, or at 8 s; report which fired. (browser-use has no such wait; that is why the
   Workday page showed up blank on 2026-10-27.)
 - Per step: one brain call (90 s cap), actions 25 s each, every other call into the pane
-  20 s (`SJ_AGENT_PANE_MS`), the fill engine 40 s (`SJ_AGENT_FILL_MS`). `MAX_STEPS = 60`
+  20 s (`SJ_AGENT_PANE_MS`), the fill engine by phase (2026-11-18, `shell-electron/fill_budget.js`: engine 30 s, form read 15 s, plan 30 s, ops 40 s, 120 s overall with `SJ_AGENT_FILL_MS` as the override; a phase that is still filling is cut at its cap and keeps what it filled, one whose page gave no heartbeat for 15 s is a hang). `MAX_STEPS = 60`
   (`SJ_AGENT_MAX_STEPS`), `MAX_FAILED_STEPS = 4` in a row (a failed step = an action error or
   an empty reply) -> the recovery ladder, never a stop (section 13).
 - Loop detector: the hash of `(op, index, text)` over the last 12 actions; the same hash 3
@@ -436,7 +436,7 @@ account, asked for a reset, and gave up when no mail came in 3 minutes. From 02:
 API key ran out of credits and every job parked "needs you" within 20 seconds.
 
 **Every call into the pane is capped.** `guard(promise, ms, what)` races the call with a
-timeout (`PANE_MS` 20 s; the fill 40 s; a brain call 90 s; CDP input events 6 s), with the
+timeout (`PANE_MS` 20 s; the fill 120 s overall with a cap per phase; a brain call 90 s; CDP input events 6 s), with the
 run's Stop flag (polled every 150 ms, so Stop takes effect inside a hung call), and with a
 navigation (`did-navigate` bumps `navEpoch`; a call to the old document is rejected instead of
 left pending, which Electron otherwise does). The run's `webContents` is wrapped in a proxy

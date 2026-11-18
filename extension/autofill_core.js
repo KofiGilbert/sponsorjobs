@@ -528,6 +528,7 @@ function qsaSafe(sel, root) {
   }
 
   function markFilled(el, from) {
+    _gen++; tick(1);                         // the form changed; one more field done
     el.classList.add("tailor-filled");
     setTimeout(() => el.classList.remove("tailor-filled"), 2500);
     logFill(el, from);
@@ -1438,6 +1439,75 @@ function qsaSafe(sel, root) {
   const LOADING_MAX_MS = 6000;
   const NOT_AN_OPTION = /^(no options|no results|loading|searching|no matches|type to search|start typing)/;
   const WIDGET_WAIT_MS = 2500;
+  // A list that is open, unchanged and not loading has settled: with no choice for the wanted
+  // value there is nothing more to wait for (2026-11-18: a miss waited the whole 2.5 s on every
+  // dropdown and every pass, and real fills ran 15 to 20 s). ``SETTLE_MS`` for a list that shows
+  // options or its own "No options" line, ``TYPED_SETTLE_MS`` after typing a search (results may
+  // still be on their way), ``EMPTY_SETTLE_MS`` when nothing has appeared at all.
+  const SETTLE_MS = 350;
+  const TYPED_SETTLE_MS = 700;
+  const EMPTY_SETTLE_MS = 1200;
+
+  // ---- the cost of a fill (shell-electron/main.js reads these between and during its phases)
+  // ``_deadline``: the running phase's own time limit; past it the engine starts nothing new and
+  // returns what it has (``timed_out``), so a slow page keeps its finished work. ``_beat``: the
+  // heartbeat (the last time the engine started or finished something, and how many fields are
+  // done), so the shell can tell a slow fill from a page that stopped answering.
+  let _deadline = 0, _timedOut = false;
+  const _beat = { at: 0, done: 0, skipped: 0, opens: 0, phase: "" };
+  const tick = (done) => { _beat.at = Date.now(); if (done) _beat.done += done; };
+  function over() {
+    if (_deadline && Date.now() > _deadline) { _timedOut = true; return true; }
+    return false;
+  }
+  function startBudget(phase, ms) {
+    _beat.phase = phase; _beat.at = Date.now(); _timedOut = false;
+    _deadline = Number(ms) > 0 ? Date.now() + Number(ms) : 0;
+    return { done: _beat.done, skipped: _beat.skipped, opens: _beat.opens };
+  }
+  function endBudget(base) {
+    const out = { timed_out: _timedOut, done: _beat.done - base.done, skipped: _beat.skipped - base.skipped,
+                  opens: _beat.opens - base.opens };
+    _deadline = 0; _beat.phase = ""; _beat.at = Date.now();
+    return out;
+  }
+  // {at, age, done, skipped, opens, phase}: read by the shell while a phase runs.
+  function fillProgress() {
+    return { at: _beat.at, age: _beat.at ? Date.now() - _beat.at : -1, done: _beat.done, skipped: _beat.skipped,
+             opens: _beat.opens, phase: _beat.phase };
+  }
+  // ---- what a dropdown already told us, for the life of the page
+  // A pick that found no choice for a wanted value is remembered per control AND wanted value,
+  // and skipped on the later passes (the agent fills again after every step). A miss on a list
+  // that showed its choices stands; one on a list that showed nothing (it may load after another
+  // answer, a State list after the Country) is tried again once the form has changed
+  // (``_gen``: a field was filled, or the person or the agent typed), and stands after two.
+  // A new control (a new page of the form), or a different wanted value, is always tried.
+  let _gen = 0;
+  const _pickMiss = new WeakMap();           // control -> Map(key -> {n, durable, gen})
+  const _opened = new WeakMap();             // control -> times its list was opened (tests, the log)
+  const memoKey = (want) => (want && (want.memo || (want.text ? "t:" + canon(want.text) : ""))) || "";
+  function missedBefore(el, want) {
+    const k = memoKey(want), m = k && _pickMiss.get(el), r = m && m.get(k);
+    return !!r && (r.durable || r.gen === _gen);
+  }
+  function noteMiss(el, want, sawList) {
+    const k = memoKey(want);
+    if (!k) return;
+    let m = _pickMiss.get(el);
+    if (!m) { m = new Map(); _pickMiss.set(el, m); }
+    const r = m.get(k) || { n: 0, durable: false, gen: 0 };
+    r.n++; r.gen = _gen; r.durable = r.durable || !!sawList || r.n >= 2;
+    m.set(k, r);
+  }
+  try {
+    // the person's (or the agent's real) typing changes the form: an empty list may have filled
+    document.addEventListener("change", (e) => { if (e && e.isTrusted) _gen++; }, true);
+  } catch (e) { /* no document events (a test DOM) */ }
+  function openCount(el) { return _opened.get(el) || 0; }
+  function openCounts() {
+    return comboboxes().map((el) => ({ label: widgetLabel(el), n: openCount(el) }));
+  }
   const STEP_MS = 50;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1650,6 +1720,7 @@ function qsaSafe(sel, root) {
   async function openCombo(el) {
     try { if (el.focus) el.focus(); } catch (e) { /* fine */ }
     if (menuOpen(el)) return true;
+    _beat.opens++; _opened.set(el, (_opened.get(el) || 0) + 1); tick();
     fire(el, "pointerdown", { button: 0 }); fire(el, "mousedown", { button: 0 });
     await sleep(STEP_MS);
     if (menuOpen(el)) return true;
@@ -1765,16 +1836,31 @@ function qsaSafe(sel, root) {
     }
     return false;
   }
-  async function waitBest(el, score, ms) {
+  // The list's own "No options" line (never a "Loading..." one): it has answered, with nothing.
+  function emptyNotice(el) {
+    const lb = listboxFor(el);
+    const t = lb ? norm(lb.textContent) : "";
+    return !!t && NOT_AN_OPTION.test(t) && !/^(loading|searching)/.test(t);
+  }
+  // The best option within ``ms``, else null. ``settle``: stop early once the list has settled
+  // with no choice for the value (unchanged for that long and not loading), instead of waiting
+  // out ``ms``; a list that shows nothing at all gets EMPTY_SETTLE_MS before it counts as settled.
+  async function waitBest(el, score, ms, settle) {
     let until = Date.now() + ms;
     const hard = until + LOADING_MAX_MS;
-    let lastN = -1;
+    let lastN = -1, since = Date.now();
     while (Date.now() < until) {
       const opts = optionsFor(el);
       const best = bestOf(opts, score);
       const busy = loading(el);
       if (best && !busy && (best.score >= 99 || opts.length === lastN)) return best;
       if (busy) until = Math.min(hard, Math.max(until, Date.now() + 300));
+      if (opts.length !== lastN || busy) since = Date.now();
+      if (!best && !busy && settle && opts.length === lastN) {
+        const shown = opts.length > 0 || emptyNotice(el);
+        if (Date.now() - since >= (shown ? settle : Math.max(settle, EMPTY_SETTLE_MS))) return null;
+      }
+      if (over()) break;
       lastN = opts.length;
       await sleep(STEP_MS);
     }
@@ -1796,14 +1882,27 @@ function qsaSafe(sel, root) {
   // you type), click it, and verify. Returns {ok, value} or {ok:false, why}.
   async function pickCombo(el, want) {
     if (comboValue(el)) return { ok: false, why: "answered" };
+    if (missedBefore(el, want)) { _beat.skipped++; return { ok: false, why: "no-match", skipped: true }; }
+    if (over()) return { ok: false, why: "over-budget" };
+    tick();
     const isInput = tagOf(el) === "INPUT";
     await openCombo(el);
-    let best = await waitBest(el, want.score, isInput && want.text ? 400 : WIDGET_WAIT_MS);
+    let best = await waitBest(el, want.score, isInput && want.text ? 400 : WIDGET_WAIT_MS, SETTLE_MS);
+    // What the list showed before any typing: kept so the form read does not open it again, and
+    // so a miss on a list that had its choices is not tried again.
+    const first = optionsFor(el);
+    let sawList = first.length > 0;
+    if (sawList && !_comboOptions.has(el)) {
+      _comboOptions.set(el, first.map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 40));
+    }
     if (!best && isInput && want.text) {
       for (const q of typeQueries(want.text)) {
+        if (over()) break;
         setNativeValue(el, q);
-        best = await waitBest(el, want.score, WIDGET_WAIT_MS);
+        best = await waitBest(el, want.score, WIDGET_WAIT_MS, TYPED_SETTLE_MS);
         if (best) break;
+        // the search answered (results, or its own "No options"): a miss on it stands
+        if (!_timedOut && !loading(el) && (optionsFor(el).length > 0 || emptyNotice(el))) sawList = true;
       }
     }
     if (!best && isInput && want.freeText && want.text && !hasValueBox(el)) {
@@ -1816,6 +1915,8 @@ function qsaSafe(sel, root) {
     if (!best) {
       if (isInput && el.value) setNativeValue(el, "");        // leave no stray filter text behind
       await closeCombo(el);
+      if (_timedOut) return { ok: false, why: "over-budget" };   // cut short: not a miss
+      noteMiss(el, want, sawList);
       return { ok: false, why: "no-match" };
     }
     const label = optionText(best.opt);
@@ -1833,7 +1934,9 @@ function qsaSafe(sel, root) {
     }
     await closeCombo(el);
     v = comboValue(el);
-    return sameChoice(v, label) ? { ok: true, value: label } : { ok: false, why: "did-not-stick" };
+    if (sameChoice(v, label)) return { ok: true, value: label };
+    noteMiss(el, want, false);                 // tried again once, then left
+    return { ok: false, why: "did-not-stick" };
   }
 
   // ---- ARIA radio groups (and Yes/No button pairs with aria-pressed), ARIA checkboxes
@@ -1929,13 +2032,18 @@ function qsaSafe(sel, root) {
   const EXTRACT_BUDGET_MS = 8000;
   async function extractFormAsync(opts) {
     let n = 0;
-    const budget = Date.now() + EXTRACT_BUDGET_MS;
+    // ``budgetMs`` (the shell's): what is left of the form read across the page and its frames.
+    const cap = opts && Number(opts.budgetMs) > 0 ? Math.min(EXTRACT_BUDGET_MS, Number(opts.budgetMs)) : EXTRACT_BUDGET_MS;
+    const budget = Date.now() + cap;
+    const base = startBudget("extract", 0);
     for (const el of comboboxes()) {
-      if (n >= 15 || Date.now() > budget) break;
+      // a real cap: a dropdown is only opened while there is time to read and close it
+      if (n >= 15 || Date.now() + 250 > budget) { if (n < 15) _timedOut = true; break; }
       if (_comboOptions.has(el) || comboValue(el)) continue;
       n++;
+      tick();
       await openCombo(el);
-      const until = Date.now() + 600;
+      const until = Math.min(Date.now() + 600, budget);
       let opts2 = optionsFor(el), last = -1;
       while (Date.now() < until && (opts2.length === 0 || opts2.length !== last)) {
         last = opts2.length; await sleep(STEP_MS); opts2 = optionsFor(el);
@@ -1943,8 +2051,11 @@ function qsaSafe(sel, root) {
       _comboOptions.set(el, opts2.map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 40));
       await closeCombo(el);
     }
+    _lastExtract = endBudget(base);
     return extractForm(opts);
   }
+  let _lastExtract = { timed_out: false, done: 0, skipped: 0, opens: 0 };
+  const lastExtract = () => Object.assign({}, _lastExtract);
 
   // Screening / EEO / contact values for the custom widgets, by the same rules as the native
   // passes: saved Yes/No answers, the EEO decline the person opted into, and profile values
@@ -1960,14 +2071,15 @@ function qsaSafe(sel, root) {
       if (hits.length > 1) return null;                    // combined question: polarity unclear
       if (hits.length === 1) {
         const a = screeningAnswer(payload.screening, hits[0].key, q);
-        return a ? { kind: "screening", score: regexScorer(a === "Yes" ? YES_RE : NO_RE) } : null;
+        return a ? { kind: "screening", score: regexScorer(a === "Yes" ? YES_RE : NO_RE), memo: "yn:" + a } : null;
       }
       if (topics.test(q)) {
-        return (payload.eeo && payload.eeo.decline) ? { kind: "eeo", score: regexScorer(decline) } : null;
+        return (payload.eeo && payload.eeo.decline) ? { kind: "eeo", score: regexScorer(decline), memo: "eeo:decline" } : null;
       }
       return undefined;
     };
     for (const el of comboboxes()) {
+      if (over()) break;
       if (comboValue(el)) continue;
       const q = norm(widgetLabel(el));
       let r = route(q);
@@ -1991,6 +2103,7 @@ function qsaSafe(sel, root) {
       if (res.ok) { out[r.kind]++; out.filled++; markFilled(controlOf(el)); }
     }
     for (const g of ariaRadioGroups()) {
+      if (over()) break;
       if (g.radios.some(isOn)) continue;
       const r = route(norm(widgetQuestion(g.box)));
       if (!r) continue;
@@ -2028,7 +2141,10 @@ function qsaSafe(sel, root) {
   }
 
   // applyOps for the shell: native fields as before, custom widgets driven and verified.
-  async function applyOpsAsync(ops) {
+  // ``opts.budgetMs``: past it no further widget is started; the report says ``timed_out`` and
+  // how many ops were not reached (``pending``), and what was filled stands.
+  async function applyOpsAsync(ops, opts) {
+    const base = startBudget("ops", opts && opts.budgetMs);
     _logOn = true;
     const native = [], widget = [];
     for (const op of (ops || [])) {
@@ -2037,13 +2153,22 @@ function qsaSafe(sel, root) {
       else native.push(op);
     }
     const rep = applyOps(native);
+    tick(0);
+    let reached = 0;
     for (const [el, op] of widget) {
+      if (over()) break;
+      reached++;
       let res = "skipped";
       _from = op.from || "ai";
       try { res = await applyWidgetOp(el, op); } catch (e) { res = "skipped"; }
       if (res === "filled") rep.filled++; else rep.skipped++;
     }
     _from = "";
+    const cost = endBudget(base);
+    rep.timed_out = cost.timed_out;
+    rep.pending = widget.length - reached;
+    rep.from_memory = cost.skipped;            // picks skipped: this control already missed this value
+    rep.opens = cost.opens;
     return rep;
   }
 
@@ -2175,7 +2300,7 @@ function qsaSafe(sel, root) {
         const lab = widgetLabel(el);
         if (comboValue(el)) continue;
         if (HIST_LABELS.degree.test(lab) && lv) {
-          const r = await pickCombo(el, { score: (t) => (lv.test(t) ? 50 - Math.min(9, t.length / 20) : 0) });
+          const r = await pickCombo(el, { score: (t) => (lv.test(t) ? 50 - Math.min(9, t.length / 20) : 0), memo: "re:" + lv.source });
           if (r.ok) { n++; logFill(el); }
         } else if (HIST_LABELS.field.test(lab) && (item.field || item.level)) {
           if (isSearchBox(el)) { _searchOps.push(fieldSearch(el, item)); continue; }
@@ -2370,13 +2495,17 @@ function qsaSafe(sel, root) {
   let _keyOps = [];
   let _searchOps = [];
   // The keyword fill plus the custom widgets: what the desktop shell runs.
-  async function fillAsync(payload) {
+  // ``opts.budgetMs``: past it the engine starts no further widget and returns what it filled,
+  // with ``timed_out`` (the shell carries on from the page as it stands).
+  async function fillAsync(payload, opts) {
+    const base = startBudget("engine", opts && opts.budgetMs);
     _keyOps = [];
     _searchOps = [];
     _logOn = true;
     _fillLog = [];
     const r = fill(payload);
-    if (!r || !r.ok) return r;
+    if (!r || !r.ok) { endBudget(base); return r; }
+    tick(0);
     let w = { filled: 0, fields: 0, screening: 0, eeo: 0 };
     try { w = await fillWidgets(payload); } catch (e) { /* a widget threw: the rest stands */ }
     let h = { filled: 0 };
@@ -2393,6 +2522,10 @@ function qsaSafe(sel, root) {
     r.total += w.filled;
     r.widgets = w.filled;
     r.remaining = extractForm({ onlyEmpty: true }).length;
+    const cost = endBudget(base);
+    r.timed_out = cost.timed_out;
+    r.from_memory = cost.skipped;              // picks skipped: this control already missed this value
+    r.opens = cost.opens;
     return r;
   }
 
@@ -2529,6 +2662,7 @@ function qsaSafe(sel, root) {
     fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, closeSearch, extractFormAsync,
     cleanLabel, readBack, fileListed, fileListing: fileListingAt, dropDuplicateFiles, dropUnsizedCopy, fileCopies, sizeReadings, sizeMatches, applyOpsAsync, leftover, pageSignature, setRefPrefix, takeFillLog,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
+    fillProgress, openCounts, lastExtract,
     // recipes: the per-system table, success detection, continue hints, corrections
     setRecipes, recipes: () => RECIPES, recipeFor, globToRe, highlightSubmit, continueButton,
     detectSuccess, watchSuccess, stopSuccessWatch, watchCorrections, takeCorrections,
