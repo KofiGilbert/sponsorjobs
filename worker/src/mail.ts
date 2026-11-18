@@ -510,6 +510,10 @@ const RECEIVED_RE = new RegExp([
   "has been (?:received|submitted)",
 ].join("|"), "i");
 
+/** Wrapped lines joined: one line per paragraph, so "not\nselected" reads "not selected". */
+const flatten = (text: string) =>
+  text.split(/\n\s*\n/).map((p) => p.split(/\s+/).filter(Boolean).join(" ")).join("\n");
+
 const sentences = (text: string) => text.split(/(?<=[.!?])\s+|\n+/);
 
 /** The text with the sentences that decide nothing removed. */
@@ -530,7 +534,7 @@ function saysRejected(text: string): boolean {
 /** One label for a message to the alias, from its subject and text only (no model). The first
  * rule that fires wins: rejected, interview, action, received, else other. */
 export function labelOf(subject: string, text: string): MailLabel {
-  const whole = `${subject}\n${text}`.slice(0, 20000);
+  const whole = flatten(`${subject}\n\n${text}`.slice(0, 20000));
   const plain = settled(whole);
   if (saysRejected(plain)) return "rejected";
   if (INTERVIEW_RE.test(settled(whole, true))) return "interview";
