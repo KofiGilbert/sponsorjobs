@@ -257,6 +257,9 @@ _CANON: list[tuple[str, re.Pattern]] = [
     # (autoapply/commonsense.py), saved by Apply setup's own wording only: an answer to one
     # company's question never becomes it.
     ("relatives_at_employer", re.compile(r"^do any of your relatives work at companies you apply to$")),
+    # (2026-11-18) Other names the person has used (autoapply/commonsense.py), saved by Apply
+    # setup's own wording; the forms' wordings are matched by commonsense.other_names_question.
+    ("other_names", re.compile(r"^what other names have you used$")),
 ]
 
 _EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability",

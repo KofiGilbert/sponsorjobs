@@ -707,3 +707,136 @@ def test_a_page_whose_only_field_is_the_education_question_is_planned(app):
     got = mod._known_answers_for([EDU, "How Did You Hear About Us?"], rec, mod._record_data(rec), {})
     assert got.get(EDU) == "Master's degree" and got.get("How Did You Hear About Us?") == "Job board", got
     assert mod._common_sense(CO, None)["education"] == ""         # no profile, no record: nothing known
+
+
+# --------------------------------------------------------------------------- phone device type
+PHONE_TYPE = "Phone Device Type"
+
+
+@pytest.mark.parametrize("options,want", [
+    (["Home", "Mobile", "Telephone"], "Mobile"),                     # one Workday tenant
+    (["Fax", "Landline", "Mobile"], "Mobile"),                       # another
+    (["Home", "Work", "Cell"], "Cell"),
+    (["Landline", "Cellular", "Fax"], "Cellular"),
+    (["Home Phone", "Cell Phone", "Work Phone"], "Cell Phone"),
+    (["Home", "Personal Cell", "Work Cell"], "Personal Cell"),
+    (["Landline", "Mobile Phone"], "Mobile Phone"),
+    (["Work Mobile", "Mobile", "Home"], "Mobile"),                   # the plain one before a work line
+])
+def test_phone_device_type_takes_the_mobile_choice(options, want, lib):
+    assert CS.phone_type_question(PHONE_TYPE) and CS.mobile_option(options) == want
+    assert _plan(PHONE_TYPE, _ctx(lib), options=options) == ([(want, "common_sense")], [])
+    assert known_answer(PHONE_TYPE, options, library=lib) == (want, "common_sense")
+
+
+def test_phone_type_is_never_the_phone_number_and_a_saved_answer_wins_only_when_listed(lib):
+    from autoapply.planner import contact_key
+    # the cause (2026-11-18): the label read as the phone NUMBER, so the number was the "answer"
+    for label in (PHONE_TYPE, "Phone Type", "Type of phone", "Telephone type", "Phone Extension"):
+        assert contact_key(label) == "", label
+    for label in ("Phone", "Phone Number", "Mobile phone", "Cell"):
+        assert contact_key(label) == "phone", label
+    for label in (PHONE_TYPE, "Phone Type", "Type of phone", "Phone Device Type*"):
+        assert CS.phone_type_question(label), label
+    for label in ("Phone Number", "Phone", "Country Phone Code", "Device", "Type of employment"):
+        assert not CS.phone_type_question(label), label
+    ctx = _ctx(lib, applicant={"phone": "555-010-0000"})
+    acts, left = _plan(PHONE_TYPE, ctx, options=["Home", "Mobile", "Telephone"])
+    assert acts == [("Mobile", "common_sense")] and not left
+    # a list with no mobile choice at all stays a question; a text box says Mobile
+    assert _plan(PHONE_TYPE, _ctx(lib), options=["Home", "Work"]) == ([], ["f"])
+    assert _plan(PHONE_TYPE, _ctx(lib), options=[], kind="text") == ([("Mobile", "common_sense")], [])
+    assert _plan(PHONE_TYPE, _ctx(lib), options=[]) == ([("Mobile", "common_sense")], [])     # choices not read yet
+    # a saved answer that is one of the choices wins; one that is not falls back to mobile, never asked
+    lib.save(PHONE_TYPE, "Home")
+    assert _plan(PHONE_TYPE, _ctx(lib), options=["Home", "Mobile", "Telephone"]) == ([("Home", "library")], [])
+    assert _plan(PHONE_TYPE, _ctx(lib), options=["Fax", "Landline", "Mobile"]) == ([("Mobile", "common_sense")], [])
+    assert known_answer(PHONE_TYPE, ["Fax", "Landline", "Mobile"], library=lib) == ("Mobile", "common_sense")
+
+
+def test_the_page_engine_never_offers_the_phone_number_to_a_phone_type_list():
+    js = (ROOT / "extension" / "autofill_core.js").read_text(encoding="utf-8")
+    assert 'if (c.key === "phone" && PHONE_KIND_RE.test(sig)) continue;' in js
+
+
+# --------------------------------------------------------------------------- other names, connections
+ALIASES = "List any aliases or other name(s) you have used or currently use or indicate N/A."
+CONNECTIONS = ("List all close personal and professional connections employed by Globex Hale and their relationship "
+               "to you, or indicate N/A.")
+
+
+def test_other_names_are_never_guessed_and_filled_once_saved(lib):
+    assert CS.other_names_question(ALIASES) and normalize(S.QUESTIONS["other_names"]) == CS.OTHER_NAMES_KEY == "@other_names"
+    assert S.KEYS["other_names"] == "@other_names"
+    # nothing saved: the person's, never "N/A" by guess
+    assert _plan(ALIASES, _ctx(lib), options=[], kind="textarea") == ([], ["f"])
+    assert _plan(ALIASES, _ctx(lib), options=[], kind="text") == ([], ["f"])
+    assert known_answer(ALIASES, [], library=lib) is None
+    # the person said none in Apply setup: exactly what the question asks for
+    lib.save(S.QUESTIONS["other_names"], "None")
+    assert _plan(ALIASES, _ctx(lib), options=[], kind="textarea") == ([("N/A", "library")], [])
+    assert known_answer(ALIASES, [], library=lib) == ("N/A", "library")
+    assert _plan("Other names used. If none, write None.", _ctx(lib), options=[], kind="text") == ([("None", "library")], [])
+    assert _plan("Former or maiden name", _ctx(lib), options=[], kind="text") == ([("N/A", "library")], [])
+    assert _plan("Have you ever used another name?", _ctx(lib)) == ([("No", "library")], [])
+    # names they gave are written as given
+    lib.save(S.QUESTIONS["other_names"], "Sam Sample")
+    assert _plan(ALIASES, _ctx(lib), options=[], kind="textarea") == ([("Sam Sample", "library")], [])
+    assert _plan("Have you ever used another name?", _ctx(lib)) == ([("Yes", "library")], [])
+    for other in ("Preferred name", "First name", "Company name", "Name of your reference", "Emergency contact name"):
+        assert not CS.other_names_question(other), other
+
+
+def test_what_a_question_asks_for_when_there_is_nothing():
+    assert CS.none_word(ALIASES) == "N/A" and CS.none_word(CONNECTIONS) == "N/A"
+    assert CS.none_word("List any other names. If none, write None.") == "None"
+    assert CS.none_word('Please enter "N/A" if not applicable') == "N/A"
+    assert CS.none_word("List your previous names (write n/a if none)") == "n/a"
+    assert CS.none_word("Other names used") == "N/A"                  # it names no word: N/A
+    for said in ("None", "none.", "N/A", "n/a", "No", "Not applicable"):
+        assert CS.said_none(said), said
+    assert not CS.said_none("Sam Sample") and not CS.said_none("")
+
+
+def test_connections_employed_here_as_a_list_follow_the_standing_no_on_relatives(lib):
+    assert CS.relatives_list_question(CONNECTIONS) and not CS.relatives_question(CONNECTIONS)
+    # nothing saved, or "Yes, ask me each time": theirs to list
+    assert _plan(CONNECTIONS, _ctx(lib), options=[], kind="textarea") == ([], ["f"])
+    assert known_answer(CONNECTIONS, [], library=lib) is None
+    lib.save(S.QUESTIONS["relatives"], "Yes")
+    assert _plan(CONNECTIONS, _ctx(lib), options=[], kind="textarea") == ([], ["f"])
+    # a standing No: what the question asks for
+    lib.save(S.QUESTIONS["relatives"], "No")
+    assert _plan(CONNECTIONS, _ctx(lib), options=[], kind="textarea") == ([("N/A", "library")], [])
+    assert _plan(CONNECTIONS, _ctx(lib), options=[], kind="text") == ([("N/A", "library")], [])
+    assert known_answer(CONNECTIONS, [], library=lib) == ("N/A", "library")
+    assert _plan("Please list any relatives who work at Globex Hale. If none, write None.", _ctx(lib), options=[],
+                 kind="textarea") == ([("None", "library")], [])
+    # the Yes / No form still gets its No, as before
+    assert _plan(RELATIVES, _ctx(lib)) == ([("No", "library")], [])
+    # never a follow-up to a Yes, a reference, a client, a public official
+    for other in ("If yes, please list the names of your relatives employed by Globex Hale.",
+                  "List your references and their relationship to you",
+                  "List all clients of Globex Hale you have worked with",
+                  "List any relatives who are government officials"):
+        assert not CS.relatives_list_question(other), other
+        acts, _left = _plan(other, _ctx(lib), options=[], kind="textarea")
+        assert acts == [], other
+
+
+def test_apply_setup_asks_other_names_once_in_five_locales(app):
+    mod, _rid = app
+    c = mod.app.test_client()
+    get = lambda: c.get("/api/apply-setup", headers=H).get_json()["forms"]["other_names"]     # noqa: E731
+    save = lambda v: c.post("/api/apply-setup/save", json={"step": "forms", "fields": {"other_names": v}}, headers=H)  # noqa: E731
+    assert get() == ""                                                        # unanswered: no default
+    assert save("None").status_code == 200 and get() == "None"
+    assert save("Sam Sample").status_code == 200 and get() == "Sam Sample"
+    assert save("").status_code == 200 and get() == ""                        # cleared again
+    for lang in ("de", "en", "es", "fr", "pt"):
+        d = json.loads((ROOT / "ui" / "static" / "locales" / f"{lang}.json").read_text(encoding="utf-8"))
+        for k in ("setup.otherNames", "setup.otherNamesPh"):
+            assert d.get(k), (lang, k)
+            assert "—" not in d[k] and "–" not in d[k]
+    js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'suInput("other_names", suT("setup.otherNames"' in js

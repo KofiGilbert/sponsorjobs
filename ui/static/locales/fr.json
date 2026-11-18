@@ -1727,6 +1727,8 @@
   "setup.covenants": "Une clause de non-concurrence ou autre restriction",
   "setup.relatives": "Des membres de votre famille travaillent-ils dans des entreprises où vous postulez ?",
   "setup.relativesAsk": "Oui, me demander à chaque fois",
+  "setup.otherNames": "Autres noms que vous avez utilisés (écrivez Aucun s'il n'y en a pas)",
+  "setup.otherNamesPh": "Aucun",
   "setup.worked": "Déjà travaillé ici ? Répondu à partir de ton parcours : Oui chez {list}, Non ailleurs.",
   "setup.workedNone": "Déjà travaillé ici ? Répondu à partir de ton parcours dès que ton CV liste tes employeurs.",
   "setup.consents": "Avis et messages",

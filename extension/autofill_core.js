@@ -386,11 +386,15 @@ function qsaSafe(sel, root) {
     for (const c of CATEGORIES) {
       if (c.re.test(sig)) {
         if (c.key === "name" && NAME_VETO.test(sig)) continue;
+        // (2026-11-18) "Phone Device Type" asks which KIND of phone, never the number: the
+        // number was offered to that list as its answer (autoapply/commonsense.py answers it).
+        if (c.key === "phone" && PHONE_KIND_RE.test(sig)) continue;
         return c.key;
       }
     }
     return null;
   }
+  const PHONE_KIND_RE = /(phone|telephone|number|device)[\s_-]*(device[\s_-]*)?type\b|type of (phone|telephone|device|number)/;
 
   const FILLABLE_TYPES = new Set(["text", "email", "tel", "url", "search", ""]);
 

@@ -34,6 +34,19 @@ stops for them (a Workday "Application Questions" page asked five; four needed n
   (MA, MS)", "Graduate degree", "4-year degree"), else the nearest lower choice. Never a choice
   above what the profile holds. Origin ``history``.
 
+* **Phone device type** ("Phone Device Type", "Phone Type", "Type of phone"; Workday's My
+  Information): the mobile choice ("Mobile", "Cell", "Cellular", "Cell Phone", "Personal Cell",
+  "Mobile Phone"), origin ``common_sense``. A saved answer wins only when it is one of the
+  choices; one that is not falls back to the mobile choice, never a question. (The label used
+  to read as the phone NUMBER, so the number was offered to the list as the answer.)
+* **Other names used** ("List any aliases or other name(s) you have used or currently use or
+  indicate N/A."): Apply setup asks ONCE (``@other_names``). Saved names fill it; a saved "None"
+  fills what the question asks for when there is nothing ("N/A", "None"). Nothing saved: theirs.
+* **Connections employed by the company, as a list** ("List all close personal and professional
+  connections employed by Acme and their relationship to you, or indicate N/A."): the free-text
+  form of the relatives question. A standing No (``@relatives_at_employer``) writes what the
+  question asks for when there is nothing; anything else leaves it for the person.
+
 Acknowledgements worded as a Yes / No choice live in autoapply/consents.py. Category rules on the
 question's words, never one site's markup. Pure: the caller (ui/app.py) reads the stores.
 """
@@ -389,3 +402,134 @@ def education_answer(label: str, options, level: str, field_type: str = "select"
     if (field_type or "").lower() == "checkbox" or level not in EDU_WORDS:
         return None
     return EDU_WORDS[level], "history"
+
+
+# ---------------------------------------------------------------------------- phone device type
+_PHONE_TYPE = re.compile(r"\b(phone|telephone|device|contact number|number)\s+(device\s+)?type\b"
+                         r"|\btype of (phone|telephone|device|number|contact number)\b", re.I)
+# The mobile choice, best first: the plain word, then its usual longer forms, then any choice that
+# says mobile or cell and is not a work or other line.
+_MOBILE = (re.compile(r"^\W*mobile\W*$", re.I), re.compile(r"^\W*(mobile|cell|cellular)( ?phone)?\W*$", re.I),
+           re.compile(r"^\W*(personal|my|own) (mobile|cell|cellular)( ?phone)?\W*$", re.I),
+           re.compile(r"\b(mobile|cell|cellular)\b", re.I))
+_NOT_MY_MOBILE = re.compile(r"\b(work|business|office|company|other|fax|pager)\b", re.I)
+
+
+def phone_type_question(label: str) -> bool:
+    """True for "Phone Device Type", "Phone Type", "Type of phone": which KIND of phone the
+    number is, never the number itself."""
+    lbl = _squash(label)
+    return bool(lbl) and len(lbl) <= 120 and bool(_PHONE_TYPE.search(lbl))
+
+
+def mobile_option(options) -> str | None:
+    """The list's mobile choice ("Mobile", "Cell Phone", "Personal Cell"), None when it has none."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    for i, rx in enumerate(_MOBILE):
+        for o in opts:
+            if rx.search(o) and not (i == len(_MOBILE) - 1 and _NOT_MY_MOBILE.search(o)):
+                return o
+    return None
+
+
+def phone_type_answer(label: str, options, saved: str = "", field_type: str = "select") -> tuple[str, str] | None:
+    """(answer, origin) for a phone type question: the person's saved answer when it is one of
+    the choices ("library"), else the mobile choice ("common_sense"); a text box, or a list whose
+    choices were not read, gets the saved answer or "Mobile". None only when a list has no
+    mobile choice at all."""
+    if not phone_type_question(label) or (field_type or "").lower() == "checkbox":
+        return None
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    saved = _squash(saved)
+    if opts:
+        if saved:
+            hit = next((o for o in opts if _squash(o).lower() == saved.lower()), None)
+            if hit:
+                return hit, "library"
+        v = mobile_option(opts)
+        return (v, "common_sense") if v else None
+    return (saved, "library") if saved else ("Mobile", "common_sense")
+
+
+# ---------------------------------------------------------------------------- nothing to list
+# What a question asks for when there is nothing to list: "... or indicate N/A", "if none, write
+# None", "enter N/A if not applicable". The word as the question writes it; "N/A" when it says none.
+_NONE_ASKED = re.compile(
+    r"(?:indicate|write|enter|type|put|state|answer|respond(?: with)?|mark|say|use)\s+[\"'“‘(]?"
+    r"(?P<a>n\s?/\s?a|none|not applicable)\b"
+    r"|[\"'“‘(]?(?P<b>n\s?/\s?a|none)[\"'”’)]?\s+if (?:none|not applicable|there are none|this does not apply)", re.I)
+_NONE_SAID = re.compile(r"^\W*(none|no|nope|n\s?/?\s?a|not applicable|nil|nothing|no other names?|i have (none|not))\W*$", re.I)
+
+
+def none_word(label: str) -> str:
+    """The word the question asks for when there is nothing to list, as it writes it ("N/A",
+    "None"); "N/A" when the question names none."""
+    m = _NONE_ASKED.search(_squash(label))
+    w = (m.group("a") or m.group("b")) if m else ""
+    return re.sub(r"\s+", "", w) if w else "N/A"
+
+
+def said_none(answer: str) -> bool:
+    """True when a saved answer says there is nothing ("None", "N/A", "No")."""
+    return bool(_NONE_SAID.match(_squash(answer)))
+
+
+# ---------------------------------------------------------------------------- other names used
+OTHER_NAMES_KEY = "@other_names"
+_ALIASES = re.compile(r"\balias(es)?\b|\b(other|another|former|previous|prior|maiden|different) (legal )?names?\b"
+                      r"|\bother name\(s\)|\bnames? (you have |you've )?(previously |ever )?(used|gone by|been known (by|as))\b"
+                      r"|\balso known as\b|\ba\.?k\.?a\b", re.I)
+# Someone else's name, or a name that is not a person's: never this question.
+_ALIASES_NOT = re.compile(r"\b(reference|referr|emergency|manager|supervisor|spouse|parent|guardian|company|employer|school"
+                          r"|universit|business|product|preferred name)\b", re.I)
+
+
+def other_names_question(label: str) -> bool:
+    """True for "List any aliases or other name(s) you have used or currently use", "Have you
+    ever used another name?", "Former or maiden name"."""
+    lbl = _squash(label)
+    return bool(lbl) and len(lbl) <= 300 and bool(_ALIASES.search(lbl)) and not _ALIASES_NOT.search(lbl)
+
+
+def other_names_answer(label: str, saved: str, options=None, field_type: str = "text") -> tuple[str, str] | None:
+    """(answer, "library") from the person's standing answer in Apply setup (``@other_names``),
+    else None (theirs: never a guess). Names they gave fill a text box as given. "None" fills what
+    the question asks for when there is nothing ("N/A", "None"), and a Yes / No form of the
+    question ("Have you used another name?") gets No, or Yes when they gave names."""
+    saved = _squash(saved)
+    if not saved or not other_names_question(label):
+        return None
+    none = said_none(saved)
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    t = (field_type or "text").lower()
+    if opts or t in ("select", "radio"):
+        v = workauth.pick_yes_no(not none, opts) if opts else None
+        return (v, "library") if v else None
+    if t not in ("text", "textarea"):
+        return None
+    return (none_word(label) if none else saved), "library"
+
+
+# ---------------------------------------------------------------------------- connections, as a list
+_CONNECTIONS = re.compile(r"\b(connections?|relationships?|acquaintances?|contacts)\b", re.I)
+_LISTS = re.compile(r"^\W*(please )?(list|name|identify|provide|state|describe|disclose|tell us)\b", re.I)
+
+
+def relatives_list_question(label: str) -> bool:
+    """True for the free-text form of "do you know or are you related to anyone employed here?":
+    "List all close personal and professional connections employed by Acme and their
+    relationship to you, or indicate N/A.", "Please list any relatives who work at Acme". Never
+    a follow-up to a Yes ("If yes, please list ...": that box stays empty), a public official, a
+    competitor, a client or a referral."""
+    lbl = _squash(label)
+    if not lbl or len(lbl) > 400 or not _LISTS.search(lbl) or _REL_NOT.search(lbl):
+        return False
+    return bool((_REL.search(lbl) or _CONNECTIONS.search(lbl)) and _REL_WORK.search(lbl))
+
+
+def relatives_list_answer(label: str, library, field_type: str = "text") -> tuple[str, str] | None:
+    """("N/A" | "None" as the question asks, "library") when the person saved a standing No on
+    relatives at a company they apply to, else None (theirs to list)."""
+    if (field_type or "text").lower() not in ("text", "textarea") or not relatives_list_question(label):
+        return None
+    return (none_word(label), "library") if relatives_saved(library) == "No" else None

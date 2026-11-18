@@ -7206,6 +7206,8 @@ def _setup_payload() -> dict:
             "covenants": S.yes_no(saved.get("@restrictive_covenants")),
             # "" (never answered), "No" (answered No everywhere) or "ask" (Yes, ask me each time)
             "relatives": {"No": "No", "Yes": "ask"}.get(S.yes_no(saved.get("@relatives_at_employer")), ""),
+            # "" (never answered: a form's alias question stays the person's), "None", or the names
+            "other_names": saved.get("@other_names") or "",
             "marketing": S.yes_no(saved.get("@marketing_optin")) or "No",
             "forced": "always" if S.yes_no(saved.get("@forced_consent")) == "Yes" else "ask",
             "terms": _terms_pref(),
@@ -7385,6 +7387,8 @@ def _setup_forms(f: dict) -> None:
             patch["over_18"] = S.yes_no(f.get("over_18"))
         if "forced" in f:
             _setup_answer(lib, "forced", "Yes" if f.get("forced") == "always" else "")
+        if "other_names" in f:                   # "None" (or the names); empty removes it
+            _setup_answer(lib, "other_names", " ".join(str(f.get("other_names") or "").split())[:120])
         if "relatives" in f:                     # "ask" is saved as Yes: some do, so ask each time
             _setup_answer(lib, "relatives", {"No": "No", "ask": "Yes"}.get(str(f.get("relatives") or ""), ""))
         if clearance is not None:

@@ -116,6 +116,9 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     # No answers No on every form; Yes asks each time. Never set from one form's answer.
     _k("@relatives_at_employer", "yes_no", LEGAL, choices=_YES_NO,
        ask="Do any of your relatives work at companies you apply to?"),
+    # (2026-11-18) Aliases, a maiden or former name (autoapply/commonsense.py): "None" when there
+    # are none. Asked once in Apply setup; never guessed.
+    _k("@other_names", ask="What other names have you used?"),
     # What the person is paid now: filled only when a form asks it.
     _k("@current_salary", "money", ask="What is your current annual salary?"),
     _k("@current_bonus", "money", ask="What is your current annual bonus?"),

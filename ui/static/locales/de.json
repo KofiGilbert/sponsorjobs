@@ -1727,6 +1727,8 @@
   "setup.covenants": "Ein Wettbewerbsverbot oder eine andere Beschränkung",
   "setup.relatives": "Arbeiten Verwandte von dir bei Firmen, bei denen du dich bewirbst?",
   "setup.relativesAsk": "Ja, frag mich jedes Mal",
+  "setup.otherNames": "Andere Namen, die du verwendet hast (schreibe Keine, wenn es keine gibt)",
+  "setup.otherNamesPh": "Keine",
   "setup.worked": "Schon hier gearbeitet? Aus deinem Werdegang beantwortet: Ja bei {list}, sonst überall Nein.",
   "setup.workedNone": "Schon hier gearbeitet? Aus deinem Werdegang beantwortet, sobald dein Lebenslauf deine Arbeitgeber nennt.",
   "setup.consents": "Hinweise und Nachrichten",

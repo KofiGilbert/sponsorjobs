@@ -1727,6 +1727,8 @@
   "setup.covenants": "A non-compete or other restrictive covenant",
   "setup.relatives": "Do any of your relatives work at companies you apply to?",
   "setup.relativesAsk": "Yes, ask me each time",
+  "setup.otherNames": "Other names you have used (write None if there are none)",
+  "setup.otherNamesPh": "None",
   "setup.worked": "Worked here before? Answered from your history: Yes at {list}, No everywhere else.",
   "setup.workedNone": "Worked here before? Answered from your history once your resume lists your employers.",
   "setup.consents": "Notices and messages",

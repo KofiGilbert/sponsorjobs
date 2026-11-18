@@ -219,6 +219,19 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         got = COMMON.applied_answer(q, ak, applied_here, worked_here if per_company else None)
         v = fit(got[0]) if got else None
         return (v, got[1]) if v else None
+    # (2026-11-18) the kind of phone, other names used, connections employed here as a list
+    if COMMON.phone_type_question(q):
+        own = library.lookup(q) if library is not None else None
+        return COMMON.phone_type_answer(q, opts, (own or {}).get("answer") or "", "select" if opts else "text")
+    if COMMON.other_names_question(q):
+        row = library.best(COMMON.OTHER_NAMES_KEY) if library is not None and hasattr(library, "best") else None
+        own = library.lookup(q) if library is not None else None
+        return COMMON.other_names_answer(q, (own or row or {}).get("answer") or "", opts, "select" if opts else "text")
+    if COMMON.relatives_list_question(q) and not opts:
+        own = library.lookup(q) if library is not None else None
+        if own and str(own.get("answer") or "").strip():
+            return str(own["answer"]).strip(), "library"
+        return COMMON.relatives_list_answer(q, library, "text")
     if COMMON.relatives_question(q):
         got = COMMON.relatives_answer(library)
         v = fit(got[0]) if got else None

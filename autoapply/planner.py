@@ -62,7 +62,9 @@ _CONTACT: list[tuple[str, re.Pattern]] = [
     ("first_name", re.compile(r"first name|given name|forename|^\W*first\W*$", re.I)),
     ("last_name", re.compile(r"last name|surname|family name|^\W*last\W*$", re.I)),
     ("full_name", re.compile(r"^\W*(full |legal |your )*name\W*$", re.I)),
-    ("phone", re.compile(r"phone|mobile|telephone|\bcell\b", re.I)),
+    # never the KIND of phone ("Phone Device Type") or its extension: those are not the number
+    ("phone", re.compile(r"^(?!.*\b(device type|phone type|telephone type|number type|type of (phone|telephone|device|number)"
+                         r"|extension|ext)\b).*(phone|mobile|telephone|\bcell\b)", re.I)),
     ("linkedin", re.compile(r"linked\s?in", re.I)),
     ("github", re.compile(r"git\s?hub", re.I)),
     ("website", re.compile(r"website|portfolio|personal (site|url|page)|\bblog\b", re.I)),
@@ -922,6 +924,43 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin=origin, sensitive=True))
                 if hit and hit.get("key"):
                     out.used_library.append(hit["key"])
+            else:
+                out.left.append(f)
+            continue
+
+        # 1a+. (2026-11-18) Common sense, before anything reads these labels as something else:
+        #      "Phone Device Type" is the KIND of phone (it used to read as the phone number): the
+        #      saved answer when it is one of the choices, else the mobile choice. "List any
+        #      aliases or other names ... or indicate N/A": the standing answer from Apply setup,
+        #      never a guess. "List all ... connections employed by <company> ... or indicate
+        #      N/A": what the question asks for when there is none, under a standing No on relatives.
+        if commonsense.phone_type_question(label):
+            hit = ctx.library.lookup(label) if ctx.library is not None else None
+            got = commonsense.phone_type_answer(label, f.options, (hit or {}).get("answer") or "", t)
+            if got:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=got[0], origin=got[1], sensitive=True))
+                if got[1] == "library" and hit and hit.get("key"):
+                    out.used_library.append(hit["key"])
+            else:
+                out.left.append(f)
+            continue
+        if commonsense.other_names_question(label):
+            row = ctx.library.best(commonsense.OTHER_NAMES_KEY) if ctx.library is not None and hasattr(ctx.library, "best") else None
+            own = ctx.library.lookup(label) if ctx.library is not None else None
+            got = commonsense.other_names_answer(label, (own or row or {}).get("answer") or "", f.options, t)
+            if got:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=got[0], origin=got[1], sensitive=True))
+                out.used_library.append((own or row).get("key") or commonsense.OTHER_NAMES_KEY)
+            else:
+                out.left.append(f)
+            continue
+        if commonsense.relatives_list_question(label):
+            own = ctx.library.lookup(label) if ctx.library is not None else None
+            got = ((own["answer"], "library") if own and str(own.get("answer") or "").strip() and t in ("text", "textarea")
+                   else commonsense.relatives_list_answer(label, ctx.library, t))
+            if got:
+                out.actions.append(FillAction(f.ref, "fill", value=got[0], origin=got[1], sensitive=True))
+                out.used_library.append((own or {}).get("key") or commonsense.RELATIVES_KEY)
             else:
                 out.left.append(f)
             continue

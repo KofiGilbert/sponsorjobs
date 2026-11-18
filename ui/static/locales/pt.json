@@ -1727,6 +1727,8 @@
   "setup.covenants": "Um acordo de não concorrência ou outra restrição",
   "setup.relatives": "Algum parente seu trabalha em empresas às quais você se candidata?",
   "setup.relativesAsk": "Sim, pergunte-me sempre",
+  "setup.otherNames": "Outros nomes que você já usou (escreva Nenhum se não houver)",
+  "setup.otherNamesPh": "Nenhum",
   "setup.worked": "Já trabalhou aqui? Respondido pelo seu histórico: Sim em {list}, Não nas demais.",
   "setup.workedNone": "Já trabalhou aqui? Respondido pelo seu histórico assim que o currículo listar seus empregadores.",
   "setup.consents": "Avisos e mensagens",
