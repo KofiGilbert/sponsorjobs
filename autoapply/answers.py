@@ -150,8 +150,12 @@ _CANON: list[tuple[str, re.Pattern]] = [
     ("years_experience", re.compile(
         r"^(how many )?(total )?years (of )?(professional |relevant |work |industry )?experience"
         r"( do you have)?( in total| overall)?$")),
+    # (2026-11-17) Also "Are you 18 or older?", "Are you 18+?", "Are you of legal age to work?".
     ("over_18", re.compile(r"(at least|over|older than) (the age of )?18|18 years (of age|or older|old)"
-                           r"|age of majority")),
+                           r"|age of majority|\b18 (or|and) (older|over|above)\b|^are you 18\+?$"
+                           r"|\b(are you|i am|you are)\b.*\blegal (working|employment) age\b"
+                           r"|\b(are you|i am|you are)\b.*\blegal (minimum )?age\b.*\b(work|employ)"
+                           r"|\b(are you|i am|you are) legally old enough to work\b")),
     # Voluntary self-identification (EEO): asked once, answered the same way everywhere. Each is
     # the WHOLE label (_ASK ... _TAIL): "Race: Asian" is one box of a checkbox group, "Gender
     # pronouns" is another question, and an accommodation question is not the disability one.
@@ -249,6 +253,10 @@ _CANON: list[tuple[str, re.Pattern]] = [
     # The standing choice on a REQUIRED consent whose only choice is yes (autoapply/consents.py),
     # saved by its own wording only, like the marketing opt-in.
     ("forced_consent", re.compile(r"^accept (a )?required consents? whose only choice is yes$")),
+    # (2026-11-17) The standing answer on relatives employed by a company the person applies to
+    # (autoapply/commonsense.py), saved by Apply setup's own wording only: an answer to one
+    # company's question never becomes it.
+    ("relatives_at_employer", re.compile(r"^do any of your relatives work at companies you apply to$")),
 ]
 
 _EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability",

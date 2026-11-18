@@ -514,3 +514,10 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   question list and no answer box over the Browser pane. A dead end is never acceptable: every
   ask has a way on (answer, Next, Skip this job). Not yet checked at Kofi's window (no app run on
   the 8 GB builder); check at 76% zoom and 100% before release.
+- 2026-11-17: Apply setup, Form questions, asks ONE new question in plain words: "Do any of your
+  relatives work at companies you apply to?" with **No** and **Yes, ask me each time**. No choice
+  is preselected (the agent never invents this answer); it sits full width under the non-compete
+  row, the same segmented control as its neighbours. Review answers gains one source label, "Your
+  tracker" (an "applied here before" answer from the person's earlier applications). Not yet
+  checked at Kofi's window (no app run on the 8 GB builder); check at 76% zoom and 100% before
+  release.

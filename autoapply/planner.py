@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from autoapply import consents, eeo, workauth
+from autoapply import commonsense, consents, eeo, workauth
 from autoapply.answers import normalize
 from autoapply import countries
 from autoapply.countries import country_option
@@ -48,7 +48,8 @@ _FACT = re.compile(
 def is_fact_question(label: str) -> bool:
     """True for a question only the person's own material may answer."""
     lbl = str(label or "")
-    return bool(_FACT.search(lbl) or workauth.classify(lbl) or normalize(lbl).startswith("@"))
+    return bool(_FACT.search(lbl) or workauth.classify(lbl) or normalize(lbl).startswith("@")
+                or consents.is_acknowledgement(lbl))
 
 
 # --------------------------------------------------------------------------- profile fields
@@ -210,7 +211,7 @@ _EMPLOYEE_OF = re.compile(
     + r"|\b" + _WHEN + r"(?:\s*(?:or|/|and)\s*" + _WHEN + r")?\s+(?:employee|contractor|intern)s?\s+(?:of|at|with|for)\s+"
     r"(?P<who3>[^?()]{2,80})", re.I)
 _SOMEONE_ELSE = re.compile(r"relative|related|family|friend|spouse|anyone|someone|know|refer|partner", re.I)
-_CO_SUFFIX = re.compile(r"\b(inc|incorporated|llc|l l c|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|sa"
+_CO_SUFFIX = re.compile(r"\b(inc|incorporated|llc|l l c|llp|l l p|pllc|lp|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|sa"
                         r"|group|holdings?|technologies|labs|usa|u s a|north america|americas|international|global)\b", re.I)
 # "Why do you want to work at Acme?", "Would you like to work for Acme?": a wish, not a history.
 _WISH = re.compile(r"\bwhy\b|\b(want|like|love|wish|hope|plan|excited|eager|interested in|choose|chose)\b[^?]{0,12}"
@@ -675,6 +676,12 @@ class KnownContext:
     # accept_required_terms "always"): an acknowledgement question gets its affirmative choice
     # (autoapply/consents.py). Marketing opt-ins are declined unless @marketing_optin says yes.
     accept_notices: bool = False
+    # (2026-11-17, autoapply/commonsense.py) ``adult``: the saved profile proves the person is
+    # at least 18 (a degree, or a job or school date 4 years back); ``applied_here``: ("Yes" | "No",
+    # "tracker") for "have you applied to this company before?" from the person's own records,
+    # None when they could not be read (then it stays a question).
+    adult: bool = False
+    applied_here: tuple | None = None
 
 
 @dataclass
@@ -850,9 +857,41 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="profile", sensitive=True))
             continue
 
+        # 1a'. (2026-11-17, autoapply/commonsense.py) "Have you applied to / interviewed with this
+        #      company before?": the person's own answer to this wording, else their records (No
+        #      when the Tracker holds no earlier application here, Yes when it does); a question
+        #      that also asks "or worked for" needs the worked-here verdict too
+        qkey0 = normalize(label)
+        ak = commonsense.applied_question(label, ctx.company) if ctx.applied_here else ""
+        if ak:
+            hit = ctx.library.lookup(label) if ctx.library is not None and not qkey0.startswith("@") else None
+            v, origin = (_literal(f, hit["answer"]) if hit else None), "library"
+            if not v:
+                hit = None
+                got = commonsense.applied_answer(label, ak, ctx.applied_here,
+                                                 ctx.worked_here if ctx.per_company else None)
+                v, origin = (_literal(f, got[0]), got[1]) if got else (None, "")
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin=origin, sensitive=True))
+                if hit and hit.get("key"):
+                    out.used_library.append(hit["key"])
+            else:
+                out.left.append(f)
+            continue
+
+        # 1a''. "Are any of your relatives employed by this company?": No when the person saved a
+        #       standing No in Apply setup (@relatives_at_employer); unsaved or "ask me each time"
+        #       falls through to their own answer to this exact wording, else it is theirs
+        if commonsense.relatives_question(label):
+            got = commonsense.relatives_answer(ctx.library)
+            v = _literal(f, got[0]) if got else None
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin=got[1], sensitive=True))
+                out.used_library.append(commonsense.RELATIVES_KEY)
+                continue
+
         # 1b. "Have you worked here before?": for THIS company (applicant/facts.py worked_here),
         #     also when the question names the company ("... working at Gusto or Symmetry ...")
-        qkey0 = normalize(label)
         if ctx.per_company and qkey0 != "@previously_worked" and asks_worked_here(label, ctx.company, ctx.confirm):
             qkey0 = "@previously_worked"
         if ctx.per_company and qkey0 == "@previously_worked":
@@ -908,6 +947,12 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             hit = keyed(ctx, qkey0, hit)                   # (Phase 4) withheld, or this country's
             if not hit and qkey0 in ctx.withhold:
                 out.left.append(f)                         # a stale value: theirs to give again
+                continue
+        if not hit and ctx.adult and commonsense.is_adult_question(label):
+            # (2026-11-17) no saved answer, and the profile shows it (a degree, or a date 4 years back)
+            v = _literal(f, "Yes", qkey0)
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="history", sensitive=True))
                 continue
         if not hit and label in ctx.confirm:
             out.left.append(f)                             # a new wording of a legal question: asked once

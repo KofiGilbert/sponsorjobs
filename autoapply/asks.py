@@ -27,6 +27,7 @@ import json
 import re
 import threading
 
+from autoapply import commonsense as COMMON
 from autoapply import consents as CONSENTS
 from autoapply import eeo as EEO
 from autoapply import workauth
@@ -106,7 +107,8 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
                  per_company: bool = False, worked_here=None, hold=frozenset(), mapped=None, confirm=None,
                  withhold=frozenset(), job_salary: str = "", wa_ended=None,
                  company: str = "", eeo_fallback: bool = False,
-                 accept_notices: bool = False) -> tuple[str, str] | None:
+                 accept_notices: bool = False, adult: bool = False,
+                 applied_here=None, full: str = "") -> tuple[str, str] | None:
     """(answer, origin) when the person's own material answers this question, else None.
     Origins: "library", "workauth", "eeo_decline". ``options`` is every choice the page has (or
     as many as were read; ``partial`` says the list is cut). With options, the answer is the
@@ -129,7 +131,14 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     label mapper matched it to; ``confirm`` {question: key}: such a mapping to a legal or
     self-identification key, not confirmed yet (not known: the person taps once); ``withhold``:
     keys whose saved value expired or does not fit this job; ``job_salary``: the salary for a job
-    outside the US; ``wa_ended``: the job country's status ended on that date (applicant/expiry.py)."""
+    outside the US; ``wa_ended``: the job country's status ended on that date (applicant/expiry.py).
+
+    (2026-11-17, autoapply/commonsense.py) ``adult``: the saved profile proves the person is at
+    least 18, by a degree or a date 4 years back (origin "history"); ``applied_here``: the records' verdict on "have you applied to
+    this company before?" (origin "tracker"); a standing No on relatives employed by the company
+    (``@relatives_at_employer``, origin "library"). ``full``: the question's whole wording when
+    ``question`` was cut short (a long notice whose "Please select Yes to acknowledge" comes
+    last): the standing rules for opt-ins and acknowledgements read that."""
     q = str(question or "").strip()
     if not q:
         return None
@@ -193,10 +202,27 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     # (2026-11-17) A marketing opt-in: the decline (or the person's saved yes); an acknowledgement
     # of a notice or condition: its affirmative choice under the standing consent to required
     # notices (autoapply/consents.py). A forced consent falls through to their own saved words.
-    got = CONSENTS.standing_answer(q, opts, "select" if opts else "text", True, library=library,
-                                   accept_notices=accept_notices)
+    whole = " ".join(str(full or "").split())
+    got = CONSENTS.standing_answer(whole if whole.startswith(q) else q, opts, "select" if opts else "text", True,
+                                   library=library, accept_notices=accept_notices)
     if got is not None and got[0] == CONSENTS.PICK:
         return got[1], got[2]
+    # (2026-11-17) "Have you applied to this company before?": their own answer to this wording,
+    # else their records; "Are any of your relatives employed here?": a standing No from setup.
+    ak = COMMON.applied_question(q, company) if applied_here else ""
+    if ak:
+        own = library.lookup(q) if library is not None and not normalize(q).startswith("@") else None
+        v = fit(own.get("answer")) if own else None
+        if v:
+            return v, "library"
+        got = COMMON.applied_answer(q, ak, applied_here, worked_here if per_company else None)
+        v = fit(got[0]) if got else None
+        return (v, got[1]) if v else None
+    if COMMON.relatives_question(q):
+        got = COMMON.relatives_answer(library)
+        v = fit(got[0]) if got else None
+        if v:
+            return v, got[1]
     if per_company and key == "@previously_worked":
         ok = worked_here and worked_here[1] != "confirm" and fit(worked_here[0])
         return (fit(worked_here[0]), worked_here[1] or "library") if ok else None
@@ -207,6 +233,10 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         hit = keyed(ctx, key, hit)
         if not hit and key in (withhold or ()):
             return None
+    if not hit and adult and COMMON.is_adult_question(q):
+        v = fit("Yes")                       # the profile shows it: a degree, or a date 4 years back
+        if v:
+            return v, "history"
     if not hit and q in ctx.mapped:
         got = mapped_value(ctx.mapped[q], FormField(ref="q", label=q, type="select" if opts else "text",
                                                     options=opts, required=True), ctx)

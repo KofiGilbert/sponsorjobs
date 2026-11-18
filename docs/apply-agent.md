@@ -1063,3 +1063,37 @@ typed "No" and "I still could not tell" looped for ever while an answered siblin
   offers: Yes." with the ways on (a choice, leave it empty, skip this job), and nothing loops. An answer already given
   travels to the shell at once (`partial` on a waiting ask).
 - Tests: tests/test_agent_batch_exits.py, tests/js/test_agent_guide.js.
+
+## 28. Common-sense screeners: at least 18, applied before, Yes / No acknowledgements, relatives (2026-11-17)
+
+A Workday "Application Questions" page stopped a filled application with "5 fields need you": five
+required Yes / No selects, four of which needed no person. The standing rule is "apply common sense,
+never stop to ask simple questions". Four category rules, on the question's words (never one site's
+markup), in the planner (`plan_known`) and in the ask route's known check (`asks.known_answer`),
+before the grounded call, which never sees these questions (`grounded.eligible`); the label mapper
+never sees them either (`mapper.rule_known`). The pure half is `autoapply/commonsense.py`; the
+stores are read in ui/app.py (`_common_sense`, `_earlier_applications`).
+
+| Question | Answered from | Review answers | Stays a question when |
+|---|---|---|---|
+| **At least 18 / legal working age** ("Are you 18 years of age or older?", "Are you over 18?", "Are you 18+?", "Are you of legal age to work?") | the saved answer (`@over_18`) first; else **Yes** when the saved profile shows it (`adult_proof`): a higher-education entry (a bachelor's, master's, MBA, doctorate, associate degree, a university or college diploma; by the degree's words, never the school's name alone) that is finished or was started at least a year ago, or a job or school date at least 4 years before today (a date with no month counts as December) | "Saved answer", or "Your resume" (origin `history`) | a high-school-only profile with a recent date, a first job under 4 years ago and no degree, no dates; the inverse or another age ("under 18", "between 18 and 21", "21 or older", a work permit). Never a No, never a guess |
+| **Applied to / interviewed with this company before** ("Have you previously applied for employment with Acme or any of its predecessor firms?") | the person's own answer to that wording first; else their records: **No** when no earlier application to the company exists, **Yes** when one does. Earlier applications are saved applications marked applied or further, and Tracker cards that were applied to; the company name is normalised (`facts.same_company`), and the application being filled and its Tracker card are left out | "Your tracker" (origin `tracker`) | the records could not be read; a Yes to a question about a time window ("in the last 12 months") or this very position; the question names another employer, a relative, a visa, a clearance. "Applied to or worked for" needs both verdicts: Yes when either says Yes, No only when both say No (a worked-here Yes read from the resume still waits for its one tap) |
+| **An acknowledgement worded as a Yes / No choice** ("Please select "Yes" to acknowledge that you have received and understand this requirement", "Please be aware that ..." with Yes and No, "I understand ...", "I acknowledge ...") | the affirmative choice, under the same standing consent as the required checkboxes (`accept_required_terms` "always") | "Your consent to required notices" (origin `consent`) | the preference is off; the text asks something ("Are you aware of any conflicts of interest?", "... Are you willing to travel?"; only "Do you understand / agree?" may follow a notice); a marketing or SMS opt-in (its own rule: declined, or a forced consent); a covenant, a conviction or any other disclosure (`_DISCLOSE`); a question a saved key answers; a statement the page view cut at 80 characters (its end is not known) |
+| **Relatives employed by the company** ("Are any of your relatives presently employed by Acme?") | only a standing **No** the person saved in Apply setup (`@relatives_at_employer`): then No on every form | "Saved answer" (origin `library`; "Your answer" when it went in through the ask route, like every saved answer there) | nothing saved, or "Yes, ask me each time"; a question about a government or public official, a competitor, a client, a referral. Never a default |
+
+- **Apply setup, step 4 (Form questions)** asks once: "Do any of your relatives work at companies you
+  apply to?" with **No** and **Yes, ask me each time**; unanswered by default. "Ask" is saved as Yes
+  (some do, so each form's question is the person's). The key is saved by the setup's own wording
+  only, so an answer to one company's question never becomes the standing answer.
+- **A long notice is read whole.** The ask route keeps a question's first 300 characters as its
+  name; the standing rules for opt-ins and acknowledgements now read up to 1,500 (`full`), so a
+  "Please select Yes to acknowledge" that closes a long paragraph is seen.
+- **The model never answers an acknowledgement**: `planner.is_fact_question` is true for one, so
+  with the preference off it is left for the person, never handed to the fill model.
+- **Review answers** keeps the origin of an answer the ask route worked out by rule (`history`,
+  `tracker`, `consent`; `noteOrigins` in shell-electron/agent.js), so the list and the Telegram
+  summary name the source instead of "Your answer".
+- Company names: "LLP", "PLLC" and "LP" are dropped like "Inc" and "LLC" when a question is matched
+  to the company (`planner._CO_SUFFIX`), also for the worked-here rule.
+- Nothing here presses Submit or changes who may: section 6 and section 26 are untouched.
+- Tests: tests/test_agent_common_sense.py.
