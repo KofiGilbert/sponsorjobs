@@ -7853,6 +7853,316 @@ def inbox_alias_release():
     return jsonify({"ok": True})
 
 
+# ---- The in-app mailbox (docs/mail-alias.md): mail to the SponsorJobs address, downloaded once
+# from the broker and kept on this machine (inbox/store.py). The broker holds a message only
+# until this app has it. Nothing here logs a subject or a body. ----
+MAILBOX_SYNC_EVERY = 60.0        # opening the Inbox pulls new mail at most this often
+_MAILBOX = {"store": None, "path": None, "thread": None, "last": 0.0, "lock": threading.Lock()}
+_NOTIFY_MODES = ("forward", "notice", "off")
+
+
+def _mailbox_path() -> Path:
+    return _DATA / "mailbox.db"
+
+
+def _mailbox():
+    """The local mailbox store, one per data directory (reopened when a test moves _DATA)."""
+    from inbox.store import MailboxStore
+    path = _mailbox_path()
+    if _MAILBOX["store"] is None or _MAILBOX["path"] != path:
+        if _MAILBOX["store"] is not None:
+            try:
+                _MAILBOX["store"].close()
+            except Exception:      # noqa: BLE001
+                pass
+        _MAILBOX["store"], _MAILBOX["path"] = MailboxStore(path), path
+    return _MAILBOX["store"]
+
+
+def _mailbox_forget() -> None:
+    """Close the store (before its file is erased)."""
+    if _MAILBOX["store"] is not None:
+        try:
+            _MAILBOX["store"].close()
+        except Exception:          # noqa: BLE001
+            pass
+    _MAILBOX["store"], _MAILBOX["path"] = None, None
+
+
+def _mailbox_message(row: dict) -> dict:
+    """A stored message as the dict the detectors, the matcher and the Tracker's suggestions read."""
+    from datetime import datetime, timezone
+    name, addr = row.get("sender_name") or "", row.get("sender") or ""
+    try:
+        date = datetime.fromtimestamp(float(row.get("at") or 0), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError, OverflowError):
+        date = ""
+    return {"id": f"alias:{row.get('cursor')}", "from": f"{name} <{addr}>" if name else addr,
+            "subject": row.get("subject") or "", "body": row.get("text") or "", "date": date}
+
+
+def _later_positive(job: dict, received_at) -> bool:
+    """Did this application reach Interviewing or Offer AFTER the message arrived? A rejection
+    that is older than that move must not pull the card back."""
+    from datetime import datetime
+    if (job.get("stage") or "") not in ("interviewing", "offer"):
+        return False
+    try:
+        moved = datetime.fromisoformat(str(job.get("stage_at") or ""))
+        if moved.tzinfo is None:
+            moved = moved.astimezone()
+        return moved.timestamp() > float(received_at or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+def _mailbox_file(ids: list[int]) -> None:
+    """Label each newly downloaded message, tie it to its application, and tell the Tracker.
+
+    The label is rules only (inbox/labels.py). The match is the Tracker's own
+    (inbox/matching.py: thread, sender's domain, company name). The status change goes through
+    the ONE existing path, _store_inbox_suggestions: a plain confirmation matched by domain moves
+    the card to Applied (with Undo) and is attached to the application; a rejection, an interview
+    request or an assessment becomes a suggestion the person taps. A message reaches that path
+    (without its small print) only when that path's rules read the same stage as the Inbox label,
+    and a rejection never does
+    when the card moved to Interviewing or Offer after the message arrived."""
+    if not ids:
+        return
+    from inbox.labels import STAGE_FOR_LABEL, decisive_text, label_of
+    from inbox.matching import match_application
+    from inbox.replies import rules_reply
+    store = _mailbox()
+    rows = [r for r in (store.get(i) for i in ids) if r]
+    for r in rows:
+        r["label"] = label_of(r["subject"], r["text"])
+        store.set_auto(r["id"], label=r["label"])
+    hand: list[dict] = []
+    try:
+        w = _watchlist()
+        try:
+            by_job = _board_reconcile(w)
+            jobs, threads = w.board_jobs(), w.thread_index()
+            for r in rows:
+                msg = _mailbox_message(r)
+                job, lane = match_application(msg, jobs, threads)
+                if job is None:
+                    continue
+                recs = by_job.get(job["source_id"]) or []
+                store.set_auto(r["id"], record_id=recs[0]["id"] if recs else None, job_id=job["source_id"],
+                               company=job.get("company") or "", role=job.get("title") or "", matched_by=lane)
+                want = STAGE_FOR_LABEL.get(r["label"], "")
+                # The Tracker's rules read the message without its small print ("if selected,
+                # we will reach out to schedule an interview"), which decides nothing.
+                msg = {**msg, "body": decisive_text(msg["body"])}
+                if not want or rules_reply(msg)["stage"] != want:
+                    continue
+                if r["label"] == "rejected" and _later_positive(job, r["at"]):
+                    continue
+                hand.append(msg)
+        finally:
+            w.close()
+        if hand:
+            # Newest first, as a mailbox scan hands them over (the path reads them oldest first).
+            _store_inbox_suggestions(list(reversed(hand)), None)
+    except Exception:              # noqa: BLE001 - the mail is already stored and labelled
+        traceback.print_exc()
+
+
+def _mailbox_sync() -> dict:
+    """Pull the alias's mail from the broker into the local store, then file what is new.
+    {ok, new} or {ok: False, new: 0} when there is no alias, no account, or no connection.
+    One sync at a time."""
+    alias = _mail_alias()
+    if not alias:
+        return {"ok": False, "new": 0, "why": "no_alias"}
+    with _MAILBOX["lock"]:
+        _MAILBOX["last"] = time.time()
+        store = _mailbox()
+        ok = False
+        try:
+            fetch = _relay_fetch()
+            if fetch is not None:
+                from inbox.relay import sync
+                sync(fetch, store, alias)
+                ok = True
+        except Exception as exc:   # noqa: BLE001 - offline, a broker error: the local store still serves
+            print(f"mailbox sync failed: {type(exc).__name__}")
+        # File whatever is stored and not filed yet: this run's mail, and any page an earlier
+        # run committed just before it failed.
+        fresh = store.ids_after(store.state("filed") or 0)
+        if fresh:
+            _mailbox_file(fresh)
+            store.set_state("filed", max(fresh))
+        return {"ok": ok, "new": len(fresh), "why": "" if ok else "offline"}
+
+
+def _mailbox_syncing() -> bool:
+    t = _MAILBOX["thread"]
+    return bool(t is not None and t.is_alive())
+
+
+def _mailbox_sync_soon(force: bool = False) -> bool:
+    """Start a background sync unless one is running or one ran in the last minute. True when a
+    sync is running after the call. Never blocks the request that asked."""
+    if _mailbox_syncing():
+        return True
+    if not _mail_alias() or (not force and time.time() - _MAILBOX["last"] < MAILBOX_SYNC_EVERY):
+        return False
+    _MAILBOX["last"] = time.time()
+    t = threading.Thread(target=_mailbox_sync, name="mailbox-sync", daemon=True)
+    _MAILBOX["thread"] = t
+    t.start()
+    return True
+
+
+_MAILBOX_LIST_KEYS = ("id", "sender", "sender_name", "subject", "snippet", "at", "read", "archived", "label",
+                      "record_id", "job_id", "company", "role", "has_attachments")
+
+
+def _mailbox_detail(m: dict) -> dict:
+    """One message for the reader: the list fields, the text, the sanitised HTML, the attachment
+    names, and its application with the card's stage as it is now."""
+    from inbox.sanitize import sanitize_html
+    out = {k: m.get(k) for k in _MAILBOX_LIST_KEYS}
+    out.update({"text": m.get("text") or "", "html_safe": sanitize_html(m.get("html")),
+                "attachment_names": m.get("attachment_names") or [], "application": None})
+    if m.get("job_id"):
+        status = ""
+        try:
+            w = _watchlist()
+            try:
+                status = w.stage_of(m["job_id"]) or ""
+            finally:
+                w.close()
+        except Exception:          # noqa: BLE001
+            traceback.print_exc()
+        out["application"] = {"record_id": m.get("record_id"), "job_id": m["job_id"],
+                              "company": m.get("company") or "", "role": m.get("role") or "", "status": status}
+    return out
+
+
+def _int_arg(name: str, default: int) -> int:
+    try:
+        return int(request.args.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+@app.get("/api/inbox/messages")
+@_guard
+def inbox_messages():
+    """The Inbox list, newest first, from the local store (so it works offline and with no
+    address yet). Opening it starts a background download of new mail at most once a minute.
+    Query: label, unread=1, q, archived=0|1, page, per_page (50, at most 200)."""
+    syncing = _mailbox_sync_soon()
+    store = _mailbox()
+    label = str(request.args.get("label") or "").strip().lower()
+    rows, count = store.list(label=label, unread=request.args.get("unread") in ("1", "true"),
+                             q=request.args.get("q") or "", archived=request.args.get("archived") in ("1", "true"),
+                             page=_int_arg("page", 1), per_page=_int_arg("per_page", 50))
+    return _nostore(jsonify({"ok": True, "messages": [{k: r.get(k) for k in _MAILBOX_LIST_KEYS} for r in rows],
+                             "count": count, "unread": store.unread_count(), "labels": store.label_counts(),
+                             "alias": _mail_alias() or None, "syncing": syncing}))
+
+
+@app.post("/api/inbox/messages/read-all")
+@_guard
+def inbox_messages_read_all():
+    _mailbox().mark_all_read()
+    return jsonify({"ok": True, "unread": 0})
+
+
+@app.get("/api/inbox/messages/<int:mid>")
+@_guard
+def inbox_message_get(mid):
+    m = _mailbox().get(mid)
+    if m is None:
+        return jsonify({"ok": False, "error": "No such message."}), 404
+    return _nostore(jsonify({"ok": True, "message": _mailbox_detail(m)}))
+
+
+@app.post("/api/inbox/messages/<int:mid>")
+@_guard
+def inbox_message_update(mid):
+    """The person's own changes: {read?, archived?, label?}. A label set here is theirs: no
+    later automatic labelling replaces it."""
+    from inbox.labels import LABELS
+    b = request.json or {}
+    store = _mailbox()
+    if store.get(mid) is None:
+        return jsonify({"ok": False, "error": "No such message."}), 404
+    label = b.get("label")
+    if label is not None and str(label) not in LABELS:
+        return jsonify({"ok": False, "error": "Unknown label.", "labels": list(LABELS)}), 400
+    m = store.update(mid, read=bool(b["read"]) if "read" in b else None,
+                     archived=bool(b["archived"]) if "archived" in b else None,
+                     label=str(label) if label is not None else None)
+    return jsonify({"ok": True, "message": _mailbox_detail(m)})
+
+
+@app.delete("/api/inbox/messages/<int:mid>")
+@_guard
+def inbox_message_delete(mid):
+    """Delete one message from this machine. It left the broker when it was downloaded."""
+    if not _mailbox().delete(mid):
+        return jsonify({"ok": False, "error": "No such message."}), 404
+    return jsonify({"ok": True})
+
+
+@app.post("/api/inbox/sync")
+@_guard
+def inbox_sync():
+    """Download new mail now and wait for it. Offline (or with no address) this is not an error:
+    {ok: true, new: 0, synced: false} and the local mailbox is unchanged."""
+    out = _mailbox_sync()
+    return jsonify({"ok": True, "new": out["new"], "unread": _mailbox().unread_count(), "synced": bool(out["ok"])})
+
+
+@app.get("/api/inbox/notify")
+@_guard
+def inbox_notify_get():
+    """What the person's own e-mail gets for each message to the address: "forward" (the whole
+    message), "notice" (a short note) or "off". Asked from the broker; the last known answer
+    when it cannot be reached; null with no address."""
+    if not _mail_alias():
+        return jsonify({"ok": True, "mode": None})
+    store = _mailbox()
+    mode = store.state("notify_mode") or None
+    try:
+        fetch = _relay_fetch()
+        if fetch is not None:
+            from inbox.relay import notify_mode
+            got = notify_mode(fetch)
+            if got.get("ok") and got.get("mode") in _NOTIFY_MODES:
+                mode = got["mode"]
+                store.set_state("notify_mode", mode)
+    except Exception as exc:       # noqa: BLE001 - offline: the last known answer
+        print(f"mailbox notify mode not read: {type(exc).__name__}")
+    return jsonify({"ok": True, "mode": mode})
+
+
+@app.post("/api/inbox/notify")
+@_guard
+def inbox_notify_set():
+    mode = str((request.json or {}).get("mode") or "").strip().lower()
+    if mode not in _NOTIFY_MODES:
+        return jsonify({"ok": False, "error": "Unknown mode.", "modes": list(_NOTIFY_MODES)}), 400
+    if not _mail_alias():
+        return jsonify({"ok": False, "error": "Create your SponsorJobs address first.", "reason": "no_alias"}), 400
+    try:
+        fetch = _relay_fetch()
+        from inbox.relay import set_notify_mode
+        out = set_notify_mode(fetch, mode) if fetch is not None else {"ok": False}
+    except Exception:              # noqa: BLE001
+        out = {"ok": False}
+    if not out.get("ok"):
+        return jsonify({"ok": False, "error": "The SponsorJobs service is not reachable right now.",
+                        "reason": "offline"}), 503
+    _mailbox().set_state("notify_mode", out["mode"])
+    return jsonify({"ok": True, "mode": out["mode"]})
+
+
 # ---- Telegram: connect from the UI (Connections settings), not by hand-editing creds. ----
 @app.get("/api/telegram/status")
 @_guard
@@ -8898,7 +9208,12 @@ def _brain_export() -> dict:
                  "aa_learn": _read_json_file(_DATA / "aa_learn.json"),
                  "linkedin_review": _read_json_file(_DATA / "linkedin_review.json"),
                  "inbox_suggestions": _read_json_file(_SUGGESTIONS_FILE) or [],
-                 "tracker": {}, "backups": []}
+                 "mailbox": [], "tracker": {}, "backups": []}
+    try:                       # the mail to the SponsorJobs address that this machine keeps
+        if _mailbox_path().exists():
+            out["mailbox"] = _mailbox().export()
+    except Exception:          # noqa: BLE001 - the rest of the export still goes out
+        traceback.print_exc()
     try:                       # the mail tied to each application and the stage history
         w = _watchlist()
         try:
@@ -8943,7 +9258,8 @@ def _erase_brain_and_answers() -> list:
     from applicant.store import db_files
     gone = []
     _bm.forget_process_state(_DATA)                 # close the brain before its file goes
-    paths = db_files(_bm.brain_path(_DATA)) + db_files(_ANSWERS_DB) + [_PREFS_PATH] \
+    _mailbox_forget()                               # and the in-app mailbox before its file goes
+    paths = db_files(_bm.brain_path(_DATA)) + db_files(_ANSWERS_DB) + db_files(_mailbox_path()) + [_PREFS_PATH] \
         + [_DATA / n for n in _INTERVIEW_FILES] + [_DATA / "aa_learn.json"] \
         + [_DATA / "linkedin_review.json"] + [_SUGGESTIONS_FILE] \
         + ([_photo_path()] if _photo_path() else [])
@@ -13389,6 +13705,10 @@ def start_notify_loop():
             if n % NOTIFY_SCAN_EVERY == 0:
                 try:
                     _autopilot_kick()     # whether or not Telegram is connected
+                except Exception:   # noqa: BLE001
+                    traceback.print_exc()
+                try:
+                    _mailbox_sync_soon()  # the in-app mailbox: pull the address's new mail (5 min)
                 except Exception:   # noqa: BLE001
                     traceback.print_exc()
             n += 1
