@@ -726,6 +726,9 @@ class KnownContext:
     # None when they could not be read (then it stays a question).
     adult: bool = False
     applied_here: tuple | None = None
+    # (2026-11-18) ``education``: the highest degree level the saved profile shows as completed
+    # ("masters", "bachelors", ...; commonsense.highest_education), "" when it shows none.
+    education: str = ""
 
 
 @dataclass
@@ -991,6 +994,12 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             hit = keyed(ctx, qkey0, hit)                   # (Phase 4) withheld, or this country's
             if not hit and qkey0 in ctx.withhold:
                 out.left.append(f)                         # a stale value: theirs to give again
+                continue
+        if not hit and ctx.education and commonsense.education_question(label):
+            # (2026-11-18) the highest completed degree on the resume: the list's choice for it
+            got = commonsense.education_answer(label, f.options, ctx.education, t)
+            if got:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=got[0], origin=got[1], sensitive=True))
                 continue
         if not hit and qkey0 == commonsense.HEARD_KEY:
             # (2026-11-18) nothing saved: someone applying through a job app found it on a job board

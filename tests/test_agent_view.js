@@ -281,6 +281,16 @@ test("how did you hear: the rule on the page is the rule in Python (the shared c
   cases.forEach((c, i) => assert.strictEqual(got[i], c.want, JSON.stringify(c) + " -> " + got[i]));
   assert.strictEqual(await page.evaluate(() => window.TailorAutofill.isHeardLabel("How Did You Hear About Us?")), true);
   assert.strictEqual(await page.evaluate(() => window.TailorAutofill.isHeardLabel("Which team are you applying to?")), false);
+  // the education placeholder ("Master's degree", autoapply/commonsense.py EDU_WORDS) lands on the
+  // list's choice for that level through the strict scorer, never a neighbour
+  const edu = ["No High School Diploma", "High School Diploma or GED", "Some College, No Degree", "Associate Degree (AA, AS)",
+               "Bachelor's Degree (BA, BS)", "Master's Degree (MA, MS)", "Doctorate (PhD)"];
+  const best = await page.evaluate(([opts, words]) => words.map((w) => {
+    const sc = window.TailorAutofill.answerScorer(w);
+    return opts.map((o) => [sc(o.toLowerCase()), o]).filter((x) => x[0] > 0).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
+  }), [edu, ["Master's degree", "Bachelor's degree", "Associate degree", "High school diploma", "Doctorate"]]);
+  assert.deepStrictEqual(best, [["Master's Degree (MA, MS)"], ["Bachelor's Degree (BA, BS)"], ["Associate Degree (AA, AS)"],
+                                ["High School Diploma or GED"], ["Doctorate (PhD)"]]);
   await page.close();
 });
 

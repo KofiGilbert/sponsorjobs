@@ -580,3 +580,130 @@ def test_a_worked_here_yes_from_the_resume_still_waits_and_a_saved_answer_wins(l
     # their own answer for this company
     assert _plan(WORKED_GROUP, _ctx(lib, company="Globex Financial Corporation",
                                     worked_here=("Yes", "library"))) == ([("Yes", "library")], [])
+
+
+# --------------------------------------------------------------------------- highest education
+EDU = "What is the highest level of education you have completed?"
+EDU_OPTS = ["No High School Diploma", "High School Diploma or GED", "Some College, No Degree", "Associate Degree (AA, AS)",
+            "Bachelor's Degree (BA, BS)", "Master's Degree (MA, MS)", "Doctorate (PhD)"]
+EDU_DAY = dt.date(2026, 11, 18)
+
+
+def _edu(*entries):
+    return {"education": [{"school": "Example State University", "degree": d, "date": w} for d, w in entries]}
+
+
+def test_the_highest_completed_degree_is_read_from_the_profile():
+    hi = lambda *e: CS.highest_education(_edu(*e), EDU_DAY)      # noqa: E731
+    assert hi(("MSc Data Science", "2021"), ("BSc Economics", "2018")) == "masters"
+    assert hi(("BSc Economics", "2014 - 2018")) == "bachelors"
+    assert hi(("Associate of Arts", "2012")) == "associates"
+    assert hi(("PhD Physics", "May 2020"), ("MS Physics", "2016")) == "doctorate"
+    assert hi(("High School Diploma", "2010")) == "high school"
+    assert hi(("MBA", "")) == "masters"                           # no date: on the resume as held
+    # a degree still in progress or expected is not completed: the one below it counts
+    assert hi(("MSc Data Science", "Expected 2027"), ("BSc Economics", "2018")) == "bachelors"
+    assert hi(("Master of Science", "Sept 2025 - Present"), ("BA History", "2015 - 2019")) == "bachelors"
+    assert hi(("PhD Candidate, Physics", "2022"), ("MS Physics", "2021")) == "masters"
+    assert hi(("MSc Data Science", "2025 - 2027"), ("BSc Economics", "2018")) == "bachelors"
+    assert hi(("BSc Economics", "2024 - Present")) == ""
+    assert hi(("Data Bootcamp", "2020")) == "" and CS.highest_education({}, EDU_DAY) == ""
+
+
+@pytest.mark.parametrize("level,want", [
+    ("doctorate", "Doctorate (PhD)"), ("masters", "Master's Degree (MA, MS)"), ("bachelors", "Bachelor's Degree (BA, BS)"),
+    ("associates", "Associate Degree (AA, AS)"), ("high school", "High School Diploma or GED"),
+])
+def test_the_exact_workday_list_takes_the_choice_for_the_level(level, want, lib):
+    assert CS.education_option(level, EDU_OPTS) == want
+    assert _plan(EDU, _ctx(lib, education=level), options=EDU_OPTS) == ([(want, "history")], [])
+    assert known_answer(EDU, EDU_OPTS, library=lib, education=level) == (want, "history")
+
+
+def test_a_choice_is_matched_loosely_and_never_overstates():
+    opt = CS.education_option
+    assert opt("masters", ["High school", "Undergraduate degree", "Graduate degree"]) == "Graduate degree"
+    assert opt("masters", ["GED", "Bachelors", "Masters", "PhD"]) == "Masters"
+    assert opt("masters", ["Bachelor's", "Master's Degree (MA, MS, MBA)", "Professional degree (JD, MD)"]) == "Master's Degree (MA, MS, MBA)"
+    assert opt("bachelors", ["High school", "2-year degree", "4-year degree", "Postgraduate"]) == "4-year degree"
+    assert opt("bachelors", ["Some college", "College degree", "Some graduate school", "Graduate degree"]) == "College degree"
+    assert opt("doctorate", ["Bachelor's", "Master's", "Doctorate (PhD)"]) == "Doctorate (PhD)"
+    assert opt("associates", ["High School", "Associate Degree (AA, AS)", "Bachelor's"]) == "Associate Degree (AA, AS)"
+    # no choice for the level: the nearest lower one, never a higher one
+    assert opt("masters", ["High School Diploma or GED", "Bachelor's Degree (BA, BS)", "Doctorate (PhD)"]) == "Bachelor's Degree (BA, BS)"
+    assert opt("bachelors", ["High School Diploma", "Some College, No Degree", "Master's Degree"]) == "Some College, No Degree"
+    assert opt("doctorate", ["Bachelor's", "Master's", "Professional degree (JD, MD)"]) == "Master's"
+    assert opt("high school", ["No High School Diploma", "Bachelor's Degree"]) is None      # never "no diploma", never more
+    assert opt("bachelors", ["Master's Degree", "Doctorate", "Other"]) is None
+    assert opt("", EDU_OPTS) is None
+
+
+@pytest.mark.parametrize("label", [
+    EDU, "Highest level of education completed", "What is your highest level of education attained?",
+    "Highest level of education achieved", "Highest degree earned", "What is the highest degree you have obtained?",
+    "Education level", "Please select your highest education level",
+])
+def test_the_common_wordings_are_one_question(label, lib):
+    assert CS.education_question(label) == "level"
+    assert _plan(label, _ctx(lib, education="masters"), options=EDU_OPTS) == ([("Master's Degree (MA, MS)", "history")], [])
+    # a text box, and a list whose choices were not read: the level in words
+    assert _plan(label, _ctx(lib, education="masters"), options=[], kind="text") == ([("Master's degree", "history")], [])
+    assert _plan(label, _ctx(lib, education="bachelors"), options=[]) == ([("Bachelor's degree", "history")], [])
+    assert known_answer(label, [], library=lib, education="masters") == ("Master's degree", "history")
+
+
+def test_do_you_have_a_degree_is_yes_or_no_from_the_level(lib):
+    q = "Do you have a bachelor's degree (or higher)?"
+    assert CS.education_question(q) == "bachelors"
+    for level, want in (("doctorate", "Yes"), ("masters", "Yes"), ("bachelors", "Yes"), ("associates", "No"), ("high school", "No")):
+        assert _plan(q, _ctx(lib, education=level)) == ([(want, "history")], [])
+        assert _plan(q, _ctx(lib, education=level), kind="radio") == ([(want, "history")], [])
+        assert known_answer(q, YN, library=lib, education=level) == (want, "history")
+    assert _plan("Have you earned a master's degree?", _ctx(lib, education="bachelors")) == ([("No", "history")], [])
+    assert _plan("Do you have a high school diploma or GED?", _ctx(lib, education="masters")) == ([("Yes", "history")], [])
+    assert _plan("Do you have a 4-year college degree?", _ctx(lib, education="masters")) == ([("Yes", "history")], [])
+
+
+@pytest.mark.parametrize("label", [
+    "Do you have a bachelor's degree in Accounting?",            # the field decides
+    "What is the minimum education level required for this role?",
+    "What is your mother's highest level of education?",
+    "Are you currently pursuing a degree?",
+    "Field of study", "Which university did you attend?", "What is your GPA?",
+])
+def test_another_education_question_is_never_answered_from_the_level(label, lib):
+    assert CS.education_question(label) == ""
+    acts, _left = _plan(label, _ctx(lib, education="masters"), options=EDU_OPTS)
+    assert not [a for a in acts if a[1] == "history"]
+
+
+def test_no_completed_degree_stays_a_question_and_a_saved_answer_wins(lib):
+    assert CS.education_answer(EDU, EDU_OPTS, "") is None
+    acts, _left = _plan(EDU, _ctx(lib, education=""), options=EDU_OPTS)
+    assert acts == []                                             # nothing known: never a guess
+    assert known_answer(EDU, EDU_OPTS, library=lib, education="") is None
+    lib.save(EDU, "Bachelor's Degree (BA, BS)")
+    assert _plan(EDU, _ctx(lib, education="masters"), options=EDU_OPTS) == ([("Bachelor's Degree (BA, BS)", "library")], [])
+    assert known_answer(EDU, EDU_OPTS, library=lib, education="masters") == ("Bachelor's Degree (BA, BS)", "library")
+
+
+def test_a_page_whose_only_field_is_the_education_question_is_planned(app):
+    # (2026-11-18) the plan route said "Could not plan this form confidently" three times: no
+    # rule knew the question, so the plan was empty. It is now one known action.
+    mod, _rid = app
+    prof = {"identity": {"name": "Sam Example"},
+            "education": [{"school": "Example State University", "degree": "MSc Data Science", "date": "2021"},
+                          {"school": "Example State University", "degree": "BSc Economics", "date": "2018"}]}
+    rid = _add(mod, CO, {"status": "approved", "render_profile": prof})
+    assert mod._common_sense(CO, mod._get_record(rid))["education"] == "masters"
+    d = _post(mod, "/api/autoapply/plan", {"url": "https://example.wd1.myworkdayjobs.com/x/job/1/apply", "record_id": rid,
+                                           "fields": [{"ref": "w1", "label": EDU, "type": "select", "widget": "combobox",
+                                                       "options": EDU_OPTS, "required": True}]})
+    assert d["ok"] is True and d["left"] == [], d
+    assert [(o["ref"], o["op"], o["text"], o["from"]) for o in d["ops"]] == [("w1", "select", "Master's Degree (MA, MS)", "history")]
+    # the model path: the answer placeholder for the open label (a text answer, picked from the
+    # list by the page script's strict match), and the heard-about and worked-here ones beside it
+    rec = mod._get_record(rid)
+    got = mod._known_answers_for([EDU, "How Did You Hear About Us?"], rec, mod._record_data(rec), {})
+    assert got.get(EDU) == "Master's degree" and got.get("How Did You Hear About Us?") == "Job board", got
+    assert mod._common_sense(CO, None)["education"] == ""         # no profile, no record: nothing known

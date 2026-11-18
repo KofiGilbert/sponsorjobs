@@ -26,6 +26,14 @@ stops for them (a Workday "Application Questions" page asked five; four needed n
   app found the job on a job board. On a list, the choice that says so is picked by
   autoapply/planner.py generic_sources ("Job board", "Other Job Board", else "Other").
 
+* **Highest level of education completed** ("What is the highest level of education you have
+  completed?", "Highest degree earned", "Education level", "Do you have a bachelor's degree or
+  higher?"): the person's saved answer to the wording first; else the highest COMPLETED degree
+  on the resume the agent built (``highest_education``: a degree still in progress or expected
+  does not count), as the list's choice for that level (``education_option``: "Master's Degree
+  (MA, MS)", "Graduate degree", "4-year degree"), else the nearest lower choice. Never a choice
+  above what the profile holds. Origin ``history``.
+
 Acknowledgements worded as a Yes / No choice live in autoapply/consents.py. Category rules on the
 question's words, never one site's markup. Pure: the caller (ui/app.py) reads the stores.
 """
@@ -238,3 +246,146 @@ def relatives_saved(library) -> str:
 def relatives_answer(library) -> tuple[str, str] | None:
     """("No", "library") when the person saved a standing No, else None (theirs to answer)."""
     return ("No", "library") if relatives_saved(library) == "No" else None
+
+
+# ---------------------------------------------------------------------------- highest education
+# Levels low to high. "some college" is only ever a choice on a list, never read from a degree.
+EDU_RANK = {"none": 0, "high school": 1, "some college": 2, "associates": 3, "bachelors": 4, "masters": 5,
+            "doctorate": 6}
+EDU_WORDS = {"high school": "High school diploma", "associates": "Associate degree", "bachelors": "Bachelor's degree",
+             "masters": "Master's degree", "doctorate": "Doctorate"}
+_EDU_Q = re.compile(
+    r"\bhighest (level|degree|grade|form) of (education|schooling|school|degree)\b"
+    r"|\bhighest (education|educational|academic|degree|qualification)\b"
+    r"|\b(education|educational|degree) (level|attainment)\b|\blevel of (education|schooling)\b", re.I)
+# Another question that mentions education: what a job requires, a parent's, a field, a school.
+_EDU_NOT = re.compile(r"\b(parents?|mother|father|guardian|spouse|require[sd]?|minimum|preferred|field of study|major"
+                      r"|which (school|university|college)|name of|gpa|grade point|pursuing|enrolled|plan to|willing)\b", re.I)
+_DEGREE_YN = re.compile(
+    r"\b(do you (currently )?(have|hold|possess)|have you (earned|completed|obtained|received|attained|been awarded)"
+    r"|did you (earn|complete|obtain|receive|graduate with)|are you (a )?(holder|graduate))\b[^?]{0,40}?"
+    r"\b(?P<what>high school diploma|ged|associate'?s?|bachelor'?s?|undergraduate|4[- ]year|four[- ]year|college"
+    r"|master'?s?|graduate|doctorate|doctoral|ph\.?d)\b[^?]{0,30}?\b(degree|diploma|ged|ph\.?d|doctorate)", re.I)
+# "... a bachelor's degree in Accounting?": the field decides, which a level alone does not say.
+_DEGREE_IN = re.compile(r"\b(degree|diploma|doctorate|ph\.?d)\b(\s*\([^)]*\))?(\s+or (higher|above|equivalent|greater))?"
+                        r"\s+(in|from|with)\b", re.I)
+_PENDING = re.compile(r"\b(expected|anticipated|in progress|ongoing|candidate|pursuing|incomplete|current(ly)?|present"
+                      r"|enrolled|coursework|did not (complete|finish|graduate)|no degree)\b", re.I)
+# A list's choices, by level. Checked top to bottom: the first that fits names the choice's level.
+_EDU_OPTION = [
+    ("", re.compile(r"\bsome (graduate|post ?graduate|master|doctoral)|\bprofessional\b|\bj\.?d\b|\bjuris\b|\bm\.?d\b"
+                    r"|\bother\b|\bprefer\b|\bdecline\b|\bpost ?doc", re.I)),          # never picked by level
+    ("none", re.compile(r"\b(no|less than|did not (complete|finish)|without|not completed?|some) (a )?(high school|secondary)"
+                        r"|\bno (formal )?(education|schooling|diploma)\b", re.I)),
+    ("some college", re.compile(r"\bsome (college|university|undergraduate)|\bno degree\b|\bvocational\b|\btrade\b"
+                                r"|\btechnical (school|college|certificate|diploma)\b|\bcertificate\b|\bcertification\b", re.I)),
+    ("doctorate", re.compile(r"\bdoctor(ate|al)?\b|\bph\.?\s?d\b|\bd\.?phil\b|\bed\.?d\b", re.I)),
+    ("masters", re.compile(r"\bmaster'?s?\b|\bmba\b|\b(post ?)?graduate degree\b|\bpostgraduate\b|\bm\.?s\.?c?\b", re.I)),
+    ("bachelors", re.compile(r"\bbachelor'?s?\b|\b(4|four)[- ]year\b|\bundergraduate degree\b|\b(college|university) "
+                             r"(degree|graduate)\b|\bb\.?s\.?c?\b|\bb\.?a\b", re.I)),
+    ("associates", re.compile(r"\bassociate'?s?\b|\b(2|two)[- ]year\b|\ba\.?a\.?s?\b", re.I)),
+    ("high school", re.compile(r"\bhigh school\b|\bged\b|\bsecondary\b|\bhs diploma\b", re.I)),
+]
+
+
+def education_question(label: str) -> str:
+    """"level" for "what is your highest level of education (completed / attained)?", "highest
+    degree earned", "education level"; the level asked ("bachelors") for "Do you have a
+    bachelor's degree (or higher)?"; else "". Never a question about what the job requires, a
+    field of study, a school, or a degree in a named subject."""
+    lbl = _squash(label)
+    if not lbl or len(lbl) > 300 or _EDU_NOT.search(lbl) or _SOMEONE_ELSE.search(lbl):
+        return ""
+    m = _DEGREE_YN.search(lbl)
+    if m and not _DEGREE_IN.search(lbl):
+        w = m.group("what").lower()
+        for level, words in (("high school", ("high school", "ged")), ("associates", ("associate",)),
+                             ("bachelors", ("bachelor", "undergraduate", "4", "four", "college")),
+                             ("masters", ("master", "graduate")), ("doctorate", ("doctor", "ph"))):
+            if any(w.startswith(x) for x in words):
+                return level
+    if m or _NOT_YES_NO.search(lbl) and not re.match(r"^\W*(what|which|please (select|provide|state|specify|enter))\b", lbl, re.I):
+        return ""
+    return "level" if _EDU_Q.search(lbl) else ""
+
+
+def highest_education(profile: dict, today: _dt.date | None = None) -> str:
+    """The highest degree level the saved profile shows as COMPLETED ("masters", "bachelors",
+    "associates", "high school", ...), "" when it shows none. A degree still in progress (a date
+    range to Present or into the future, a single date in the future, "Expected 2027",
+    "Candidate") does not count; a degree with no date counts (it is on the resume as held)."""
+    from autoapply.history import degree_level
+    today = today or _dt.date.today()
+    now = (today.year, today.month)
+    best = ""
+    for ed in (profile if isinstance(profile, dict) else {}).get("education") or []:
+        if not isinstance(ed, dict):
+            continue
+        degree = _squash(ed.get("degree"))
+        level = degree_level(degree)
+        if level not in EDU_RANK:
+            continue
+        when = _squash(ed.get("date") or ed.get("dates"))
+        if _PENDING.search(degree) or _PENDING.search(when):
+            continue
+        span = parse_span(when) if when else {}
+        if span.get("current"):
+            continue
+        last = span.get("end") or span.get("start")
+        if last and last.get("y") and (int(last["y"]), int(last.get("m") or 0) or 1) > now:
+            continue                                    # it ends in the future
+        if EDU_RANK[level] > EDU_RANK.get(best, -1):
+            best = level
+    return best
+
+
+def education_level_of(option: str) -> str:
+    """The level a list's choice names ("Master's Degree (MA, MS)" -> "masters", "Some College,
+    No Degree" -> "some college"), "" for one that names none or is never picked by level
+    ("Professional degree", "Other")."""
+    o = _squash(option)
+    for level, rx in _EDU_OPTION:
+        if rx.search(o):
+            return level
+    return ""
+
+
+def education_option(level: str, options) -> str | None:
+    """The choice for ``level``: the one that names it, else the nearest LOWER choice (a
+    bachelor's on a list that stops at "Associate degree"). Never a higher one, never "No high
+    school diploma" for someone who holds more."""
+    rank = EDU_RANK.get(level)
+    if not rank:
+        return None
+    best = None
+    for o in [str(o) for o in (options or []) if str(o).strip()]:
+        r = EDU_RANK.get(education_level_of(o))
+        if not r or r > rank:
+            continue
+        if best is None or r > best[0]:
+            best = (r, o)
+    return best[1] if best else None
+
+
+def education_answer(label: str, options, level: str, field_type: str = "select") -> tuple[str, str] | None:
+    """(answer, "history") for an education-level question from the highest completed degree
+    ``level`` (highest_education), else None (the person's). A list: its choice for the level.
+    A Yes / No question ("Do you have a bachelor's degree or higher?"): Yes when the level
+    reaches it, No when the profile's completed education stops short. A text box: the level in
+    words ("Master's degree")."""
+    kind = education_question(label)
+    if not kind or level not in EDU_RANK:
+        return None
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if kind != "level":
+        yes = EDU_RANK[level] >= EDU_RANK[kind]
+        if opts:
+            v = workauth.pick_yes_no(yes, opts)
+            return (v, "history") if v else None
+        return ("Yes" if yes else "No"), "history"
+    if opts:
+        v = education_option(level, opts)
+        return (v, "history") if v else None
+    if (field_type or "").lower() == "checkbox" or level not in EDU_WORDS:
+        return None
+    return EDU_WORDS[level], "history"
