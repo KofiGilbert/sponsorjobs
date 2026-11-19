@@ -162,6 +162,7 @@ function setPaneQuiet(on) {
     // the pane is closed (agent:batch refuses otherwise).
     paneQuiet = true;
   } else {
+    dropQuietDebugger();
     paneQuiet = false;
     // The hidden page is closed (and reaped a minute later, like any closed pane). A job left at
     // Ready to send keeps its place on the record: Send fills it again and submits (agent.send).
@@ -230,6 +231,10 @@ function ensurePane() {
   };
   wc.on("will-navigate", onReturn);
   wc.on("will-redirect", onReturn);
+  // a navigation may hand the page to a new process: what it is told about itself is sent again
+  wc.on("did-navigate", () => {
+    try { if (wc.debugger.isAttached()) focusEmulation.apply(wc.debugger, { quiet: isQuietPane(wc), log: emulationLog }); } catch (e) { /* gone */ }
+  });
   return pane;
 }
 
@@ -277,6 +282,7 @@ function openInPane(url, fromAgent) {
   paneReap = null;
   ensurePane();
   paneOpen = true;
+  if (fromAgent) holdQuietDebugger();                    // a quiet run: the page gets its focus and size before it loads
   pane.webContents.loadURL(url);
   layoutPane();
   pushPaneState();
@@ -517,11 +523,43 @@ function armSuccessWatch(wc, startUrl, recordId) {
 // success check): attached on first use, detached when the last user is done, and never torn
 // down under another user's feet. If DevTools already holds the debugger, CDP is unavailable
 // and each caller falls back (the person attaches the resume; frames are left to them).
-// Every time it is taken, the page is told it is focused and visible (focus_emulation.js): real
-// keys through the debugger do not reach a page that is out of sight otherwise. Sent right after
-// attaching and again on each later use (a navigation may have moved the page to a new process);
-// not waited for, and a refusal changes nothing else. SJ_AGENT_DEBUG=1 says once whether it took.
+// Every time it is taken, the page is told it is focused and visible, and, while a quiet run
+// keeps the pane out of sight, that it is 1280 x 900 (focus_emulation.js: a parked pane's page
+// measured 0 x 0, hidden and unfocused; real keys did not reach it and Workday drew its
+// small-screen pickers). Sent right after attaching and again on each later use and after every
+// navigation; not waited for here, and a refusal changes nothing else. Both last only while the
+// debugger is attached, so a quiet run holds it for its whole length (holdQuietDebugger) and it
+// is not detached under it. SJ_AGENT_DEBUG=1 says once what the page reports afterwards.
 const focusEmulation = require("./focus_emulation");
+const emulationLog = process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null;
+const isQuietPane = (wc) => !!(paneQuiet && pane && pane.webContents === wc);
+let _quietHold = null;                // {wc, release}: the quiet run's own hold on the debugger
+function holdQuietDebugger() {
+  if (!paneQuiet || !pane) return;
+  const wc = pane.webContents;
+  if (_quietHold && _quietHold.wc === wc) return;
+  dropQuietDebugger();
+  const release = acquireDebugger(wc);
+  if (release) _quietHold = { wc, release };
+  else if (emulationLog) emulationLog("page emulation: the debugger could not be attached (DevTools open?)");
+}
+// The quiet run is over, or the person takes the pane: the size override is cleared before the
+// pane is shown, and the run's hold on the debugger is given back.
+function dropQuietDebugger() {
+  const h = _quietHold;
+  _quietHold = null;
+  if (!h) return;
+  try { if (!h.wc.isDestroyed() && h.wc.debugger.isAttached()) focusEmulation.show(h.wc.debugger).finally(h.release); else h.release(); }
+  catch (e) { try { h.release(); } catch (e2) { /* gone */ } }
+}
+// Before a fill in a quiet run: a page under 600 wide (0 x 0 when parked) is sized and read
+// again. false = still no real size: nothing is filled on it.
+async function ensureQuietViewport(wc) {
+  if (!isQuietPane(wc)) return { ok: true, width: -1, applied: false };
+  holdQuietDebugger();
+  return focusEmulation.ensureViewport({ width: () => wc.executeJavaScript("window.innerWidth", true),
+                                         dbg: wc.debugger.isAttached() ? wc.debugger : null }, { log: emulationLog });
+}
 const _dbgUsers = new WeakMap();      // webContents -> {n, owned}
 function acquireDebugger(wc) {
   const dbg = wc.debugger;
@@ -533,7 +571,7 @@ function acquireDebugger(wc) {
     } catch (e) { return null; }
     _dbgUsers.set(wc, st);
   }
-  focusEmulation.enable(dbg, process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null);
+  focusEmulation.apply(dbg, { quiet: isQuietPane(wc), log: emulationLog });
   st.n++;
   let released = false;
   return () => {
@@ -896,6 +934,11 @@ async function runAutoApplyOnPane(recordId, opts) {
 
   let fr = null;
   try {
+    // never fill a page with no size (a parked pane measured 0 x 0, and sites drew their
+    // small-screen forms): size it first; if it still has none, say so instead of filling
+    const vp = await ensureQuietViewport(wc);
+    if (!vp.ok) return { ok: false, reason: "no-viewport", page: opts.page || 0, left: [],
+                         message: "The page has no size yet (" + vp.width + " wide)." };
     await wc.insertCSS(FILLED_CSS);
     await wc.executeJavaScript(autofillCore(), true);
     const page = opts.page || pageNumberFor(wc, recordId, await mainSignature(wc));
@@ -965,6 +1008,11 @@ async function runAutoApplyOnPane(recordId, opts) {
       try { pres.push(await run("filling the page", "engine", (b) => wc.executeJavaScript(fillExpr(b), true), beatMain)); } catch (e) { /* fill what we can below */ }
       tally(pres[0]);
       if (pres[0] && debugLine) for (const line of (pres[0].trace || [])) debugLine("engine: " + line);
+      if (!pres[0] && debugLine) {                         // cut or silent: what it had got to, if the page still answers
+        const sofar = await fillKeys.capped(wc.executeJavaScript("window.TailorAutofill.takeTrace()", true), 1000);
+        for (const line of (Array.isArray(sofar) ? sofar : [])) debugLine("engine (cut): " + line);
+        if (!Array.isArray(sofar)) debugLine("engine (cut): the page did not answer a plain call either");
+      }
       // Real input, after the engine's pass: each bounded, each field once, and a page that stops
       // answering ends it at once (the fill carries on to its report).
       if (pres[0] && pres[0].left_open) counts.left_open = pres[0].left_open;
@@ -1368,7 +1416,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 const agent = createAgent({
   getPane: () => pane, openInPane: (url) => openInPane(url, true), waitPaneLoad, autofillCore, agentViewSource,
   runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
-  isNewPage, attachResume, newUploadRun, setQuiet: setPaneQuiet,
+  isNewPage, attachResume, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
@@ -1414,6 +1462,7 @@ ipcMain.on("pane:set-bounds", (_e, rect) => { paneBounds = rect; layoutPane(); }
 function takePaneBack() {
   if (!paneQuiet) return;
   agent.stop();
+  dropQuietDebugger();                                   // the pane is the person's again: its own size
   paneQuiet = false;
 }
 ipcMain.on("pane:open", (_e, url) => openInPane(url));

@@ -3081,7 +3081,7 @@ function qsaSafe(sel, root) {
     const before = promptPicked(el);
     const enter = { key: "Enter", code: "Enter", keyCode: 13, which: 13 };
     const max = spec.max || 1;
-    for (const q of (spec.queries || []).slice(0, 3)) {
+    for (const q of (spec.queries || []).slice(0, spec.maxQueries || 3)) {
       if (over() || out.picked >= max) break;
       _robustUntil = Date.now() + pms("results") + 1000;   // these waits do not rest on page timers alone
       // a list still open from the query before is closed first, so this query's own list is
@@ -3096,10 +3096,13 @@ function qsaSafe(sel, root) {
       // wait for the choices: the list changed and holds some; "No Items." only after a while;
       // nothing at all for long enough means the page did not take the Enter
       const tq = Date.now(), end = untilMs(pms("results"));
-      let best = null, reacted = false;
+      let best = null, reacted = false, seen = 0, lastSig = "", steady = 0;
       while (Date.now() < end) {
         await sleep(STEP_MS * 2);
         const opts = optionsFor(el).filter((o) => !optionTicked(o));
+        seen = opts.length;
+        const now = listSig(el);
+        steady = now === lastSig ? steady + 1 : 0; lastSig = now;
         reacted = reacted || listSig(el) !== sig || (!wasOpen && promptListOpen(el)) || (wasOpen && listboxFor(el) !== node0);
         if (reacted && opts.length) {
           for (const o of opts) {
@@ -3107,13 +3110,16 @@ function qsaSafe(sel, root) {
             if (sc > 0 && (!best || sc > best.sc || (sc === best.sc && optionText(o).length < optionText(best.o).length))) best = { o, sc };
           }
           if (best) break;
-          if (!loading(el) && Date.now() - tq >= pms("none")) break;        // choices, none fitting
+          // choices, none fitting: decided once the list has stood still for a moment (waiting
+          // the whole "No Items." time on every such query used up the fill's budget)
+          if (!loading(el) && (steady >= 4 || Date.now() - tq >= pms("none"))) break;
         }
         if (reacted && !opts.length && Date.now() - tq >= pms("none")) break;   // "No Items.", and it stayed
         if (!reacted && Date.now() - tq >= pms("silent")) break;
       }
       out.registered = out.registered || reacted;
-      trace(el, "prompt-query-" + (best ? "fit" : reacted ? "no-fit" : "silent"), Date.now() - tq);
+      // (how many choices came back, never what they say)
+      trace(el, "prompt-query-" + (best ? "fit" : reacted ? "no-fit" : "silent") + "-of-" + seen, Date.now() - tq);
       if (!reacted) break;                                 // the page does not take a script's Enter: no further query
       if (!best) continue;
       const shown = cleanText(best.o.textContent), had = promptPicked(el);
@@ -3266,8 +3272,14 @@ function qsaSafe(sel, root) {
     const queries = [];
     if (item.field) queries.push(String(item.field));
     for (const w of own.slice().sort((a, b) => b.length - a.length)) if (!queries.some((q) => canon(q) === w)) queries.push(w);
-    if (want.includes("administration") && !queries.includes("Business Administration")) queries.push("Business Administration");
-    return { ref: fieldRef(el), kind: "field", want, queries: queries.slice(0, 3), label: widgetLabel(el) };
+    // At most three, and what the degree's own name says is always among them: the field as the
+    // person wrote it, its longest word, then "Business Administration" for an MBA (a field of
+    // two words used to push that one out, and "Business Administration/Management" was never
+    // even listed; a real Workday form, 2026-11-19), else the next word.
+    const mba = want.includes("administration") && !queries.some((q) => canon(q) === "business administration");
+    const out = queries.slice(0, mba ? 2 : 3);
+    if (mba) out.push("Business Administration");
+    return { ref: fieldRef(el), kind: "field", want, queries: out, label: widgetLabel(el) };
   }
   // How well an option fits the subject words. An option whose own words are all supported
   // ("Economics" for "Economics and Sociology"; "Business Administration/Management" for an MBA,
@@ -3644,14 +3656,19 @@ function qsaSafe(sel, root) {
       }
     }
     // "Type to Add Skills": a few of the person's own skills, only ones the list offers.
-    const skills = ((payload && payload.skills) || []).slice(0, 6);
+    const skills = ((payload && payload.skills) || []).slice(0, 8);
+    // "SQL" is "SQL" and "SQL (Programming Language)"; "Power BI" is "PowerBI". Nothing looser.
+    const squash = (t) => canon(String(t || "").replace(/\s*\([^)]*\)\s*/g, " ")).replace(/\s+/g, "");
+    const sameSkill = (a, b) => canon(a) === canon(b) || (squash(a).length >= 2 && squash(a) === squash(b));
     if (skills.length) {
       for (const el of comboboxes()) {
         if (over()) break;
         if (!/\bskills?\b/i.test(widgetLabel(el)) || !isSearchBox(el) || chosenPills(el).length) continue;
+        // one search per skill, the exact (or all but exact) choice only; optional, so a skill
+        // the list does not offer is skipped quietly
         const op = { ref: fieldRef(el), kind: "skills", items: skills, queries: skills.slice(0, 4), max: 3, label: widgetLabel(el) };
-        const r = await promptSearch(el, { kind: "skills", queries: skills.slice(0, 3), max: 3, from: "skills",
-                                           score: (t) => (skills.some((x) => canon(x) === canon(t)) ? 100 : 0) });
+        const r = await promptSearch(el, { kind: "skills", queries: skills, maxQueries: 8, max: 8, from: "skills",
+                                           score: (t) => (skills.some((x) => sameSkill(x, t)) ? 100 : 0) });
         if (r.picked) out.filled += r.picked;
         else if (!r.registered && !r.skipped && pageVisible()) shellSearch(el, op);
       }
@@ -3708,8 +3725,11 @@ function qsaSafe(sel, root) {
     const r = fill(payload);
     if (!r || !r.ok) { endBudget(base); return r; }
     tick(0);
+    trace(null, "labels-filled-" + (r.filled || 0), Date.now() - _beat.at);
     let w = { filled: 0, fields: 0, screening: 0, eeo: 0 };
+    const tw = Date.now();
     try { w = await fillWidgets(payload); } catch (e) { /* a widget threw: the rest stands */ }
+    trace(null, "widgets-filled-" + (w.filled || 0), Date.now() - tw);
     let h = { filled: 0 };
     try { h = await fillHistory(payload); } catch (e) { /* the rest stands */ }
     _from = "today";

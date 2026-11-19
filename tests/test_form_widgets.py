@@ -1021,3 +1021,46 @@ def test_phone_extension_is_never_given_the_number_and_a_stale_one_is_cleared(tm
 def test_shell_turns_focus_emulation_on_when_it_takes_the_debugger():
     out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_focus_emulation.js")], capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stderr[-2000:]
+
+
+@pytest.mark.parametrize("degree, field", [
+    ("MBA", ""),                                                # an MBA says Business Administration by itself
+    ("Master of Business Administration", "Business Administration"),
+    ("MBA - Finance and Strategy (STEM)", "Finance and Strategy"),   # two words of its own: the MBA term is still searched
+])
+def test_workday_real_page_field_of_study_for_an_mba_fits_business_administration(tmp_path, degree, field):
+    # the list for "Business" holds "Agricultural Business and Management" and
+    # "Business Administration/Management": the second fits an MBA, the first never does
+    payload = json.loads(json.dumps(XP_PAYLOAD))
+    payload["history"] = payload["history"][:1]
+    payload["education"] = [dict(payload["education"][0], degree=degree, field=field)]
+    payload["skills"] = []
+    r = run(tmp_path, XP_REAL, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _real_fill(payload)},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+    ], query="?hidden=1")
+    assert r["values"]["fields"] == [["Business Administration/Management"]], r["rep"]["trace"]
+    assert r["values"]["open"] is False
+    # the trace says how many choices each query brought back, never what they say
+    queries = [l for l in r["rep"]["trace"] if "prompt-query-" in l]
+    assert queries and all(__import__("re").search(r"prompt-query-(fit|no-fit|silent)-of-\d+ \d+ms$", l) for l in queries), queries
+    assert not any("Business" in l or "Administration" in l for l in r["rep"]["trace"])
+
+
+def test_workday_real_page_skills_one_search_each_exact_choices_only(tmp_path):
+    payload = json.loads(json.dumps(XP_PAYLOAD))
+    payload["history"] = payload["history"][:1]
+    payload["education"] = []
+    payload["skills"] = ["Excel", "Python", "power bi", "Agile coaching", "SQL", "Analytic"]
+    r = run(tmp_path, XP_REAL, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _real_fill(payload)},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+    ], query="?hidden=1")
+    v = r["values"]
+    # the same skill whatever its case; never "Agile" for "Agile coaching" or "Analytics" for "Analytic"
+    assert v["skills"] == ["Excel", "Power BI", "SQL"], v["skills"]
+    assert v["searches"] == 6 and v["open"] is False            # one search per skill
+    assert "Type to Add Skills" not in r["left"] and r["rep"]["left_open"] == 0
