@@ -388,13 +388,17 @@ function qsaSafe(sel, root) {
         if (c.key === "name" && NAME_VETO.test(sig)) continue;
         // (2026-11-18) "Phone Device Type" asks which KIND of phone, never the number: the
         // number was offered to that list as its answer (autoapply/commonsense.py answers it).
-        if (c.key === "phone" && PHONE_KIND_RE.test(sig)) continue;
+        if (c.key === "phone" && (PHONE_KIND_RE.test(sig) || PHONE_EXT_RE.test(sig))) continue;
         return c.key;
       }
     }
     return null;
   }
   const PHONE_KIND_RE = /(phone|telephone|number|device)[\s_-]*(device[\s_-]*)?type\b|type of (phone|telephone|device|number)/;
+
+  // "Phone Extension" asks for an extension, never the number (a Workday form, 2026-11-19: the
+  // whole number sat in it, left by earlier fills).
+  const PHONE_EXT_RE = /(phone|telephone|\btel|mobile)[\s_-]*ext(ension|n)?\b|\bext(ension|n)?\b[\s_.#-]*(number|no|num)?\s*$|\bextension\b/;
 
   const FILLABLE_TYPES = new Set(["text", "email", "tel", "url", "search", ""]);
 
@@ -590,6 +594,29 @@ function qsaSafe(sel, root) {
     if (lab.length > 60) return false;
     if (tagOf(el) === "TEXTAREA" && key !== "street") return false;
     return true;
+  }
+
+  // A phone box the engine must not fill (extension, device type) that holds the person's own
+  // phone number was filled by mistake by an earlier pass: emptied again (the native setter with
+  // "", an input event of type deleteContentBackward, change). Anything else in it is left.
+  function clearMisplacedPhone(fields) {
+    const digits = String((fields && fields.phone) || "").replace(/\D/g, "");
+    if (digits.length < 7) return 0;
+    let n = 0;
+    for (const el of qsaDeep("input")) {
+      if (!FILLABLE_TYPES.has(String(el.type || "").toLowerCase()) || el.disabled || el.readOnly) continue;
+      const have = String(el.value || "").replace(/\D/g, "");
+      if (have.length < 7 || !(have === digits || have.endsWith(digits) || digits.endsWith(have))) continue;
+      const sig = norm(cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || "") + " " + (el.name || "") + " " + (el.id || ""));
+      if (!PHONE_EXT_RE.test(sig) && !PHONE_KIND_RE.test(sig)) continue;
+      const view = viewOf(el);
+      Object.getOwnPropertyDescriptor((view.HTMLInputElement || HTMLInputElement).prototype, "value").set.call(el, "");
+      try { el.dispatchEvent(new (view.InputEvent || InputEvent)("input", { bubbles: true, inputType: "deleteContentBackward" })); }
+      catch (e) { el.dispatchEvent(new (view.Event || Event)("input", { bubbles: true })); }
+      el.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
+      n++;
+    }
+    return n;
   }
 
   function applyFill(plan) {
@@ -1223,6 +1250,8 @@ function qsaSafe(sel, root) {
     if (payload && payload.recipes) setRecipes(payload.recipes);   // fresh table from the app
     const recipe = recipeFor();
     const fields = (payload && payload.fields) || {};
+    let cleared = 0;
+    try { cleared = clearMisplacedPhone(fields); } catch (e) { cleared = 0; }
     const plan = planFill(fields, { recipe });
     const filled = applyFill(plan);
     const was = _from;
@@ -1244,7 +1273,7 @@ function qsaSafe(sel, root) {
     const cont = continueButton(recipe);
     const next_page = !!(recipe && recipe.multipage && cont);
     const remaining = extractForm({ onlyEmpty: true }).length;
-    return { ok: true, filled: filled + answers, total, screening, answers, eeo, resume_upload,
+    return { ok: true, cleared, filled: filled + answers, total, screening, answers, eeo, resume_upload,
              via_recipe: plan.filter((p) => p.via === "recipe").length,
              system: recipe ? recipe.id : "", system_name: recipe ? recipe.name : "",
              submit_highlighted, next_page,
@@ -1441,7 +1470,7 @@ function qsaSafe(sel, root) {
                   + "[class*='multi-value__label'], [data-automation-id='selectedItem']";
   const VALUE_BOX_SEL = "[class*='value-container'], [class*='ValueContainer']";
   const LOADING_MAX_MS = 6000;
-  const NOT_AN_OPTION = /^(no options|no results|loading|searching|no matches|type to search|start typing)/;
+  const NOT_AN_OPTION = /^(no options|no results|no items|loading|searching|no matches|type to search|start typing)/;
   const WIDGET_WAIT_MS = 2500;
   // A list that is open, unchanged and not loading has settled: with no choice for the wanted
   // value there is nothing more to wait for (2026-11-18: a miss waited the whole 2.5 s on every
@@ -2710,6 +2739,25 @@ function qsaSafe(sel, root) {
     }
     return d;
   }
+  const pageVisible = () => { try { return document.visibilityState !== "hidden"; } catch (e) { return true; } };
+  // One date segment, set in the page. A segment that holds something else is emptied first
+  // (the native setter with "" and an input event of type deleteContentBackward: a plain input
+  // event did not always clear the year on the real page).
+  function setSpin(sp, text) {
+    const view = viewOf(sp);
+    const set = Object.getOwnPropertyDescriptor((view.HTMLInputElement || HTMLInputElement).prototype, "value").set;
+    try { if (sp.focus) sp.focus(); } catch (e) { /* fine */ }
+    if (String(sp.value || "") !== "" || spinDigits(sp)) {
+      set.call(sp, "");
+      try { sp.dispatchEvent(new (view.InputEvent || InputEvent)("input", { bubbles: true, inputType: "deleteContentBackward" })); }
+      catch (e) { sp.dispatchEvent(new (view.Event || Event)("input", { bubbles: true })); }
+      sp.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
+    }
+    set.call(sp, String(text));
+    sp.dispatchEvent(new (view.Event || Event)("input", { bubbles: true }));
+    sp.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
+    try { if (sp.blur) sp.blur(); } catch (e) { /* fine */ }
+  }
   // Did a typed date land? The digits, in order, anywhere the group keeps them, with whatever
   // separators or padding the page uses ("3", "2026" is there in "03/2026", "current value is
   // 03/2026", "3 2026" and "032026"). Never a digit run that is part of a longer number.
@@ -2736,26 +2784,38 @@ function qsaSafe(sel, root) {
     const single = tagOf(group) === "INPUT";
     const spins = single ? [] : qsaSafe(SPIN_SEL, group);
     if (spins.length) {
-      // Workday's date segments take only real keys (a value set from script shows but is not
-      // kept: "Invalid Date: 03/" on Next, Uline 2026-11-16). They are handed to the shell, which
-      // types them with real key presses (keyOps), month first, as a person does.
-      // A segment that already holds digits is left alone (a second pass types nothing), and
-      // one whose keys did not land before is not handed over again (the shared miss memory).
-      // Returns "keys": queued for the shell, NOT yet filled; keysLanded() says what landed.
-      const parts = [];
+      // (Until 2026-11-19 these were only typed by the shell with real keys, after a script-set
+      // value was seen to show but not be kept on another tenant. That earlier set did not
+      // focus, fire change or blur; the recipe below was measured to hold.)
+      // Set in the page (measured on a real Workday form, 2026-11-19): focus the segment, give it
+      // the value through the native setter with input and change events, blur, and read it
+      // back from the box and the text beside it. Real keys through the debugger do not reach a
+      // page that is out of sight, so they are only the fallback, and only on a visible page.
+      // A group that is complete (every segment holds digits) is the person's: left alone. In an
+      // incomplete one a segment holding something else is cleared first.
+      if (!boxShown(group)) return false;
+      const wanted = [];
       for (const sp of spins) {
-        if (spinDigits(sp) || !boxShown(group)) continue;
         const part = spinPart(sp);
         const v = part === "m" ? mm : part === "y" ? yy : part === "d" ? (when.d ? String(when.d) : "") : "";
-        if (!v) continue;
-        const want = { memo: "keys:" + v };
-        if (missedBefore(sp, want)) { _beat.skipped++; continue; }
-        _keyOps.push({ ref: fieldRef(sp), text: v });
-        parts.push({ el: sp, text: v, want });
+        if (v) wanted.push({ el: sp, text: v, want: { memo: "keys:" + v } });
       }
-      if (!parts.length) return false;
-      _keyGroups.push({ group, parts, from: _from, section: _section, label: label || "", words: dateWords(when) });
-      return "keys";
+      if (!wanted.length || spins.every((sp) => spinDigits(sp))) return false;
+      const todo = wanted.filter((p) => Number(spinDigits(p.el) || NaN) !== Number(p.text));
+      if (!todo.length) return false;
+      if (todo.every((p) => missedBefore(p.el, p.want))) { _beat.skipped += todo.length; return false; }
+      for (const p of todo) setSpin(p.el, p.text);
+      const left = todo.filter((p) => Number(spinDigits(p.el) || NaN) !== Number(p.text));
+      trace(group, "date-set-" + (todo.length - left.length) + "-of-" + todo.length);
+      if (!left.length) { _gen++; tick(1); return true; }
+      // the page did not take the value from script: real keys, where they can reach it
+      if (pageVisible() && left.every((p) => !spinDigits(p.el))) {
+        for (const p of left) _keyOps.push({ ref: fieldRef(p.el), text: p.text });
+        _keyGroups.push({ group, parts: left, from: _from, section: _section, label: label || "", words: dateWords(when) });
+        return "keys";
+      }
+      for (const p of left) noteMiss(p.el, p.want, false);
+      return false;
     }
     const box = single ? (emptyBox(group) ? group : null)
       : qsaSafe("input", group).find((i) => !/^(hidden|checkbox|radio|button|submit)$/i.test(i.type || "") && emptyBox(i));
@@ -2773,7 +2833,16 @@ function qsaSafe(sel, root) {
     setNativeValue(box, v);
     return true;
   }
+  // Workday names its date fields: formField-startDate / -endDate (month and year) for a job,
+  // formField-firstYearAttended / -lastYearAttended (a year) for a school. Found by that name
+  // inside the section (the numbers in Workday's ids are not positions: never built from one).
+  const DATE_FIELD_IDS = { from: ["formField-startDate", "formField-firstYearAttended"], to: ["formField-endDate", "formField-lastYearAttended"] };
   function dateGroup(box, re) {
+    const side = re === HIST_LABELS.from ? "from" : re === HIST_LABELS.to ? "to" : "";
+    for (const id of (DATE_FIELD_IDS[side] || [])) {
+      const g = qsaSafe("[data-automation-id='" + id + "']", box)[0];
+      if (g && qsaSafe(SPIN_SEL, g).length) return g;
+    }
     for (const g of qsaSafe("fieldset, [role='group']", box)) {
       const lg = g.querySelector("legend, [role='heading'], label");
       if (lg && re.test(cleanLabel(lg.textContent)) && g !== box) return g;
@@ -2804,20 +2873,16 @@ function qsaSafe(sel, root) {
     trace(null, "keys-landed-" + out.landed + "-missed-" + out.missed);
     return out;
   }
-  // A search the shell is asked to run (real keys and a real Enter). Not asked again for a list
-  // that already had nothing fitting (closeSearch notes the miss in the shared miss memory).
   const SEARCH_MEMO = { memo: "search" };
-  function queueSearch(el, op) {
-    if (missedBefore(el, SEARCH_MEMO) || popupStuckFor(el) || stuckShowing()) { _beat.skipped++; return false; }
-    if (_searchOps.some((o) => o.ref === op.ref)) return false;
+  const _searchBox = new Map();              // ref -> the field's container
+  // The shell's real-input search, as the fallback of the in-page one (a visible page only).
+  function shellSearch(el, op) {
+    if (popupStuckFor(el) || stuckShowing() || _searchOps.some((o) => o.ref === op.ref)) return false;
     _searchOps.push(op);
-    // Workday re-renders a prompt's input (the node the ref was put on goes stale): remember the
-    // field's own container, so the input can be found again in it.
     const box = el.closest && el.closest("[data-automation-id='multiselectInputContainer'], [data-automation-id='multiSelectContainer'], [data-automation-id^='formField']");
     if (box) _searchBox.set(op.ref, box);
     return true;
   }
-  const _searchBox = new Map();              // ref -> the field's container
   function searchEl(ref) {
     const el = elByRef(ref);
     if (el && el.isConnected) return el;
@@ -2827,6 +2892,138 @@ function qsaSafe(sel, root) {
     if (!again) return null;
     try { again.setAttribute("data-tailor-ref", ref); } catch (e) { return null; }
     return again;
+  }
+  // ---- Workday's prompt fields (School, Field of Study, Skills), searched IN THE PAGE.
+  // Measured on a real Workday form (2026-11-19), with the pane out of sight:
+  //   * the prompt is input[data-uxi-widget-type=selectinput] in multiselectInputContainer;
+  //   * the search runs on Enter: the query set through the native setter, then keydown /
+  //     keypress / keyup for Enter on that input. One to three seconds later the choices appear
+  //     in div[role=listbox][data-automation-id=activeListContainer] (each a promptOption), or
+  //     "No Items.";
+  //   * a click() on the wanted promptOption picks it: the list closes, the input clears, and a
+  //     selectedItem pill appears in the field;
+  //   * Escape and blur do not close an open list; a press and click somewhere else does, and
+  //     so does Tab on the input. The prompt's icon is never clicked;
+  //   * real keys and clicks through the debugger do not reach a page that is out of sight.
+  // No dialog is involved, so none is looked for here. Bounded: at most 3 queries, each waited
+  // PROMPT_MS for its choices, all inside the phase budget; a list searched once on this page
+  // is not searched again (the shared miss memory). Returns how many choices reached the field.
+  const PROMPT_MS = { results: 5000, none: 2000, silent: 3500, took: 2500 };
+  let _promptScale = 1;                       // tests shorten the waits (fillAsync opts.promptMs)
+  const pms = (k) => Math.max(100, Math.round(PROMPT_MS[k] * _promptScale));
+  const untilMs = (ms) => { const t = Date.now() + ms; return _deadline ? Math.min(t, _deadline) : t; };
+  // The list a prompt's search shows: Workday's activeListContainer first, else the usual lookup.
+  function promptListOpen(el) {
+    const doc = el.ownerDocument || document;
+    return qsaSafe("[data-automation-id='activeListContainer']", doc).some(boxShown) || optionsFor(el).length > 0;
+  }
+  function promptPicked(el) {
+    const n = chosenPills(el).length;
+    if (n) return n;
+    // "1 item selected, <label>" beside the input
+    let node = el;
+    for (let i = 0; i < 4 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      const a = qsaSafe("[data-automation-id='promptAriaInstruction']", node)[0];
+      if (a) { const m = /^\s*(\d+)\s+items?\s+selected/i.exec(a.textContent || ""); return m ? Number(m[1]) : 0; }
+    }
+    return 0;
+  }
+  // Close the prompt's list as a person would: a press and click on a heading above (it takes
+  // no input and opens nothing), then Tab on the input. Checked after each.
+  async function closePromptList(el) {
+    if (!promptListOpen(el)) return true;
+    const doc = el.ownerDocument || document;
+    let spot = null;
+    for (const hd of qsaSafe("h1, h2, h3, h4, h5, h6, [role='heading']", doc)) {
+      if (!boxShown(hd) || hd.closest("[role='listbox'], [role='dialog'], button, a, label")) continue;
+      if (precedes(hd, el)) spot = hd;
+    }
+    press(spot || doc.body);
+    for (const end = untilMs(300); promptListOpen(el) && Date.now() < end;) await sleep(STEP_MS);
+    if (!promptListOpen(el)) return true;
+    const tab = { key: "Tab", code: "Tab", keyCode: 9, which: 9 };
+    fire(el, "keydown", tab); fire(el, "keyup", tab);
+    for (const end = untilMs(300); promptListOpen(el) && Date.now() < end;) await sleep(STEP_MS);
+    return !promptListOpen(el);
+  }
+  // spec: {queries, score(text) -> number, max?, kind}. -> {picked, registered, closed}
+  async function promptSearch(el, spec) {
+    const out = { picked: 0, registered: false, closed: true };
+    if (missedBefore(el, SEARCH_MEMO) || popupStuckFor(el) || stuckShowing()) { _beat.skipped++; out.skipped = true; return out; }
+    if (over()) return out;
+    noteMiss(el, SEARCH_MEMO, true);                       // searched once on this page, whatever comes of it
+    const t0 = Date.now();
+    const before = promptPicked(el);
+    const enter = { key: "Enter", code: "Enter", keyCode: 13, which: 13 };
+    const max = spec.max || 1;
+    for (const q of (spec.queries || []).slice(0, 3)) {
+      if (over() || out.picked >= max) break;
+      _robustUntil = Date.now() + pms("results") + 1000;   // these waits do not rest on page timers alone
+      // a list still open from the query before is closed first, so this query's own list is
+      // told apart from it (the same "No Items." twice looks like no answer at all)
+      if (promptListOpen(el)) await closePromptList(el);
+      // click and focus first; what that alone brings up (a list of first choices on some pages)
+      // is not the search's answer, so the list is read after it and before the query goes in
+      try { if (el.click) el.click(); if (el.focus) el.focus(); } catch (e) { /* fine */ }
+      const sig = listSig(el), wasOpen = promptListOpen(el), node0 = listboxFor(el);
+      setNativeValue(el, String(q));
+      fire(el, "keydown", enter); fire(el, "keypress", enter); fire(el, "keyup", enter);
+      // wait for the choices: the list changed and holds some; "No Items." only after a while;
+      // nothing at all for long enough means the page did not take the Enter
+      const tq = Date.now(), end = untilMs(pms("results"));
+      let best = null, reacted = false;
+      while (Date.now() < end) {
+        await sleep(STEP_MS * 2);
+        const opts = optionsFor(el).filter((o) => !optionTicked(o));
+        reacted = reacted || listSig(el) !== sig || (!wasOpen && promptListOpen(el)) || (wasOpen && listboxFor(el) !== node0);
+        if (reacted && opts.length) {
+          for (const o of opts) {
+            const sc = spec.score(optionText(o));
+            if (sc > 0 && (!best || sc > best.sc || (sc === best.sc && optionText(o).length < optionText(best.o).length))) best = { o, sc };
+          }
+          if (best) break;
+          if (!loading(el) && Date.now() - tq >= pms("none")) break;        // choices, none fitting
+        }
+        if (reacted && !opts.length && Date.now() - tq >= pms("none")) break;   // "No Items.", and it stayed
+        if (!reacted && Date.now() - tq >= pms("silent")) break;
+      }
+      out.registered = out.registered || reacted;
+      trace(el, "prompt-query-" + (best ? "fit" : reacted ? "no-fit" : "silent"), Date.now() - tq);
+      if (!reacted) break;                                 // the page does not take a script's Enter: no further query
+      if (!best) continue;
+      const shown = cleanText(best.o.textContent), had = promptPicked(el);
+      try { best.o.click(); } catch (e) { press(best.o); }
+      for (const stop = untilMs(pms("took")); promptPicked(el) <= had && Date.now() < stop;) await sleep(STEP_MS);
+      if (promptPicked(el) <= had && best.o.isConnected) {      // the row's own box, then the full press
+        const box = best.o.querySelector("input[type='radio'], input[type='checkbox']");
+        press(box || best.o);
+        for (const stop = untilMs(600); promptPicked(el) <= had && Date.now() < stop;) await sleep(STEP_MS);
+      }
+      if (promptPicked(el) > had) { out.picked++; _gen++; tick(1); logFill(el, spec.from || "", shown); }
+    }
+    if (isTextBox(el) && el.value && !out.picked) setNativeValue(el, "");     // no stray search text behind
+    out.closed = await closePromptList(el);
+    if (!out.closed) _trouble.set(el, "left-open"); else _trouble.delete(el);
+    out.picked = Math.max(out.picked, promptPicked(el) - before);
+    trace(el, "prompt-" + (out.closed ? "closed" : "left-open") + "-picked-" + out.picked, Date.now() - t0);
+    return out;
+  }
+  // "X University" <-> "University of X", with and without a leading "The": at most 3 queries.
+  function schoolQueries(name) {
+    const base = String(name || "").trim().replace(/\s+/g, " ");
+    const out = [];
+    const add = (q) => { q = String(q || "").trim(); if (q && !out.some((x) => canon(x) === canon(q))) out.push(q); };
+    add(base);
+    const bare = base.replace(/^the\s+/i, "");
+    add(bare);
+    let m = /^university of (.+)$/i.exec(bare);
+    if (m) add(m[1] + " University");
+    m = /^(.+) university$/i.exec(bare);
+    if (m) add("University of " + m[1]);
+    add(base.split(",")[0]);
+    return out.slice(0, 3);
   }
   async function fillSection(sec, item, kind) {
     let n = 0;
@@ -2847,6 +3044,17 @@ function qsaSafe(sel, root) {
       if (kind === "edu" && HIST_LABELS.field.test(lab)) continue;            // a list, below
       const key = Object.keys(textFor).find((k) => HIST_LABELS[k].test(lab));
       if (!key || !textFor[key] || !emptyBox(el)) continue;
+      if (isPromptInput(el)) {                                                 // Workday's prompt: searched in the page
+        if (chosenPills(el).length) continue;
+        const want = textFor[key], sc = answerScorer(want);
+        const r = await promptSearch(el, { kind: "school", queries: schoolQueries(want), score: sc, from: "history" });
+        if (r.picked) { n++; continue; }
+        if (r.registered || r.skipped) continue;
+        // the page did not take a script's Enter: the list as it filters while typing, as before
+        const r2 = await pickCombo(el, { text: want, score: sc, freeText: true });
+        if (r2.ok) { n++; logFill(el); }
+        continue;
+      }
       if (isWidgetInput(el)) {                                                 // a search list (School on some sites)
         const r = await pickCombo(el, { text: textFor[key], score: answerScorer(textFor[key]), freeText: true });
         if (r.ok) { n++; logFill(el); }
@@ -2877,14 +3085,18 @@ function qsaSafe(sel, root) {
           const r = await pickCombo(el, { score: (t) => (lv.test(t) ? 50 - Math.min(9, t.length / 20) : 0), memo: "re:" + lv.source });
           if (r.ok) { n++; logFill(el); }
         } else if (HIST_LABELS.field.test(lab) && (item.field || item.level)) {
-          if (isSearchBox(el)) { queueSearch(el, fieldSearch(el, item)); continue; }
+          if (isPromptInput(el)) {
+            // searched in the page; only when the page does not take a script's Enter, and can
+            // be reached by real keys (it is visible), is the shell asked to search it
+            const op = fieldSearch(el, item);
+            const r = await promptSearch(el, { kind: "field", queries: op.queries, score: (t) => subjectScore(op.want, t), from: "closest" });
+            if (r.picked) n++;
+            else if (!r.registered && !r.skipped && pageVisible()) shellSearch(el, op);
+            continue;
+          }
           if (!item.field) continue;
           const r = await pickCombo(el, { text: item.field, score: answerScorer(item.field) });
           if (r.ok) { n++; logFill(el); }
-          // its list opened as a search popup and the first choices held no match: the popup is
-          // closed again, and the shell searches it with real keys (the list filters on Enter)
-          // (the same for a prompt with an inline list: its first choices are all a script can see)
-          else if (isPromptInput(el) && !r.skipped && (r.popup || r.why === "no-match")) queueSearch(el, fieldSearch(el, item));
         }
       }
     }
@@ -3126,28 +3338,6 @@ function qsaSafe(sel, root) {
     const o = optionsFor(el);
     return o.length + "|" + o.slice(0, 6).map(optionText).join("|") + "|" + (emptyNotice(el) ? "none" : "");
   }
-  // The search run from inside the page, the way other tools drive Workday's prompts: the
-  // prompt's own input (or its popup's search box) is opened, focused, given the query through
-  // the native value setter and an input event, and sent Enter (Workday searches on Enter; typed
-  // text alone filters nothing). Whether the page took it is read afterwards (searchSeen: did
-  // the list change?). The shell falls back to real keys through the debugger when it did not.
-  function searchInPage(ref, query) {
-    const el = searchEl(ref);
-    if (!el) return null;
-    const doc = el.ownerDocument || document;
-    const w = watchFor(ref);
-    const st = searchState(ref, el);
-    let pop = ourPopupFor(el) || (w ? claimFromWatch(el, w) : null);
-    if (!pop && !st.opened) { st.opened = true; press(el); pop = ourPopupFor(el) || (w ? claimFromWatch(el, w) : null); }
-    const t = (pop && popupSearchBox(pop)) || el;
-    st.sig = listSig(el);
-    try { if (doc.activeElement !== t) t.focus(); } catch (e) { /* fine */ }
-    setNativeValue(t, String(query));
-    const enter = { key: "Enter", code: "Enter", keyCode: 13, which: 13 };
-    fire(t, "keydown", enter); fire(t, "keypress", enter); fire(t, "keyup", enter);
-    trace(el, pop ? "search-in-page-popup" : "search-in-page");
-    return { popup: !!pop };
-  }
   // {options, changed, none, popup}: what the list shows since the last query was sent.
   function searchSeen(ref) {
     const el = searchEl(ref);
@@ -3334,8 +3524,13 @@ function qsaSafe(sel, root) {
     const skills = ((payload && payload.skills) || []).slice(0, 6);
     if (skills.length) {
       for (const el of comboboxes()) {
+        if (over()) break;
         if (!/\bskills?\b/i.test(widgetLabel(el)) || !isSearchBox(el) || chosenPills(el).length) continue;
-        queueSearch(el, { ref: fieldRef(el), kind: "skills", items: skills, queries: skills.slice(0, 4), max: 3, label: widgetLabel(el) });
+        const op = { ref: fieldRef(el), kind: "skills", items: skills, queries: skills.slice(0, 4), max: 3, label: widgetLabel(el) };
+        const r = await promptSearch(el, { kind: "skills", queries: skills.slice(0, 3), max: 3, from: "skills",
+                                           score: (t) => (skills.some((x) => canon(x) === canon(t)) ? 100 : 0) });
+        if (r.picked) out.filled += r.picked;
+        else if (!r.registered && !r.skipped && pageVisible()) shellSearch(el, op);
       }
     }
     return out;
@@ -3385,6 +3580,8 @@ function qsaSafe(sel, root) {
     _fillLog = [];
     passStart();
     if (opts && "debug" in opts) setTrace(opts.debug);
+    _trace = [];                               // this pass's own lines only
+    _promptScale = opts && Number(opts.promptMs) > 0 ? Number(opts.promptMs) / PROMPT_MS.results : 1;
     const r = fill(payload);
     if (!r || !r.ok) { endBudget(base); return r; }
     tick(0);
@@ -3546,7 +3743,7 @@ function qsaSafe(sel, root) {
     rawLabel, answerableTextareas, pageJobContext, screeningAnswer,
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
     // deep DOM + custom widgets + multi-page (desktop shell)
-    fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, searchTook, searchInPage, searchSeen, searchClose, closeSearch, searchTarget, searchFocus, searchTroubles,
+    fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, searchTook, searchSeen, searchClose, promptSearch, closeSearch, searchTarget, searchFocus, searchTroubles,
     keysLanded, closeOpened, pickerPopups, takeTrace, setTrace, extractFormAsync,
     cleanLabel, readBack, fileListed, fileListing: fileListingAt, dropDuplicateFiles, dropUnsizedCopy, fileCopies, sizeReadings, sizeMatches, applyOpsAsync, leftover, pageSignature, setRefPrefix, takeFillLog,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,

@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>My Information (phone fields fixture)</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<!-- A Workday "My Information" phone block (made-up data): Phone Device Type, Country Phone Code,
+     Phone Number, Phone Extension. ?stale=1: Phone Extension already holds the whole phone number
+     (written there by an earlier, wrong fill). The boxes are controlled the way the real page's
+     are: setting "" clears one only with an input event of type deleteContentBackward. -->
+<form>
+<h2>My Information</h2>
+<div><label for="fn">First Name*</label><input id="fn" type="text" name="firstName"></div>
+<div><label for="pt">Phone Device Type*</label><input id="pt" type="text" name="phoneType" value="Mobile"></div>
+<div><label for="pn">Phone Number*</label><input id="pn" type="text" name="phoneNumber"></div>
+<div><label for="px">Phone Extension</label><input id="px" type="text" name="phoneExtension"></div>
+<div><label for="ox">Office Extension</label><input id="ox" type="text" name="officeExt" value="204"></div>
+<button type="button">Save and Continue</button>
+</form>
+<script>
+  const set = (el, v) => Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, v);
+  if (/[?&]stale=1/.test(location.search)) set(document.getElementById("px"), "(555) 010-2000");
+  if (/[?&]other=1/.test(location.search)) set(document.getElementById("px"), "4471");
+  for (const el of document.querySelectorAll("input")) {
+    let kept = el.value;
+    el.addEventListener("input", (e) => {
+      if (el.value !== "" || e.inputType === "deleteContentBackward") kept = el.value; else set(el, kept);
+    });
+  }
+  window.fxValues = () => Object.fromEntries([...document.querySelectorAll("input")].map((e) => [e.name, e.value]));
+</script>
+</body></html>

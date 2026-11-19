@@ -24,11 +24,10 @@
 
 const CALL_MS = 2500;          // one page or debugger call (every page call here is synchronous)
 const KEYS_MS = 15000;         // all the date typing of one fill
-const SEARCH_MS = 30000;       // all the searches of one fill
+const SEARCH_MS = 20000;       // all the searches of one fill
 const CLOSE_MS = 3000;         // the close of one search, allowed even after SEARCH_MS
 const RESULTS_MS = 4000;       // at most, for a search's results after Enter (it ends as soon as they show)
 const NONE_MS = 2000;          // a list that says it has nothing is believed after this long
-const IN_PAGE_MS = 1500;       // an in-page search the list did not react to is given up after this long
 const MAX_QUERIES = 4;
 const MAX_FIELDS = 8;
 
@@ -116,16 +115,16 @@ async function typeKeys(driver, keys, opts) {
   return out;
 }
 
-// Search lists that filter only on a real Enter (Workday's Field of Study and Skills). For each
-// one the engine names ({ref, kind, queries, want | items, max, label}), per query: FIRST the
-// search from inside the page (searchInPage: the query set into the prompt's own input and Enter
-// sent to it, no click and no debugger keys); if the list did not react, real input instead:
+// Search a list with REAL input: the fallback of the engine's own in-page search (promptSearch
+// in autofill_core.js), asked for only when the page did not take a script's Enter AND is
+// visible (real keys and clicks do not reach a page that is out of sight, measured 2026-11-19).
+// For each list the engine names ({ref, kind, queries, want | items, max, label}), per query:
 // ask the engine where to click (the box, or the search box of its popup), click, give the page
 // up to CLAIM_MS to bring up a popup (the engine claims it; none means an inline list, typed
-// into the box itself), type the query, Enter. Then the engine presses the best REAL option
-// (searchChoice); the next query only when nothing fit. Once the page has shown which way it
-// takes a search, the other is not tried again in this fill. Then the close, step by step (Done, Escape, a press outside, and one real
-// Escape key if the engine asks for it), and closeSearch for what really reached the page.
+// into the box itself), type the query, Enter, and let the engine press the best REAL option
+// (searchChoice); the next query only when nothing fit. Then the close, step by step (Done,
+// Escape, a press outside, and one real Escape key if the engine asks for it), and closeSearch
+// for what really reached the page.
 // Every page call here is synchronous on the page side; all the waiting is done HERE, with this
 // process's timers (a page with a popup open did not run its own, 2026-11-18).
 // A problem in this optional job is never the fill's problem: the fields it could not finish
@@ -147,7 +146,6 @@ async function searchPicks(driver, ops, opts) {
   const seen = new Set();
   const list = (ops || []).filter((o) => o && o.ref && !seen.has(o.ref) && seen.add(o.ref)).slice(0, MAX_FIELDS);
   const out = { picked: 0, fields: 0, left_open: 0, trouble: [], timed_out: false, dead: false, ms: 0 };
-  let inPage = (opts && opts.inPage) || "";         // "" not known yet, "yes" the page takes it, "no" real keys only
   const troubled = (op) => { if (op.label && !out.trouble.includes(op.label)) out.trouble.push(op.label); };
   for (let i = 0; i < list.length; i++) {
     if (run.st.dead || run.left() <= 0) { run.st.timed_out = true; break; }
@@ -188,28 +186,11 @@ async function searchPicks(driver, ops, opts) {
           if ((seen.changed || !needChange) && seen.options > 0 && same >= 1) break;
           if (age >= L.results) break;
           if (seen.changed && seen.options === 0 && age >= Math.min(NONE_MS, L.results)) break;
-          if (needChange && !seen.changed && age >= Math.min(IN_PAGE_MS, L.results)) break;
         }
         return last;
       };
-      // 1. the search from inside the page (no click, no debugger keys): the query set into the
-      //    prompt's own input, Enter on it. Kept only if the list answered (it changed).
-      let answered = false;
-      if (inPage !== "no") {
-        let r = await run.step(w + "in-page", () => driver.evalJs(`window.TailorAutofill.searchInPage(${ref}, ${query})`));
-        if (r && !r.popup && !popup) {
-          await awaitPopup();
-          if (popup) r = await run.step(w + "in-page popup", () => driver.evalJs(`window.TailorAutofill.searchInPage(${ref}, ${query})`));
-        }
-        if (r && r.popup) popup = true;
-        const seen = r ? await awaitResults(true) : null;
-        answered = !!(seen && seen.changed);
-        if (answered) inPage = "yes";
-        else if (inPage !== "yes") { inPage = "no"; if (log) log("searchPicks: " + w + "the in-page search did not register; real keys from here on"); }
-        if (run.st.dead) break;
-      }
-      // 2. real input through the debugger, when the page did not take the in-page search
-      if (!answered && inPage !== "yes") {
+      // Real input through the debugger (the engine already tried the search in the page).
+      {
         const at = await run.step(w + "target", () => driver.evalJs(`window.TailorAutofill.searchTarget(${ref})`));
         if (!at || !(at.w > 0)) break;
         await run.step(w + "press", () => driver.send("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 }));

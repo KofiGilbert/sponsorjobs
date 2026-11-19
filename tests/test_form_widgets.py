@@ -552,8 +552,11 @@ XP_PAYLOAD = {
 XP_PAGE = "workday_experience_dialog.html"
 
 
+XP_PROMPT_MS = 500        # the in-page prompt search's waits, scaled down (5 s on a real page)
+
+
 def _xp_fill(payload=None):
-    return f"window.TailorAutofill.fillAsync({json.dumps(payload or XP_PAYLOAD)})"
+    return f"window.TailorAutofill.fillAsync({json.dumps(payload or XP_PAYLOAD)}, {{promptMs: {XP_PROMPT_MS}}})"
 
 
 XP_ONE_PASS = [
@@ -571,8 +574,8 @@ def test_workday_popup_field_of_study_is_picked_and_the_dialog_closed(tmp_path):
         {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
     ])
     v, rep = r["values"], r["rep"]
-    # the engine's own pass leaves nothing open, although Field of Study opened a popup dialog
-    assert r["after_engine"]["popupOpens"] >= 1 and r["after_engine"]["open"] is False
+    # the engine's own pass (an in-page search this page does not take) provokes no popup at all
+    assert r["after_engine"]["popupOpens"] == 0 and r["after_engine"]["open"] is False
     assert rep["left_open"] == 0
     # the shell's search: the option the degree supports, by the engine's scorer, then Done
     assert v["fields"] == [["Business Administration/Management"], ["Economics"]]
@@ -639,8 +642,8 @@ def test_workday_popup_is_closed_when_no_option_matches_and_not_searched_again(t
 def test_workday_popup_without_a_done_button_is_closed_another_way(tmp_path):
     # ?nodone=1: no Done; a script's Escape is ignored; a press on the backdrop closes it
     r = run(tmp_path, XP_PAGE, XP_ONE_PASS, query="?nodone=1")
-    assert r["after_engine"]["popupOpens"] >= 1 and r["after_engine"]["open"] is False
-    assert r["rep"]["left_open"] == 0
+    assert r["after_engine"]["popupOpens"] == 0 and r["after_engine"]["open"] is False
+    assert r["rep"]["left_open"] == 0 and r["values"]["popupOpens"] >= 1     # opened by the shell's real click
     assert r["values"]["open"] is False and r["search"]["left_open"] == 0
     assert r["values"]["fields"] == [["Business Administration/Management"], ["Economics"]]
     assert r["keys"]["landed"] == 7 and r["keys"]["missed"] == 0
@@ -686,7 +689,7 @@ XP_BUDGET_MS = 6000
 def _xp_timed(payload=None, budget=XP_BUDGET_MS):
     """fillAsync under a budget, with the wall time it really took and its debug trace."""
     return ("(async () => { const t = performance.now(); const r = await window.TailorAutofill.fillAsync("
-            f"{json.dumps(payload or XP_PAYLOAD)}, {{budgetMs: {budget}, debug: true}});"
+            f"{json.dumps(payload or XP_PAYLOAD)}, {{budgetMs: {budget}, debug: true, promptMs: {XP_PROMPT_MS}}});"
             " return Object.assign(r, {wall_ms: Math.round(performance.now() - t)}); })()")
 
 
@@ -697,6 +700,7 @@ def test_workday_popup_that_never_closes_is_reported_once_and_left_alone(tmp_pat
         {"do": "shellKeys", "from": "rep", "as": "keys"},
         {"do": "shellSearch", "from": "rep", "as": "search"},
         {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
         {"do": "eval", "as": "rep2", "js": _xp_timed()},
         {"do": "shellKeys", "from": "rep2", "as": "keys2"},
         {"do": "shellSearch", "from": "rep2", "as": "search2"},
@@ -706,14 +710,15 @@ def test_workday_popup_that_never_closes_is_reported_once_and_left_alone(tmp_pat
         {"do": "eval", "as": "values3", "js": "window.fxValues()"},
     ], query="?stuck=1")
     rep, rep2 = r["rep"], r["rep2"]
-    # the first popup the engine opened would not close: one close cycle, reported, and the pass returns
-    assert rep["left_open"] == 1 and rep["wall_ms"] < XP_BUDGET_MS + 2000, rep["wall_ms"]
-    assert sum(1 for line in rep["trace"] if "popup-stuck" in line) == 1, rep["trace"]
+    assert rep["left_open"] == 0 and rep["wall_ms"] < XP_BUDGET_MS + 2000, rep["wall_ms"]
+    # the popup the shell's first search brought up would not close: its close steps once, then it
+    # is reported with its field, and the other searches are not started under it
+    s1 = r["search"]
+    assert s1["left_open"] == 1 and s1["trouble"] == ["Field of Study"] and not s1["dead"] and s1["ms"] < 20000
     assert r["values"]["popupOpens"] == 1 and r["values"]["open"] is True
-    # the shell's searches return at once for the stuck control and never hang
-    assert r["search"]["picked"] == 0 and not r["search"]["dead"] and r["search"]["ms"] < 20000
+    assert "Field of Study" in r["left"]
     # the second pass, and the form read, do not open or try to close anything again
-    assert rep2["left_open"] == 1 and rep2["opens"] == 0 and rep2["wall_ms"] < 1500, rep2
+    assert rep2["left_open"] == 1 and rep2["opens"] == 0 and rep2["searches"] == [] and rep2["wall_ms"] < 1500, rep2
     assert not any("popup-" in line and "left-open" not in line for line in rep2["trace"]), rep2["trace"]
     assert r["values2"]["popupOpens"] == 1 and r["values3"]["popupOpens"] == 1
     assert r["read"] < 6000
@@ -832,7 +837,7 @@ def test_workday_page_timers_frozen_under_a_popup_still_returns_and_closes(tmp_p
         {"do": "eval", "as": "values2", "js": "window.fxValues()"},
     ], query="?freeze=1")
     rep, v, s = r["rep"], r["values"], r["search"]
-    assert r["after_engine"]["popupOpens"] >= 1 and r["after_engine"]["open"] is False     # opened, and closed, by the engine
+    assert r["after_engine"]["open"] is False
     assert rep["left_open"] == 0 and rep["wall_ms"] < XP_BUDGET_MS + 2000 and not rep["timed_out"], rep["wall_ms"]
     assert r["keys"]["landed"] == 7
     assert v["fields"] == [["Business Administration/Management"], ["Economics"]] and v["skills"] == ["Excel", "SQL"]
@@ -891,21 +896,128 @@ def test_shell_never_calls_a_fill_stalled_over_the_dates_or_a_list_search():
     assert "async" not in "".join(l for l in keys.splitlines() if "TailorAutofill." in l)   # no page call awaits a page-side wait
 
 
-@pytest.mark.parametrize("query", ["?softenter=1", "?softenter=1&inline=1", "?softenter=1&late=1"])
-def test_workday_in_page_search_needs_no_click_and_no_debugger_keys(tmp_path, query):
-    """Where the page takes a script's Enter on the prompt's own input, the search runs wholly in
-    the page (value set natively, Enter on the input): no real click, no real key, same picks."""
-    r = run(tmp_path, XP_PAGE, XP_ONE_PASS, query=query)
-    v, s = r["values"], r["search"]
-    assert v["fields"] == [["Business Administration/Management"], ["Economics"]] and v["skills"] == ["Excel", "SQL"], s["lines"]
-    assert s["picked"] == 4 and s["left_open"] == 0 and s["trouble"] == [] and v["open"] is False
-    assert any("in-page" in l for l in s["lines"])
-    assert not any(x in l for l in s["lines"] for x in (" press ", " release ", " type ", " enter ", "did not register")), s["lines"]
+# ------------------------------------------------------------------ the measured Workday page (2026-11-19)
+# workday_experience_real.html is built from what was measured on the real page with the pane out
+# of sight: dates take a native-set value with input and change events; a prompt searches on an
+# in-page Enter, lists its choices in activeListContainer, takes a click() on a promptOption and
+# shows a selectedItem pill; Escape and blur do not close a list, a click elsewhere does; and real
+# keys and clicks through the debugger never reach a page that is out of sight (?hidden=1).
+XP_REAL = "workday_experience_real.html"
+XP_REAL_MS = 1500
 
 
-def test_workday_in_page_search_that_does_not_register_falls_back_to_real_keys(tmp_path):
-    r = run(tmp_path, XP_PAGE, XP_ONE_PASS)                     # this page ignores a script's Enter
-    lines = r["search"]["lines"]
-    assert sum(1 for l in lines if "did not register" in l) == 1   # found out once, on the first query
-    assert sum(1 for l in lines if " in-page " in l) <= 2 and any(" type " in l for l in lines)
-    assert r["values"]["fields"] == [["Business Administration/Management"], ["Economics"]]
+def _real_fill(payload=None, budget=28000):
+    return ("(async () => { const t = performance.now(); const r = await window.TailorAutofill.fillAsync("
+            f"{json.dumps(payload or XP_PAYLOAD)}, {{budgetMs: {budget}, debug: true, promptMs: {XP_REAL_MS}}});"
+            " return Object.assign(r, {wall_ms: Math.round(performance.now() - t)}); })()")
+
+
+def test_workday_real_page_out_of_sight_fills_dates_and_prompts_with_no_debugger_input(tmp_path):
+    r = run(tmp_path, XP_REAL, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _real_fill()},
+        {"do": "shellKeys", "from": "rep", "as": "keys"},          # what the shell would do with the report: nothing
+        {"do": "shellSearch", "from": "rep", "as": "search"},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+        {"do": "eval", "as": "rep2", "js": _real_fill()},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+    ], query="?hidden=1")
+    rep, v = r["rep"], r["values"]
+    # nothing is handed to the shell: no key to type, no list to search, no debugger input at all
+    assert rep["keys"] == [] and rep["searches"] == []
+    assert r["keys"]["typed"] == 0 and r["search"]["fields"] == 0 and v["realInput"] == 0
+    # dates: month and year from the profile, no To for the current job, a year alone for a school
+    assert v["current"] == [True, False]
+    assert v["from"] == ["3/2026", "2/2018"] and v["to"] == ["/", "9/2024"] and v["fromShown"] == ["03/2026", "02/2018"]
+    assert v["eduFrom"] == ["2024", "2011"] and v["eduTo"] == ["2025", "2015"]
+    # prompts: searched in the page, the best real choice clicked, checked by the pill
+    assert v["schools"] == [["Example State University"], ["Sample College"]]
+    assert v["fields"] == [["Business Administration/Management"], ["Economics"]]
+    assert v["skills"] == ["Excel", "SQL"] and v["degrees"] == ["Masters", "Bachelors"]
+    assert v["open"] is False and v["iconClicks"] == 0 and v["dialogs"] == 0 and rep["left_open"] == 0
+    assert not rep["timed_out"] and rep["wall_ms"] < 28000
+    assert not any(x in r["left"] for x in ("From", "To", "School or University", "Field of Study")), r["left"]
+    # the debug trace names steps and refs only
+    assert not any(x in line for line in rep["trace"] for x in ("Economics", "Business", "Example", "Field of Study"))
+    # the second pass: nothing filled, searched or opened; nothing changed on the page
+    rep2 = r["rep2"]
+    assert rep2["filled"] == 0 and rep2["keys"] == [] and rep2["searches"] == [] and rep2["opens"] == 0 and rep2["wall_ms"] < 1500
+    assert r["values2"] == v
+
+
+def test_workday_real_page_nothing_fitting_leaves_the_prompt_empty_closed_and_unsearched_again(tmp_path):
+    payload = json.loads(json.dumps(XP_PAYLOAD))
+    payload["history"] = payload["history"][:1]
+    payload["education"] = [dict(payload["education"][0], school="Example State University",
+                                 degree="Master of Science in Marine Biology", field="Marine Biology")]
+    payload["skills"] = ["Welding"]
+    r = run(tmp_path, XP_REAL, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _real_fill(payload)},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+        {"do": "eval", "as": "rep2", "js": _real_fill(payload)},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+    ], query="?hidden=1")
+    v = r["values"]
+    assert v["fields"] == [[]] and v["skills"] == []            # "No Items.": left empty, never a guess
+    assert v["open"] is False and r["rep"]["left_open"] == 0     # ... and the list it showed is closed (Escape would not)
+    assert r["rep"]["searches"] == [] and "Field of Study" not in r["left"]
+    assert v["searches"] <= 1 + 3 + 1                            # school, at most 3 terms for the field, one skill
+    assert r["values2"]["searches"] == v["searches"] and r["rep2"]["filled"] == 0   # not searched again on this page
+
+
+def test_workday_real_page_an_incomplete_date_is_cleared_and_set_and_a_complete_one_is_left(tmp_path):
+    seg = "document.querySelectorAll('[data-automation-id=formField-startDate] input')"
+    typed = ("(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;"
+             " const put = (el, v) => { set.call(el, v); el.dispatchEvent(new Event('input', {bubbles: true})); };"
+             f" const s = {seg}; put(s[1], '1999');"                                    # a year, no month: incomplete
+             " const e = document.querySelectorAll('[data-automation-id=formField-firstYearAttended] input'); put(e[0], '1990');"
+             " return true; })()")
+    r = run(tmp_path, XP_REAL, [
+        {"do": "inject"},
+        {"do": "eval", "as": "pre", "js": typed},
+        {"do": "eval", "as": "rep", "js": _real_fill()},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+    ], query="?hidden=1")
+    v = r["values"]
+    assert v["from"][0] == "3/2026"                              # the stray year was cleared, then the date set
+    assert v["eduFrom"][0] == "1990"                             # a complete date is the person's: left alone
+
+
+def test_workday_real_page_fill_stays_inside_a_small_budget(tmp_path):
+    r = run(tmp_path, XP_REAL, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _real_fill(budget=1500)},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+    ], query="?hidden=1")
+    rep = r["rep"]
+    assert rep["timed_out"] is True and rep["wall_ms"] < 1500 + 2500, rep["wall_ms"]
+    assert r["values"]["titles"][0] == "Data Analyst" and r["values"]["from"][0] == "3/2026"   # what it had is kept
+    assert r["values"]["open"] is False
+
+
+# ------------------------------------------------------------------ a phone number left in "Phone Extension"
+PHONE_PAYLOAD = {"fields": {"first_name": "Avery", "phone": "555-010-2000"}, "screening": {}, "eeo": {"decline": False}}
+
+
+@pytest.mark.parametrize("query, ext, cleared", [("?stale=1", "", 1), ("", "", 0), ("?other=1", "4471", 0)])
+def test_phone_extension_is_never_given_the_number_and_a_stale_one_is_cleared(tmp_path, query, ext, cleared):
+    r = run(tmp_path, "phone_extension.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": f"window.TailorAutofill.fill({json.dumps(PHONE_PAYLOAD)})"},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "rep2", "js": f"window.TailorAutofill.fill({json.dumps(PHONE_PAYLOAD)})"},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+    ], query=query)
+    v = r["values"]
+    assert v["phoneNumber"] == "555-010-2000" and v["firstName"] == "Avery"
+    assert v["phoneExtension"] == ext                           # the person's number is cleared; anything else stays
+    assert v["phoneType"] == "Mobile" and v["officeExt"] == "204"
+    assert r["rep"]["cleared"] == cleared and r["rep2"]["cleared"] == 0 and r["values2"] == v
+
+
+def test_shell_turns_focus_emulation_on_when_it_takes_the_debugger():
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_focus_emulation.js")], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stderr[-2000:]

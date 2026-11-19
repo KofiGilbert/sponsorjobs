@@ -517,6 +517,11 @@ function armSuccessWatch(wc, startUrl, recordId) {
 // success check): attached on first use, detached when the last user is done, and never torn
 // down under another user's feet. If DevTools already holds the debugger, CDP is unavailable
 // and each caller falls back (the person attaches the resume; frames are left to them).
+// Every time it is taken, the page is told it is focused and visible (focus_emulation.js): real
+// keys through the debugger do not reach a page that is out of sight otherwise. Sent right after
+// attaching and again on each later use (a navigation may have moved the page to a new process);
+// not waited for, and a refusal changes nothing else. SJ_AGENT_DEBUG=1 says once whether it took.
+const focusEmulation = require("./focus_emulation");
 const _dbgUsers = new WeakMap();      // webContents -> {n, owned}
 function acquireDebugger(wc) {
   const dbg = wc.debugger;
@@ -528,6 +533,7 @@ function acquireDebugger(wc) {
     } catch (e) { return null; }
     _dbgUsers.set(wc, st);
   }
+  focusEmulation.enable(dbg, process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null);
   st.n++;
   let released = false;
   return () => {
@@ -984,6 +990,10 @@ async function runAutoApplyOnPane(recordId, opts) {
         searchTrouble = sr.trouble || [];
         lap("search", "filling the page");
       }
+    }
+    if (debugLine && havePayload) {                        // what the engine noted while the shell typed and searched
+      const more = await fillKeys.capped(wc.executeJavaScript("window.TailorAutofill.takeTrace()", true), 1000);
+      if (Array.isArray(more)) for (const line of more) debugLine("engine: " + line);
     }
     lap("engine", "reading the form");
     fr = await openFrameSession(wc);

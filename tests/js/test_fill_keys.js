@@ -25,10 +25,10 @@ const OPS = [{ ref: "f1", kind: "field", want: ["marine"], queries: [SECRET, "ma
              { ref: "f2", kind: "skills", items: ["SQL"], queries: ["SQL"], max: 3, label: "Type to Add Skills" }];
 const KEYS = [{ ref: "k1", text: "3" }, { ref: "k2", text: "2026" }, { ref: "k1", text: "3" }];
 // a page that behaves: an inline list (no popup), nothing open after the first close step
-const PAGE = { searchTarget: { x: 5, y: 5, w: 40 }, searchInPage: { popup: false }, searchSeen: { options: 0, changed: false, none: false }, searchFocus: { popup: false, focused: true, added: ["div[aid=somePopup]"] },
+const PAGE = { searchTarget: { x: 5, y: 5, w: 40 }, searchSeen: { options: 0, changed: false, none: false }, searchFocus: { popup: false, focused: true, added: ["div[aid=somePopup]"] },
                searchChoice: { ok: false }, searchTook: { ok: false, pending: false },
                searchClose: { open: false, real_escape: false }, closeSearch: { ok: true, picked: 0 } };
-const FAST = { resultsMs: 1, claimMs: 300, inPage: "no" };          // real keys only, unless a case says otherwise
+const FAST = { resultsMs: 1, claimMs: 300 };
 
 (async () => {
   // 1. nothing fits: each field once, at most MAX_QUERIES queries, exactly one end per field
@@ -66,7 +66,7 @@ const FAST = { resultsMs: 1, claimMs: 300, inPage: "no" };          // real keys
     let looks = 0;
     const d = fake(Object.assign({}, PAGE, { searchFocus: (e) => later(e.includes("false") ? { popup: ++looks >= 3 } : { popup: looks >= 3, focused: true }) }));
     const lines = [];
-    await K.searchPicks(d, [OPS[2]], { resultsMs: 1, claimMs: 900, inPage: "no", log: (l) => lines.push(l) });
+    await K.searchPicks(d, [OPS[2]], { resultsMs: 1, claimMs: 900, log: (l) => lines.push(l) });
     assert.strictEqual(looks, 3);
     assert.ok(!lines.some((l) => /no popup claimed/.test(l)));
   }
@@ -86,7 +86,7 @@ const FAST = { resultsMs: 1, claimMs: 300, inPage: "no" };          // real keys
   }
   // 6. a page call that never answers (the real page's ``focus``, 2026-11-18): the job ends at
   //    that call, inside one call's cap, asks nothing more, and names the field for ``left``
-  for (const stuckAt of ["searchTarget", "searchInPage", "searchSeen", "searchFocus", "searchChoice", "searchClose", "closeSearch"]) {
+  for (const stuckAt of ["searchTarget", "searchSeen", "searchFocus", "searchChoice", "searchClose", "closeSearch"]) {
     const d = fake(Object.assign({}, PAGE, { [stuckAt]: never }));
     const t = Date.now();
     const lines = [];
@@ -101,31 +101,17 @@ const FAST = { resultsMs: 1, claimMs: 300, inPage: "no" };          // real keys
   {
     const d = fake(Object.assign({}, PAGE, { send: never }));
     const t = Date.now();
-    const r = await K.searchPicks(d, OPS, { resultsMs: 1, claimMs: 100, callMs: 120, inPage: "no" });
+    const r = await K.searchPicks(d, OPS, { resultsMs: 1, claimMs: 100, callMs: 120 });
     assert.ok(r.dead && Date.now() - t < 1500 && d.calls.send.length === 1);
   }
   // 8. a slow page: the job's own cap ends it; the field in hand still gets its close
   {
     const d = fake(PAGE, 25);
     const t = Date.now();
-    const r = await K.searchPicks(d, OPS, { resultsMs: 1, claimMs: 100, searchMs: 300, closeMs: 200, inPage: "no" });
+    const r = await K.searchPicks(d, OPS, { resultsMs: 1, claimMs: 100, searchMs: 300, closeMs: 200 });
     assert.ok(r.timed_out && !r.dead, JSON.stringify(r));
     assert.ok(Date.now() - t < 2500, "took " + (Date.now() - t));
     assert.strictEqual(count(d, "closeSearch"), 1);
-  }
-  // 8b. the search from inside the page: when the list reacts, no click and no key goes through
-  //     the debugger at all; when it does not, real keys take over, for this field and the rest
-  {
-    const d = fake(Object.assign({}, PAGE, { searchSeen: { options: 3, changed: true, none: false }, searchChoice: { ok: true }, closeSearch: { ok: true, picked: 1 } }));
-    const r = await K.searchPicks(d, OPS, { resultsMs: 30, claimMs: 60 });
-    assert.deepStrictEqual([r.picked, r.left_open, r.dead], [2, 0, false]);
-    assert.strictEqual(d.calls.send.length, 0, "no debugger input when the page takes the in-page search");
-    assert.strictEqual(count(d, "searchFocus(\"f1\", true)") + count(d, 'searchFocus("f1", true)'), 0);
-    const d2 = fake(PAGE);                                           // the list never reacts
-    const lines = [];
-    await K.searchPicks(d2, OPS, { resultsMs: 30, claimMs: 60, log: (l) => lines.push(l) });
-    assert.strictEqual(count(d2, "searchInPage"), 1, "tried once, then real keys only");
-    assert.ok(d2.calls.send.length > 0 && lines.some((l) => /in-page search did not register/.test(l)));
   }
   // 9. typing: each box once, then the read-back; a box that does not take the focus is skipped
   {

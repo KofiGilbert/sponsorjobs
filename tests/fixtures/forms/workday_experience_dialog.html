@@ -36,9 +36,7 @@
        ?freeze=1  while a popup is open the page's own timers never fire (what the real page
                   appeared to do: every page call that waited on a timer there never came back)
        ?inline=1  no popup at all: the list is a plain box under the control, the control's own
-                  input takes the query (filtered on a real Enter), a press elsewhere closes it
-       ?softenter=1  a script's Enter on the search box runs the search too (what other tools
-                  that drive Workday's prompts rely on; combine with the variants above) -->
+                  input takes the query (filtered on a real Enter), a press elsewhere closes it -->
 <div id="page">
 <h3>My Experience</h3>
 <div id="work" role="group" aria-labelledby="wh"><h4 id="wh">Work Experience</h4><div id="workList"></div>
@@ -51,7 +49,7 @@
 <script>
   const flag = (k) => new RegExp("[?&]" + k + "=1").test(location.search);
   const NODONE = flag("nodone"), STUCK = flag("stuck"), MODAL = flag("modal"), SEP = flag("sep"), NOKEYS = flag("nokeys"),
-        LATE = flag("late"), FREEZE = flag("freeze"), INLINE = flag("inline"), SOFT = flag("softenter");
+        LATE = flag("late"), FREEZE = flag("freeze"), INLINE = flag("inline"), SOFT = false;
   const realTimeout = window.setTimeout.bind(window);
   let popupsUp = 0;
   if (FREEZE) window.setTimeout = (fn, ms) => (popupsUp > 0 ? 0 : realTimeout(fn, ms));     // frozen while a popup is open
