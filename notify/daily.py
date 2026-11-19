@@ -43,12 +43,19 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def summary_text(sent: int, ready: int, need: int, telegram: bool = False) -> str:
+def summary_text(sent: int, ready: int, need: int, telegram: bool = False, check: int = 0, could_not: int = 0) -> str:
     """The daily summary's words. ``telegram``: the copy that goes to the phone, which says
-    where Send all is instead of offering it."""
+    where Send all is instead of offering it. (2026-11-19) ``check``: answers Auto gave by best
+    guess on the applications waiting for Send; ``could_not``: forms the agent could not do (a
+    required field it never guesses)."""
     sent, ready, need = max(0, int(sent)), max(0, int(ready)), max(0, int(need))
+    check, could_not = max(0, int(check or 0)), max(0, int(could_not or 0))
     line = (f"Today: {sent} sent for you, {ready} ready for your Send, "
             f"{_plural(need, 'needs', 'need')} an answer.")
+    if check:
+        line += f" {_plural(check, 'answer needs', 'answers need')} your check before you send."
+    if could_not:
+        line += f" {_plural(could_not, 'form', 'forms')} I could not do."
     if not telegram:
         return line
     tail = []
@@ -185,15 +192,17 @@ def daily_summary(state, channel, counts: dict, now: datetime, paused: bool = Fa
         return None
     local = now.astimezone() if now.tzinfo else now
     sent, ready, need = (max(0, int(counts.get(k) or 0)) for k in ("sent", "ready", "need"))
+    check, could_not = max(0, int(counts.get("check") or 0)), max(0, int(counts.get("could_not") or 0))
     summary = {"date": local.date().isoformat(), "sent": sent, "ready": ready, "need": need,
-               "text": "", "telegram": False, "seen": False}
-    if not (sent or ready or need):
+               "check": check, "could_not": could_not, "text": "", "telegram": False, "seen": False}
+    if not (sent or ready or need or could_not):
         state.update(lambda x: x.__setitem__("auto_summary", summary))
         return summary
-    summary["text"] = summary_text(sent, ready, need)
+    summary["text"] = summary_text(sent, ready, need, check=check, could_not=could_not)
     prefs = _prefs(state.load())
     if channel is not None and not paused and prefs.get("app_updates", True):
-        summary["telegram"] = _try_send(channel, summary_text(sent, ready, need, telegram=True)) == "sent"
+        summary["telegram"] = _try_send(channel, summary_text(sent, ready, need, telegram=True, check=check,
+                                                              could_not=could_not)) == "sent"
     state.update(lambda x: x.__setitem__("auto_summary", summary))
     return summary
 

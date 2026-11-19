@@ -227,7 +227,8 @@ _AUTH = re.compile(
     r"(legally |lawfully )?(work|be employed|employment|accept employment)"
     r"|work authori[sz]ation|right to work|eligib\w* (for|to) (work|employment)"
     r"|employment eligibility|legally (work|able to work|authori[sz]ed|eligible|permitted)"
-    r"|lawfully (work|employed)|permission to work|legal(ly)? (right|entitled)", re.I)
+    r"|lawfully (work|employed)|permission to work|legal(ly)? (right|entitled)"
+    r"|\b(can|could) you (legally |lawfully )?work\b", re.I)
 _NO_SPONSOR = re.compile(r"without (the )?(need (for|of) |needing |requiring |requirement (for|of) |any )?"
                          r"(visa |employer |company )?sponsor|not (need|require)\w* (visa |any )?sponsor"
                          r"|no (visa )?sponsorship", re.I)
@@ -529,6 +530,52 @@ def pick_status(code: str, options, country: str = "US"):
     return None
 
 
+# (2026-11-19, Ochsner on Workday) Choices that state a sponsorship situation instead of Yes or
+# No: "Yes, I am legally authorized to work in the United States. (I do not and will not need visa
+# sponsorship ...)", "I currently need a visa sponsorship from an employer ...", "In the future, I
+# will need visa sponsorship ...". Each is read as one of none / now / future.
+_STATE_NOW = re.compile(r"\b(currently|now|at this time|at present|presently|immediately)\b", re.I)
+_STATE_FUTURE = re.compile(r"\b(future|later|eventually|will need|going forward)\b", re.I)
+
+
+def sponsor_state(option: str) -> str | None:
+    """"none" | "now" | "future" for an option that states a sponsorship situation, else None."""
+    o = str(option or "")
+    n = _norm(o)
+    if "sponsor" not in n and "visa" not in n:
+        return None
+    claim = _sponsor_claim(o)
+    if claim is False or (_POSITIVE_WITHOUT.search(n) and polarity(o) is True):
+        return "none"
+    if claim is True:
+        if _STATE_NOW.search(o) and not _STATE_FUTURE.search(o):
+            return "now"
+        if _STATE_FUTURE.search(o) and not _STATE_NOW.search(o):
+            return "future"
+        return "now" if _STATE_NOW.search(o) else None
+    return None
+
+
+def pick_sponsor_state(wa: dict | None, country: str, options):
+    """The choice that states the person's own sponsorship situation: needs it now, else only in
+    the future, else none (authorized, no sponsorship now or later). None when the profile does
+    not say, or the choices do not name exactly one that fits."""
+    now, fut, auth = needs_sponsorship(wa, country, "now"), needs_sponsorship(wa, country, "future"), is_authorized(wa, country)
+    if now is True:
+        want = "now"
+    elif now is False and fut is True:
+        want = "future"
+    elif now is False and fut is False and auth is not False:
+        want = "none"
+    else:
+        return None
+    states = [(o, sponsor_state(o)) for o in (options or []) if str(o).strip()]
+    if sum(1 for _o, st in states if st) < 2:
+        return None                          # not a list of situations
+    hit = [o for o, st in states if st == want]
+    return hit[0] if len(hit) == 1 else None
+
+
 _CHOICE_TYPES = ("select", "radio")
 
 
@@ -561,7 +608,10 @@ def answer(question: str, wa: dict | None, *, options=(), field_type: str = "tex
         sponsor_any = needs_sponsorship(wa, country, "any")
         if kind.startswith("sponsor"):
             sponsor_any = val
-        picked = pick_yes_no(bool(val), opts, sponsor_any=sponsor_any)
+        picked = None
+        if kind in ("authorized_no_sponsor", "authorized_unrestricted", "sponsor_now", "sponsor_future", "sponsor_any"):
+            picked = pick_sponsor_state(wa, country, opts)
+        picked = picked or pick_yes_no(bool(val), opts, sponsor_any=sponsor_any)
         if picked is None and kind in ("citizen", "citizen_or_pr", "pr") and opts:
             st = entry(wa, country)["status"]  # a "Yes/No" citizen question may list statuses
             picked = pick_status(st, opts, country) if st else None

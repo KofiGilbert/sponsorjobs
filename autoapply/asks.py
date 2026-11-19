@@ -240,6 +240,10 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     if per_company and key == "@previously_worked":
         if worked_here and worked_here[1] == "history" and not COMMON.fast_path("worked_here"):
             return None                         # the rule is off: the brain answers it
+        if worked_here and worked_here[0] == "Yes":
+            from autoapply.planner import currently_here_question
+            if currently_here_question(q, company):
+                return None                     # "currently employed by": only the person knows
         ok = worked_here and worked_here[1] != "confirm" and fit(worked_here[0])
         return (fit(worked_here[0]), worked_here[1] or "library") if ok else None
     hit = library.lookup(q) if library is not None else None
@@ -267,6 +271,11 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         if got:
             return got[0], got[1]
         return None
+    if hit and key == "@citizenship":
+        from autoapply.planner import export_answer, export_question
+        if export_question(q):
+            v = export_answer(q, opts, library, work_auth, partial=partial)
+            return (v, "library") if v else None
     if hit and residence_withheld(q, work_auth):
         return None
     if hit:

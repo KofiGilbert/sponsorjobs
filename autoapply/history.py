@@ -142,3 +142,70 @@ def form_skills(profile: dict, limit: int = 12) -> list:
             if len(out) >= limit:
                 return out
     return out
+
+
+# (2026-11-19, Home Depot on Workday) A form's Languages rows: the person's own languages with the
+# level they saved, never one they did not ("English (Native)", "Spanish - conversational",
+# {"name": "French", "level": "Fluent"}).
+_LEVEL = re.compile(r"\b(native|bilingual|mother tongue|first language|fluent|full professional|"
+                    r"professional working|limited working|proficient|advanced|upper intermediate|"
+                    r"intermediate|conversational|elementary|beginner|basic|working)\b", re.I)
+
+
+def form_languages(profile: dict, limit: int = 4) -> list:
+    """[{"name", "level"}] from the profile's ``languages`` (a list, a comma line, or {name,
+    level} rows); "level" is "" when the profile names none. Empty when it has none."""
+    raw = (profile or {}).get("languages") or []
+    items = raw if isinstance(raw, list) else re.split(r"[,;\n]", str(raw))
+    out = []
+    for it in items:
+        if isinstance(it, dict):
+            name = str(it.get("name") or it.get("language") or "").strip()
+            level = str(it.get("level") or it.get("proficiency") or "").strip()
+        else:
+            text = " ".join(str(it or "").split())
+            m = re.match(r"^(.*?)\s*(?:\((.*?)\)|[-:\u2013\u2014]\s*(.+))?$", text)
+            name, level = (m.group(1) or "").strip(), (m.group(2) or m.group(3) or "").strip()
+            if not level:
+                lm = _LEVEL.search(name)
+                if lm:
+                    level, name = lm.group(0), (name[:lm.start()] + name[lm.end():]).strip(" ,-")
+        name = name.strip(" .,")
+        if not name or len(name) > 40 or name.lower() in {x["name"].lower() for x in out}:
+            continue
+        out.append({"name": name, "level": level[:40]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+# (2026-11-19, Home Depot on Workday) A form's required Languages row when the person saved no
+# languages: common sense says a person whose resume is written in English speaks English. Only
+# English, only when the resume's own words are English; never another language.
+_EN_WORDS = frozenset("the and of to in for with on as by at from a an our their my led built managed developed "
+                      "improved created designed using across team teams data analysis reports".split())
+
+
+def resume_in_english(profile: dict) -> bool:
+    """True when the profile's own words (summary, bullets, titles) read as English."""
+    parts = [str((profile or {}).get("summary") or "")]
+    for org in (profile or {}).get("experience") or []:
+        if not isinstance(org, dict):
+            continue
+        for role in org.get("roles") or [org]:
+            if isinstance(role, dict):
+                parts.append(str(role.get("title") or ""))
+                b = role.get("bullets") or []
+                parts.extend(str(x.get("text") if isinstance(x, dict) else x) for x in (b if isinstance(b, list) else [b]))
+    words = re.findall(r"[a-z]+", " ".join(parts).lower())
+    if len(words) < 20:
+        return False
+    return sum(1 for w in words if w in _EN_WORDS) / len(words) >= 0.08
+
+
+def language_default(profile: dict) -> dict | None:
+    """{"name": "English", "common_sense": True} when the profile saves no languages and its
+    resume is in English, else None."""
+    if form_languages(profile):
+        return None
+    return {"name": "English", "common_sense": True} if resume_in_english(profile) else None

@@ -50,6 +50,7 @@ function fakePane(P) {
       if (expr.includes("selectOptions(")) return null;
       if (expr.includes("pageCheck")) return { required_empty: [], errors: [] };
       if (expr.includes("innerText || el.value")) return "Submit";
+      if (expr.includes("TailorAgent.act(")) { P.answered = true; return { ok: true, note: "", changed: false }; }
       return true;
     },
   };
@@ -80,6 +81,12 @@ function setup(o) {
     postApp: async (p, b) => {
       posts.push([p, JSON.parse(JSON.stringify(b || {}))]);
       if (p === "/api/autoapply/agent/step") {
+        // (2026-11-19) Auto never stops to ask: told so (``auto``), the brain gives its best guess
+        if (b.auto && P.job === "ask" && !P.answered) {
+          return { ok: true, summary: "Answering with a best guess", done: null, cost: 0.01,
+                   actions: [{ op: "type", index: 22, text: "Open to discuss", sensitive: false,
+                               proof: { source: "best_guess", origin: "best_guess", evidence: "nothing saved answers this", class: "" } }] };
+        }
         return P.job === "ask" && !P.answered
           ? { ok: true, summary: "Working on it", actions: [], done: { outcome: "blocked", reason: "needs-answers" }, cost: 0.01 }
           : { ok: true, summary: "Working on it", actions: [], done: { outcome: "ready_to_submit" }, cost: 0.01 };
@@ -120,16 +127,22 @@ const realAsks = (posts) => of(posts, "/api/autoapply/agent/ask").filter((b) => 
     const by = (id) => r.results.find((x) => x.record_id === id);
     assert(by(1).submitted === true, "the allowlisted site was sent " + JSON.stringify(by(1)));
     assert(by(2).ready === true && !by(2).submitted, "the other site stops at Ready to send " + JSON.stringify(by(2)));
-    assert(by(3).parked === true, "the job with a question parks " + JSON.stringify(by(3)));
+    // (2026-11-19, the owner: Auto never stops to ask) the job with a question nothing answers is
+    // NOT set aside: the brain's best guess goes in, flagged, and it waits at Ready to send
+    assert(by(3).ready === true && !by(3).parked && !by(3).submitted, "the job with a question goes on to Ready to send " + JSON.stringify(by(3)));
+    assert(of(s.posts, "/api/autoapply/agent/step").every((b) => b.auto === true), "every step of an Auto run says so");
+    const g3 = s.progress.find((x) => x.state === "ready" && x.answers && x.answers.rows.some((r) => r.from === "best_guess"));
+    assert(g3 && g3.answers.rows.find((r) => r.from === "best_guess").flag === "best_guess", "the guess is flagged in Review answers");
     assert(by(4).ready === true && !by(4).submitted, "the engine's no wins over the flag " + JSON.stringify(by(4)));
     assert(JSON.stringify(s.P.clicks) === JSON.stringify(["https://" + AUTO_HOST + "/o/analyst"]), "Submit pressed only on the allowlisted host " + JSON.stringify(s.P.clicks));
     const applied = of(s.posts, "/api/autofill/applied");
     assert(applied.length === 1 && applied[0].record_id === 1 && applied[0].by === "auto", "reported as sent by the agent " + JSON.stringify(applied));
     const asks = realAsks(s.posts);
-    assert(asks.length === 1 && asks[0].no_wait === true && asks[0].telegram === false, "the question parks at once, nothing on Telegram " + JSON.stringify(asks));
+    assert(asks.length === 0, "nothing is asked in Auto, on the bar or on Telegram " + JSON.stringify(asks));
     assert(of(s.posts, "/api/autoapply/agent/digest").length === 0, "no digest in Auto");
     const readies = of(s.posts, "/api/autoapply/agent/ready").filter((b) => !b.clear);
-    assert(readies.length === 2 && readies.every((b) => !("notice" in b)), "no Ready to send notice in Auto " + JSON.stringify(readies));
+    assert(readies.length === 3 && readies.every((b) => !("notice" in b)), "no Ready to send notice in Auto " + JSON.stringify(readies));
+    assert(readies.some((b) => b.guessed === 1 && b.guessed_legal === 0), "the guess is counted on the application " + JSON.stringify(readies));
     assert(s.agent.quiet() === false, "quiet ends with the batch");
   }
 

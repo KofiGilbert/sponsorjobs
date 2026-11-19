@@ -552,11 +552,13 @@ function qsaSafe(sel, root) {
   let _from = "";
   let _section = "";
   let _fillLog = [];
-  function logFill(el, from, value, label) {
+  // ``evidence``: a fill the agent decided by common sense, not from the person's own material
+  // (Review answers flags it as one to check, with this reason).
+  function logFill(el, from, value, label, evidence) {
     if (!_logOn || !el || _fillLog.length >= 300) return;
     const f = from || _from;
     if (!f) return;
-    _fillLog.push({ el, from: f, value: value == null ? null : String(value), label: label || "", section: _section });
+    _fillLog.push({ el, from: f, value: value == null ? null : String(value), label: label || "", section: _section, evidence: evidence || "" });
   }
 
   // Plan the fill without applying it, used both to decide whether to offer the panel
@@ -912,6 +914,38 @@ function qsaSafe(sel, root) {
     return rest.length === 1 ? rest[0] : null;
   }
   function resumeInputOpen() { return !!resumeInput(); }
+  // (2026-11-19, iCIMS) The upload control of a box that has no file input of its own until it is
+  // pressed: a button or link worded as an upload, in the area of the question's words (or of the
+  // resume's). Its centre in viewport pixels, for the shell's upload through the page's own file
+  // chooser (shell-electron/chooser.js); null when there is none. Never a cover letter's.
+  const UPLOAD_BTN_RE = /^(?:upload|browse|attach)\b.{0,30}$|^(?:choose|select|add) (?:a |your )?(?:file|files|r[eé]sum[eé]|cv|document)\b|\b(?:upload|attach) (?:a |your |new )?(?:file|r[eé]sum[eé]|cv|document)\b/i;
+  function uploadButtonPoint(label) {
+    const want = canon(label || "").slice(0, 40);
+    const words = (b) => cleanText(b.getAttribute("aria-label") || b.textContent || b.value || "");
+    const scored = [];
+    for (const b of qsaSafe("button, [role='button'], a, label, input[type='button']", document)) {
+      if (!boxShown(b) || b.disabled) continue;
+      const w = words(b);
+      if (!w || w.length > 60 || !UPLOAD_BTN_RE.test(w) || LETTER_BOX_RE.test(w)) continue;
+      let box = b.parentElement, near = "";
+      for (let i = 0; box && i < 4; i++, box = box.parentElement) {
+        near = cleanText(box.textContent || "").slice(0, 400);
+        if (near.length > w.length + 10) break;
+      }
+      if (LETTER_BOX_RE.test(near) && !RESUME_BOX_RE.test(near)) continue;
+      let sc = 1;
+      if (want && canon(near).includes(want)) sc += 5;
+      if (RESUME_BOX_RE.test(near) || RESUME_BOX_RE.test(w)) sc += 3;
+      scored.push({ b, sc });
+    }
+    if (!scored.length) return null;
+    scored.sort((a, b) => b.sc - a.sc);
+    const el = scored[0].b;
+    try { el.scrollIntoView({ block: "center" }); } catch (e) { /* fine */ }
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), text: words(el).slice(0, 40) };
+  }
 
   // ---- a file the box already holds: never upload it twice, never skip the right one
   // Workday keeps a draft application across visits and clears its file input after each upload,
@@ -3671,6 +3705,8 @@ function qsaSafe(sel, root) {
         if (v) { setNativeValue(el, v); markFilled(el); out.filled++; }
       }
     }
+    // Workday's Languages rows: the person's own languages, an empty row removed.
+    try { const L = await fillLanguages(payload); out.filled += L.filled; out.languages = L; } catch (e) { /* the rest stands */ }
     // "Type to Add Skills": a few of the person's own skills, only ones the list offers.
     const skills = ((payload && payload.skills) || []).slice(0, 8);
     // "SQL" is "SQL" and "SQL (Programming Language)"; "Power BI" is "PowerBI". Nothing looser.
@@ -3688,6 +3724,187 @@ function qsaSafe(sel, root) {
         if (r.picked) out.filled += r.picked;
         else if (!r.registered && !r.skipped && pageVisible()) shellSearch(el, op);
       }
+    }
+    return out;
+  }
+
+  // ---- Languages (Workday's My Experience, 2026-11-19, Home Depot): a row of Language (a
+  // dropdown or a search prompt), the proficiency dropdowns (Read / Speak / Write, Reading,
+  // Comprehension, Overall) and "I am fluent in this language". An empty row's fields become
+  // required and hold Save and Continue, so a row is either the person's own language from the
+  // profile (payload.languages: [{name, level}]) or removed with its own Delete. A language is
+  // never invented: with none saved and no Delete, the row stays for the person.
+  const LANG_PICK_RE = /^languages?$/i;
+  const LANG_SKILL_RE = /^(?:read(?:ing)?|speak(?:ing)?|spoken|writ(?:e|ing|ten)|comprehension|listening|overall|proficiency|fluency|level)\b/i;
+  const LANG_FLUENT_RE = /\bfluent in this language\b|\bnative (?:speaker|language)\b|\bi am fluent\b/i;
+  const LANG_ADD_RE = /^(?:\+\s*)?add(?: another)?(?: languages?)?$/i;
+  const LANG_DEL_RE = /^(?:delete|remove)\b/i;
+  // 5 native, 4 fluent, 3 advanced, 2 intermediate, 1 basic; 0 when the words say no level.
+  function langRank(t) {
+    const s = String(t || "").toLowerCase();
+    if (/native|bilingual|mother tongue|first language/.test(s)) return 5;
+    if (/fluent|expert|full professional|proficient|excellent/.test(s)) return 4;
+    if (/advanced|professional working|very good/.test(s)) return 3;
+    if (/intermediate|conversational|limited working|good|moderate|working/.test(s)) return 2;
+    if (/basic|beginner|elementary|novice|limited|some|fair/.test(s)) return 1;
+    return 0;
+  }
+  function langPickers() {
+    const out = [];
+    for (const el of comboboxes().concat(qsaDeep("select"))) {
+      if (inPopupList(el) || !LANG_PICK_RE.test(tagOf(el) === "SELECT" ? boxLabel(el) : widgetLabel(el))) continue;
+      if (!out.includes(el)) out.push(el);
+    }
+    return out;
+  }
+  const OTHER_HEAD_RE = /^(?:work experience|experience|employment|education|skills|websites?|social network urls?|resume\/cv|resume|certifications?)\b/i;
+  // The row around one Language control: the largest box that holds no other Language control
+  // and no other section of the page.
+  function langRow(pick, all) {
+    let box = pick.parentElement, best = null;
+    for (let i = 0; box && i < 8 && box !== document.body; i++, box = box.parentElement) {
+      if (all.some((o) => o !== pick && box.contains(o))) break;
+      const heads = qsaSafe("h1, h2, h3, h4, h5, h6, [role='heading'], legend", box).map((hd) => cleanText(hd.textContent));
+      if (heads.some((t) => OTHER_HEAD_RE.test(t))) break;
+      if (qsaSafe("button, [role='button']", box).some((b) => LANG_ADD_RE.test(cleanText(b.textContent || b.getAttribute("aria-label") || "")))) break;
+      best = box;
+    }
+    return best || pick.parentElement;
+  }
+  function langControls(row) {
+    const skills = [], boxes = [];
+    for (const el of comboboxes().concat(qsaSafe("select", row))) {
+      if (!row.contains(el) || inPopupList(el)) continue;
+      const lab = tagOf(el) === "SELECT" ? boxLabel(el) : widgetLabel(el);
+      if (LANG_SKILL_RE.test(lab) && !skills.includes(el)) skills.push(el);
+    }
+    for (const el of qsaSafe("input[type='checkbox']", row)) if (LANG_FLUENT_RE.test(checkboxWords(el)) || /^native$/i.test(el.name || "")) boxes.push(el);
+    return { skills, boxes };
+  }
+  const ctlValue = (el) => (tagOf(el) === "SELECT" ? (/^(select|choose|--|please)/i.test(norm(el.value)) ? "" : norm(el.value)) : comboValue(el));
+  function langAddButton(rows) {
+    const near = rows.length ? rows[rows.length - 1] : null;
+    if (near) {
+      for (let box = near.parentElement, i = 0; box && i < 4; box = box.parentElement, i++) {
+        const heads = qsaSafe("h1, h2, h3, h4, h5, h6, [role='heading'], legend", box).map((hd) => cleanText(hd.textContent));
+        if (heads.some((t) => OTHER_HEAD_RE.test(t))) break;
+        const b = qsaSafe("button, [role='button']", box).find((x) => LANG_ADD_RE.test(cleanText(x.textContent || x.getAttribute("aria-label") || ""))
+          && !near.contains(x) && boxShown(x) && !x.disabled);
+        if (b) return b;
+      }
+      return null;
+    }
+    // No row yet: the Add of the section headed "Languages"
+    for (const hd of qsaDeep("h1, h2, h3, h4, h5, h6, [role='heading'], legend")) {
+      if (!/^languages?$/i.test(cleanText(hd.textContent)) || !boxShown(hd)) continue;
+      let box = hd.closest("[role='group'], fieldset, section") || hd.parentElement;
+      for (let i = 0; box && i < 3; i++, box = box.parentElement) {
+        const b = qsaSafe("button, [role='button']", box).find((x) => LANG_ADD_RE.test(cleanText(x.textContent || x.getAttribute("aria-label") || "")) && boxShown(x) && !x.disabled);
+        if (b) return b;
+      }
+    }
+    return null;
+  }
+  // ``common``: the common-sense default (no languages saved, a required row, an application in
+  // English): English at the highest level the list offers that is not native, the fluent box
+  // left alone, every fill logged as common sense with its reason.
+  const LANG_COMMON_WHY = "your resume and application are in English, and no languages are saved";
+  async function fillLanguageRow(row, pick, lang, common) {
+    let n = 0;
+    const log = (el) => logFill(el, common ? "common_sense" : "languages", undefined, undefined, common ? LANG_COMMON_WHY : "");
+    const name = String(lang.name || "").trim();
+    if (!ctlValue(pick)) {
+      const want = canon(name);
+      const score = (t) => { const c = canon(t); return c === want ? 100 : (c.startsWith(want + " ") || want.startsWith(c + " ")) ? 60 - Math.min(9, c.length / 10) : 0; };
+      if (tagOf(pick) === "SELECT") { if (pickSelectOption(pick, (t) => score(t) >= 60)) { n++; if (common) log(pick); } }
+      else {
+        const r = await pickCombo(pick, { text: name, score });
+        if (r.ok) { n++; log(pick); }
+      }
+    }
+    const rank = langRank(lang.level);
+    const { skills, boxes } = langControls(row);
+    if (rank || common) {
+      // the closest level the list offers, a lower one before a higher one on a tie; the common
+      // default: the highest that is not native
+      const score = common ? (t) => { const r = langRank(t); return r && r < 5 ? r * 10 : 0; }
+        : (t) => { const r = langRank(t); return r ? 100 - 10 * Math.abs(r - rank) - (r > rank ? 5 : 0) : 0; };
+      for (const el of skills) {
+        if (ctlValue(el)) continue;
+        if (tagOf(el) === "SELECT") {
+          let best = null;
+          for (const o of el.options) { const sc = score(norm(o.textContent)); if (sc > 0 && (!best || sc > best.sc)) best = { o, sc }; }
+          if (best) { setNativeValue(el, best.o.value); markFilled(el, common ? "common_sense" : "languages"); if (common) log(el); n++; }
+        } else {
+          const r = await pickCombo(el, { score });
+          if (r.ok) { n++; log(el); }
+        }
+      }
+      if (rank >= 4 && !common) for (const b of boxes) if (!b.checked) { press(b); await sleep(STEP_MS * 2); if (b.checked) { n++; logFill(b, "languages"); } }
+    }
+    return n;
+  }
+  function langDelete(row) {
+    return qsaSafe("button, [role='button']", row).find((b) => (LANG_DEL_RE.test(cleanText(b.textContent || "")) || LANG_DEL_RE.test(b.getAttribute("aria-label") || "")
+      || /delete/i.test(b.getAttribute("data-automation-id") || "")) && boxShown(b) && !b.disabled) || null;
+  }
+  function langRequired(pick) {
+    const lab = String(rawLabel(pick) || "") + " " + String(pick.getAttribute("aria-label") || "");
+    return pick.getAttribute("aria-required") === "true" || pick.required === true || /\brequired\b|\*/i.test(lab);
+  }
+  function langRowEmpty(row, pick) {
+    if (ctlValue(pick)) return false;
+    const { skills, boxes } = langControls(row);
+    return !skills.some((el) => ctlValue(el)) && !boxes.some((b) => b.checked);
+  }
+  async function fillLanguages(payload) {
+    const out = { filled: 0, rows: 0, removed: 0, kept: 0 };
+    const langs = ((payload && payload.languages) || []).filter((x) => x && String(x.name || "").trim()).slice(0, 4);
+    // only a Language control in a row of its own (proficiency lists or the fluent box beside
+    // it): never the site's own language picker in its header or footer
+    const rowPicks = () => { const all = langPickers(); return all.filter((p) => { const c = langControls(langRow(p, all)); return c.skills.length || c.boxes.length; }); };
+    let picks = rowPicks();
+    if (!picks.length && !langs.length) return out;
+    // one row per saved language: "Add" for the ones the page has no row for yet
+    for (let i = picks.length; i < langs.length; i++) {
+      const add = langAddButton(picks.map((p) => langRow(p, picks)));
+      if (!add) break;
+      press(add);
+      for (let t = 0; t < 40 && rowPicks().length <= picks.length; t++) await sleep(STEP_MS);
+      if (rowPicks().length <= picks.length) break;
+      picks = rowPicks();
+    }
+    const rows = picks.map((p) => langRow(p, picks));
+    out.rows = rows.length;
+    const was = _section;
+    for (let i = 0; i < picks.length && i < langs.length; i++) {
+      _section = "Languages " + (i + 1);
+      out.filled += await fillLanguageRow(rows[i], picks[i], langs[i]);
+    }
+    // (2026-11-19, Home Depot) No languages saved, and the form REQUIRES its first Language row:
+    // common sense says a person whose resume and application are in English speaks English
+    // (``payload.language_default``, set by the app only then). English only, never another
+    // language, flagged as one to check.
+    let used = langs.length;
+    const dflt = payload && payload.language_default;
+    // A row with its own Delete is not required: it is removed below instead.
+    if (!langs.length && dflt && String(dflt.name || "").trim() && picks.length && langRequired(picks[0]) && langRowEmpty(rows[0], picks[0])
+        && !langDelete(rows[0])) {
+      _section = "Languages 1";
+      const n = await fillLanguageRow(rows[0], picks[0], { name: String(dflt.name), level: "" }, true);
+      out.filled += n;
+      if (n) { used = 1; out.common = true; }
+    }
+    _section = was;
+    // a row nothing fills: removed with its own Delete, from the last one up; never filled with a
+    // language the person did not save
+    for (let i = picks.length - 1; i >= used; i--) {
+      if (!rows[i] || !rows[i].isConnected || !langRowEmpty(rows[i], picks[i])) continue;
+      const del = langDelete(rows[i]);
+      if (!del) { out.kept++; continue; }
+      press(del);
+      for (let t = 0; t < 20 && picks[i].isConnected; t++) await sleep(STEP_MS);
+      if (!picks[i].isConnected) out.removed++; else out.kept++;
     }
     return out;
   }
@@ -3847,6 +4064,7 @@ function qsaSafe(sel, root) {
       if (!label || !value) continue;
       if (e.section && !label.toLowerCase().startsWith(e.section.toLowerCase())) label = e.section + ": " + label;
       const row = { label: label.slice(0, LOG_MAX), value: value.slice(0, LOG_MAX), from: e.from };
+      if (e.evidence) { row.agent = true; row.evidence = String(e.evidence).slice(0, LOG_MAX); }
       if (at.has(e.el)) out[at.get(e.el)] = row;                 // the same control again: its last word
       else { at.set(e.el, out.length); out.push(row); }
     }
@@ -3898,12 +4116,12 @@ function qsaSafe(sel, root) {
 
   window.TailorAutofill = {
     fill, pageBlocker, applicationForm, applyButtonLabel, siteSearch, planFill, applyFill, fillScreening, fillTextAnswers, answerKeyForLabel,
-    fillEeo, hasResumeUpload, resumeInput, resumeInputOpen, isLetterBox, candidates, categorize, signature, setNativeValue, markFilled,
+    fillEeo, hasResumeUpload, resumeInput, resumeInputOpen, uploadButtonPoint, isLetterBox, candidates, categorize, signature, setNativeValue, markFilled,
     rawLabel, answerableTextareas, pageJobContext, screeningAnswer,
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
     // deep DOM + custom widgets + multi-page (desktop shell)
-    fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, searchTook, searchSeen, searchClose, promptSearch, closeSearch, searchTarget, searchFocus, searchTroubles,
-    keysLanded, closeOpened, pickerPopups, takeTrace, setTrace, extractFormAsync,
+    fillAsync, fillWidgets, fillHistory, fillLanguages, fillSignatureDate, searchChoice, searchTook, searchSeen, searchClose, promptSearch, closeSearch, searchTarget, searchFocus, searchTroubles,
+    keysLanded, closeOpened, pickerPopups, takeTrace, setTrace, extractFormAsync, setSpin, spinDigits,
     cleanLabel, readBack, fileListed, fileListing: fileListingAt, dropDuplicateFiles, dropUnsizedCopy, fileCopies, sizeReadings, sizeMatches, applyOpsAsync, leftover, pageSignature, setRefPrefix, takeFillLog,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
     agentPick, agentOptions, agentClickOption, agentQueries,                // the apply agent's own hands (agent_view.js)

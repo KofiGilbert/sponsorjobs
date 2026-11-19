@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Self Identify (Workday-style date fixture)</title>
+<link rel="stylesheet" href="style.css"><style>.spin{width:48px}</style></head>
+<body>
+<!-- Modelled on the "Date" of Workday's Voluntary Self-Identification of Disability (CC-305) form
+     (2026-11-19): Month / Day / Year spinbuttons that keep only REAL key presses (a value set from
+     script is taken back at once), and move on to the next segment by themselves once a segment is
+     full (2, 2 and 4 digits). The engine's in-page recipe cannot set it, so the shell's real keys,
+     the fallback, are what fill it here. -->
+<h3>Voluntary Self-Identification of Disability</h3>
+<fieldset id="date"><legend><label>Date*</label></legend>
+  <div role="group">
+    <input class="spin" type="text" role="spinbutton" aria-label="Month" aria-required="true" id="sid--dateSignedOn-dateSectionMonth-input">
+    <input class="spin" type="text" role="spinbutton" aria-label="Day" aria-required="true" id="sid--dateSignedOn-dateSectionDay-input">
+    <input class="spin" type="text" role="spinbutton" aria-label="Year" aria-required="true" id="sid--dateSignedOn-dateSectionYear-input">
+  </div>
+</fieldset>
+<p>Please sign: your signature and today's date.</p>
+<button type="button">Next</button>
+<script>
+  const segs = ["Month", "Day", "Year"].map((n) => document.getElementById("sid--dateSignedOn-dateSection" + n + "-input"));
+  const size = [2, 2, 4];
+  const state = ["", "", ""];
+  const render = () => segs.forEach((el, i) => { el.value = state[i]; });
+  segs.forEach((el, i) => {
+    el.addEventListener("keydown", (e) => {
+      e.preventDefault();
+      if (!e.isTrusted || !/^\d$/.test(e.key)) return;
+      if (state[i].length >= size[i]) state[i] = "";
+      state[i] += e.key;
+      render();
+      if (state[i].length === size[i] && segs[i + 1]) segs[i + 1].focus();
+    });
+    el.addEventListener("input", (e) => { if (!e.isTrusted) render(); });   // a script's value never stays
+    el.addEventListener("blur", render);
+  });
+  window.fxValues = () => ({ date: state[0] + "/" + state[1] + "/" + state[2], shown: segs.map((s) => s.value) });
+</script>
+</body></html>

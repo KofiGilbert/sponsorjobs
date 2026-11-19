@@ -323,13 +323,14 @@ def test_the_summary_counts_come_from_the_records_and_carry_no_answers(A):
     _add(mod, "Writer", "Dune", GH_URL + "3", agent_park={"state": "waiting", "kind": "questions", "message": SELF})
     _add(mod, "Tester", "Echo", GH_URL + "4")                              # approved, not worked on yet
     _post(mod, "/api/autofill/applied", {"record_id": a, "url": AUTO_URL, "by": "auto"})
-    assert mod._auto_counts() == {"sent": 1, "ready": 2, "need": 1}
+    # (2026-11-19) and Auto's best guesses waiting for a check, and forms the agent could not do
+    assert mod._auto_counts() == {"sent": 1, "ready": 2, "need": 1, "check": 0, "could_not": 0}
     chan.sent.clear()
     s = DN.daily_summary(mod._notify_state(), chan, mod._auto_counts(), _at(18))
     assert s["text"] == "Today: 1 sent for you, 2 ready for your Send, 1 needs an answer."
     assert SELF not in json.dumps(s) and all(SELF not in t for t, _b in chan.sent)
     d = _post(mod, "/api/autoapply/auto/tick")                             # the page's own tick
-    assert d["counts"] == {"sent": 1, "ready": 2, "need": 1} and "summary" in d["auto"]
+    assert d["counts"] == {"sent": 1, "ready": 2, "need": 1, "check": 0, "could_not": 0} and "summary" in d["auto"]
     assert _get(mod, "/api/autoapply/board")["auto"]["summary"]["text"] == s["text"]
     seen = _post(mod, "/api/autoapply/auto/seen", {"summary": True})
     assert seen["auto"]["summary"]["seen"] is True

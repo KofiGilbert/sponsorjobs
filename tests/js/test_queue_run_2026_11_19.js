@@ -1,0 +1,209 @@
+// The hidden Auto run of 2026-11-19 (tests/test_queue_run_2026_11_19.py runs this): the
+// navigation fence. Where a run that leaves its site went is logged and kept on the record; an
+// aggregator's ad link adopts the employer site it lands on; a careers site's hand-off to its
+// hiring system stays on the run; a third-party survey parks as a person step with Continue.
+// Everyone and every site here is made up.
+"use strict";
+const path = require("path");
+const { createAgent, offSiteVerdict, SURVEY_LINE, uploadsOpen, questionsFor, createAnswers, addAnswer, readyAnswers } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
+const assert = (c, m) => { if (!c) throw new Error(m); };
+
+// ---- the verdict, pure ------------------------------------------------------------------------
+{
+  const agg = { aggregator: true };
+  // the ad link redirected with no click by the agent: the landing site is adopted
+  assert(offSiteVerdict({ host: "careers.brightwater.example", fence: agg, fromHost: "adzuna.com", clicks: [] }) === "adopt", "no click adopts");
+  // one click on the ad's own Apply link
+  assert(offSiteVerdict({ host: "careers.brightwater.example", fence: agg, fromHost: "adzuna.com", clicks: ["Apply for this job"] }) === "adopt", "Apply click adopts");
+  // a click on anything else, or two clicks: no
+  assert(offSiteVerdict({ host: "careers.brightwater.example", fence: agg, fromHost: "adzuna.com", clicks: ["Similar jobs"] }) === "left", "other click");
+  assert(offSiteVerdict({ host: "careers.brightwater.example", fence: agg, fromHost: "adzuna.com", clicks: ["Apply", "Apply"] }) === "left", "two clicks");
+  // once only: a second hop is not adopted
+  assert(offSiteVerdict({ host: "elsewhere.example", fence: agg, adopted: true, fromHost: "adzuna.com", clicks: [] }) === "left", "once");
+  // only from the aggregator itself
+  assert(offSiteVerdict({ host: "elsewhere.example", fence: agg, fromHost: "careers.brightwater.example", clicks: [] }) === "left", "from the employer site");
+  // never a prohibited site, however it got there
+  for (const h of ["linkedin.com", "www.indeed.com".replace(/^www\./, ""), "uk.linkedin.com", "glassdoor.com"]) {
+    assert(offSiteVerdict({ host: h, fence: agg, fromHost: "adzuna.com", clicks: [] }) === "left", "prohibited " + h);
+  }
+  // not an aggregator's link: never adopted
+  assert(offSiteVerdict({ host: "elsewhere.example", fence: { aggregator: false }, fromHost: "jobs.brightwater.example", clicks: [] }) === "left", "not aggregator");
+  // a survey host, or a click named like one, is the person's survey
+  assert(offSiteVerdict({ host: "wotcgs.ey.com", fence: {}, fromHost: "brightwater.wd1.myworkdayjobs.com" }) === "survey", "wotc host");
+  assert(offSiteVerdict({ host: "assess.vendor.example", fence: {}, fromHost: "brightwater.wd1.myworkdayjobs.com", lastClick: "Take Assessment" }) === "survey", "assessment click");
+  assert(offSiteVerdict({ host: "linkedin.com", fence: {}, lastClick: "Take Assessment" }) === "left", "never LinkedIn");
+  assert(offSiteVerdict({ host: "", fence: agg }) === "left", "no host");
+  assert(/short survey on another site \(wotcgs\.ey\.com\)\. Do it yourself, then press Continue and I will finish\./.test(SURVEY_LINE("wotcgs.ey.com")), "survey line");
+}
+
+// ---- a run, end to end, with a fake pane ---------------------------------------------------------
+function setup(o) {
+  const posts = [], progress = [], opened = [];
+  const wc = {
+    url: "", getURL: () => wc.url, isDestroyed: () => false, on: () => {}, removeListener: () => {}, session: null,
+    executeJavaScript: async (expr) => {
+      if (expr.includes("!!window.TailorAutofill && !!window.TailorAgent")) return true;
+      if (expr.includes("__tailorQuiet.at")) return "5000|complete";
+      if (expr.includes("pageSignature")) return { success: true };
+      return true;
+    },
+  };
+  const pane = { webContents: wc };
+  const deps = {
+    noPolling: true,
+    getPane: () => pane,
+    openInPane: (u) => { opened.push(u); wc.url = (o.redirect && o.redirect[u]) || u; },
+    waitPaneLoad: async () => {},
+    autofillCore: () => "", agentViewSource: () => "",
+    runAutoApplyOnPane: async () => ({ ok: true, filled: 0, left: [] }),
+    sendProgress: (info) => progress.push(info),
+    acquireDebugger: () => null, frames: {},
+    applyDecision: async () => ({ fill: true }),
+    isNewPage: () => false, attachResume: async () => false,
+    getApp: async (p) => {
+      if (p.startsWith("/api/autoapply/agent/parked")) return { ok: true, parked: [] };
+      if (p === "/api/autoapply/mode") return { ok: true, mode: "auto", telegram_asks: false };
+      if (p.startsWith("/api/autoapply/agent/allowed-hosts")) {
+        const u = decodeURIComponent(p.split("url=")[1] || "");
+        const h = new URL(u).hostname.replace(/^www\./, "");
+        return { ok: true, hosts: [h, h.split(".").slice(-2).join(".")], aggregator: /adzuna\./.test(h) };
+      }
+      return { ok: true };
+    },
+    postApp: async (p, b) => { posts.push([p, b]); return { ok: true }; },
+  };
+  return { agent: createAgent(deps), posts, progress, opened, wc };
+}
+const leftPosts = (posts) => posts.filter(([p, b]) => p === "/api/autoapply/agent/left-site" && !b.clear).map(([, b]) => b);
+
+(async () => {
+  // Adzuna's ad link redirects to the employer's site with no click: adopted, the run goes on.
+  {
+    const ad = "https://www.adzuna.com/land/ad/1?se=x";
+    const { agent, posts } = setup({ redirect: { [ad]: "https://careers.brightwater.example/apply/9" } });
+    const r = await agent.run("28", { url: ad, mode: "batch", quiet: true });
+    assert(r.ok && r.submitted, "adopted run went on: " + JSON.stringify(r));
+    assert(!leftPosts(posts).length, "no left-site");
+  }
+  // A careers site that sends the run to an unrelated site: stopped, and WHERE is kept.
+  {
+    const job = "https://jobs.brightwater.example/job/1";
+    const { agent, posts, progress } = setup({ redirect: { [job]: "https://shop.unrelated.example/cart?token=secret" } });
+    const r = await agent.run("30", { url: job, mode: "batch", quiet: true });
+    assert(!r.ok && r.reason === "left-site", "left: " + JSON.stringify(r));
+    const lp = leftPosts(posts);
+    assert(lp.length === 1 && lp[0].host === "shop.unrelated.example" && lp[0].from_host === "jobs.brightwater.example"
+           && lp[0].kind === "left" && lp[0].step === 1, "recorded: " + JSON.stringify(lp));
+    assert(!JSON.stringify(lp).includes("token"), "never the address with its tokens");
+    const stop = progress.find((x) => x.state === "stopped" && x.reason === "left-site");
+    assert(stop && stop.host === "shop.unrelated.example" && /shop\.unrelated\.example/.test(stop.message), "the stop names the host");
+    assert(posts.some(([p, b]) => p === "/api/autoapply/agent/left-site" && b.clear), "a new run clears the old one");
+  }
+  // A SuccessFactors careers site handing off to sapsf.com (record 30's shape): stays on the run.
+  {
+    const job = "https://jobs.brightwater.example/job/2";
+    const { agent, posts } = setup({ redirect: { [job]: "https://career41.sapsf.com/careers?company=brightwater" } });
+    const r = await agent.run("31", { url: job, mode: "batch", quiet: true });
+    assert(r.ok && r.submitted && !leftPosts(posts).length, "sapsf hand-off: " + JSON.stringify(r));
+  }
+  // An Oracle Recruiting Cloud tenant: allowed by its shape, not all of oraclecloud.com.
+  {
+    const job = "https://careers.brightwater.example/job/3";
+    const { agent } = setup({ redirect: { [job]: "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/3" } });
+    const r = await agent.run("32", { url: job, mode: "batch", quiet: true });
+    assert(r.ok && r.submitted, "oracle hand-off: " + JSON.stringify(r));
+    const job2 = "https://careers.brightwater.example/job/4";
+    const s2 = setup({ redirect: { [job2]: "https://objectstorage.us-ashburn-1.oraclecloud.com/n/x" } });
+    const r2 = await s2.agent.run("33", { url: job2, mode: "batch", quiet: true });
+    assert(r2.reason === "left-site", "not any oraclecloud.com: " + JSON.stringify(r2));
+  }
+  // A required tax-credit survey on another site: parked as a person step with Continue, the
+  // reason says so, and Continue opens the application's own page, never the survey.
+  {
+    const job = "https://brightwater.wd1.myworkdayjobs.com/en-US/Search/job/1/apply";
+    const { agent, posts, progress } = setup({ redirect: { [job]: "https://wotcgs.ey.com/survey?id=1" } });
+    const r = await agent.run("34", { url: job, mode: "batch", quiet: true, batchAt: { i: 1, n: 8 } });
+    assert(r.parked && r.kind === "person", "parked: " + JSON.stringify(r));
+    const pk = posts.find(([p]) => p === "/api/autoapply/agent/park");
+    assert(pk && pk[1].kind === "person" && pk[1].message === SURVEY_LINE("wotcgs.ey.com"), "person park with the reason");
+    assert(pk[1].page_url === job, "Continue opens the application page: " + pk[1].page_url);
+    const lp = leftPosts(posts);
+    assert(lp.length === 1 && lp[0].kind === "survey" && lp[0].host === "wotcgs.ey.com", "kept on the record");
+    const said = progress.find((x) => x.state === "parked");
+    assert(said && /Moving on\./.test(said.message) && /short survey/.test(said.message), "the batch moves on: " + (said && said.message));
+    assert(!progress.some((x) => x.reason === "left-site"), "never left-site");
+  }
+  // ---- an upload box is never a question (record 3, iCIMS) ------------------------------------
+  {
+    const UP = "Please upload your resume/CV (Max size: 5 MB)";
+    const page = "Candidate Profile\n[3]<input type=text label=\"" + UP + "\" value=\"\" required>\n"
+      + "[4]<file label=\"Cover Letter\" file=none>\n[9]<button>Submit Profile</button>";
+    assert(JSON.stringify(uploadsOpen(page, [])) === JSON.stringify([UP]), "the open upload: " + JSON.stringify(uploadsOpen(page, [])));
+    assert(!questionsFor(page, [UP]).length, "never asked: " + JSON.stringify(questionsFor(page, [UP])));
+    assert(JSON.stringify(uploadsOpen("[5]<file label=\"Resume\" file=chosen required>\n[6]<file label=\"Cover letter\" file=none required>", [])) === "[]", "chosen, or a letter: none");
+    const runWith = async (attachResume, attachViaChooser) => {
+      const posts = [], progress = [];
+      let views = 0;
+      const wc = {
+        getURL: () => "https://careers-acme.icims.com/jobs/1/candidate", isDestroyed: () => false, on: () => {}, removeListener: () => {}, session: null,
+        navigationHistory: { canGoBack: () => false },
+        executeJavaScript: async (expr) => {
+          if (expr.includes("!!window.TailorAutofill && !!window.TailorAgent")) return true;
+          if (expr.includes("__tailorQuiet")) return "5000|complete|";
+          if (expr.includes("pageSignature")) return { labels: ["Upload"] };
+          if (expr.includes("termsItems")) return [];
+          if (expr.includes("crossOriginFrames")) return 0;
+          if (expr.includes("pageShape")) return { fields: 3, buttons: 3, skeleton: false, words: 80 };
+          if (expr.includes("TailorAutofill.leftover()")) return [];
+          if (expr.includes("TailorAgent.view(")) { views++; return { text: "URL: https://careers-acme.icims.com/jobs/1/candidate\n" + page }; }
+          if (expr.includes("resumeInputOpen")) return false;
+          return true;
+        },
+      };
+      const pane = { webContents: wc };
+      const deps = {
+        noPolling: true, getPane: () => pane, openInPane: () => {}, waitPaneLoad: async () => {},
+        autofillCore: () => "", agentViewSource: () => "",
+        runAutoApplyOnPane: async () => ({ ok: true, filled: 0, left: [UP] }),
+        sendProgress: (info) => progress.push(info), acquireDebugger: () => null, frames: {},
+        applyDecision: async () => ({ fill: true, click_submit: false }), isNewPage: () => false,
+        attachResume, attachViaChooser,
+        getApp: async (p) => (p.startsWith("/api/autoapply/agent/parked") ? { ok: true, parked: [] } : { hosts: ["icims.com"] }),
+        postApp: async (p, b) => {
+          posts.push([p, b]);
+          if (p === "/api/autoapply/agent/step") return { ok: true, summary: "Stuck", actions: [], done: { outcome: "blocked", reason: "needs-answers" }, cost: 0.01 };
+          if (p === "/api/autoapply/agent/ask") return { ok: true, answers: {} };
+          return { ok: true };
+        },
+      };
+      const agent = createAgent(deps);
+      const r = await agent.run("3", { url: "https://careers-acme.icims.com/jobs/1/candidate", mode: "batch", quiet: true, resumePath: __filename });
+      return { r, posts, progress };
+    };
+    // the box takes nothing, twice: stopped as a site problem, never "no saved answer"
+    let tries = 0;
+    const a = await runWith(async () => { tries++; return false; }, async () => false);
+    assert(a.r.reason === "no-upload", "stopped: " + JSON.stringify(a.r));
+    assert(tries === 2, "two tries: " + tries);
+    const stop = a.progress.find((x) => x.reason === "no-upload");
+    assert(stop && /I could not attach the resume on this site\. Stopped\./.test(stop.message), "the reason: " + (stop && stop.message));
+    const sk = a.posts.find(([p]) => p === "/api/autoapply/agent/skip");
+    assert(sk && sk[1].reason === "upload", "kept on the record as a site problem");
+    const asked = a.posts.filter(([p]) => p === "/api/autoapply/agent/ask").map(([, b]) => JSON.stringify(b));
+    assert(!asked.some((x) => x.includes("Please upload")), "the upload is never asked: " + asked.join(" | "));
+    // the page's own file chooser takes it: no stop for the upload
+    let chose = 0;
+    const b = await runWith(async () => false, async (_wc, file, label) => { chose++; return label === UP && !!file; });
+    assert(chose >= 1 && b.r.reason !== "no-upload", "attached through the chooser: " + JSON.stringify(b.r));
+    assert(!b.posts.some(([p, x]) => p === "/api/autoapply/agent/ask" && JSON.stringify(x).includes("Please upload")), "never asked");
+  }
+  // ---- English by common sense on a required Languages row: one to check in Review answers ----
+  {
+    const ans = createAnswers();
+    addAnswer(ans, { page: 2, label: "Languages 1: Language", value: "English", from: "common_sense", agent: true, evidence: "your resume and application are in English" });
+    const rows = readyAnswers(ans, { recordId: 1 }).rows || readyAnswers(ans, { recordId: 1 });
+    const row = (Array.isArray(rows) ? rows : []).find((x) => x.value === "English");
+    assert(row && row.flag === "agent" && row.from === "common_sense" && /English/.test(row.evidence), "flagged: " + JSON.stringify(rows));
+  }
+  console.log("ok");
+})().catch((e) => { console.error(e); process.exit(1); });

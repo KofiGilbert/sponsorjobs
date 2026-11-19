@@ -86,6 +86,14 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     # a fact asked once ever, then reused on every wording that asks it.
     _k("@restrictive_covenants", "yes_no", LEGAL, choices=_YES_NO,
        ask="Do you have a non-compete or other restrictive covenant with a current or past employer?"),
+    # (2026-11-19, Auto's checklist) A conviction or pending charge, and a dismissal or forced
+    # resignation: facts asked once in Apply setup, so Auto never has to guess them.
+    _k("@criminal_record", "yes_no", LEGAL, choices=_YES_NO,
+       ask="Have you ever been convicted of a crime, or do you have a pending charge?"),
+    _k("@excluded_programs", "yes_no", LEGAL, choices=_YES_NO,
+       ask="Have you ever been excluded, suspended or sanctioned from a health care or government program?"),
+    _k("@dismissed", "yes_no", LEGAL, choices=_YES_NO,
+       ask="Have you ever been dismissed or asked to resign from a job?"),
     # (2026-11-17, Apply setup) "No", or "Yes, Secret": a clearance the person holds.
     _k("@security_clearance", sensitivity=LEGAL, ask="Do you have an active security clearance?"),
     _k("@drivers_license", "yes_no", choices=_YES_NO, ask="Do you have a valid driver's license?"),

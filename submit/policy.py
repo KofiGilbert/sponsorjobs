@@ -32,6 +32,44 @@ ATS_HOSTS: tuple[str, ...] = (
     "smartrecruiters.com",
     "myworkdayjobs.com", "icims.com", "taleo.net", "successfactors.com", "jobvite.com",
     "bamboohr.com", "paylocity.com", "ultipro.com", "adp.com",
+    # (2026-11-19) The hand-offs a company careers site makes to the system its applications
+    # really live on. A careers site on SAP SuccessFactors' Recruiting Marketing (Gainwell's
+    # jobs.<employer>.com) signs in and applies on career<N>.sapsf.com, which was missing, so
+    # the run stopped as "left-site" three steps in. Each entry is a hiring system's own domain.
+    "sapsf.com", "sapsf.eu", "successfactors.eu",           # SAP SuccessFactors
+    "myworkdaysite.com", "myworkday.com",                     # Workday (career sites, sign-in)
+    "jibeapply.com", "phenompeople.com", "avature.net",       # Jibe, Phenom, Avature
+    "eightfold.ai", "brassring.com", "csod.com",              # Eightfold, Kenexa BrassRing, Cornerstone
+    "dayforcehcm.com", "paycomonline.net", "ukg.net",         # Dayforce, Paycom, UKG
+    "applytojob.com", "breezy.hr", "teamtailor.com", "personio.de", "personio.com",
+    "pinpointhq.com", "jazzhr.com", "applicantpro.com", "isolvedhire.com", "hrmdirect.com",
+    "zohorecruit.com", "freshteam.com", "governmentjobs.com", "paradox.ai",
+)
+
+# Oracle Recruiting Cloud tenants live on <pod>.fa.<region>.oraclecloud.com. The whole of
+# oraclecloud.com also hosts unrelated customer apps, so only that shape is allowed.
+ATS_HOST_PATTERNS: tuple[str, ...] = (r"(^|\.)fa(\.[a-z0-9-]+)?\.oraclecloud\.com$",)
+
+# (2026-11-19) The job aggregators the sourcing code reads (sourcing/ats.py): their ad links
+# (adzuna.com/land/ad/...) only redirect to the employer's own application site. A run that
+# starts on one may ADOPT the first site it lands on after that redirect (agent.js
+# ``landingAllowed``), never a prohibited one.
+AGGREGATOR_HOSTS: tuple[str, ...] = (
+    "adzuna.com", "adzuna.co.uk", "adzuna.ca", "adzuna.com.au", "adzuna.de", "adzuna.fr",
+    "adzuna.in", "adzuna.nl", "adzuna.it", "adzuna.es", "adzuna.at", "adzuna.ch", "adzuna.pl",
+    "adzuna.sg", "adzuna.co.nz", "adzuna.co.za", "adzuna.com.br", "adzuna.com.mx",
+    "remotive.com", "arbeitnow.com", "remoteok.com", "remoteok.io", "freehire.me",
+)
+
+# (2026-11-19) Third-party questionnaires an employer's application sends the PERSON to: the
+# work opportunity tax credit screeners (EY's wotcgs.ey.com on a bank's Workday) and the
+# pre-employment assessments. They are the person's to do: the run parks there with a clear
+# reason and Continue, never "left-site", and never fills them.
+SURVEY_HOSTS: tuple[str, ...] = (
+    "wotcgs.ey.com", "wotc.com", "taxcreditco.com", "cost-wotc.com", "wotcsolutions.com",
+    "hirevue.com", "shl.com", "pymetrics.ai", "criteriacorp.com", "harver.com", "plum.io",
+    "wonderlic.com", "testgorilla.com", "codility.com", "hackerrank.com", "codesignal.com",
+    "talentlens.com", "berkeassessment.com", "modernhire.com",
 )
 
 
@@ -74,6 +112,34 @@ def run_allowed_hosts(apply_url: str) -> set[str]:
         return set()
     hosts = {host, registrable_domain(host), *ATS_HOSTS}
     return {h for h in hosts if h and not _matches(h, PROHIBITED_HOSTS)}
+
+
+def is_ats_host(host: str) -> bool:
+    """True for a hiring system's own host (a careers site's hand-off target)."""
+    import re
+    h = _host(host)
+    return bool(h) and (_matches(h, ATS_HOSTS) or any(re.search(p, h) for p in ATS_HOST_PATTERNS))
+
+
+def is_aggregator(url: str) -> bool:
+    """An aggregator's ad link: it only redirects to the employer's application site."""
+    h = _host(url)
+    return bool(h) and _matches(h, AGGREGATOR_HOSTS)
+
+
+def is_survey_host(url: str) -> bool:
+    """A third-party questionnaire the application sends the person to (SURVEY_HOSTS)."""
+    h = _host(url)
+    return bool(h) and _matches(h, SURVEY_HOSTS)
+
+
+def run_fence(apply_url: str) -> dict:
+    """Everything the shell's navigation fence needs for one run (the allowed-hosts route):
+    the hosts, the Oracle-style host patterns, whether the apply URL is an aggregator's ad link
+    (so the landing site may be adopted), and the aggregator, survey and prohibited lists."""
+    return {"hosts": sorted(run_allowed_hosts(apply_url)), "patterns": list(ATS_HOST_PATTERNS),
+            "aggregator": is_aggregator(apply_url), "aggregators": list(AGGREGATOR_HOSTS),
+            "surveys": list(SURVEY_HOSTS), "prohibited": list(PROHIBITED_HOSTS)}
 
 
 def submission_policy(url: str) -> str:

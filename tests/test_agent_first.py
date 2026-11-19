@@ -315,7 +315,7 @@ def test_the_record_carries_the_origin_label_review_answers_shows():
     rec = protocol.record(a, protocol.check(a, EDU_Q, [], m))
     assert rec == {"source": "resume", "origin": "history", "evidence": "edu1: Master of Science, 2018", "class": "factual"}
     assert protocol.ORIGIN == {"profile": "profile", "resume": "history", "saved_answer": "library", "common_sense": "common_sense",
-                               "posting": "job"}
+                               "posting": "job", "best_guess": "best_guess"}
 
 
 # --------------------------------------------------------------------------- the brain's step

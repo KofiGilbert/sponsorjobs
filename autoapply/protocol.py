@@ -50,10 +50,10 @@ from dataclasses import dataclass
 from autoapply import commonsense, qclass
 from autoapply.asks import is_filler
 
-SOURCES = ("profile", "resume", "saved_answer", "common_sense", "posting")
+SOURCES = ("profile", "resume", "saved_answer", "common_sense", "posting", "best_guess")
 # The Review answers origin each source shows as (ui/static/app.js aaAnsFrom).
 ORIGIN = {"profile": "profile", "resume": "history", "saved_answer": "library", "common_sense": "common_sense",
-          "posting": "job"}
+          "posting": "job", "best_guess": "best_guess"}
 # The source a fact of each kind stands for, when the engine attaches the evidence itself.
 KIND_SOURCE = {"location": "profile", "links": "profile", "job": "resume", "school": "resume", "skills": "resume",
                "years": "resume", "languages": "resume", "answer": "saved_answer", "posting": "posting"}
@@ -115,7 +115,8 @@ def meta(action: dict) -> dict:
     get = lambda *keys: next((str(d.get(k)) for d in (a, inner) for k in keys if d.get(k) not in (None, "", True, False)), "")  # noqa: E731
     src = get("source", "origin").strip().lower().replace(" ", "_").replace("-", "_")
     src = {"saved": "saved_answer", "answer": "saved_answer", "library": "saved_answer", "history": "resume", "cv": "resume",
-           "job": "posting", "job_posting": "posting", "jd": "posting", "commonsense": "common_sense"}.get(src, src)
+           "job": "posting", "job_posting": "posting", "jd": "posting", "commonsense": "common_sense",
+           "guess": "best_guess", "bestguess": "best_guess", "my_best_guess": "best_guess"}.get(src, src)
     cls = get("class", "klass", "category").strip().lower().replace(" ", "_").replace("-", "_")
     cls = {"commonsense": "common_sense", "fact": "factual"}.get(cls, cls)
     ev = " ".join(get("evidence", "reason", "fact").split())[:MAX_EVIDENCE]
@@ -253,7 +254,42 @@ def default_answer(kind: str, value: str, question: str, options, material) -> t
 
 
 # --------------------------------------------------------------------------- the check
-def check(action: dict, question: str, options=(), material=None, *, saved: bool = False) -> Verdict:
+NEVER = ("never guessed, in any mode: an ID number, a date of birth, bank or payment details, a password or a typed "
+         "signature is filled only from the person's saved value. Leave it; if the form requires it, this "
+         "application cannot be done by the agent")
+
+
+def check(action: dict, question: str, options=(), material=None, *, saved: bool = False, auto: bool = False,
+          reason: str = "") -> Verdict:
+    """May this answer go on the page? The check of ``_check``, and in Auto (``auto``; the owner,
+    2026-11-19: Auto never stops to ask) one more door: an answer nothing supports is taken as a
+    flagged BEST GUESS (autoapply/guess.py) instead of being refused, so the run goes on. Never
+    for a never-guessed field, a consent, a long number or filler; where the form offers a
+    neutral choice the guess is that one (always, on a self-identification question)."""
+    v = _check(action, question, options, material, saved=saved)
+    if v.ok or saved or not auto:
+        return v
+    from autoapply import guess
+    op = str(action.get("op") or "")
+    value = str(action.get("text") if op == "type" else action.get("option") or action.get("value") or "")
+    if v.hard == "6" or (op == "type" and is_filler(value) and not _NONE_WORD.match(value)):
+        return v
+    ok, why = guess.accept(question, value, options, typed=op == "type")
+    if ok:
+        said = meta(action)["evidence"]
+        m = guess.majority(question)
+        # ``reason``: the engine's own word on why this is a guess (a saved work authorization the
+        # form's choices could not be matched to), before the brain's and the majority's
+        return Verdict(True, klass=v.klass or meta(action)["class"], source=guess.SOURCE,
+                       evidence=(reason or said or (m[1] if m else "") or "nothing saved or in the material answers this")[:MAX_EVIDENCE])
+    if why == "never":
+        return Verdict(False, NEVER + ".", v.klass, hard="9")
+    if why == "consent":
+        return v
+    return Verdict(False, "Auto takes a best guess here, but not this one: " + why + ".", v.klass)
+
+
+def _check(action: dict, question: str, options=(), material=None, *, saved: bool = False) -> Verdict:
     """May this answer go on the page? ``action``: the brain's type / select / click with its
     source, evidence and class (any of them may be missing); ``question``: the field's own label;
     ``options``: the choices the view shows for it; ``material``: autoapply/material.Material;
@@ -342,6 +378,42 @@ def check(action: dict, question: str, options=(), material=None, *, saved: bool
         cited = next((f for f in getattr(material, "facts", []) or [] if re.search(r"\b" + re.escape(f.id) + r"\b", ev, re.I)), None)
         src = KIND_SOURCE.get(cited.kind, "resume") if cited is not None else "resume"
     return yes(source=src, evidence=ev)
+
+
+# (2026-11-19, the CC-305 Date at Uline on Workday) The date a self-identification or signature
+# form is signed is TODAY's date: never a fact about the person, so the agent may fill it, the
+# way the fill engine does (autofill_core.js fillSignatureDate). The brain's typed date there was
+# refused as a legal date. Only a box named plainly as that date, on such a form, and only today:
+# the month, the day or the year as a segment (Workday's Month / Day / Year spinbuttons), or the
+# whole date in a usual order. The self-identification answers themselves are unchanged.
+SIGN_DATE_LABEL = re.compile(r"^\W*(date|today'?s date|date signed|signature date|date of signature|signed on|"
+                             r"date \(mm/dd/yyyy\)|date \(dd/mm/yyyy\))\W*$", re.I)
+SIGN_PAGE = re.compile(r"self[- ]?identif|\bsignature\b|\bsigned\b|electronic(?:ally)? sign|\bcc-?305\b", re.I)
+SIGN_DATE_EVIDENCE = "today's date: the date this form is signed"
+
+
+def signature_date(question: str, value: str, page: str, today=None) -> bool:
+    """True when ``value`` is today's date (or one of its segments) typed into a signature-date box
+    of a self-identification or signature form."""
+    import datetime as _dt
+    q = " ".join(str(question or "").split())
+    v = " ".join(str(value or "").split())
+    if not SIGN_DATE_LABEL.match(q) or not SIGN_PAGE.search(str(page or "")) or not v:
+        return False
+    d = today or _dt.date.today()
+    if re.fullmatch(r"\d{1,4}", v):
+        n = int(v)
+        return (len(v) <= 2 and n in (d.month, d.day)) or (len(v) == 4 and n == d.year)
+    digits = re.sub(r"\D", "", v)
+    m, dd, y = f"{d.month:02d}", f"{d.day:02d}", str(d.year)
+    want = {m + dd + y, dd + m + y, y + m + dd, str(d.month) + str(d.day) + y, str(d.day) + str(d.month) + y,
+            y + str(d.month) + str(d.day)}
+    if digits in want:
+        return True
+    words = d.strftime("%B %d %Y").lower(), d.strftime("%b %d %Y").lower(), d.strftime("%d %B %Y").lower()
+    t = re.sub(r"[^a-z0-9 ]", " ", v.lower())
+    t = " ".join(re.sub(r"\b0(\d)\b", r"\1", t).split())
+    return t in {" ".join(re.sub(r"\b0(\d)\b", r"\1", w).split()) for w in words}
 
 
 def record(action: dict, verdict: Verdict) -> dict:

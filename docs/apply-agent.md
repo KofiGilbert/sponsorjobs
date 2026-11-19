@@ -1004,6 +1004,10 @@ auto-submit only on the verified allowlist with Autonomous submit on); it never 
 
 ## 26. Three apply modes: Auto, Assisted, Hybrid (2026-11-17)
 
+(2026-11-19) Auto no longer sets an application aside for a question with no saved answer: it
+answers with a flagged best guess and goes on. Section 31 replaces what this section and section
+29 say about that.
+
 ONE saved choice (`_apply_mode` in ui/app.py, the small file `apply_mode` beside the old switch's;
 the rule is `autoapply/modes.py`), made in Apply setup step 6 ("How to apply") and on the
 Auto-apply page's Today panel. An install from before the modes has none saved, so the old
@@ -1155,7 +1159,7 @@ in stone."
 | 2 | Captcha, bot wall, MFA, identity check: stop. Never solved, never evaded. No stealth. | agent.js blockers and `PARK_REASONS`; agent_view.js never enters a captcha frame; prompt rule 10 |
 | 3 | Nothing on LinkedIn. | `submit.policy.fill_permitted`; `brain.step` (LinkedIn click); agent.js `socialRefused` |
 | 4 | Consents and terms: only what the person's saved consent settings allow. | autoapply/consents.py; agent.js `handleTerms`; agent_view.js `termsItems`; `qclass.is_legal` (an acknowledgement or opt-in is never the brain's to tick) |
-| 5 | Facts are never invented. A legal or attestation question is answered ONLY from a saved answer or saved profile field for exactly that question; none saved: ask (Assisted, Hybrid) or set the job aside (Auto). | `qclass.is_legal`, `protocol.check`; planner's work authorization, EEO, citizenship, consent and worked-here rules; agent.js `pickSaved` |
+| 5 | Facts about the person are never invented when they are knowable: a question the saved answers or the person's material (profile, resume, posting) answer is answered from those, and a legal or attestation question from the saved answer for exactly that question. When nothing is saved: Assisted and Hybrid ASK the person. Auto never stops to ask (section 31): it answers with a flagged best guess, and an application holding a guess on a legal question is held at Ready to send for the person's own Send. Never guessed, in any mode: a government ID number or SSN, a date of birth, bank or payment details, a password or code, a typed legal signature the consent settings do not allow. | `qclass.is_legal`, `qclass.never_guess`, `protocol.check` (`auto`), autoapply/guess.py; planner's work authorization, EEO, citizenship, consent and worked-here rules; agent.js `pickSaved`, `skipFor`; `modes.may_send_alone` |
 | 6 | Credentials only through placeholders, never shown to the model or logged. Files: only this application's resume and cover letter. | `brain.resolve_actions`, `brain.redact`, `mask_values`; agent.js `upload`, `safeReply` |
 | 7 | Payment, purchases, account deletion, anything outside applying for this job: never. | `qclass._LEGAL` (payment and bank words are legal class, so never the brain's); the allowed-hosts rule |
 | 8 | The run stays on the employer's application flow. | agent.js `onSite` / `allowedHosts` (`left-site`) |
@@ -1533,3 +1537,308 @@ drafted, the limit, the guidance, the cleaning, the route's draft and the send-a
 tests/js/test_agent_first.js (the shell's routing of a combobox type, an option click and
 list_options to the page's own pick; a drafted answer held at Ready to send) and
 tests/test_agent_view.js (five fixture tests of the agent's ops on react-select).
+
+
+## 31. What Auto does when it does not know (2026-11-19)
+
+The owner: "For auto apply, we can't stop to ask the user anything. A user asking for auto apply
+to do the work should understand the risk based on our terms and conditions, but we will also
+first try to apply to jobs that don't ask for questions that will require us to stop and ask, and
+if it does require, we will use a common sense approach to pick the best option possible and
+proceed with the application." Stopping to ask belongs to Assisted and Hybrid only.
+
+Until now an Auto (quiet) run set the whole application aside for one question with no saved
+answer ("Set aside: no saved answer for ..."), legal ones included. An Auto application is no
+longer set aside because of a question.
+
+### Every question gets the best available answer
+
+In this order, and the run goes on to Ready to send (or to sending, where allowed):
+
+1. the person's **saved answer** (Apply setup, the answer library, work authorization);
+2. the person's **material** under the answer protocol (profile, resume, the posting; section 29);
+3. a **common-sense default** (section 30);
+4. a **best guess**, with its reason (autoapply/guess.py):
+   - an explicit neutral choice the form offers ("Prefer not to say", "Decline to self-identify",
+     "I do not wish to answer", "N/A" where the question invites it);
+   - else the choice that is true for the great majority of applicants and commits the person
+     to the least: No to relatives at the employer, a conflict of interest or a public office, a
+     non-compete, a conviction or pending charge, a dismissal, having applied or worked there
+     before; Yes to being at least 18 and to being able to do the job;
+   - else the first choice that commits to nothing ("Other", "Not applicable").
+
+Who guesses: on a question whose choices the engine can read, the engine does, in code
+(`guess.choose`, through the ask route's known-only check with `auto_guess`); the shell puts it
+on the page. Everything else is the brain's own best guess: every step of an Auto run tells it
+so (`<mode>` in the state message, `brain.AUTO_MODE`; the cached system prompt is the same text
+in every mode), and `protocol.check(auto=True)` takes an answer nothing supports as a best guess
+instead of refusing it, with these limits (`guess.accept`): where the form offers a neutral
+choice, the guess is that choice (or the majority answer); a typed guess is a few words, never a
+number or a date about the person, never a long number; filler is still refused.
+
+**Self-identification** (gender, race, ethnicity, veteran, disability) always takes the decline
+choice unless a saved answer exists, as before. With no decline choice on the list it is never
+guessed: the question is left, and the application goes over flagged "Needs you".
+
+### What each class of question gets in Auto
+
+| Class | With a saved answer or material | With nothing |
+|---|---|---|
+| Factual (employer, degree, dates, skills, where they live) | From the material, cited | Best guess from the choices; a typed number or date is never made up |
+| Preference (employment type, office, a condition of the job) | Saved answer, or the section 30 default | Best guess |
+| Common sense (how did you hear, phone type, a follow-up that does not apply) | As before | As before |
+| Legal and attestation (non-compete, conviction, dismissal, relatives, clearance, salary, start date) | The saved answer only | Best guess, flagged, counted as `guessed_legal`, and never sent by the agent alone |
+| Self-identification | The saved answer, or the standing decline | The form's decline choice; never guessed without one |
+| Consents, acknowledgements, terms, marketing | The consent settings (autoapply/consents.py) | The consent settings: unchanged, never a guess |
+| Never guessed (below) | The saved value | The application is skipped |
+| Open-ended text | Drafted (section 30), held for the person's Send | The same |
+
+### Recorded and flagged
+
+Every best guess is recorded with `source: best_guess`, its reason and the question's class. In
+Review answers it reads "Best guess" with "Best guess: <reason>. Check it." (five locales), and
+it counts as one to check. The application keeps the counts (`agent_guessed`: `guessed`,
+`guessed_legal`; the agent's ready route).
+
+### Protections that do not stop the run
+
+- **Never sent alone with a guessed legal answer.** `modes.may_send_alone(..., guessed_legal=True)`
+  is False; the shell's hand-over checks its own Review answers rows too (and a required
+  question still open). Such an application waits at Ready to send. Its row says "N answers
+  need your check", the daily summary says how many answers need a check, and the line beside
+  Send all says how many of them are best guesses on legal questions before the person presses
+  it. The person's own Send works as before. **Send all** asks ONCE when any application it
+  would send holds a guessed legal answer (ui/static/send_all.js, the outage card's frame): it
+  names each one (role at company) with its count, and offers "Review them first" (sends
+  nothing, opens the first one's Review answers), "Send the other N, keep these" (only the
+  applications without one; the rest stay at Ready to send) and "Send all anyway". Closing it
+  sends nothing. With no guessed legal answer there is no confirmation.
+- **A saved work authorization the form words differently.** When the profile answers a work
+  authorization question but none of the form's choices can be matched to it, the answer is
+  still a best guess (class legal), and its flag reads "your work authorization is saved but
+  this form words it differently" (`guess.reason_for`), so it explains itself.
+- **Never guessed, in any mode** (`qclass.never_guess`): a government ID number, an SSN or
+  national ID, a passport or licence number, a date of birth, bank, card or payment details, a
+  password, a code or a security answer, and a typed signature. A wrong value there is not a
+  judgement call. When such a field is REQUIRED and nothing is saved, the agent cannot do that
+  application: in Auto it is skipped (`/api/autoapply/agent/skip`: the record moves to "Needs
+  you" with the reason "The form requires something I never fill in for you" and the field
+  named), the batch moves on, and the daily summary counts it as a form the agent could not do,
+  not as a question. Signatures the consent settings allow keep their own path (section 18).
+- **Consents and terms** keep following autoapply/consents.py.
+
+One case still pauses an Auto run on a page: the form would not take any answer into a required
+box after three rounds (a widget problem). The reason then says so and names the box; it is not
+"no saved answer".
+
+### Asking once, up front: Auto's checklist
+
+So that guesses are rare, Apply setup holds the standard declarations Auto would otherwise guess,
+each answered once and saved under its own key:
+
+| Declaration | Where | Key |
+|---|---|---|
+| Authorized to work; visa sponsorship | Work authorization step | the work authorization profile |
+| Other names used | Forms step | `@other_names` |
+| Relatives at an employer | Forms step | `@relatives_at_employer` |
+| Non-compete or other restrictive agreement | Forms step | `@restrictive_covenants` |
+| Conviction or pending charge (new) | Forms step | `@criminal_record` |
+| Ever dismissed or asked to resign (new) | Forms step | `@dismissed` |
+| Excluded, suspended or sanctioned from a health care or government program (new) | Forms step | `@excluded_programs` |
+| Background check and drug screen | Forms step, "Background checks and notices a site requires" | `accept_required_terms` (the consent setting) |
+| Willing to relocate | Wants step | the work authorization profile |
+| Notice period or earliest start date | Wants step | `@notice_period`, `@start_date` |
+| Current salary; wanted salary | Forms and Wants steps | `@current_salary`, `@salary` |
+| Security clearance | Forms step | `@security_clearance` |
+
+Where Auto is switched on (the Auto-apply page and the setup's own step) the list is shown with
+how many are still unanswered and the sentence: "Auto never stops to ask. Answer these once so
+it never has to guess. Anything left blank, I answer with my best guess and flag for you." It
+never blocks turning Auto on (`/api/autoapply/auto/checklist`, `setup.auto_checklist`). Under it,
+in plain words: "In Auto I may answer a form's questions with my best judgement when you have
+not saved an answer. Those answers are flagged, and you are responsible for checking them before
+an application is sent."
+
+### Preferring jobs that need no guess
+
+`/api/autoapply/auto/plan` keeps its rules (approved, waiting, the daily limit, oldest approval
+first) and then sorts by how likely an application needs a guess (`_form_score`, lowest first):
+
+1. **The form's own questions, where a public feed lists them before the form is opened.** Only
+   Greenhouse does: its keyless job board API (the feed sourcing/ats.py and sourcing/liveness.py
+   already read) returns a job's questions with `?questions=true` (sourcing/formquestions.py).
+   The required ones are counted against what the person's saved answers cover; contact fields,
+   files, self-identification, essays, consents and common-sense questions are not unknowns.
+   The count is kept on the record for a week; one plan call makes at most four feed requests.
+   Lever's and Ashby's public feeds do not list a form's custom questions, and nothing is
+   scraped.
+2. **What earlier runs met**, for everything else: per employer, else per form system, the
+   average number of best guesses a run and how often a form had to be skipped
+   (`form_history` in the prefs store: counts only, never a question or an answer).
+3. Nothing known: 0.5, after the forms known to be clean and before the ones known to need
+   guesses.
+
+### Assisted and Hybrid
+
+Unchanged: they ask. `auto` is false on their steps, the check refuses a legal answer with no
+saved answer (hard limit 5), nothing is guessed, and the question is asked once at the end.
+
+### The first real form: Ochsner on Workday (2026-11-19)
+
+A hidden Auto run reached Application Questions and was set aside for three questions. Two were
+bugs:
+
+- **"Are you legally authorized to work in the United States without requiring visa sponsorship
+  (e.g., H-1B visa status, etc.) from an employer now or in the future?"** The classifier read it
+  correctly (`authorized_no_sponsor`), but its choices were not Yes and No. They were three
+  statements: "Yes, I am legally authorized ... (I do not and will not need visa sponsorship)", "I
+  currently need a visa sponsorship ...", "In the future, I will need visa sponsorship ...". Every
+  one read as a yes, so nothing was picked. `workauth.pick_sponsor_state` now reads each choice as
+  none, now or future, and picks the person's own. "Can you work ... without requiring
+  sponsorship" is now read as this question too (it was read as "do you need sponsorship", the
+  inverse).
+- **"Have you previously been employed by Ochsner or any of companies, partners, or affiliates?"**
+  and **"Are you currently employed by any of the following Ochsner companies, partners, or
+  affiliates? Companies Include: ..."** The worked-here matcher read "partners" as someone else (a
+  domestic partner). A lone "partner" still is, "companies, partners, or affiliates" is the
+  employer's own group. "Currently employed by" is answered No when the employer is nowhere in the
+  history; a Yes from the history is never given to it (it may be a past job).
+
+The third, **"Have you ever been suspended, sanctioned, excluded, or otherwise precluded from
+participating in Medicare, Medicaid, or any other federal, state or private health insurance
+program?"**, is a legal declaration with no saved answer: in Auto it is a flagged best guess (No:
+most applicants were never excluded), held for the person's Send, and it is now one of the setup
+checklist's declarations (`@excluded_programs`).
+
+### Tests
+
+tests/test_auto_never_stops.py and tests/js/test_auto_never_stops.js.
+
+## 32. The hidden Auto run of 2026-11-19: eight applications, five fixes
+
+### Left-site: where it went, aggregators, hand-offs, surveys
+
+Three of eight runs stopped as "left-site", and the host they went to was kept nowhere.
+
+- **Where it went is kept.** The stop logs `left-site step N <from host> -> <host>` and posts
+  `/api/autoapply/agent/left-site` (`agent_left` on the record: the host, the step, the host it
+  came from, never the address with its tokens). The Auto-apply row says "Stopped: the site sent
+  me to <host>" (five locales). A new run clears it.
+- **An aggregator's ad link** (Adzuna's `adzuna.com/land/ad/...`, and the other aggregators the
+  sourcing code reads: Remotive, Arbeitnow, RemoteOK, freehire; `submit.policy.AGGREGATOR_HOSTS`)
+  only redirects. The first page that is not the aggregator becomes the run's own site
+  (`offSiteVerdict` "adopt": the hosts the engine allows for that page are added), when the agent
+  made no click on the aggregator, or one click on the ad's own Apply link. Once per run, and
+  never a prohibited site.
+- **A careers site's hand-off to its hiring system.** Gainwell's careers site runs on SAP
+  SuccessFactors and applies on `career41.sapsf.com`, which was not on the list. `ATS_HOSTS`
+  (submit/policy.py, mirrored in agent.js) now holds the hiring systems' own domains: SAP
+  SuccessFactors (sapsf.com, sapsf.eu, successfactors.eu), Workday's career sites, Jibe, Phenom,
+  Avature, Eightfold, BrassRing, Cornerstone, Dayforce, Paycom, UKG and the small ATSs. Oracle
+  Recruiting Cloud is allowed by its shape (`<pod>.fa.<region>.oraclecloud.com`,
+  `ATS_HOST_PATTERNS`), never all of oraclecloud.com.
+- **A third-party survey is the person's.** A bank's Workday requires an assessment that opens
+  EY's tax-credit survey (`wotcgs.ey.com`). A survey host (`SURVEY_HOSTS`: tax-credit screeners
+  and assessment vendors), or any host reached by a click named like an assessment or survey,
+  parks the job as a person step: "This employer needs a short survey on another site (<host>).
+  Do it yourself, then press Continue and I will finish." Continue opens the application's own
+  page (the last allowed page), never the survey; a resumed run that finds itself still on the
+  survey goes back to that page once. In Auto the job is set aside with that reason and the batch
+  moves on.
+- Unchanged: a run never wanders to an unrelated site, and never to LinkedIn or another
+  prohibited board.
+
+### Workday's Languages rows
+
+Home Depot's My Experience had a Languages row open (Language, Read, Speak, Write and "I am fluent
+in this language"); nothing filled it, its fields became required, and Save and Continue held for
+48 steps. The fill engine now handles the rows (`fillLanguages` in extension/autofill_core.js,
+called from the history pass): the profile's languages (`autoapply/history.form_languages`, in
+the fill payload as `languages: [{name, level}]`, this application's profile first) go one per
+row, "Add" for more; each proficiency list takes the closest level it offers ("Native" takes
+"Native or bilingual", else "Fluent", else "Advanced"), and native or fluent ticks the fluent box.
+A row nothing fills is removed with its own Delete. A language or its level is never a best guess
+(`guess.is_language_question`).
+
+Common sense on a required row (2026-11-19, Home Depot): with NO languages saved, a first
+Language row that is required and has no Delete of its own, and a resume written in English
+(`history.resume_in_english`, the app's `language_default` in the payload), the row takes
+English at the highest level the list offers that is not native (the fluent box is left alone).
+Each fill is logged as common sense with its reason ("your resume and application are in English,
+and no languages are saved") and flagged as one to check in Review answers. Never another
+language, never another row. Only a Language control with
+proficiency lists or the fluent box beside it counts, never a site's own language picker.
+
+### The export-control question
+
+Lam's form (Phenom) asks "For the sole purpose of determining export licensing requirements,
+please provide your most recent country/region of citizenship or legal permanent residence. If
+your country/region is not listed please select Other." Its list holds only the controlled
+countries and Other. The saved country of citizenship was not on it, so nothing matched, the
+brain's own "Other" was refused (a legal question), and the job was set aside for a question the
+saved answers settle.
+
+`planner.export_question` (a country-of-citizenship question with export words: export
+licensing or control, deemed export, ITAR, EAR, the Export Administration Regulations) and
+`planner.export_answer` answer it from the saved countries of citizenship and, when it asks about
+a permanent residence and the person holds one (a green card, settled status), that residence: it
+is the more recent of the two. On a list: the country when the list names it, else the list's own
+"Other" or "Not listed" (only on a list read in full); in a text box the countries, and a
+residence as "<country> (permanent resident)". It stays legal class, answered from the saved
+answer (origin "library"), through the planner and the ask's known-only check. A permanent
+resident's answer was left to the person before; it is now answered this way. More wordings
+reach the citizenship key ("Under the Export Administration Regulations (EAR), please state your
+citizenship", "What is your citizenship for export control purposes?"); a citizenship STATUS or a
+yes/no question keeps its own.
+
+### An upload box is never a question
+
+On Schneider Electric's iCIMS profile the agent attached the resume, saved the profile, and the
+page came back from its resume parse with the upload box empty again ("Please upload your
+resume/CV (Max size: 5 MB)", required). The page has a password box (the account is made on the
+same form), so the engine's fill and its resume attach never ran there, and the empty box went
+into the list of questions: the job was set aside for "no saved answer" on an upload.
+
+- `questionsFor` never takes an upload label (`isUploadLabel`: upload or attach with resume, CV,
+  cover letter, document or file, or a "(Max size" note), so an upload never becomes a question,
+  a deferred question or a "Needs you" row.
+- Every step, a required upload box of the resume still empty (`uploadsOpen`: a file box with no
+  file, a box worded as an upload, or one the engine left) gets the application's own resume:
+  the page's file box first (`attachResume`, which still never uploads a copy the box already
+  lists), else the upload button's own file chooser (`attachViaChooser` in main.js,
+  shell-electron/chooser.js: the chooser is intercepted through the debugger, a real press on the
+  button found by `uploadButtonPoint`, and the file box it opened gets the resume). Never a cover
+  letter's box or button. At most twice per box.
+- When neither takes it twice, the run stops: "I could not attach the resume on this site." The
+  record moves to Needs you with that reason (`no_upload`, five locales: "Open it to attach it
+  yourself"), a site problem, never a question.
+
+The same run's other open question was "Preferred Engagement Language", a required list the
+brain's pick was refused on (a preference with nothing to cite). It is not handled here.
+
+### Today's date on a self-identification form
+
+Uline's CC-305 disability form (Workday) showed "Invalid Date: 11/19/": the engine's Month, Day
+and Year were typed one segment at a time with a focus from script in between, and the year never
+registered. The brain then typed the year itself and the answer protocol refused it as a legal
+date.
+
+- The date a self-identification or signature form is signed is today's, not a fact about the
+  person. `protocol.signature_date` (a box named "Date", "Today's date", "Date signed" and the
+  like, on a page that is a self-identification or signature form, and only today's date, whole
+  or one of its segments) lets the brain's typed date through as common sense ("today's date: the
+  date this form is signed"). The self-identification answers themselves are unchanged (the
+  decline unless saved).
+- The fill's date segments follow main's measured in-page recipe (PR #310: `setSpin`, the native
+  setter with focus, input, change and blur, read back), with real keys only as the fallback on a
+  page in sight. A brain `type` on a date segment does the same (`spinType`): `setSpin` first,
+  then, only when the page did not keep it, a real press and the digits as real keys (never
+  select-all and Backspace, which steps back into the segment before).
+- The fixture tests/fixtures/forms/workday_date.html models a widget that keeps only real keys:
+  the in-page recipe cannot set it, so the fallback is what fills it there.
+
+### Tests
+
+tests/test_queue_run_2026_11_19.py (with the headless fixtures workday_languages.html,
+icims_upload.html and workday_date.html), tests/js/test_queue_run_2026_11_19.js and
+tests/js/test_icims_upload.js.

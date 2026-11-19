@@ -806,25 +806,29 @@ LAM_EXPORT = ("For the sole purpose of determining export licensing requirements
               "list each)")
 
 
-def test_the_lam_export_question_is_left_to_a_permanent_resident(tmp_path):
+def test_the_lam_export_question_names_a_permanent_residence(tmp_path):
+    """(2026-11-19) It asks for the MOST RECENT of a citizenship and a permanent residence: a
+    permanent residence is gained after a citizenship, so it is answered from the profile, the
+    residence named (it was left to the person before; a hidden Auto run set the job aside)."""
     from autoapply import basics
     gc = {"countries": {"US": {"status": "green_card"}}}
     with AnswerLibrary(tmp_path / "a.db") as lib:
         basics.write(lib, {"citizenship": "Ghana"})
-        assert AK.known_answer(LAM_EXPORT, [], library=lib, work_auth=gc) is None
+        assert AK.known_answer(LAM_EXPORT, [], library=lib, work_auth=gc) == ("United States (permanent resident); citizen of Ghana", "library")
         res = plan_known([FormField("t", LAM_EXPORT, "text")], KnownContext(library=lib, work_auth=gc))
-        assert [f.ref for f in res.left] == ["t"]
+        assert [a.value for a in res.actions] == ["United States (permanent resident); citizen of Ghana"]
         # without a permanent residence anywhere, the citizenship answers it
         assert AK.known_answer(LAM_EXPORT, [], library=lib, work_auth=IRAN_H1B) == ("Ghana", "library")
         # the card's own question never mentions residence
         assert AK.known_answer("Country of citizenship", [], library=lib, work_auth=gc) == ("Ghana", "library")
 
 
-def test_the_step_route_leaves_the_lam_export_question_to_a_permanent_resident(app, monkeypatch):
+def test_the_step_route_names_the_permanent_residence_on_the_lam_export_question(app, monkeypatch):
     A, c = app
     c.post("/api/answers/basics", json={"fields": {"citizenship": "Ghana"}})
     monkeypatch.setattr(A, "_work_auth", lambda: {"countries": {"US": {"status": "green_card"}}})
-    assert A._known_answers_for([LAM_EXPORT, "Country of citizenship"], None, {}, {}) == {"Country of citizenship": "Ghana"}
+    assert A._known_answers_for([LAM_EXPORT, "Country of citizenship"], None, {}, {}) == {
+        LAM_EXPORT: "United States (permanent resident); citizen of Ghana", "Country of citizenship": "Ghana"}
 
 
 # --------------------------------------------------------------------------- self-identification on the step route

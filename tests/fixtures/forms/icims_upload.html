@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Candidate Profile (iCIMS-style upload fixture)</title>
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<!-- Modelled on an iCIMS candidate profile (2026-11-19): "Please upload your resume/CV (Max size:
+     5 MB)" is a required read-only box showing the file's name beside a styled Upload button. The
+     page has NO file input until the button is pressed: the press makes one and opens the file
+     chooser. A cover letter has its own Upload button, which must never get the resume. With
+     ?nobutton the resume area has no upload control at all. -->
+<form onsubmit="return false">
+  <div class="field" id="resumeArea">
+    <div class="label" id="resumeLabel">Please upload your resume/CV (Max size: 5 MB) <span>*</span></div>
+    <input type="text" id="resumeName" readonly required aria-required="true" aria-labelledby="resumeLabel" value="">
+    <button type="button" id="up" class="iCIMS_Button">Upload</button>
+  </div>
+  <div class="field" id="letterArea">
+    <div class="label">Cover Letter</div>
+    <input type="text" id="letterName" readonly value="" aria-label="Cover Letter">
+    <button type="button" id="upLetter" class="iCIMS_Button">Upload</button>
+  </div>
+  <div class="field"><label for="lang">Preferred Engagement Language</label>
+    <select id="lang" required><option value="">Select</option><option>English</option><option>French</option></select></div>
+  <button type="submit">Submit Profile</button>
+</form>
+<script>
+  window.fx = { file: "", letter: "", opened: 0 };
+  if (/nobutton/.test(location.search)) { document.getElementById("up").remove(); document.getElementById("upLetter").remove(); }
+  function chooser(onFile) {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = ".pdf,.doc,.docx"; inp.style.display = "none";
+    inp.addEventListener("change", () => { if (inp.files.length) onFile(inp.files[0].name); inp.remove(); });
+    document.body.appendChild(inp);
+    window.fx.opened++;
+    inp.click();
+  }
+  const up = document.getElementById("up");
+  if (up) up.addEventListener("click", () => chooser((n) => { window.fx.file = n; document.getElementById("resumeName").value = n; }));
+  const ul = document.getElementById("upLetter");
+  if (ul) ul.addEventListener("click", () => chooser((n) => { window.fx.letter = n; document.getElementById("letterName").value = n; }));
+  window.fxValues = () => Object.assign({}, window.fx, { inputs: document.querySelectorAll("input[type=file]").length });
+</script>
+</body></html>

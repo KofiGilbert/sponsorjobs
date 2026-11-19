@@ -2224,7 +2224,7 @@ def _may_send_alone(lane: str, match, data: dict | None = None) -> bool:
     written answer on it that the agent drafted and the person has not read (``data``)."""
     from autoapply import modes
     return modes.may_send_alone(_apply_mode(), lane, match, _auto_min_match(),
-                                drafted=_holds_agent_draft(data or {}))
+                                drafted=_holds_agent_draft(data or {}), guessed_legal=_guessed(data or {})[1] > 0)
 
 
 def _submit_driver_for(url: str):
@@ -2328,6 +2328,10 @@ def _set_prefs(patch: dict) -> dict:
             pass
     if "terms_decided" in patch:
         cur["terms_decided"] = bool(patch["terms_decided"])
+    if isinstance(patch.get("form_history"), dict):   # counts only, per employer and form system (Auto's ordering)
+        cur["form_history"] = {str(k)[:120]: {"runs": int(v.get("runs") or 0), "guessed": int(v.get("guessed") or 0),
+                                               "skipped": int(v.get("skipped") or 0), "at": str(v.get("at") or "")[:40]}
+                               for k, v in list(patch["form_history"].items())[:FORM_HISTORY_MAX] if isinstance(v, dict)}
     if isinstance(patch.get("apply_setup"), dict):    # Apply setup's place: seen, step, done
         from autoapply.setup import STEPS
         a = dict(cur.get("apply_setup") or {})
@@ -6456,8 +6460,9 @@ def profile_autofill():
     # The work history and education for a form's repeating sections (Workday's "Work Experience
     # 1", "Education 1"): this application's tailored resume when the shell names the record, so
     # the form says what the uploaded resume says, else the saved profile (autoapply/history.py).
-    from autoapply.history import form_history
+    from autoapply.history import form_history, form_languages, language_default
     hist = {"history": [], "education": [], "skills": []}
+    langs, lang_default = [], None
     try:
         prof = {}
         rid = request.args.get("record_id")
@@ -6474,6 +6479,10 @@ def profile_autofill():
         if not prof.get("skills"):
             prof = dict(prof, skills=full.get("skills") or {})
         hist = form_history(prof)
+        # (2026-11-19) the Languages rows of a form: this application's profile, else the saved one
+        langs = form_languages(prof) or form_languages(full)
+        # none saved: English on a required Languages row when the resume is in English (common sense)
+        lang_default = None if langs else language_default(prof if prof.get("experience") else full)
     except Exception:                                     # noqa: BLE001 - the contact fill still runs
         pass
     return _nostore(jsonify({
@@ -6483,6 +6492,8 @@ def profile_autofill():
         "history": hist["history"],
         "education": hist["education"],
         "skills": hist["skills"],
+        "languages": langs,
+        "language_default": lang_default,
         "screening": screening,
         "answers": answers,
         "eeo": {"decline": bool(prefs.get("eeo_decline"))},
@@ -7168,7 +7179,8 @@ def _setup_payload() -> dict:
     except Exception:          # noqa: BLE001
         employers = []
     state = dict(p.get("apply_setup") or {})
-    snap = {"applicant": ap, "declined": declined, "work_auth": wa, "basics": b, "saved": saved}
+    snap = {"applicant": ap, "declined": declined, "work_auth": wa, "basics": b, "saved": saved,
+            "terms_decided": bool(p.get("terms_decided")) or _terms_pref() == "always"}
     return {
         "ok": True,
         "state": {"seen": bool(state.get("seen")), "step": state.get("step") if state.get("step") in S.STEPS else "contact",
@@ -7206,6 +7218,10 @@ def _setup_payload() -> dict:
             "heard": saved.get("@heard_about") or "",
             "over_18": S.yes_no(saved.get("@over_18")),
             "covenants": S.yes_no(saved.get("@restrictive_covenants")),
+            # (2026-11-19) the standard declarations Auto would otherwise answer by best guess
+            "criminal": S.yes_no(saved.get(S.KEYS["criminal"])),
+            "dismissed": S.yes_no(saved.get(S.KEYS["dismissed"])),
+            "excluded": S.yes_no(saved.get(S.KEYS["excluded"])),
             # "" (never answered), "No" (answered No everywhere) or "ask" (Yes, ask me each time)
             "relatives": {"No": "No", "Yes": "ask"}.get(S.yes_no(saved.get("@relatives_at_employer")), ""),
             # "" (never answered: a form's alias question stays the person's), "None", or the names
@@ -7230,6 +7246,8 @@ def _setup_payload() -> dict:
                   "auto_sites": sorted({e.ats for e in _AUTO_REG if e.auto_eligible})},
         "countries": list(countries.NAMES),
         "count": S.coverage(snap),
+        # what Auto would otherwise guess: the checklist shown where Auto is switched on
+        "auto_checklist": S.auto_checklist(snap),
     }
 
 
@@ -7382,7 +7400,7 @@ def _setup_forms(f: dict) -> None:
         if "heard" in f:
             _setup_answer(lib, "heard", f.get("heard"))
             patch["hear_about_us"] = " ".join(str(f.get("heard") or "").split())[:60]
-        for fld in ("over_18", "covenants", "marketing", "license", "related_degree"):
+        for fld in ("over_18", "covenants", "criminal", "dismissed", "excluded", "marketing", "license", "related_degree"):
             if fld in f:
                 _setup_answer(lib, fld, S.yes_no(f.get(fld)))
         if "over_18" in f:
@@ -7453,6 +7471,15 @@ def apply_setup_get():
     """Apply setup: every step's fields pre-filled from the stores that own them, where the person
     left off, and how many of the questions forms usually ask the agent can now answer."""
     return _nostore(jsonify(_setup_payload()))
+
+
+@app.get("/api/autoapply/auto/checklist")
+@_guard
+def autoapply_auto_checklist():
+    """(2026-11-19) What Auto would otherwise answer by best guess: the standard declarations,
+    which are answered and which are still open, the sentence shown where Auto is switched on,
+    and the plain words about best judgement. Never blocks Auto. Local only."""
+    return _nostore(jsonify({"ok": True, **_setup_payload()["auto_checklist"]}))
 
 
 @app.post("/api/apply-setup/save")
@@ -14805,6 +14832,105 @@ def _agent_drafts(rec, data: dict, prof: dict, labels: list, view: str) -> dict:
         recs.close()
 
 
+# ---- which applications Auto can finish without a guess (docs/apply-agent.md section 31) -------
+# Two signals, no scraping: (1) the form's own questions where a public feed lists them before
+# the form is opened (Greenhouse's keyless job board API, sourcing/formquestions.py), counted
+# against what the person's saved answers cover and kept on the record; (2) what earlier runs met,
+# per employer and per form system: how many answers were a best guess, how often a form had to
+# be skipped (``form_history`` in the prefs store; counts only, never a question or an answer).
+FORM_HISTORY_MAX = 300
+FORM_PROBE_S = 7 * 86400            # a form's questions are read again after a week
+FORM_PROBES_A_PLAN = 4              # feed requests one plan call may make
+_FORM_FETCH = None                  # a test's stand-in for the feed (url -> parsed JSON)
+
+
+def _form_keys(rec: dict, data: dict | None = None) -> list:
+    from applicant.facts import company_key
+    from submit.policy import _host
+    data = data if data is not None else _record_data(rec)
+    sj = data.get("source_job") if isinstance(data.get("source_job"), dict) else {}
+    host = _host(str(sj.get("url") or ""))
+    system = ".".join(host.split(".")[-2:]) if host else ""
+    ck = company_key(rec.get("company") or "")
+    return [k for k in (("co:" + ck) if ck else "", ("sys:" + system) if system else "") if k]
+
+
+def _form_history_note(rec: dict, guessed, skipped: bool = False) -> None:
+    """One finished run's numbers into ``form_history`` (by employer and by form system)."""
+    try:
+        hist = dict(_prefs().get("form_history") or {})
+        for k in _form_keys(rec):
+            e = dict(hist.get(k) or {})
+            e["runs"] = int(e.get("runs") or 0) + 1
+            e["guessed"] = int(e.get("guessed") or 0) + max(0, int(guessed or 0))
+            e["skipped"] = int(e.get("skipped") or 0) + (1 if skipped else 0)
+            e["at"] = _now_iso()
+            hist[k] = e
+        if len(hist) > FORM_HISTORY_MAX:
+            for k in sorted(hist, key=lambda x: str(hist[x].get("at") or ""))[:len(hist) - FORM_HISTORY_MAX]:
+                hist.pop(k, None)
+        _set_prefs({"form_history": hist})
+    except Exception:          # noqa: BLE001 - a signal for the ordering, never a blocker
+        traceback.print_exc()
+
+
+def _form_probe(rec: dict, data: dict, budget: list) -> dict | None:
+    """{unknown, total, at} for this application's form from the public feed, kept on the record
+    for a week; None when no feed lists this form's questions (or it did not answer)."""
+    from sourcing import formquestions as FQ
+    kept = data.get("form_questions") if isinstance(data.get("form_questions"), dict) else None
+    if kept and time.time() - float(kept.get("ts") or 0) < FORM_PROBE_S:
+        return kept
+    sj = data.get("source_job") if isinstance(data.get("source_job"), dict) else {}
+    ref = FQ.greenhouse_ref(str(sj.get("url") or ""), str(sj.get("source_id") or ""))
+    # (never the network under a test or a dev session, unless a test hands in its own feed)
+    if not ref or budget[0] <= 0 or (_FORM_FETCH is None and _under_test_or_dev()):
+        return kept
+    budget[0] -= 1
+    qs = FQ.greenhouse_questions(*ref, fetch=_FORM_FETCH)
+    if qs is None:
+        return kept
+    required = [q["label"] for q in qs if q.get("required")]
+    try:
+        prof = data.get("render_profile") or data.get("profile") or _saved_full_profile() or {}
+        known = _known_answers_for(required, rec, data, _applicant_for(prof)) if required else {}
+    except Exception:          # noqa: BLE001 - then only the classifier's verdict counts
+        known = {}
+    out = {"unknown": FQ.unknown_count(qs, known.keys(), company=rec.get("company") or ""), "total": len(qs),
+           "ts": time.time(), "source": "greenhouse"}
+    try:
+        _records().merge_data(rec["id"], {"form_questions": out})
+    except Exception:          # noqa: BLE001
+        pass
+    return out
+
+
+def _form_score(rec: dict, data: dict, budget: list) -> float:
+    """How likely this application needs a guess, lowest first: the feed's own count of
+    unanswered required questions when a feed lists them; else what earlier runs met for this
+    employer, else for this form system (the average guesses a run, 3 more for a form that had to
+    be skipped); else 0.5 (nothing known: after the known-clean ones, before the known-hard)."""
+    probe = _form_probe(rec, data, budget)
+    if probe is not None:
+        return float(probe.get("unknown") or 0)
+    hist = _prefs().get("form_history") or {}
+    for k in _form_keys(rec, data):
+        e = hist.get(k)
+        if isinstance(e, dict) and int(e.get("runs") or 0) > 0:
+            return round((int(e.get("guessed") or 0) + 3 * int(e.get("skipped") or 0)) / int(e["runs"]), 2)
+    return 0.5
+
+
+def _guessed(data: dict) -> tuple[int, int]:
+    """(guessed, guessed_legal): how many answers on this application are Auto's best guess, and
+    how many of those are on a legal or attestation question (kept by the agent's ready route)."""
+    g = (data or {}).get("agent_guessed") if isinstance((data or {}).get("agent_guessed"), dict) else {}
+    try:
+        return max(0, int(g.get("guessed") or 0)), max(0, int(g.get("guessed_legal") or 0))
+    except (TypeError, ValueError):
+        return 0, 0
+
+
 def _holds_agent_draft(data: dict) -> bool:
     """Does this application hold a written answer the agent drafted (and the person has not
     edited)? Then the agent never sends it alone (autoapply/modes.py)."""
@@ -15643,14 +15769,36 @@ def autoapply_agent_ask():
         # A self-identification answer that IS one of the page's choices: the shell picks it
         # itself with real clicks (shell-electron/agent.js pickSaved), never through the model;
         # so is a neutral pick (the page's own words).
+        # (2026-11-19, Auto never stops to ask) ``auto_guess``: what is STILL open gets the engine's
+        # best guess where the page's choices settle one (autoapply/guess.py: the neutral choice,
+        # else the majority answer, else the choice that commits to nothing), origin
+        # "best_guess" with its reason. A field that is never guessed (an ID number, a date of
+        # birth, bank details, a password, a signature) is named in ``never``: the shell skips
+        # the application. What neither settles is the brain's own best guess, on the page.
+        reasons, never, classes = {}, [], {}
+        if b.get("auto_guess"):
+            from autoapply import guess as _G, qclass as _Q
+            wa_g = _work_auth()
+            for it in items:
+                if it["answer"]:
+                    continue
+                if _Q.never_guess(it["question"]):
+                    never.append(it["question"])
+                    continue
+                g = _G.choose(it["question"], it["page_options"], company=company)
+                if g:
+                    it["answer"], it["origin"] = g[0], "best_guess"
+                    reasons[it["question"]] = _G.reason_for(it["question"], wa_g, country) or g[1]
+                    classes[it["question"]] = _Q.question_class(it["question"], it["page_options"], company=company)
         select = {it["question"]: it["answer"] for it in items
-                  if it["answer"] and (AK.is_eeo(it["question"]) or it["origin"] == "neutral")
+                  if it["answer"] and (AK.is_eeo(it["question"]) or it["origin"] in ("neutral", "best_guess"))
                   and it["answer"] in it["all_options"]}
         # (2026-11-17) A required consent with no way to decline, and the person's standing No to
         # those (``@forced_consent``): never asked again. The run leaves it EMPTY and flags it.
         leave = _forced_declined([it for it in items if not it["answer"]])
         return jsonify({"ok": all(it["answer"] or it["question"] in leave for it in items), "id": aid, "known": True,
                         "answers": answers(), "select": select, "reword": reword, **origins(), "leave": leave,
+                        "reasons": reasons, "never": never, "classes": classes,
                         "open": [it["question"] for it in items if not it["answer"] and it["question"] not in leave]})
     if all(it["answer"] for it in items):
         return jsonify({"ok": True, "id": aid, "known": True, "answer": items[0]["answer"], "answers": answers(),
@@ -16380,7 +16528,7 @@ def autoapply_agent_parked_take(rid: int):
     return jsonify({"ok": True, "entry": e})
 
 
-_AGENT_ANSWER_SOURCES = ("profile", "history", "library", "common_sense", "job")
+_AGENT_ANSWER_SOURCES = ("profile", "history", "library", "common_sense", "job", "best_guess")
 
 
 def _agent_answers_clean(rows) -> list | None:
@@ -16430,6 +16578,16 @@ def autoapply_agent_ready():
         chosen = _agent_answers_clean(b.get("agent_answers"))
         if chosen is not None:
             recs.merge_data(rid, {"agent_answers": chosen})
+        # (2026-11-19) how many of this run's answers are Auto's best guess, and how many of those
+        # are on a legal question: the row says "N answers need your check", and an application
+        # with a guessed legal answer is never sent by the agent alone
+        if "guessed" in b or "guessed_legal" in b:
+            try:
+                g, gl = max(0, int(b.get("guessed") or 0)), max(0, int(b.get("guessed_legal") or 0))
+            except (TypeError, ValueError):
+                g = gl = 0
+            recs.merge_data(rid, {"agent_guessed": {"guessed": g, "guessed_legal": min(g, gl), "at": _now_iso()}})
+            _form_history_note(rec, g)
         if b.get("answers_only"):
             return jsonify({"ok": True, "agent_answers": len(chosen or [])})
         run = b.get("run") if isinstance(b.get("run"), dict) else {}
@@ -16648,13 +16806,21 @@ def autoapply_auto_plan():
                 and re.match(r"https?://", it["apply_url"] or "", re.I)):
             items.append(it)
     items.sort(key=lambda x: x["approved_at"] or x["when"])
+    # (2026-11-19) After the rules above: the applications Auto can finish without a guess go
+    # first (a stable sort, so the oldest approval still leads among equals).
+    by_id = {r["id"]: r for r in rows}
+    budget = [FORM_PROBES_A_PLAN]
+    for it in items[:max(limit * 3, 12)]:
+        it["form_score"] = _form_score(by_id[it["id"]], _record_data(by_id[it["id"]]), budget)
+    items.sort(key=lambda x: x.get("form_score", 0.5))
     out = []
     for it in items[:min(left, limit)]:
         alone = bool(it["auto_send"]) and sends_left > 0
         if alone:
             sends_left -= 1
         out.append({"recordId": it["id"], "url": it["apply_url"], "resumePath": it["cv_path"],
-                    "lane": it["lane"], "autonomous": alone, "company": it["company"]})
+                    "lane": it["lane"], "autonomous": alone, "company": it["company"],
+                    "form_score": it.get("form_score", 0.5)})
     if out and not b.get("peek"):
         ids = [j["recordId"] for j in out]
         state.update(lambda d: _auto_day(d, today)["ids"].extend(ids))
@@ -16735,12 +16901,15 @@ def _auto_counts() -> dict:
         rows = recs.list(limit=10000)
     finally:
         recs.close()
-    sent = ready = need = 0
+    sent = ready = need = check = could_not = 0
     for r in rows:
         d = _record_data(r)
         from submit.stages import app_stage
         st = app_stage(d)
         park = d.get("agent_park") if isinstance(d.get("agent_park"), dict) else None
+        if st["stage"] == "failed" and st["reason"] == "cannot_fill" and _local_day((d.get("agent_skip") or {}).get("at")) == today:
+            could_not += 1                      # a form the agent could not do today: not a question
+            continue
         if st["stage"] == "submitted":
             if st["how"] == "auto" and _local_day(d.get("applied_at") or (d.get("submission") or {}).get("at")) == today:
                 sent += 1
@@ -16750,7 +16919,8 @@ def _auto_counts() -> dict:
             need += 1
         elif st["stage"] == "approved" and isinstance(d.get("agent_ready"), dict):
             ready += 1
-    return {"sent": sent, "ready": ready, "need": need}
+            check += _guessed(d)[0]             # Auto's best guesses waiting for the person's eye
+    return {"sent": sent, "ready": ready, "need": need, "check": check, "could_not": could_not}
 
 
 def _auto_daily_tick() -> dict:
@@ -17261,7 +17431,15 @@ def autoapply_agent_step():
         "reflect": b.get("reflect") if isinstance(b.get("reflect"), dict) else None,
         "last_step": bool(b.get("last_step")), "image": image,
         "portal": {"account": bool(portal), "new": bool(b.get("portal_new"))},
+        # (2026-11-19) an Auto run: nobody to ask, so an unknown is a flagged best guess (autoapply/guess.py)
+        "auto": bool(b.get("auto")),
     }
+    if req["auto"]:
+        # a saved work authorization the form words differently: the guess's flag says so
+        from autoapply import guess as _G
+        wa_now = _work_auth()
+        req["guess_reasons"] = {lab: r for lab in req["left"] for r in [_G.reason_for(re.sub(r" \([^()]*\)$", "", lab), wa_now,
+                                                                                    _job_country(data))] if r}
     if b.get("shell_signin"):
         # The shell signs in itself on a sign-in form (no model call): the saved account goes in
         # through the same placeholders, resolved here, marked sensitive, never logged.
@@ -17479,6 +17657,36 @@ def autoapply_agent_precheck():
         _records().merge_data(rec["id"], {"liveness": {"status": res.get("status"), "at": time.time()}})
     return jsonify({"ok": True, "closed": res.get("status") == "closed", "status": res.get("status"),
                     "phrase": res.get("why") or ""})
+
+
+@app.post("/api/autoapply/agent/skip")
+@_guard
+def autoapply_agent_skip():
+    """(2026-11-19) The apply agent cannot do this application: the form REQUIRES a field that is
+    never guessed (an ID number, a date of birth, bank details, a password, a signature) and
+    nothing is saved for it. Body {record_id, field, url?}. The record moves to "Needs you" with
+    the reason and the field named, so no batch picks it again; it is a job the agent could not
+    do, not a question for the person, so nothing is asked and nothing goes to Telegram."""
+    from submit.stages import failed_patch
+    b = request.json or {}
+    rid = b.get("record_id")
+    rec = _get_record(rid) if rid not in (None, "") else None
+    if rec is None:
+        return jsonify({"ok": False, "reason": "no-record"})
+    field = " ".join(str(b.get("field") or "").split())[:120]
+    if b.get("reason") == "upload":
+        # (2026-11-19) the form's upload box would not take the resume: a site problem, never a
+        # question for the person
+        patch = failed_patch({"reason": "no_upload", "message": "Stopped: I could not attach the resume on this site."})
+    else:
+        patch = failed_patch({"reason": "cannot_fill",
+                              "message": "Skipped: the form requires " + (f"\u201c{field}\u201d" if field else "a field") + ", which I never guess."})
+    patch["agent_skip"] = {"at": _now_iso(), "field": field, "url": str(b.get("url") or "")[:1000]}
+    patch["agent_ready"] = None
+    patch["agent_park"] = None
+    _records().merge_data(rec["id"], patch)
+    _form_history_note(rec, None, skipped=True)
+    return jsonify({"ok": True, "state": "skipped", "field": field})
 
 
 @app.post("/api/autoapply/agent/closed")
@@ -17707,8 +17915,35 @@ def autoapply_agent_portal_account_create():
 def autoapply_agent_allowed_hosts():
     """The hosts an apply-agent run may navigate to for this apply URL (submit.policy
     .run_allowed_hosts); the shell stops the run anywhere else. Empty on a prohibited site."""
-    from submit.policy import run_allowed_hosts
-    return jsonify({"ok": True, "hosts": sorted(run_allowed_hosts(request.args.get("url") or ""))})
+    from submit.policy import run_fence
+    return jsonify(dict({"ok": True}, **run_fence(request.args.get("url") or "")))
+
+
+@app.post("/api/autoapply/agent/left-site")
+@_guard
+def autoapply_agent_left_site():
+    """(2026-11-19) A run stopped because the site sent it to another host: body {record_id,
+    host, step, from_host, kind} keeps WHERE it went on the record (``agent_left``: hosts and
+    the step only, never the address with its tokens), so the Auto-apply row can say it.
+    {record_id, clear: true} clears it when a run starts again."""
+    b = request.json or {}
+    rid = b.get("record_id")
+    rec = _get_record(rid) if rid not in (None, "") else None
+    if rec is None:
+        return jsonify({"ok": False, "reason": "no-record"})
+    if b.get("clear"):
+        if (_record_data(rec) or {}).get("agent_left"):
+            _records().merge_data(rec["id"], {"agent_left": None})
+        return jsonify({"ok": True})
+    host = str(b.get("host") or "").strip().lower()[:200]
+    try:
+        step = int(b.get("step") or 0)
+    except (TypeError, ValueError):
+        step = 0
+    left = {"host": host, "step": step, "from_host": str(b.get("from_host") or "").strip().lower()[:200],
+            "kind": "survey" if b.get("kind") == "survey" else "left", "at": _now_iso()}
+    _records().merge_data(rec["id"], {"agent_left": left})
+    return jsonify({"ok": True, "left": left})
 
 
 def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -> dict:
@@ -18999,10 +19234,14 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
     else:
         ready = None
     note = data.get("agent_note") if isinstance(data.get("agent_note"), dict) else None
+    left = data.get("agent_left") if isinstance(data.get("agent_left"), dict) else None
     return {
         "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
         "company": company, "location": location,
         "agent_note": (note or {}).get("message") or "",
+        # (2026-11-19) Where the site sent the last run when it stopped as "left-site"
+        "left_site": ({"host": left.get("host") or "", "step": left.get("step") or 0}
+                      if left and left.get("kind") == "left" and left.get("host") else None),
         "visa": tagged.get("visa") or [], "sponsorship_stated": job.get("sponsorship_stated"),
         **stance,
         "match": round(match) if match is not None else None,
@@ -19015,6 +19254,8 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "lane": plan["tier"],
         # Auto mode may press Submit by itself for this one (allowlist, and the match threshold)
         "auto_send": _may_send_alone(plan["tier"], match, data),
+        # (2026-11-19) Auto's best guesses on this application: "N answers need your check"
+        "guessed": _guessed(data)[0], "guessed_legal": _guessed(data)[1],
         # The employer's own "we received your application" mail, when the inbox saw it
         "confirmation": (data.get("confirmation") if isinstance(data.get("confirmation"), dict) else None),
         "apply_url": _application_url(url, company) if url else "",

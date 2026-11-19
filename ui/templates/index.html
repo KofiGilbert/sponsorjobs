@@ -1262,6 +1262,21 @@
     </main>
   </div>
 
+  <!-- Send all, when an application it would send holds a best guess on a legal question
+       (docs/apply-agent.md section 31): ONE confirmation that names them, before anything is
+       sent. Painted by app.js from ui/static/send_all.js. -->
+  <div class="down sa-confirm" id="saConfirm" hidden>
+    <div class="down-card sa-card" role="alertdialog" aria-modal="true" aria-labelledby="saH" aria-describedby="saP">
+      <h2 class="down-h" id="saH"></h2>
+      <p class="down-p" id="saP"></p>
+      <ul class="sa-list" id="saList"></ul>
+      <div class="sa-actions" id="saActs"></div>
+      <button class="down-x" id="saClose" type="button" aria-label="Close" data-i18n-aria="sendall.close">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+
   <!-- SponsorJobs is unavailable. It is an ONLINE, real-model tool: with no connection, no key
        or no credit it cannot write anything, so it stops and says exactly which of those it
        is, with the one action that fixes it. Never a half-working app. -->
@@ -2088,6 +2103,7 @@
   <script src="{{ url_for('static', filename='timekeeper.js') }}"></script>
   <!-- The Inbox screen's pure parts (labels, times, rows, the sandboxed mail page), node-tested. -->
   <script src="{{ url_for('static', filename='inbox_view.js') }}"></script>
+  <script src="{{ url_for('static', filename='send_all.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

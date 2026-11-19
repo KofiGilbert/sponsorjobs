@@ -183,7 +183,9 @@ _HERE = re.compile(r"\b(us|here|this (?:company|firm|organi[sz]ation|employer)|o
 _ELSEWHERE = re.compile(
     r"\b(other|another|different|any) (companies|company|firms?|employers?|organi[sz]ations?)\b|\bvisa\b|sponsor|\bloans?\b"
     r"|licen[cs]e|clearance|unemployment|benefits?|citizenship|green card|permit|asylum|scholarship|grant\b", re.I)
-_SOMEONE_ELSE = re.compile(r"relative|related|family|friend|spouse|anyone|someone|refer|partner", re.I)
+# (2026-11-19, Ochsner on Workday) "companies, partners, or affiliates" is the employer's own group,
+# never someone else: only a lone "partner" (a domestic partner) is.
+_SOMEONE_ELSE = re.compile(r"relative|related|family|friend|spouse|anyone|someone|refer|\bpartner\b(?!s)", re.I)
 _ALSO_WORKED = re.compile(r"\b(work(ed|ing)?|been employed|employed|employees?|contractors?|interns?|interned)\b", re.I)
 # A Yes the records cannot give: within a time window, or to this very position.
 _WINDOW = re.compile(r"\b(days?|weeks?|months?|years?)\b|\bsince\b|\brecent(ly)?\b", re.I)
