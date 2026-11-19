@@ -14,6 +14,10 @@
 //   {do:"framesUpload", refsFrom, file, as}  CDP file upload in each frame for refs in a prior result
 //   {do:"frameValues", as}          window.fxValues() of the first child frame (main world)
 //   {do:"keys", sel, text, enter?}   real key presses into a box (then Enter)
+//   {do:"shellKeys", from, as?, opts?}    the shell's date typing (shell-electron/fill_keys.js typeKeys) on a
+//                                         fill report's ``keys``, with real keys -> its report + debug lines
+//   {do:"shellSearch", from, as?, opts?}  the shell's list search (fill_keys.js searchPicks) on a report's
+//                                         ``searches``: real clicks and keys -> its report + debug lines
 //   {do:"wait", ms}
 // Prints {results:{...}} as JSON.
 "use strict";
@@ -88,7 +92,8 @@ async function freePort() {
   const { chromium } = findPlaywright();
   const browser = await chromium.launch({ args: ["--remote-debugging-port=" + port, "--site-per-process"] });
   const results = {};
-  let cdp = null, ctxs = [];
+  let cdp = null, ctxs = [], inputCdp = null;
+  const fillKeys = require(path.resolve(__dirname, "..", "..", "shell-electron", "fill_keys.js"));
   try {
     const page = await browser.newPage({ viewport: { width: 1100, height: 1400 } });
     let q = sc.query || "";
@@ -112,6 +117,16 @@ async function freePort() {
         await page.keyboard.press("Backspace");
         await page.keyboard.type(st.text);
         if (st.enter) await page.keyboard.press("Enter");
+      } else if (st.do === "shellKeys" || st.do === "shellSearch") {
+        // the shell's own code (shell-electron/fill_keys.js) over this page: real keys and clicks
+        if (!inputCdp) inputCdp = await page.context().newCDPSession(page);
+        const driver = { evalJs: (expr) => page.evaluate(expr), send: (m, p) => inputCdp.send(m, p) };
+        const lines = [];
+        const o = Object.assign({ log: (l) => lines.push(l), resultsMs: 150 }, st.opts || {});
+        const rep = results[st.from] || {};
+        const r = st.do === "shellKeys" ? await fillKeys.typeKeys(driver, rep.keys, o) : await fillKeys.searchPicks(driver, rep.searches, o);
+        r.lines = lines;
+        if (st.as) results[st.as] = r;
       } else if (st.do === "frameClick") {
         await page.frames()[1].click(st.sel);
       } else if (st.do === "wait") {

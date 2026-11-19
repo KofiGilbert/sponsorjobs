@@ -669,15 +669,23 @@ function createAgent(deps) {
     } catch (e) { return null; }
     finally { release(); }
   }
-  // (2026-11-19) A date segment (Workday's Month / Day / Year spinbuttons): typed the way a person
-  // does, a real press on it, then the digits as real keys. Never select-all and Backspace first:
-  // in an empty segment Backspace steps back into the one before it and erases that. A value set
-  // from script shows but is not kept ("Invalid Date: 11/19/").
+  // (2026-11-19) A date segment (Workday's Month / Day / Year spinbuttons): first set in the page
+  // with the engine's measured recipe (setSpin: focus, the native setter with input and change,
+  // blur, read back), as the fill does; only when the page did not keep it, and the page is in
+  // sight, real keys after a real press. Never select-all and Backspace first: in an empty
+  // segment Backspace steps back into the one before it and erases that.
   async function spinType(wc, index, text) {
-    let spin = false;
-    try { spin = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); return !!el && el.getAttribute("role") === "spinbutton"; })()`, true); }
-    catch (e) { if (e && e.stopped) throw e; spin = false; }
-    if (spin !== true) return null;
+    const digits = String(text).replace(/[^0-9]/g, "");
+    if (!digits) return null;
+    let st = null;
+    try {
+      st = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); const E = window.TailorAutofill;
+        if (!el || el.getAttribute("role") !== "spinbutton") return null;
+        if (E && E.setSpin && E.spinDigits) { E.setSpin(el, ${JSON.stringify(digits)}); if (Number(E.spinDigits(el) || NaN) === Number(${JSON.stringify(digits)})) return "set"; }
+        return document.visibilityState === "visible" ? "keys" : "hidden"; })()`, true);
+    } catch (e) { if (e && e.stopped) throw e; st = null; }
+    if (st === "set") return { ok: true, note: "" };
+    if (st !== "keys") return st === "hidden" ? { ok: false, note: "the date segment did not take the value" } : null;
     const release = deps.acquireDebugger(wc);
     if (!release) return null;
     try {
@@ -692,7 +700,7 @@ function createAgent(deps) {
         await cmd(dbg, "Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 });
         await cmd(dbg, "Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "left", clickCount: 1 });
       }
-      for (const ch of String(text).replace(/[^0-9]/g, "")) {
+      for (const ch of digits) {
         await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
         await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyUp", key: ch });
       }
@@ -1285,7 +1293,9 @@ function createAgent(deps) {
     // What a fill set on this page, into the Review answers list (never logged: safeReply).
     const noteFill = (r) => {
       if (!r || !r.ok) return;
-      for (const a of r.answers || []) addAnswer(ans, { page, label: a.label, value: a.value, from: a.from });
+      // ``agent``/``evidence``: a fill the engine decided by common sense (English on a required
+      // Languages row): one to check in Review answers, with its reason
+      for (const a of r.answers || []) addAnswer(ans, Object.assign({ page, label: a.label, value: a.value, from: a.from }, a.agent ? { agent: true, evidence: a.evidence || "" } : {}));
       for (const f of r.files || []) addFile(ans, Object.assign({ page }, f));
     };
     // (Fill-through) What the run left for the person, to ask once at the end: each question with

@@ -5,7 +5,7 @@
 // Everyone and every site here is made up.
 "use strict";
 const path = require("path");
-const { createAgent, offSiteVerdict, SURVEY_LINE, uploadsOpen, questionsFor } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
+const { createAgent, offSiteVerdict, SURVEY_LINE, uploadsOpen, questionsFor, createAnswers, addAnswer, readyAnswers } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
 // ---- the verdict, pure ------------------------------------------------------------------------
@@ -196,6 +196,14 @@ const leftPosts = (posts) => posts.filter(([p, b]) => p === "/api/autoapply/agen
     const b = await runWith(async () => false, async (_wc, file, label) => { chose++; return label === UP && !!file; });
     assert(chose >= 1 && b.r.reason !== "no-upload", "attached through the chooser: " + JSON.stringify(b.r));
     assert(!b.posts.some(([p, x]) => p === "/api/autoapply/agent/ask" && JSON.stringify(x).includes("Please upload")), "never asked");
+  }
+  // ---- English by common sense on a required Languages row: one to check in Review answers ----
+  {
+    const ans = createAnswers();
+    addAnswer(ans, { page: 2, label: "Languages 1: Language", value: "English", from: "common_sense", agent: true, evidence: "your resume and application are in English" });
+    const rows = readyAnswers(ans, { recordId: 1 }).rows || readyAnswers(ans, { recordId: 1 });
+    const row = (Array.isArray(rows) ? rows : []).find((x) => x.value === "English");
+    assert(row && row.flag === "agent" && row.from === "common_sense" && /English/.test(row.evidence), "flagged: " + JSON.stringify(rows));
   }
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });

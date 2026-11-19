@@ -6460,9 +6460,9 @@ def profile_autofill():
     # The work history and education for a form's repeating sections (Workday's "Work Experience
     # 1", "Education 1"): this application's tailored resume when the shell names the record, so
     # the form says what the uploaded resume says, else the saved profile (autoapply/history.py).
-    from autoapply.history import form_history, form_languages
+    from autoapply.history import form_history, form_languages, language_default
     hist = {"history": [], "education": [], "skills": []}
-    langs = []
+    langs, lang_default = [], None
     try:
         prof = {}
         rid = request.args.get("record_id")
@@ -6481,6 +6481,8 @@ def profile_autofill():
         hist = form_history(prof)
         # (2026-11-19) the Languages rows of a form: this application's profile, else the saved one
         langs = form_languages(prof) or form_languages(full)
+        # none saved: English on a required Languages row when the resume is in English (common sense)
+        lang_default = None if langs else language_default(prof if prof.get("experience") else full)
     except Exception:                                     # noqa: BLE001 - the contact fill still runs
         pass
     return _nostore(jsonify({
@@ -6491,6 +6493,7 @@ def profile_autofill():
         "education": hist["education"],
         "skills": hist["skills"],
         "languages": langs,
+        "language_default": lang_default,
         "screening": screening,
         "answers": answers,
         "eeo": {"decline": bool(prefs.get("eeo_decline"))},

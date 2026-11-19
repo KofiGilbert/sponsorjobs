@@ -1757,9 +1757,16 @@ called from the history pass): the profile's languages (`autoapply/history.form_
 the fill payload as `languages: [{name, level}]`, this application's profile first) go one per
 row, "Add" for more; each proficiency list takes the closest level it offers ("Native" takes
 "Native or bilingual", else "Fluent", else "Advanced"), and native or fluent ticks the fluent box.
-A row nothing fills is removed with its own Delete. A language is never invented: with none saved
-and no Delete (a section that requires a row), the row stays for the person, and a language or
-its level is never a best guess (`guess.is_language_question`). Only a Language control with
+A row nothing fills is removed with its own Delete. A language or its level is never a best guess
+(`guess.is_language_question`).
+
+Common sense on a required row (2026-11-19, Home Depot): with NO languages saved, a first
+Language row that is required and has no Delete of its own, and a resume written in English
+(`history.resume_in_english`, the app's `language_default` in the payload), the row takes
+English at the highest level the list offers that is not native (the fluent box is left alone).
+Each fill is logged as common sense with its reason ("your resume and application are in English,
+and no languages are saved") and flagged as one to check in Review answers. Never another
+language, never another row. Only a Language control with
 proficiency lists or the fluent box beside it counts, never a site's own language picker.
 
 ### The export-control question
@@ -1822,15 +1829,13 @@ date.
   or one of its segments) lets the brain's typed date through as common sense ("today's date: the
   date this form is signed"). The self-identification answers themselves are unchanged (the
   decline unless saved).
-- A whole empty Month / Day / Year trio is now ONE key op (`fillDate`): a real press on its first
-  segment and every digit in one run (month and day as two digits, so each segment moves on by
-  itself), the segments one by one as the shell's fallback for any segment left empty
-  (`typeKeyOps` in main.js). A brain `type` on a date segment goes the same way (`spinType`: a
-  real press, then the digits; never select-all and Backspace, which steps back into the segment
-  before).
-- Why the year did not register on the real page could not be seen from the log (it holds the
-  view, not the widget's events). The fixture (tests/fixtures/forms/workday_date.html) models a
-  widget that keeps only real keys and moves on by itself; the real Workday page is the check.
+- The fill's date segments follow main's measured in-page recipe (PR #310: `setSpin`, the native
+  setter with focus, input, change and blur, read back), with real keys only as the fallback on a
+  page in sight. A brain `type` on a date segment does the same (`spinType`): `setSpin` first,
+  then, only when the page did not keep it, a real press and the digits as real keys (never
+  select-all and Backspace, which steps back into the segment before).
+- The fixture tests/fixtures/forms/workday_date.html models a widget that keeps only real keys:
+  the in-page recipe cannot set it, so the fallback is what fills it there.
 
 ### Tests
 

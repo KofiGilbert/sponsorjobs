@@ -388,13 +388,17 @@ function qsaSafe(sel, root) {
         if (c.key === "name" && NAME_VETO.test(sig)) continue;
         // (2026-11-18) "Phone Device Type" asks which KIND of phone, never the number: the
         // number was offered to that list as its answer (autoapply/commonsense.py answers it).
-        if (c.key === "phone" && PHONE_KIND_RE.test(sig)) continue;
+        if (c.key === "phone" && (PHONE_KIND_RE.test(sig) || PHONE_EXT_RE.test(sig))) continue;
         return c.key;
       }
     }
     return null;
   }
   const PHONE_KIND_RE = /(phone|telephone|number|device)[\s_-]*(device[\s_-]*)?type\b|type of (phone|telephone|device|number)/;
+
+  // "Phone Extension" asks for an extension, never the number (a Workday form, 2026-11-19: the
+  // whole number sat in it, left by earlier fills).
+  const PHONE_EXT_RE = /(phone|telephone|\btel|mobile)[\s_-]*ext(ension|n)?\b|\bext(ension|n)?\b[\s_.#-]*(number|no|num)?\s*$|\bextension\b/;
 
   const FILLABLE_TYPES = new Set(["text", "email", "tel", "url", "search", ""]);
 
@@ -548,11 +552,13 @@ function qsaSafe(sel, root) {
   let _from = "";
   let _section = "";
   let _fillLog = [];
-  function logFill(el, from, value, label) {
+  // ``evidence``: a fill the agent decided by common sense, not from the person's own material
+  // (Review answers flags it as one to check, with this reason).
+  function logFill(el, from, value, label, evidence) {
     if (!_logOn || !el || _fillLog.length >= 300) return;
     const f = from || _from;
     if (!f) return;
-    _fillLog.push({ el, from: f, value: value == null ? null : String(value), label: label || "", section: _section });
+    _fillLog.push({ el, from: f, value: value == null ? null : String(value), label: label || "", section: _section, evidence: evidence || "" });
   }
 
   // Plan the fill without applying it, used both to decide whether to offer the panel
@@ -590,6 +596,29 @@ function qsaSafe(sel, root) {
     if (lab.length > 60) return false;
     if (tagOf(el) === "TEXTAREA" && key !== "street") return false;
     return true;
+  }
+
+  // A phone box the engine must not fill (extension, device type) that holds the person's own
+  // phone number was filled by mistake by an earlier pass: emptied again (the native setter with
+  // "", an input event of type deleteContentBackward, change). Anything else in it is left.
+  function clearMisplacedPhone(fields) {
+    const digits = String((fields && fields.phone) || "").replace(/\D/g, "");
+    if (digits.length < 7) return 0;
+    let n = 0;
+    for (const el of qsaDeep("input")) {
+      if (!FILLABLE_TYPES.has(String(el.type || "").toLowerCase()) || el.disabled || el.readOnly) continue;
+      const have = String(el.value || "").replace(/\D/g, "");
+      if (have.length < 7 || !(have === digits || have.endsWith(digits) || digits.endsWith(have))) continue;
+      const sig = norm(cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || "") + " " + (el.name || "") + " " + (el.id || ""));
+      if (!PHONE_EXT_RE.test(sig) && !PHONE_KIND_RE.test(sig)) continue;
+      const view = viewOf(el);
+      Object.getOwnPropertyDescriptor((view.HTMLInputElement || HTMLInputElement).prototype, "value").set.call(el, "");
+      try { el.dispatchEvent(new (view.InputEvent || InputEvent)("input", { bubbles: true, inputType: "deleteContentBackward" })); }
+      catch (e) { el.dispatchEvent(new (view.Event || Event)("input", { bubbles: true })); }
+      el.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
+      n++;
+    }
+    return n;
   }
 
   function applyFill(plan) {
@@ -1255,6 +1284,8 @@ function qsaSafe(sel, root) {
     if (payload && payload.recipes) setRecipes(payload.recipes);   // fresh table from the app
     const recipe = recipeFor();
     const fields = (payload && payload.fields) || {};
+    let cleared = 0;
+    try { cleared = clearMisplacedPhone(fields); } catch (e) { cleared = 0; }
     const plan = planFill(fields, { recipe });
     const filled = applyFill(plan);
     const was = _from;
@@ -1276,7 +1307,7 @@ function qsaSafe(sel, root) {
     const cont = continueButton(recipe);
     const next_page = !!(recipe && recipe.multipage && cont);
     const remaining = extractForm({ onlyEmpty: true }).length;
-    return { ok: true, filled: filled + answers, total, screening, answers, eeo, resume_upload,
+    return { ok: true, cleared, filled: filled + answers, total, screening, answers, eeo, resume_upload,
              via_recipe: plan.filter((p) => p.via === "recipe").length,
              system: recipe ? recipe.id : "", system_name: recipe ? recipe.name : "",
              submit_highlighted, next_page,
@@ -1473,7 +1504,7 @@ function qsaSafe(sel, root) {
                   + "[class*='multi-value__label'], [data-automation-id='selectedItem']";
   const VALUE_BOX_SEL = "[class*='value-container'], [class*='ValueContainer']";
   const LOADING_MAX_MS = 6000;
-  const NOT_AN_OPTION = /^(no options|no results|loading|searching|no matches|type to search|start typing)/;
+  const NOT_AN_OPTION = /^(no options|no results|no items|loading|searching|no matches|type to search|start typing)/;
   const WIDGET_WAIT_MS = 2500;
   // A list that is open, unchanged and not loading has settled: with no choice for the wanted
   // value there is nothing more to wait for (2026-11-18: a miss waited the whole 2.5 s on every
@@ -1545,7 +1576,31 @@ function qsaSafe(sel, root) {
     return comboboxes().map((el) => ({ label: widgetLabel(el), n: openCount(el) }));
   }
   const STEP_MS = 50;
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // A wait. While a popup of ours is over the page it does not rest on the page's timers alone:
+  // on a real Workday page (2026-11-18) every page call that waited on a timer while a prompt's
+  // popup was open never came back (the form read ran to its cap, the search's focus call never
+  // answered), which reads as timers not firing there. So with a popup up, a message loop
+  // watches the clock as well; whichever comes first ends the wait.
+  // (also for a moment after the engine opens any list: the popup is not known as ours yet)
+  let _robustUntil = 0;
+  const plainSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function sleep(ms) {
+    if (Date.now() > _robustUntil && !ourPopupShowing()) return plainSleep(ms);
+    return new Promise((resolve) => {
+      let done = false;
+      const fin = () => { if (!done) { done = true; resolve(); } };
+      setTimeout(fin, ms);
+      const until = Date.now() + ms + 40;
+      let ch = null;
+      try { ch = new MessageChannel(); } catch (e) { return; }
+      ch.port1.onmessage = () => {
+        if (done) { try { ch.port1.close(); } catch (e) { /* fine */ } return; }
+        if (Date.now() >= until) { fin(); try { ch.port1.close(); } catch (e) { /* fine */ } }
+        else ch.port2.postMessage(0);
+      };
+      ch.port2.postMessage(0);
+    });
+  }
 
   function viewOf(el) {
     try { return (el.ownerDocument && el.ownerDocument.defaultView) || window; } catch (e) { return window; }
@@ -1561,6 +1616,22 @@ function qsaSafe(sel, root) {
   }
   function press(el) {
     for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) fire(el, t, { button: 0 });
+  }
+  // The engine's only native click: a list's own choice or a search box, never a button, a link
+  // or anything that could send the form (CLAUDE.md section 7; tests/test_fill_recipes.py pins it).
+  const CHOICE_ROLE = /^(option|menuitem|menuitemradio|menuitemcheckbox|treeitem|combobox|searchbox|textbox)$/;
+  function choiceClick(el) {
+    if (!el || typeof el.click !== "function") return false;
+    const tag = tagOf(el), type = String(el.type || "").toLowerCase();
+    const role = String((el.getAttribute && el.getAttribute("role")) || "").toLowerCase();
+    const aid = String((el.getAttribute && el.getAttribute("data-automation-id")) || "");
+    if (tag === "BUTTON" || tag === "A" || tag === "FORM" || /^(submit|button|image|reset)$/.test(type)) return false;
+    if (el.closest && el.closest("button, a[href], [type='submit']")) return false;
+    const ok = (tag === "INPUT" && /^(text|search|)$/.test(type)) || CHOICE_ROLE.test(role)
+      || /^(promptOption|menuItem|promptLeafNode)$/.test(aid);
+    if (!ok) return false;
+    el.click();
+    return true;
   }
   function boxShown(el) {
     if (!el || !el.getBoundingClientRect) return false;
@@ -1632,6 +1703,10 @@ function qsaSafe(sel, root) {
     }
     return false;
   }
+  // Workday's prompt box: the text input of a search prompt (School, Field of Study, Skills).
+  function isPromptInput(el) {
+    return !!(el && tagOf(el) === "INPUT" && el.getAttribute("data-uxi-widget-type") === "selectinput");
+  }
   function isWidgetInput(el) {
     return !!(el && el.getAttribute && (el.getAttribute("role") === "combobox"
       || el.getAttribute("data-uxi-widget-type") === "selectinput"));
@@ -1676,7 +1751,240 @@ function qsaSafe(sel, root) {
     return qsaDeep(COMBO_SEL).some((o) => o !== el && !o.contains(el) && !el.contains(o)
                                          && namedIdsOf(o).some((id) => ids.has(id)));
   }
+  // ---- picker popups: a prompt whose list opens in a dialog OVER the page
+  // Workday draws some multiselect prompts (Field of Study, Skills) as a modal popup: a title,
+  // its own Search box, the list ("Options Expanded") and a Done button. The popup is not inside
+  // the control and the control never says aria-expanded, so the engine once opened one, saw no
+  // list of its own, reported the dropdown closed and left the dialog over the form; the page
+  // view then showed only the dialog, and the modal's focus trap kept the shell from typing the
+  // dates (a real Workday form, 2026-11-18: twelve minutes, then parked).
+  //
+  // The rules, after the first version of this ran on the real page and made the fill hang
+  // (it took every dialog-like box on the page for a popup of its own and tried to close each
+  // one, on every field and every pass):
+  //   * a popup is OURS only when it APPEARED right after the engine's own open of one control
+  //     (or the shell's click for that control's search), and it is anchored to that control.
+  //     A dialog that was already on the page is never touched, whatever it holds;
+  //   * a close is ONE cycle (Done, Escape, a press outside), each step checked and bounded.
+  //     A popup that is still there is "stuck": noted in the miss memory for its control,
+  //     reported (``left_open``), and never tried again, in this pass or a later one;
+  //   * nothing here moves the heartbeat: a close is not progress.
+  // A picker popup: a visible dialog (role=dialog, aria-modal, or a popup with a Done button)
+  // that holds a list or a search box and at most one box to type in. A dialog holding a form
+  // (several boxes, a textarea, a file) is never one, nor is a dropdown's plain list box.
+  const POPUP_SEL = "[role='dialog'], [aria-modal='true'], [data-automation-id='popup']";
+  const POPUP_PART_SEL = "[role='listbox'], [role='option'], [data-automation-id='promptOption'], "
+    + "[data-automation-id='promptLeafNode'], input[data-uxi-widget-type='selectinput'], [data-automation-id='searchBox']";
+  const _popupOf = new WeakMap();            // control -> the popup its open brought up
+  const _stuck = new WeakSet();              // popups that would not close: never tried again
+  let _stuckList = [];                       // the same, to count the ones still showing (at most 8)
+  let _passOurs = new Map();                 // popup -> control, claimed during this pass
+  let _passCombos = new Set();               // the dropdowns this pass opened
+  const STUCK_MEMO = { memo: "popup-stuck" };
+  const DONE_RE = /^done$/i;
+  const buttonName = (b) => cleanText(b.textContent || b.getAttribute("aria-label") || "");
+  function popupButtons(d) {
+    return qsaSafe("button, [role='button']", d).filter((b) => boxShown(b) && !b.disabled && !inPopupList(b));
+  }
+  function isPickerPopup(d) {
+    if (!d || !d.isConnected || !boxShown(d)) return false;
+    if (!qsaSafe(POPUP_PART_SEL, d).length) return false;
+    if (d.getAttribute("role") !== "dialog" && d.getAttribute("aria-modal") !== "true"
+        && !popupButtons(d).some((b) => DONE_RE.test(buttonName(b)))) return false;
+    if (qsaSafe("textarea, select, input[type='file'], input[type='password']", d).length) return false;
+    const typed = qsaSafe("input", d).filter((i) => !/^(hidden|checkbox|radio|button|submit)$/i.test(i.type || "") && !inPopupList(i));
+    return typed.length <= 1;
+  }
+  function pickerPopups() {
+    const all = qsaDeep(POPUP_SEL).filter(isPickerPopup);
+    return all.filter((d) => !all.some((o) => o !== d && o.contains(d)));      // outermost
+  }
+  // Claim the popup that appeared since ``before`` (the picker popups showing just before the
+  // open) for this control. Exactly one new popup is claimed; none or several is no claim.
+  // ``pre``: what was showing just before the open ({pick: picker popups, shown: popup-like
+  // containers}). New since then, and not around the control: a picker popup, or a popup-like
+  // container holding BOTH a search box and a list (a prompt's popup that is neither role=dialog
+  // nor aria-modal). A plain dropdown list box is never claimed here.
+  const POPUP_BOX_SEL = POPUP_SEL + ", [data-automation-id='popupContent'], [data-automation-id='promptSearchPopup'], [data-automation-id='wd-popup']";
+  const BOX_SEARCH_SEL = "input[data-uxi-widget-type='selectinput'], [data-automation-id='searchBox'], "
+    + "[data-automation-id='monikerSearchBox'], input[type='search'], input[placeholder^='Search' i]";
+  const BOX_LIST_SEL = "[role='listbox'], [role='option'], [data-automation-id='promptOption'], [data-automation-id='promptLeafNode']";
+  function snapshotPopups() {
+    return { pick: new Set(pickerPopups()), shown: new Set(qsaDeep(POPUP_BOX_SEL).filter(boxShown)) };
+  }
+  function claimPopup(el, pre) {
+    if (_popupOf.get(el) && !popupGone(_popupOf.get(el))) return _popupOf.get(el);
+    const ok = (p) => !p.contains(el) && !_stuck.has(p) && !_passOurs.has(p);
+    let fresh = pickerPopups().filter((p) => !pre.pick.has(p) && ok(p));
+    if (!fresh.length) {
+      fresh = qsaDeep(POPUP_BOX_SEL).filter((p) => boxShown(p) && !pre.shown.has(p) && ok(p)
+        && qsaSafe(BOX_SEARCH_SEL, p).some(boxShown) && qsaSafe(BOX_LIST_SEL, p).length > 0
+        && !qsaSafe("textarea, select, input[type='file'], input[type='password']", p).length);
+      fresh = fresh.filter((d) => !fresh.some((o) => o !== d && o.contains(d)));
+    }
+    if (fresh.length !== 1) return null;
+    _popupOf.set(el, fresh[0]);
+    _passOurs.set(fresh[0], el);
+    trace(el, "popup-claimed");
+    return fresh[0];
+  }
+  // This control's own popup, while it shows (a stuck one included: its list is still its list).
+  // A popup may render late: for LATE_CLAIM_MS after the engine opened the control, one that has
+  // appeared since is still claimed for it.
+  const LATE_CLAIM_MS = 3000;
+  const _openedAt = new WeakMap();
+  function ourPopupFor(el) {
+    const p = el && _popupOf.get(el);
+    if (p) {
+      if (!popupGone(p)) return p;
+      _popupOf.delete(el);
+      return null;                                         // it was closed: nothing new is looked for
+    }
+    const at = el && _openedAt.get(el);
+    if (!at || Date.now() - at > LATE_CLAIM_MS) return null;
+    const pre = _preOpen.get(el);
+    return pre && pre.pick ? claimPopup(el, pre) : null;
+  }
+  const popupGone = (p) => !p || !p.isConnected || !boxShown(p);
+  // Wait for a popup to go, at most ``ms`` and never past the phase's budget.
+  async function waitGone(p, ms) {
+    const until = Date.now() + ms;
+    while (!popupGone(p) && Date.now() < until && !(_deadline && Date.now() > _deadline)) await sleep(STEP_MS);
+    return popupGone(p);
+  }
+  // The popup's own search box (the one a person types in while it is open).
+  function popupSearchBox(pop) {
+    const ins = qsaSafe("input", pop).filter((i) => !/^(hidden|checkbox|radio|button|submit)$/i.test(i.type || "") && !inPopupList(i) && boxShown(i));
+    return ins[0] || null;
+  }
+  // Close a picker popup of ours the way a person does, ONE cycle: its Done button, else Escape,
+  // else a press on the backdrop outside it; each is checked, and the next is tried only if the
+  // popup is still there (at most about 0.9 s in all). Done keeps what was ticked, so it comes
+  // first. A popup that stays is marked stuck, noted for its control, and never tried again.
+  const POPUP_CLOSE_MS = { done: 400, escape: 250, outside: 250 };
+  async function closePopup(pop, el) {
+    if (popupGone(pop)) return true;
+    if (_stuck.has(pop)) return false;
+    const t0 = Date.now();
+    const doc = pop.ownerDocument || document;
+    const btns = popupButtons(pop);
+    const done = btns.find((b) => DONE_RE.test(buttonName(b)))
+      || btns.find((b) => /^(?:ok|okay|close)$/i.test(buttonName(b)) || /^close\b/i.test(b.getAttribute("aria-label") || "")
+                          || /^close(?:Button)?$/i.test(b.getAttribute("data-automation-id") || ""));
+    let how = "";
+    if (done) { press(done); if (await waitGone(pop, POPUP_CLOSE_MS.done)) how = "done"; }
+    if (!how) {
+      const esc = { key: "Escape", code: "Escape", keyCode: 27, which: 27 };
+      const at = doc.activeElement && pop.contains(doc.activeElement) ? doc.activeElement : (popupSearchBox(pop) || pop);
+      fire(at, "keydown", esc); fire(at, "keyup", esc);
+      if (await waitGone(pop, POPUP_CLOSE_MS.escape)) how = "escape";
+    }
+    if (!how) {
+      // the backdrop: the nearest box around the popup that is bigger than it, else the page body
+      let back = pop.parentElement;
+      const pr = pop.getBoundingClientRect();
+      for (let i = 0; back && back !== doc.body && i < 4; i++, back = back.parentElement) {
+        const r = back.getBoundingClientRect();
+        if (r.width > pr.width + 8 || r.height > pr.height + 8) break;
+      }
+      press(back || doc.body);
+      if (await waitGone(pop, POPUP_CLOSE_MS.outside)) how = "outside";
+    }
+    trace(el, "popup-" + (how || "still-there"), Date.now() - t0);
+    return !!how;
+  }
+  // The popup stayed through its one close: stuck. Never tried again, and its control is not
+  // opened again on this page (the miss memory).
+  function giveUpPopup(pop, el) {
+    if (_stuck.has(pop)) return;
+    _stuck.add(pop);
+    if (_stuckList.length < 8) _stuckList.push(pop);
+    if (el) noteMiss(el, STUCK_MEMO, true);
+    trace(el, "popup-stuck");
+  }
+  const popupStuckFor = (el) => missedBefore(el, STUCK_MEMO);
+  function ourPopupShowing() {
+    for (const [p] of _passOurs) if (!popupGone(p)) return true;
+    return _stuckList.some((p) => !popupGone(p));
+  }
+  // A popup of ours that would not close is still over the form: nothing under a modal answers,
+  // so no other list is opened (or searched) while it shows.
+  const stuckShowing = () => _stuckList.some((p) => !popupGone(p));
+  // The picker popups that were showing before this control was last opened: a list inside one
+  // of them belongs to that dialog, never to this control.
+  const _preOpen = new WeakMap();
+  function inEarlierPopup(x, el) {
+    const pre = _preOpen.get(el);
+    if (!pre) return false;
+    for (const p of (pre.pick || pre)) if (p.contains(x) && !p.contains(el) && !popupGone(p)) return true;
+    return false;
+  }
+  // The start of a pass: only bookkeeping. Nothing on the page is touched, and no dialog that is
+  // already open is looked at (it is the page's or the person's).
+  function passStart() {
+    _passOurs = new Map();
+    _passCombos = new Set();
+  }
+  // The end of a pass: nothing the engine opened stays open. Every dropdown this pass opened is
+  // closed if it still shows a list, and every popup claimed in this pass gets its one close.
+  // Bounded (SWEEP_MS in all). Returns how many popups of ours are still showing: the stuck ones.
+  const SWEEP_MS = 1500;
+  async function closeOpened() {
+    const until = Date.now() + SWEEP_MS;
+    for (const el of _passCombos) {
+      if (Date.now() > until) break;
+      if (!el.isConnected) continue;
+      if (el.getAttribute("aria-expanded") === "true" || optionsFor(el).length > 0) {
+        try { await closeCombo(el); } catch (e) { /* the sweep below still runs */ }
+      }
+    }
+    for (const el of _passCombos) { if (el.isConnected) ourPopupFor(el); }   // one that rendered late is claimed now
+    for (const [p, el] of _passOurs) {
+      if (Date.now() > until) break;
+      if (popupGone(p) || _stuck.has(p)) continue;
+      let ok = false;
+      try { ok = await closePopup(p, el); } catch (e) { ok = false; }
+      if (!ok && !popupGone(p)) giveUpPopup(p, el);
+    }
+    _stuckList = _stuckList.filter((p) => !popupGone(p));
+    let open = _stuckList.length;
+    for (const [p] of _passOurs) if (!popupGone(p) && !_stuck.has(p)) open++;   // the sweep ran out of time
+    _passOurs = new Map();
+    _passCombos = new Set();
+    if (open) trace(null, "left-open-" + open);
+    return open;
+  }
+
+  // ---- the trace: one line per sub-step, for the shell's SJ_AGENT_DEBUG log. A field is named
+  // by its ref (a number the engine gave it), never by its label or value.
+  let _traceOn = false;
+  let _trace = [];
+  function trace(el, step, ms) {
+    if (!_traceOn || _trace.length >= 200) return;
+    let ref = "";
+    try { ref = el ? (el.getAttribute("data-tailor-ref") || "") : ""; } catch (e) { ref = ""; }
+    _trace.push((ref ? "field " + ref + " " : "") + step + (ms == null ? "" : " " + Math.round(ms) + "ms"));
+  }
+  function takeTrace() { const t = _trace; _trace = []; return t; }
+  function setTrace(on) { _traceOn = !!on; if (!on) _trace = []; return _traceOn; }
+
   function listboxFor(el) {
+    const near = listboxNear(el);
+    if (near && qsaSafe(OPTION_SEL, near).length) return near;
+    // the list inside this control's popup dialog (never a list of chosen pills)
+    const pop = ourPopupFor(el);
+    if (pop) {
+      const chosenList = (x) => /\bitems? selected\b/i.test(x.getAttribute("aria-label") || "")
+        || !!(x.closest && x.closest("[data-automation-id='selectedItemList']"));
+      const lbs = qsaSafe("[role='listbox']", pop).filter((x) => boxShown(x) && !chosenList(x));
+      const full = lbs.filter((x) => qsaSafe(OPTION_SEL, x).length);
+      if (full.length) return full[full.length - 1];
+      if (!near && lbs.length) return lbs[lbs.length - 1];
+      if (!near && qsaSafe(OPTION_SEL, pop).length) return pop;     // a popup whose rows have no listbox around them
+    }
+    return near;
+  }
+  function listboxNear(el) {
     for (const attr of ["aria-controls", "aria-owns"]) {
       for (const id of String(el.getAttribute(attr) || "").split(/\s+/).filter(Boolean)) {
         const n = byId(el, id); if (n) return n;
@@ -1685,7 +1993,7 @@ function qsaSafe(sel, root) {
     let node = el, near = null;
     // A list of the CHOSEN values (Workday's "items selected" pills) is never an open menu.
     const chosenList = (x) => /\bitems? selected\b/i.test(x.getAttribute("aria-label") || "")
-      || !!(x.closest && x.closest("[data-automation-id='selectedItemList']"));
+      || !!(x.closest && x.closest("[data-automation-id='selectedItemList'], [data-automation-id='promptSelectionLabel']"));
     const hasOptions = (x) => qsaSafe(OPTION_SEL, x).length > 0;
     for (let i = 0; i < 6 && node.parentElement; i++) {     // react-select: the menu sits beside the control
       node = node.parentElement;
@@ -1698,7 +2006,8 @@ function qsaSafe(sel, root) {
     }
     // A menu portalled to the end of <body> (Workday, react-select menuPortalTarget): the
     // visible listbox, newest last, never one another control names.
-    const lbs = qsaDeep("[role='listbox']").filter((x) => boxShown(x) && !x.contains(el) && !ownedByOther(x, el) && !chosenList(x));
+    const lbs = qsaDeep("[role='listbox']").filter((x) => boxShown(x) && !x.contains(el) && !ownedByOther(x, el) && !chosenList(x)
+                                                           && !inEarlierPopup(x, el));
     const full = lbs.filter(hasOptions);
     return full.length ? full[full.length - 1] : (near || (lbs.length ? lbs[lbs.length - 1] : null));
   }
@@ -1751,24 +2060,40 @@ function qsaSafe(sel, root) {
                               && !NOT_AN_OPTION.test(optionText(o)));
   }
   function menuOpen(el) {
-    return el.getAttribute("aria-expanded") === "true" || optionsFor(el).length > 0;
+    return el.getAttribute("aria-expanded") === "true" || optionsFor(el).length > 0 || ourPopupFor(el) !== null;
   }
   async function openCombo(el) {
+    if (popupStuckFor(el) || stuckShowing()) return false;   // a popup would not close before: left alone
+    const before = snapshotPopups();
+    _preOpen.set(el, before);
     try { if (el.focus) el.focus(); } catch (e) { /* fine */ }
     if (menuOpen(el)) return true;
+    const t0 = Date.now();
+    _passCombos.add(el);
+    const popped = () => !!claimPopup(el, before);
+    try { return await openComboSteps(el, popped); }
+    finally { trace(el, "open", Date.now() - t0); }
+  }
+  async function openComboSteps(el, popped) {
     _beat.opens++; _opened.set(el, (_opened.get(el) || 0) + 1); tick();
+    _robustUntil = Date.now() + 1500;
+    _openedAt.set(el, Date.now());
     fire(el, "pointerdown", { button: 0 }); fire(el, "mousedown", { button: 0 });
     await sleep(STEP_MS);
-    if (menuOpen(el)) return true;
+    if (popped() || menuOpen(el)) return true;
     fire(el, "mouseup", { button: 0 }); fire(el, "click", { button: 0 });
     await sleep(STEP_MS);
-    if (menuOpen(el)) return true;
+    if (popped() || menuOpen(el)) return true;
     fire(el, "keydown", { key: "ArrowDown", code: "ArrowDown", keyCode: 40, which: 40 });
     await sleep(STEP_MS);
-    return menuOpen(el);
+    return popped() || menuOpen(el);
   }
   async function closeCombo(el) {
     const open = () => el.getAttribute("aria-expanded") === "true" || optionsFor(el).length > 0;
+    // a list that opened as a popup dialog: its Done button (else Escape, else a press outside),
+    // first, because nothing under a modal answers a key or a press
+    const pop = ourPopupFor(el);
+    if (pop) await closePopup(pop, el);                    // one cycle; the control's own ways follow
     if (open()) {
       fire(el, "keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27 });
       await sleep(STEP_MS);
@@ -1779,6 +2104,8 @@ function qsaSafe(sel, root) {
       if (open()) { pressOutside(el); await sleep(STEP_MS * 2); }
       if (open()) { pressAway(el); await sleep(STEP_MS * 2); }
     }
+    if (pop && !popupGone(pop)) { giveUpPopup(pop, el); return false; }   // stuck: reported, never tried again
+    if (pop) _openedAt.delete(el);                         // closed: no later popup is looked for
     return !open();
   }
 
@@ -1971,6 +2298,7 @@ function qsaSafe(sel, root) {
   async function pickCombo(el, want) {
     if (comboValue(el)) return { ok: false, why: "answered" };
     if (missedBefore(el, want)) { _beat.skipped++; return { ok: false, why: "no-match", skipped: true }; }
+    if (popupStuckFor(el) || stuckShowing()) { _beat.skipped++; return { ok: false, why: "popup-stuck", skipped: true }; }
     if (over()) return { ok: false, why: "over-budget" };
     tick();
     const isInput = tagOf(el) === "INPUT";
@@ -1986,14 +2314,17 @@ function qsaSafe(sel, root) {
     if (!best && isInput && want.text) {
       for (const q of typeQueries(want.text)) {
         if (over()) break;
-        setNativeValue(el, q);
+        const pop = ourPopupFor(el);
+        setNativeValue((pop && popupSearchBox(pop)) || el, q);     // a popup has its own search box
         best = await waitBest(el, want.score, WIDGET_WAIT_MS, TYPED_SETTLE_MS);
         if (best) break;
         // the search answered (results, or its own "No options"): a miss on it stands
         if (!_timedOut && !loading(el) && (optionsFor(el).length > 0 || emptyNotice(el))) sawList = true;
       }
     }
-    if (!best && isInput && want.freeText && want.text && !hasValueBox(el)) {
+    // (a Workday prompt takes only a choice of its list: text typed into it is dropped on blur,
+    // so it is never an answer, and was once counted as filled on every pass)
+    if (!best && isInput && want.freeText && want.text && !hasValueBox(el) && !isPromptInput(el)) {
       // A plain type-ahead text box (an address autocomplete): no list to pick from, so the
       // typed value IS the answer, the way a person would leave it.
       if (canon(el.value) !== canon(want.text)) setNativeValue(el, want.text);
@@ -2002,10 +2333,12 @@ function qsaSafe(sel, root) {
     }
     if (!best) {
       if (isInput && el.value) setNativeValue(el, "");        // leave no stray filter text behind
-      await closeCombo(el);
+      const pop = ourPopupFor(el);
+      const searchable = !!(pop && popupSearchBox(pop));      // a search popup: the shell can search it for real
+      const closed = await closeCombo(el);
       if (_timedOut) return { ok: false, why: "over-budget" };   // cut short: not a miss
       noteMiss(el, want, sawList);
-      return { ok: false, why: "no-match" };
+      return { ok: false, why: "no-match", popup: searchable, closed };
     }
     const label = optionText(best.opt);
     try { if (best.opt.scrollIntoView) best.opt.scrollIntoView({ block: "nearest" }); } catch (e) { /* fine */ }
@@ -2013,7 +2346,7 @@ function qsaSafe(sel, root) {
     press(best.opt);
     await sleep(STEP_MS * 2);
     let v = comboValue(el);
-    if (!sameChoice(v, label) && menuOpen(el) && isInput) {
+    if (!sameChoice(v, label) && menuOpen(el) && isInput && !ourPopupFor(el)) {
       // A menu that commits on Enter (keyboard pattern). Only while the menu is open, where
       // Enter means "choose the highlighted option", never "send the form".
       fire(el, "keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13 });
@@ -2364,10 +2697,11 @@ function qsaSafe(sel, root) {
     const cap = opts && Number(opts.budgetMs) > 0 ? Math.min(EXTRACT_BUDGET_MS, Number(opts.budgetMs)) : EXTRACT_BUDGET_MS;
     const budget = Date.now() + cap;
     const base = startBudget("extract", 0);
+    passStart();
     for (const el of comboboxes()) {
       // a real cap: a dropdown is only opened while there is time to read and close it
       if (n >= 15 || Date.now() + 250 > budget) { if (n < 15) _timedOut = true; break; }
-      if (_comboOptions.has(el) || comboValue(el)) continue;
+      if (_comboOptions.has(el) || comboValue(el) || popupStuckFor(el) || stuckShowing()) continue;
       n++;
       tick();
       await openCombo(el);
@@ -2379,6 +2713,7 @@ function qsaSafe(sel, root) {
       _comboOptions.set(el, opts2.map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 40));
       await closeCombo(el);
     }
+    try { await closeOpened(); } catch (e) { /* the read stands */ }
     _lastExtract = endBudget(base);
     return extractForm(opts);
   }
@@ -2491,6 +2826,7 @@ function qsaSafe(sel, root) {
   async function applyOpsAsync(ops, opts) {
     const base = startBudget("ops", opts && opts.budgetMs);
     _logOn = true;
+    passStart();
     const native = [], widget = [];
     for (const op of (ops || [])) {
       const el = elByRef(op.ref);
@@ -2509,6 +2845,8 @@ function qsaSafe(sel, root) {
       if (res === "filled") rep.filled++; else rep.skipped++;
     }
     _from = "";
+    try { rep.left_open = await closeOpened(); } catch (e) { rep.left_open = 0; }
+    if (_traceOn) rep.trace = takeTrace();
     const cost = endBudget(base);
     rep.timed_out = cost.timed_out;
     rep.pending = widget.length - reached;
@@ -2554,47 +2892,103 @@ function qsaSafe(sel, root) {
   };
   function boxLabel(el) { return cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || ""); }
   function emptyBox(el) { return !String(el.value || "").trim(); }
+  // A date segment (Workday's dateSectionMonth-input / dateSectionYear-input spin buttons).
+  const SPIN_SEL = "input[role='spinbutton'], input[aria-label='Month'], input[aria-label='Year'], input[aria-label='Day'], "
+                 + "input[data-automation-id^='dateSection'][data-automation-id$='-input']";
+  const spinPart = (sp) => {
+    const w = [sp.getAttribute("aria-label"), sp.getAttribute("data-automation-id"), sp.id].join(" ").toLowerCase();
+    return /month/.test(w) ? "m" : /year/.test(w) ? "y" : /day/.test(w) ? "d" : "";
+  };
+  // What a segment holds: its digits ("" while it shows its own "MM" / "YYYY"). Read from every
+  // place a date control keeps it: the box's value, its aria-valuenow / aria-valuetext, and the
+  // text Workday draws beside the box (dateSectionMonth-display). A segment that reads as empty
+  // while it holds a date would be typed into again, so any of them counts.
+  function spinDigits(sp) {
+    const of = (t) => String(t == null ? "" : t).replace(/\D/g, "");
+    let d = of(sp.value) || of(sp.getAttribute("aria-valuenow")) || of(sp.getAttribute("aria-valuetext"));
+    if (!d && sp.parentElement) {
+      const shown = qsaSafe("[data-automation-id$='-display']", sp.parentElement)[0];
+      if (shown) d = of(shown.textContent);
+    }
+    return d;
+  }
+  const pageVisible = () => { try { return document.visibilityState !== "hidden"; } catch (e) { return true; } };
+  // One date segment, set in the page. A segment that holds something else is emptied first
+  // (the native setter with "" and an input event of type deleteContentBackward: a plain input
+  // event did not always clear the year on the real page).
+  function setSpin(sp, text) {
+    const view = viewOf(sp);
+    const set = Object.getOwnPropertyDescriptor((view.HTMLInputElement || HTMLInputElement).prototype, "value").set;
+    try { if (sp.focus) sp.focus(); } catch (e) { /* fine */ }
+    if (String(sp.value || "") !== "" || spinDigits(sp)) {
+      set.call(sp, "");
+      try { sp.dispatchEvent(new (view.InputEvent || InputEvent)("input", { bubbles: true, inputType: "deleteContentBackward" })); }
+      catch (e) { sp.dispatchEvent(new (view.Event || Event)("input", { bubbles: true })); }
+      sp.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
+    }
+    set.call(sp, String(text));
+    sp.dispatchEvent(new (view.Event || Event)("input", { bubbles: true }));
+    sp.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
+    try { if (sp.blur) sp.blur(); } catch (e) { /* fine */ }
+  }
+  // Did a typed date land? The digits, in order, anywhere the group keeps them, with whatever
+  // separators or padding the page uses ("3", "2026" is there in "03/2026", "current value is
+  // 03/2026", "3 2026" and "032026"). Never a digit run that is part of a longer number.
+  function dateLanded(group, parts) {
+    const re = new RegExp("(?:^|\\D)" + parts.map((p) => "0*" + String(Number(p.text))).join("\\D*") + "(?:\\D|$)");
+    const sources = [];
+    const spins = qsaSafe(SPIN_SEL, group);
+    sources.push(spins.map((x) => String(x.value || "")).join(" / "));
+    sources.push(spins.map((x) => String(x.getAttribute("aria-valuenow") || x.getAttribute("aria-valuetext") || "")).join(" / "));
+    sources.push(String(group.textContent || ""));
+    if (parts.every((p) => p.el.isConnected && Number(spinDigits(p.el)) === Number(p.text) && spinDigits(p.el))) return true;
+    return sources.some((t) => re.test(t));
+  }
+  // The date groups whose segments this pass handed to the shell to type: [{group, parts, ...}].
+  // Read back by keysLanded() once the shell has typed, so a date counts as filled only when the
+  // page really holds it (2026-11-18: seven date groups were counted as filled on every pass
+  // while a popup kept every key from landing).
+  let _keyGroups = [];
   // A month / year (/ day) date control: Workday's spinbutton trio, a native date or month input,
   // or one text box that names its format ("MM/YYYY").
-  function fillDate(group, when) {
+  function fillDate(group, when, label) {
     if (!when || !when.y) return false;
     const mm = when.m ? String(when.m) : "", yy = String(when.y);
     const single = tagOf(group) === "INPUT";
-    const spins = single ? [] : qsaSafe("input[role='spinbutton'], input[aria-label='Month'], input[aria-label='Year']", group);
+    const spins = single ? [] : qsaSafe(SPIN_SEL, group);
     if (spins.length) {
-      // Workday's date segments take only real keys (a value set from script shows but is not
-      // kept: "Invalid Date: 03/" on Next, Uline 2026-11-16). They are handed to the shell, which
-      // types them with real key presses (keyOps), month first, as a person does.
-      // (2026-11-19, the CC-305 Date at Uline) A whole month / day / year trio, all empty: typed
-      // the way a person does, a real press on its first segment and every digit in one go
-      // (month and day as two digits, so each segment moves on to the next by itself). Typed one
-      // segment at a time, with a focus from script in between, the year was never registered
-      // ("Invalid Date: 11/19/"). ``parts``: the segments one by one, the shell's fallback.
-      const trio = spins.length === 3 && spins.every(emptyBox);
-      if (trio && when.m && when.d) {
-        const pad = (v, n) => String(v).padStart(n, "0");
-        const parts = [];
-        for (const sp of spins) {
-          const w = (sp.getAttribute("aria-label") || sp.id || "").toLowerCase();
-          const v = /month/.test(w) ? pad(mm, 2) : /year/.test(w) ? yy : /day/.test(w) ? pad(when.d, 2) : "";
-          if (!v) { parts.length = 0; break; }
-          parts.push({ ref: fieldRef(sp), text: v });
-        }
-        if (parts.length === 3) {
-          _keyOps.push({ ref: parts[0].ref, text: parts.map((x) => x.text).join(""), press: true, parts });
-          return true;
-        }
-      }
-      let n = 0;
+      // (Until 2026-11-19 these were only typed by the shell with real keys, after a script-set
+      // value was seen to show but not be kept on another tenant. That earlier set did not
+      // focus, fire change or blur; the recipe below was measured to hold.)
+      // Set in the page (measured on a real Workday form, 2026-11-19): focus the segment, give it
+      // the value through the native setter with input and change events, blur, and read it
+      // back from the box and the text beside it. Real keys through the debugger do not reach a
+      // page that is out of sight, so they are only the fallback, and only on a visible page.
+      // A group that is complete (every segment holds digits) is the person's: left alone. In an
+      // incomplete one a segment holding something else is cleared first.
+      if (!boxShown(group)) return false;
+      const wanted = [];
       for (const sp of spins) {
-        if (!emptyBox(sp)) continue;
-        const w = (sp.getAttribute("aria-label") || sp.id || "").toLowerCase();
-        const v = /month/.test(w) ? mm : /year/.test(w) ? yy : /day/.test(w) ? (when.d ? String(when.d) : "") : "";
-        if (!v) continue;
-        _keyOps.push({ ref: fieldRef(sp), text: v });
-        n++;
+        const part = spinPart(sp);
+        const v = part === "m" ? mm : part === "y" ? yy : part === "d" ? (when.d ? String(when.d) : "") : "";
+        if (v) wanted.push({ el: sp, text: v, want: { memo: "keys:" + v } });
       }
-      return n > 0;
+      if (!wanted.length || spins.every((sp) => spinDigits(sp))) return false;
+      const todo = wanted.filter((p) => Number(spinDigits(p.el) || NaN) !== Number(p.text));
+      if (!todo.length) return false;
+      if (todo.every((p) => missedBefore(p.el, p.want))) { _beat.skipped += todo.length; return false; }
+      for (const p of todo) setSpin(p.el, p.text);
+      const left = todo.filter((p) => Number(spinDigits(p.el) || NaN) !== Number(p.text));
+      trace(group, "date-set-" + (todo.length - left.length) + "-of-" + todo.length);
+      if (!left.length) { _gen++; tick(1); return true; }
+      // the page did not take the value from script: real keys, where they can reach it
+      if (pageVisible() && left.every((p) => !spinDigits(p.el))) {
+        for (const p of left) _keyOps.push({ ref: fieldRef(p.el), text: p.text });
+        _keyGroups.push({ group, parts: left, from: _from, section: _section, label: label || "", words: dateWords(when) });
+        return "keys";
+      }
+      for (const p of left) noteMiss(p.el, p.want, false);
+      return false;
     }
     const box = single ? (emptyBox(group) ? group : null)
       : qsaSafe("input", group).find((i) => !/^(hidden|checkbox|radio|button|submit)$/i.test(i.type || "") && emptyBox(i));
@@ -2612,7 +3006,16 @@ function qsaSafe(sel, root) {
     setNativeValue(box, v);
     return true;
   }
+  // Workday names its date fields: formField-startDate / -endDate (month and year) for a job,
+  // formField-firstYearAttended / -lastYearAttended (a year) for a school. Found by that name
+  // inside the section (the numbers in Workday's ids are not positions: never built from one).
+  const DATE_FIELD_IDS = { from: ["formField-startDate", "formField-firstYearAttended"], to: ["formField-endDate", "formField-lastYearAttended"] };
   function dateGroup(box, re) {
+    const side = re === HIST_LABELS.from ? "from" : re === HIST_LABELS.to ? "to" : "";
+    for (const id of (DATE_FIELD_IDS[side] || [])) {
+      const g = qsaSafe("[data-automation-id='" + id + "']", box)[0];
+      if (g && qsaSafe(SPIN_SEL, g).length) return g;
+    }
     for (const g of qsaSafe("fieldset, [role='group']", box)) {
       const lg = g.querySelector("legend, [role='heading'], label");
       if (lg && re.test(cleanLabel(lg.textContent)) && g !== box) return g;
@@ -2622,6 +3025,185 @@ function qsaSafe(sel, root) {
     }
     return null;
   }
+  // After the shell typed the queued date segments: which date groups now hold what was typed.
+  // A group that does is counted and logged as filled; a segment that does not is remembered as
+  // a miss (tried once more after the form changes, then left for the person or the agent).
+  function keysLanded() {
+    const out = { landed: 0, missed: 0 };
+    for (const g of _keyGroups) {
+      if (g.group.isConnected && dateLanded(g.group, g.parts)) {
+        out.landed++; _gen++; tick(1);
+        const was = [_from, _section];
+        _from = g.from; _section = g.section;
+        logFill(g.group, "", g.words, g.label);
+        _from = was[0]; _section = was[1];
+      } else {
+        out.missed++;
+        for (const p of g.parts) noteMiss(p.el, p.want, false);
+      }
+    }
+    _keyGroups = [];
+    trace(null, "keys-landed-" + out.landed + "-missed-" + out.missed);
+    return out;
+  }
+  const SEARCH_MEMO = { memo: "search" };
+  const _searchBox = new Map();              // ref -> the field's container
+  // The shell's real-input search, as the fallback of the in-page one (a visible page only).
+  function shellSearch(el, op) {
+    if (popupStuckFor(el) || stuckShowing() || _searchOps.some((o) => o.ref === op.ref)) return false;
+    _searchOps.push(op);
+    const box = el.closest && el.closest("[data-automation-id='multiselectInputContainer'], [data-automation-id='multiSelectContainer'], [data-automation-id^='formField']");
+    if (box) _searchBox.set(op.ref, box);
+    return true;
+  }
+  function searchEl(ref) {
+    const el = elByRef(ref);
+    if (el && el.isConnected) return el;
+    const box = _searchBox.get(ref);
+    if (!box || !box.isConnected) return null;
+    const again = qsaSafe("input[data-uxi-widget-type='selectinput'], input[type='text'], input:not([type])", box).find(boxShown);
+    if (!again) return null;
+    try { again.setAttribute("data-tailor-ref", ref); } catch (e) { return null; }
+    return again;
+  }
+  // ---- Workday's prompt fields (School, Field of Study, Skills), searched IN THE PAGE.
+  // Measured on a real Workday form (2026-11-19), with the pane out of sight:
+  //   * the prompt is input[data-uxi-widget-type=selectinput] in multiselectInputContainer;
+  //   * the search runs on Enter: the query set through the native setter, then keydown /
+  //     keypress / keyup for Enter on that input. One to three seconds later the choices appear
+  //     in div[role=listbox][data-automation-id=activeListContainer] (each a promptOption), or
+  //     "No Items.";
+  //   * a click() on the wanted promptOption picks it: the list closes, the input clears, and a
+  //     selectedItem pill appears in the field;
+  //   * Escape and blur do not close an open list; a press and click somewhere else does, and
+  //     so does Tab on the input. The prompt's icon is never clicked;
+  //   * real keys and clicks through the debugger do not reach a page that is out of sight.
+  // No dialog is involved, so none is looked for here. Bounded: at most 3 queries, each waited
+  // PROMPT_MS for its choices, all inside the phase budget; a list searched once on this page
+  // is not searched again (the shared miss memory). Returns how many choices reached the field.
+  const PROMPT_MS = { results: 5000, none: 2000, silent: 3500, took: 2500 };
+  let _promptScale = 1;                       // tests shorten the waits (fillAsync opts.promptMs)
+  const pms = (k) => Math.max(100, Math.round(PROMPT_MS[k] * _promptScale));
+  const untilMs = (ms) => { const t = Date.now() + ms; return _deadline ? Math.min(t, _deadline) : t; };
+  // The list a prompt's search shows: Workday's activeListContainer first, else the usual lookup.
+  function promptListOpen(el) {
+    const doc = el.ownerDocument || document;
+    return qsaSafe("[data-automation-id='activeListContainer']", doc).some(boxShown) || optionsFor(el).length > 0;
+  }
+  function promptPicked(el) {
+    const n = chosenPills(el).length;
+    if (n) return n;
+    // "1 item selected, <label>" beside the input
+    let node = el;
+    for (let i = 0; i < 4 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      const a = qsaSafe("[data-automation-id='promptAriaInstruction']", node)[0];
+      if (a) { const m = /^\s*(\d+)\s+items?\s+selected/i.exec(a.textContent || ""); return m ? Number(m[1]) : 0; }
+    }
+    return 0;
+  }
+  // Close the prompt's list as a person would: a press and click on a heading above (it takes
+  // no input and opens nothing), then Tab on the input. Checked after each.
+  async function closePromptList(el) {
+    if (!promptListOpen(el)) return true;
+    const doc = el.ownerDocument || document;
+    let spot = null;
+    for (const hd of qsaSafe("h1, h2, h3, h4, h5, h6, [role='heading']", doc)) {
+      if (!boxShown(hd) || hd.closest("[role='listbox'], [role='dialog'], button, a, label")) continue;
+      if (precedes(hd, el)) spot = hd;
+    }
+    press(spot || doc.body);
+    for (const end = untilMs(300); promptListOpen(el) && Date.now() < end;) await sleep(STEP_MS);
+    if (!promptListOpen(el)) return true;
+    const tab = { key: "Tab", code: "Tab", keyCode: 9, which: 9 };
+    fire(el, "keydown", tab); fire(el, "keyup", tab);
+    for (const end = untilMs(300); promptListOpen(el) && Date.now() < end;) await sleep(STEP_MS);
+    return !promptListOpen(el);
+  }
+  // spec: {queries, score(text) -> number, max?, kind}. -> {picked, registered, closed}
+  async function promptSearch(el, spec) {
+    const out = { picked: 0, registered: false, closed: true };
+    if (missedBefore(el, SEARCH_MEMO) || popupStuckFor(el) || stuckShowing()) { _beat.skipped++; out.skipped = true; return out; }
+    if (over()) return out;
+    noteMiss(el, SEARCH_MEMO, true);                       // searched once on this page, whatever comes of it
+    const t0 = Date.now();
+    const before = promptPicked(el);
+    const enter = { key: "Enter", code: "Enter", keyCode: 13, which: 13 };
+    const max = spec.max || 1;
+    for (const q of (spec.queries || []).slice(0, spec.maxQueries || 3)) {
+      if (over() || out.picked >= max) break;
+      _robustUntil = Date.now() + pms("results") + 1000;   // these waits do not rest on page timers alone
+      // a list still open from the query before is closed first, so this query's own list is
+      // told apart from it (the same "No Items." twice looks like no answer at all)
+      if (promptListOpen(el)) await closePromptList(el);
+      // click and focus first; what that alone brings up (a list of first choices on some pages)
+      // is not the search's answer, so the list is read after it and before the query goes in
+      try { choiceClick(el); if (el.focus) el.focus(); } catch (e) { /* fine */ }
+      const sig = listSig(el), wasOpen = promptListOpen(el), node0 = listboxFor(el);
+      setNativeValue(el, String(q));
+      fire(el, "keydown", enter); fire(el, "keypress", enter); fire(el, "keyup", enter);
+      // wait for the choices: the list changed and holds some; "No Items." only after a while;
+      // nothing at all for long enough means the page did not take the Enter
+      const tq = Date.now(), end = untilMs(pms("results"));
+      let best = null, reacted = false, seen = 0, lastSig = "", steady = 0;
+      while (Date.now() < end) {
+        await sleep(STEP_MS * 2);
+        const opts = optionsFor(el).filter((o) => !optionTicked(o));
+        seen = opts.length;
+        const now = listSig(el);
+        steady = now === lastSig ? steady + 1 : 0; lastSig = now;
+        reacted = reacted || listSig(el) !== sig || (!wasOpen && promptListOpen(el)) || (wasOpen && listboxFor(el) !== node0);
+        if (reacted && opts.length) {
+          for (const o of opts) {
+            const sc = spec.score(optionText(o));
+            if (sc > 0 && (!best || sc > best.sc || (sc === best.sc && optionText(o).length < optionText(best.o).length))) best = { o, sc };
+          }
+          if (best) break;
+          // choices, none fitting: decided once the list has stood still for a moment (waiting
+          // the whole "No Items." time on every such query used up the fill's budget)
+          if (!loading(el) && (steady >= 4 || Date.now() - tq >= pms("none"))) break;
+        }
+        if (reacted && !opts.length && Date.now() - tq >= pms("none")) break;   // "No Items.", and it stayed
+        if (!reacted && Date.now() - tq >= pms("silent")) break;
+      }
+      out.registered = out.registered || reacted;
+      // (how many choices came back, never what they say)
+      trace(el, "prompt-query-" + (best ? "fit" : reacted ? "no-fit" : "silent") + "-of-" + seen, Date.now() - tq);
+      if (!reacted) break;                                 // the page does not take a script's Enter: no further query
+      if (!best) continue;
+      const shown = cleanText(best.o.textContent), had = promptPicked(el);
+      try { if (!choiceClick(best.o)) press(best.o); } catch (e) { press(best.o); }
+      for (const stop = untilMs(pms("took")); promptPicked(el) <= had && Date.now() < stop;) await sleep(STEP_MS);
+      if (promptPicked(el) <= had && best.o.isConnected) {      // the row's own box, then the full press
+        const box = best.o.querySelector("input[type='radio'], input[type='checkbox']");
+        press(box || best.o);
+        for (const stop = untilMs(600); promptPicked(el) <= had && Date.now() < stop;) await sleep(STEP_MS);
+      }
+      if (promptPicked(el) > had) { out.picked++; _gen++; tick(1); logFill(el, spec.from || "", shown); }
+    }
+    if (isTextBox(el) && el.value && !out.picked) setNativeValue(el, "");     // no stray search text behind
+    out.closed = await closePromptList(el);
+    if (!out.closed) _trouble.set(el, "left-open"); else _trouble.delete(el);
+    out.picked = Math.max(out.picked, promptPicked(el) - before);
+    trace(el, "prompt-" + (out.closed ? "closed" : "left-open") + "-picked-" + out.picked, Date.now() - t0);
+    return out;
+  }
+  // "X University" <-> "University of X", with and without a leading "The": at most 3 queries.
+  function schoolQueries(name) {
+    const base = String(name || "").trim().replace(/\s+/g, " ");
+    const out = [];
+    const add = (q) => { q = String(q || "").trim(); if (q && !out.some((x) => canon(x) === canon(q))) out.push(q); };
+    add(base);
+    const bare = base.replace(/^the\s+/i, "");
+    add(bare);
+    let m = /^university of (.+)$/i.exec(bare);
+    if (m) add(m[1] + " University");
+    m = /^(.+) university$/i.exec(bare);
+    if (m) add("University of " + m[1]);
+    add(base.split(",")[0]);
+    return out.slice(0, 3);
+  }
   async function fillSection(sec, item, kind) {
     let n = 0;
     const inputs = qsaSafe("input, textarea", sec.box).filter((el) => !inPopupList(el) && !el.disabled && !el.readOnly
@@ -2630,6 +3212,7 @@ function qsaSafe(sel, root) {
       ? { title: item.title, company: item.company, location: item.location, description: item.description }
       : { school: item.school };
     for (const el of inputs) {
+      if (over()) break;
       if (el.getAttribute("role") === "spinbutton") continue;
       const lab = boxLabel(el);
       if (!lab) continue;
@@ -2640,6 +3223,17 @@ function qsaSafe(sel, root) {
       if (kind === "edu" && HIST_LABELS.field.test(lab)) continue;            // a list, below
       const key = Object.keys(textFor).find((k) => HIST_LABELS[k].test(lab));
       if (!key || !textFor[key] || !emptyBox(el)) continue;
+      if (isPromptInput(el)) {                                                 // Workday's prompt: searched in the page
+        if (chosenPills(el).length) continue;
+        const want = textFor[key], sc = answerScorer(want);
+        const r = await promptSearch(el, { kind: "school", queries: schoolQueries(want), score: sc, from: "history" });
+        if (r.picked) { n++; continue; }
+        if (r.registered || r.skipped) continue;
+        // the page did not take a script's Enter: the list as it filters while typing, as before
+        const r2 = await pickCombo(el, { text: want, score: sc, freeText: true });
+        if (r2.ok) { n++; logFill(el); }
+        continue;
+      }
       if (isWidgetInput(el)) {                                                 // a search list (School on some sites)
         const r = await pickCombo(el, { text: textFor[key], score: answerScorer(textFor[key]), freeText: true });
         if (r.ok) { n++; logFill(el); }
@@ -2647,11 +3241,12 @@ function qsaSafe(sel, root) {
       }
       setNativeValue(el, textFor[key]); markFilled(el); n++;
     }
+    // (a date typed by the shell is counted by keysLanded once it is really there)
     const from = dateGroup(sec.box, HIST_LABELS.from);
-    if (from && fillDate(from, item.start)) { n++; logFill(from, "", dateWords(item.start), "From"); }
+    if (from && fillDate(from, item.start, "From") === true) { n++; logFill(from, "", dateWords(item.start), "From"); }
     if (!item.current) {
       const to = dateGroup(sec.box, HIST_LABELS.to);
-      if (to && fillDate(to, item.end)) { n++; logFill(to, "", dateWords(item.end), "To"); }
+      if (to && fillDate(to, item.end, "To") === true) { n++; logFill(to, "", dateWords(item.end), "To"); }
     }
     if (kind === "edu") {
       const lv = { doctorate: /doctor|ph\.?\s?d/i, masters: /master|\bm\.?s\.?\b|\bmba\b|graduate degree/i,
@@ -2662,13 +3257,22 @@ function qsaSafe(sel, root) {
         if (pickSelectOption(el, (t) => lv.test(t))) n++;           // marked (and logged) inside
       }
       for (const el of comboboxes().filter((c) => sec.box.contains(c))) {
+        if (over()) break;
         const lab = widgetLabel(el);
-        if (comboValue(el)) continue;
+        if (comboValue(el) || chosenPills(el).length) continue;
         if (HIST_LABELS.degree.test(lab) && lv) {
           const r = await pickCombo(el, { score: (t) => (lv.test(t) ? 50 - Math.min(9, t.length / 20) : 0), memo: "re:" + lv.source });
           if (r.ok) { n++; logFill(el); }
         } else if (HIST_LABELS.field.test(lab) && (item.field || item.level)) {
-          if (isSearchBox(el)) { _searchOps.push(fieldSearch(el, item)); continue; }
+          if (isPromptInput(el)) {
+            // searched in the page; only when the page does not take a script's Enter, and can
+            // be reached by real keys (it is visible), is the shell asked to search it
+            const op = fieldSearch(el, item);
+            const r = await promptSearch(el, { kind: "field", queries: op.queries, score: (t) => subjectScore(op.want, t), from: "closest" });
+            if (r.picked) n++;
+            else if (!r.registered && !r.skipped && pageVisible()) shellSearch(el, op);
+            continue;
+          }
           if (!item.field) continue;
           const r = await pickCombo(el, { text: item.field, score: answerScorer(item.field) });
           if (r.ok) { n++; logFill(el); }
@@ -2718,8 +3322,14 @@ function qsaSafe(sel, root) {
     const queries = [];
     if (item.field) queries.push(String(item.field));
     for (const w of own.slice().sort((a, b) => b.length - a.length)) if (!queries.some((q) => canon(q) === w)) queries.push(w);
-    if (want.includes("administration") && !queries.includes("Business Administration")) queries.push("Business Administration");
-    return { ref: fieldRef(el), kind: "field", want, queries: queries.slice(0, 3) };
+    // At most three, and what the degree's own name says is always among them: the field as the
+    // person wrote it, its longest word, then "Business Administration" for an MBA (a field of
+    // two words used to push that one out, and "Business Administration/Management" was never
+    // even listed; a real Workday form, 2026-11-19), else the next word.
+    const mba = want.includes("administration") && !queries.some((q) => canon(q) === "business administration");
+    const out = queries.slice(0, mba ? 2 : 3);
+    if (mba) out.push("Business Administration");
+    return { ref: fieldRef(el), kind: "field", want, queries: out, label: widgetLabel(el) };
   }
   // How well an option fits the subject words. An option whose own words are all supported
   // ("Economics" for "Economics and Sociology"; "Business Administration/Management" for an MBA,
@@ -2738,40 +3348,316 @@ function qsaSafe(sel, root) {
     if (shared >= 2 && extra.length === 1) return 60 + shared;
     return 0;
   }
+  // The pills of THIS control only: the walk up stops at a box that holds another dropdown (a
+  // school's pill is not the Field of Study's answer, nor a reason to skip the Skills list).
   function chosenPills(el) {
     let node = el;
     for (let i = 0; i < 6 && node.parentElement; i++) {
       node = node.parentElement;
+      if (otherCombo(node, el)) break;
       const pills = qsaSafe("[data-automation-id='selectedItem'], [aria-label*='items selected' i] [role='option']", node);
       if (pills.length) return pills.map((p) => cleanText(p.textContent));
     }
     return [];
   }
-  async function searchChoice(ref, spec) {
-    const el = elByRef(ref);
+  // One search the shell runs: what the control held before, what was ticked, whether its list
+  // ever showed a choice (so a search with nothing fitting is not run again on this page).
+  const _searches = new Map();               // ref -> {before, saw}
+  function searchState(ref, el) {
+    let st = _searches.get(ref);
+    if (!st) { st = { before: chosenPills(el).length, saw: false }; _searches.set(ref, st); }
+    return st;
+  }
+  const optionTicked = (o) => {
+    const b = o.querySelector("input[type='radio'], input[type='checkbox']");
+    return o.getAttribute("aria-selected") === "true" || o.getAttribute("aria-checked") === "true" || !!(b && b.checked);
+  };
+  // ---- the shell's search, page side. EVERY function here is synchronous: the shell does the
+  // waiting, with its own timers. (The first version waited inside the page; on the real page
+  // the focus call never answered, a good fill was reported as a hang and thrown away.)
+  // The order the shell calls them in, per query:
+  //   searchTarget   where to click; starts watching the page for what the click brings up
+  //   searchFocus    polled for up to about a second: claims the popup once it shows, and on the
+  //                  last poll puts the focus where the query is typed
+  //   searchChoice   presses the best real option (searchTook says when the pick has shown)
+  // and once per field: searchClose (step 0..2, then -1 to look), then closeSearch for the count.
+  //
+  // What counts as this search's popup: something that was NOT showing before the click and is
+  // not around the control: a role=dialog / aria-modal box, one of Workday's popup containers,
+  // or any new box holding both a search box and a list. It may render late or in a portal at
+  // the end of <body>: a MutationObserver notes what the page adds after the click.
+  const LOOSE_POPUP_SEL = POPUP_SEL + ", [data-automation-id='popupContent'], [data-automation-id='activeListContainer'], "
+    + "[data-automation-id='promptSearchPopup'], [data-automation-id='wd-popup']";
+  const SEARCH_INPUT_SEL = "input[data-uxi-widget-type='selectinput'], [data-automation-id='searchBox'], "
+    + "[data-automation-id='monikerSearchBox'], input[type='search'], input[placeholder^='Search' i]";
+  const LIST_PART_SEL = "[role='listbox'], [role='option'], [data-automation-id='promptOption'], [data-automation-id='promptLeafNode']";
+  const SEARCH_CLAIM_MS = 5000;
+  let _watch = null;                          // {ref, el, before, shownBefore, added, at, obs}
+  const _trouble = new Map();                 // control -> why its search did not finish (leftover names it)
+  function stopWatch() {
+    if (_watch && _watch.obs) { try { _watch.obs.disconnect(); } catch (e) { /* fine */ } }
+    _watch = null;
+  }
+  function startWatch(ref, el) {
+    stopWatch();
+    const w = { ref, el, before: new Set(pickerPopups()), shownBefore: new Set(qsaDeep(LOOSE_POPUP_SEL).filter(boxShown)),
+                added: [], at: Date.now(), obs: null };
+    const take = (recs) => {
+      for (const r of recs) for (const n of r.addedNodes) if (n.nodeType === 1 && w.added.length < 200) w.added.push(n);
+    };
+    try {
+      const doc = el.ownerDocument || document;
+      w.obs = new MutationObserver(take);
+      w.take = take;
+      w.obs.observe(doc.body, { childList: true, subtree: true });
+    } catch (e) { w.obs = null; }
+    _watch = w;
+    return w;
+  }
+  const watchFor = (ref) => {
+    const w = _watch && _watch.ref === ref && Date.now() - _watch.at < SEARCH_CLAIM_MS ? _watch : null;
+    if (w && w.obs && w.take) { try { w.take(w.obs.takeRecords()); } catch (e) { /* fine */ } }
+    return w;
+  };
+  const holdsForm = (c) => qsaSafe("textarea, select, input[type='file'], input[type='password']", c).length > 0
+    || qsaSafe("input", c).filter((i) => !/^(hidden|checkbox|radio|button|submit)$/i.test(i.type || "") && !inPopupList(i)).length > 1;
+  // The popup this click brought up, if any: claimed for the control and returned.
+  function claimFromWatch(el, w) {
+    const own = ourPopupFor(el);
+    if (own) return own;
+    const found = [];
+    const add = (c) => { if (c && !found.includes(c) && c.isConnected && boxShown(c) && !c.contains(el) && !_stuck.has(c) && !holdsForm(c)) found.push(c); };
+    for (const p of pickerPopups()) if (!w.before.has(p)) add(p);
+    const hasSearch = (x) => qsaSafe(SEARCH_INPUT_SEL, x).some(boxShown);
+    const hasList = (x) => qsaSafe(LIST_PART_SEL, x).length > 0;
+    for (const a of w.added) {
+      if (!a.isConnected || a.contains(el) || ofControl(a, el)) continue;
+      let c = null;
+      if (a.matches && a.matches(LOOSE_POPUP_SEL)) c = a;
+      if (!c) c = qsaSafe(LOOSE_POPUP_SEL, a).find((x) => boxShown(x) && !w.shownBefore.has(x)) || null;
+      if (!c) {                                             // content added into a container that was not showing before
+        const anc = a.closest ? a.closest(LOOSE_POPUP_SEL) : null;
+        if (anc && !w.shownBefore.has(anc)) c = anc;
+      }
+      if (c && !(hasList(c) || hasSearch(c))) c = null;
+      if (!c && hasSearch(a) && hasList(a)) c = a;
+      add(c);
+    }
+    const outer = found.filter((d) => !found.some((o) => o !== d && o.contains(d)));
+    const pick = outer.find((c) => popupSearchBox(c)) || outer[0] || null;
+    if (!pick) return null;
+    _popupOf.set(el, pick);
+    _passOurs.set(pick, el);
+    trace(el, "popup-claimed");
+    return pick;
+  }
+  // For the debug log, when a click brought up nothing we could claim: what the page added
+  // (tag, role, data-automation-id of up to 5 elements; never their text).
+  function describeAdded(w) {
+    const tops = w.added.filter((a) => a.isConnected && !w.added.some((o) => o !== a && o.contains(a)));
+    return tops.slice(0, 5).map((a) => String(a.tagName || "").toLowerCase()
+      + (a.getAttribute("role") ? "[role=" + String(a.getAttribute("role")).slice(0, 30) + "]" : "")
+      + (a.getAttribute("data-automation-id") ? "[aid=" + String(a.getAttribute("data-automation-id")).slice(0, 40) + "]" : "")
+      + (boxShown(a) ? "" : "(hidden)"));
+  }
+  // Something the click brought up that is still showing and looks like a list or a search box,
+  // though it could not be claimed.
+  // Part of the control itself (its own box, its chosen pills): never a popup, never a stray list.
+  function ofControl(a, el) {
+    if (a.closest && a.closest("[data-automation-id='selectedItemList'], [data-automation-id='selectedItem'], [aria-label*='items selected' i]")) return true;
+    let node = el;
+    for (let i = 0; i < 4 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      if (node.contains(a)) return true;
+    }
+    return false;
+  }
+  function unclaimedShowing(w) {
+    if (!w) return false;
+    return w.added.some((a) => a.isConnected && boxShown(a) && !a.contains(w.el) && !ofControl(a, w.el)
+      && (qsaSafe(LIST_PART_SEL, a).length > 0 || qsaSafe(SEARCH_INPUT_SEL, a).some(boxShown)
+          || (a.matches && a.matches(LIST_PART_SEL + ", " + SEARCH_INPUT_SEL))));
+  }
+  const isTextBox = (x) => !!x && tagOf(x) === "INPUT" && !/^(hidden|checkbox|radio|button|submit|file)$/i.test(x.type || "");
+  // null: nothing to click (the control is gone, or a popup would not close before).
+  function searchTarget(ref) {
+    const el = searchEl(ref);
+    if (!el || popupStuckFor(el) || stuckShowing()) return null;
+    searchState(ref, el);
+    // searched once on this page, whatever comes of it; and not finished until closeSearch says so
+    noteMiss(el, SEARCH_MEMO, true);
+    if (!_trouble.has(el)) _trouble.set(el, "unfinished");
+    const pop = ourPopupFor(el);
+    const w = startWatch(ref, el);
+    if (!pop) _preOpen.set(el, { pick: w.before, shown: w.shownBefore });
+    const t = (pop && popupSearchBox(pop)) || el;
+    try { t.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) { /* fine */ }
+    const b = t.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, popup: !!pop };
+  }
+  // After the shell's click. Not final: only looks (has the popup shown yet?). Final: the focus
+  // goes where the query is typed: the popup's own search box; with no popup, the control's own
+  // input (an inline list), unless the page itself has moved the focus into a new text box.
+  // {popup, focused, added?}  (``added`` only for the debug log, when nothing was claimed)
+  function searchFocus(ref, final) {
+    const el = searchEl(ref);
+    if (!el) return { popup: false, focused: false, gone: true };
+    const doc = el.ownerDocument || document;
+    const w = watchFor(ref);
+    const pop = ourPopupFor(el) || (w ? claimFromWatch(el, w) : null);
+    if (!final) return { popup: !!pop, focused: doc.activeElement === el };
+    let t = (pop && popupSearchBox(pop)) || el;
+    const act = doc.activeElement;
+    if (!pop && act !== el && isTextBox(act) && w && w.added.some((a) => a === act || a.contains(act))) t = act;
+    try { if (doc.activeElement !== t) t.focus(); if (t.select) t.select(); } catch (e) { /* fine */ }
+    searchState(ref, el).sig = listSig(el);
+    trace(el, pop ? "search-focus-popup" : t === el ? "search-focus-inline" : "search-focus-new-box");
+    const out = { popup: !!pop, focused: doc.activeElement === t };
+    if (!pop && w && _traceOn) out.added = describeAdded(w);
+    return out;
+  }
+  // What the list shows now, to tell whether a search changed it: how many choices, the first
+  // few, and whether it says it has none.
+  function listSig(el) {
+    const o = optionsFor(el);
+    return o.length + "|" + o.slice(0, 6).map(optionText).join("|") + "|" + (emptyNotice(el) ? "none" : "");
+  }
+  // {options, changed, none, popup}: what the list shows since the last query was sent.
+  function searchSeen(ref) {
+    const el = searchEl(ref);
+    if (!el) return { options: 0, changed: false, none: false, popup: false, gone: true };
+    const w = watchFor(ref);
+    const pop = ourPopupFor(el) || (w ? claimFromWatch(el, w) : null);
+    const st = searchState(ref, el);
+    const n = optionsFor(el).length;
+    if (n) st.saw = true;
+    return { options: n, changed: st.sig != null && listSig(el) !== st.sig, none: !!emptyNotice(el), popup: !!pop };
+  }
+  function searchChoice(ref, spec) {
+    const el = searchEl(ref);
     if (!el) return { ok: false, why: "gone" };
+    const w = watchFor(ref);
+    const pop = ourPopupFor(el) || (w ? claimFromWatch(el, w) : null);
+    const st = searchState(ref, el);
+    st.pending = null;
     const opts = optionsFor(el);
+    if (opts.length) st.saw = true;
     let best = null;
     for (const o of opts) {
+      if (optionTicked(o)) continue;                       // already chosen: a press would untick it
       const t = optionText(o);
       const sc = spec.kind === "skills" ? ((spec.items || []).some((x) => canon(x) === canon(t)) ? 100 : 0) : subjectScore(spec.want || [], t);
       if (sc > 0 && (!best || sc > best.sc || (sc === best.sc && t.length < optionText(best.o).length))) best = { o, sc };
     }
+    trace(el, "search-choice-" + (best ? "fit" : "no-fit") + "-of-" + opts.length);
     if (!best) return { ok: false, why: "no-fit", seen: opts.length };
-    const before = chosenPills(el).length;
+    st.pending = { o: best.o, text: optionText(best.o), shown: cleanText(best.o.textContent), before: chosenPills(el).length,
+                   pop: !!pop, kind: spec.kind, logged: false };
     const box = best.o.querySelector("input[type='radio'], input[type='checkbox']") || best.o;
     press(box);
-    for (let i = 0; i < 20 && chosenPills(el).length <= before; i++) await sleep(STEP_MS);
-    const ok = chosenPills(el).length > before;
+    return searchTook(ref);
+  }
+  // Has the pressed choice shown? In a popup it is ticked in the list and reaches the page (as
+  // a pill) when the popup closes; closeSearch counts what really arrived.
+  // ``again``: the press on the row's own box did not show; press the row itself, once.
+  function searchTook(ref, again) {
+    const el = searchEl(ref);
+    const st = _searches.get(ref);
+    const p = st && st.pending;
+    if (!el || !p) return { ok: false, pending: false };
+    const o = p.o.isConnected ? p.o : optionsFor(el).find((x) => optionText(x) === p.text);
+    if (again && o && !p.again && !optionTicked(o) && chosenPills(el).length <= p.before) { p.again = true; press(o); }
+    const ok = chosenPills(el).length > p.before || (p.pop && !!o && optionTicked(o));
     // An optional list filled by a rule, never by the person: the Review answers list flags it
     // (2026-11-16, Uline: "Agricultural Economics" and "JavaScript" went in unseen).
-    if (ok) logFill(el, spec.kind === "skills" ? "skills" : "closest", cleanText(best.o.textContent));
-    return { ok };
+    if (ok && !p.logged) { p.logged = true; logFill(el, p.kind === "skills" ? "skills" : "closest", p.shown); }
+    return { ok, pending: !ok };
   }
-  async function closeSearch(ref) {
-    const el = elByRef(ref);
-    if (el) { try { await closeCombo(el); } catch (e) { /* fine */ } }
-    return true;
+  // One step of closing this search's list, as a person would; the shell waits between steps
+  // and asks again with step -1 ("is it still open?").
+  //   0  the popup's Done (or OK / Close) button; any text left in the control is cleared
+  //   1  Escape, in the popup and on the control
+  //   2  a press on the popup's backdrop, then the control's own ways (blur, a press away)
+  // {open, real_escape}: ``real_escape`` asks the shell for ONE real Escape key: something the
+  // click brought up is still showing (ours or not), and the control is not itself inside a
+  // dialog (where Escape could close the form).
+  function searchClose(ref, step) {
+    const el = searchEl(ref);
+    if (!el) return { open: false, real_escape: false };
+    const doc = el.ownerDocument || document;
+    const w = watchFor(ref);
+    const pop = ourPopupFor(el);
+    const esc = { key: "Escape", code: "Escape", keyCode: 27, which: 27 };
+    if (step === 0) {
+      if (isTextBox(el) && el.value) setNativeValue(el, "");
+      if (pop && !_stuck.has(pop)) {
+        const btns = popupButtons(pop);
+        const done = btns.find((b) => DONE_RE.test(buttonName(b)))
+          || btns.find((b) => /^(?:ok|okay|close)$/i.test(buttonName(b)) || /^close\b/i.test(b.getAttribute("aria-label") || "")
+                              || /^close(?:Button)?$/i.test(b.getAttribute("data-automation-id") || ""));
+        if (done) press(done);
+        trace(el, done ? "search-close-done" : "search-close-no-done");
+      }
+    } else if (step === 1) {
+      if (pop && !_stuck.has(pop)) {
+        const at = doc.activeElement && pop.contains(doc.activeElement) ? doc.activeElement : (popupSearchBox(pop) || pop);
+        fire(at, "keydown", esc); fire(at, "keyup", esc);
+      }
+      fire(el, "keydown", esc);
+      trace(el, "search-close-escape");
+    } else if (step === 2) {
+      if (pop && !_stuck.has(pop)) {
+        let back = pop.parentElement;
+        const pr = pop.getBoundingClientRect();
+        for (let i = 0; back && back !== doc.body && i < 4; i++, back = back.parentElement) {
+          const r = back.getBoundingClientRect();
+          if (r.width > pr.width + 8 || r.height > pr.height + 8) break;
+        }
+        press(back || doc.body);
+      }
+      try { if (el.blur) el.blur(); } catch (e) { /* fine */ }
+      // (also for a list that shows nothing now: an empty result box is still a box over the form)
+      if (el.getAttribute("aria-expanded") === "true" || optionsFor(el).length > 0 || (!pop && unclaimedShowing(w))) { pressOutside(el); pressAway(el); }
+      trace(el, "search-close-outside");
+    }
+    const mine = !!pop && !popupGone(pop);
+    const list = el.getAttribute("aria-expanded") === "true" || optionsFor(el).length > 0;
+    const stray = !pop && unclaimedShowing(w);
+    const inDialog = !!(el.closest && el.closest(POPUP_SEL));
+    return { open: mine || list || stray, real_escape: (mine || stray) && !inDialog };
+  }
+  // The end of one search: the choices that really reached the page are counted. {ok, picked}:
+  // ok false = something of this search is still open (a popup that would not close is given
+  // up: noted for its control, never tried again). Nothing picked: not searched again here.
+  function closeSearch(ref) {
+    const el = searchEl(ref);
+    const st = _searches.get(ref);
+    _searches.delete(ref);
+    if (!el) { stopWatch(); return { ok: true, picked: 0 }; }
+    const w = watchFor(ref);
+    const pop = ourPopupFor(el);
+    const stray = !pop && unclaimedShowing(w);
+    if (pop) { giveUpPopup(pop, el); }
+    else _passOurs = new Map([..._passOurs].filter(([p]) => !popupGone(p)));
+    stopWatch();
+    const picked = Math.max(0, chosenPills(el).length - (st ? st.before : 0));
+    if (picked) { _gen++; tick(picked); }
+    const ok = !pop && !stray;
+    if (ok) _trouble.delete(el); else _trouble.set(el, pop ? "popup-stuck" : "left-open");
+    trace(el, "search-end-" + (ok ? "closed" : pop ? "popup-stuck" : "left-open") + "-picked-" + picked);
+    return { ok, picked };
+  }
+  // The fields whose search did not finish (the shell's call ran out of time, or its list is
+  // still open): named in leftover() by their label until they hold a choice.
+  function searchTroubles() {
+    const out = [];
+    for (const [el] of _trouble) {
+      if (!el.isConnected || chosenPills(el).length || comboValue(el)) { _trouble.delete(el); continue; }
+      const label = widgetLabel(el);
+      if (label && !out.includes(label)) out.push(label);
+    }
+    return out;
   }
 
   async function fillHistory(payload) {
@@ -2789,16 +3675,19 @@ function qsaSafe(sel, root) {
       let secs = sectionsOf(kind);
       if (!secs.length) continue;                                            // this page has no such list
       for (let i = 0; i < items.length; i++) {
+        if (over()) break;                                    // the budget is spent: what is filled stands
         if (i >= secs.length) {
           const add = addButtonFor(kind, secs[secs.length - 1]);
           if (!add) break;
           press(add);
-          for (let t = 0; t < 40 && sectionsOf(kind).length <= secs.length; t++) await sleep(STEP_MS);
+          for (let t = 0; t < 40 && sectionsOf(kind).length <= secs.length && !over(); t++) await sleep(STEP_MS);
           secs = sectionsOf(kind);
           if (i >= secs.length) break;
         }
         _section = cleanText(secs[i].heading.textContent);
+        const t0 = Date.now();
         const n = await fillSection(secs[i], items[i], kind);
+        trace(null, kind + "-section-" + (i + 1) + "-filled-" + n, Date.now() - t0);
         _section = "";
         out.filled += n;
         if (n) out.sections++;
@@ -2819,11 +3708,21 @@ function qsaSafe(sel, root) {
     // Workday's Languages rows: the person's own languages, an empty row removed.
     try { const L = await fillLanguages(payload); out.filled += L.filled; out.languages = L; } catch (e) { /* the rest stands */ }
     // "Type to Add Skills": a few of the person's own skills, only ones the list offers.
-    const skills = ((payload && payload.skills) || []).slice(0, 6);
+    const skills = ((payload && payload.skills) || []).slice(0, 8);
+    // "SQL" is "SQL" and "SQL (Programming Language)"; "Power BI" is "PowerBI". Nothing looser.
+    const squash = (t) => canon(String(t || "").replace(/\s*\([^)]*\)\s*/g, " ")).replace(/\s+/g, "");
+    const sameSkill = (a, b) => canon(a) === canon(b) || (squash(a).length >= 2 && squash(a) === squash(b));
     if (skills.length) {
       for (const el of comboboxes()) {
+        if (over()) break;
         if (!/\bskills?\b/i.test(widgetLabel(el)) || !isSearchBox(el) || chosenPills(el).length) continue;
-        _searchOps.push({ ref: fieldRef(el), kind: "skills", items: skills, queries: skills.slice(0, 4), max: 3 });
+        // one search per skill, the exact (or all but exact) choice only; optional, so a skill
+        // the list does not offer is skipped quietly
+        const op = { ref: fieldRef(el), kind: "skills", items: skills, queries: skills.slice(0, 4), max: 3, label: widgetLabel(el) };
+        const r = await promptSearch(el, { kind: "skills", queries: skills, maxQueries: 8, max: 8, from: "skills",
+                                           score: (t) => (skills.some((x) => sameSkill(x, t)) ? 100 : 0) });
+        if (r.picked) out.filled += r.picked;
+        else if (!r.registered && !r.skipped && pageVisible()) shellSearch(el, op);
       }
     }
     return out;
@@ -2906,37 +3805,52 @@ function qsaSafe(sel, root) {
     }
     return null;
   }
-  async function fillLanguageRow(row, pick, lang) {
+  // ``common``: the common-sense default (no languages saved, a required row, an application in
+  // English): English at the highest level the list offers that is not native, the fluent box
+  // left alone, every fill logged as common sense with its reason.
+  const LANG_COMMON_WHY = "your resume and application are in English, and no languages are saved";
+  async function fillLanguageRow(row, pick, lang, common) {
     let n = 0;
+    const log = (el) => logFill(el, common ? "common_sense" : "languages", undefined, undefined, common ? LANG_COMMON_WHY : "");
     const name = String(lang.name || "").trim();
     if (!ctlValue(pick)) {
       const want = canon(name);
       const score = (t) => { const c = canon(t); return c === want ? 100 : (c.startsWith(want + " ") || want.startsWith(c + " ")) ? 60 - Math.min(9, c.length / 10) : 0; };
-      if (tagOf(pick) === "SELECT") { if (pickSelectOption(pick, (t) => score(t) >= 60)) n++; }
+      if (tagOf(pick) === "SELECT") { if (pickSelectOption(pick, (t) => score(t) >= 60)) { n++; if (common) log(pick); } }
       else {
         const r = await pickCombo(pick, { text: name, score });
-        if (r.ok) { n++; logFill(pick, "languages"); }
+        if (r.ok) { n++; log(pick); }
       }
     }
     const rank = langRank(lang.level);
     const { skills, boxes } = langControls(row);
-    if (rank) {
-      // the closest level the list offers, a lower one before a higher one on a tie
-      const score = (t) => { const r = langRank(t); return r ? 100 - 10 * Math.abs(r - rank) - (r > rank ? 5 : 0) : 0; };
+    if (rank || common) {
+      // the closest level the list offers, a lower one before a higher one on a tie; the common
+      // default: the highest that is not native
+      const score = common ? (t) => { const r = langRank(t); return r && r < 5 ? r * 10 : 0; }
+        : (t) => { const r = langRank(t); return r ? 100 - 10 * Math.abs(r - rank) - (r > rank ? 5 : 0) : 0; };
       for (const el of skills) {
         if (ctlValue(el)) continue;
         if (tagOf(el) === "SELECT") {
           let best = null;
           for (const o of el.options) { const sc = score(norm(o.textContent)); if (sc > 0 && (!best || sc > best.sc)) best = { o, sc }; }
-          if (best) { setNativeValue(el, best.o.value); markFilled(el, "languages"); n++; }
+          if (best) { setNativeValue(el, best.o.value); markFilled(el, common ? "common_sense" : "languages"); if (common) log(el); n++; }
         } else {
           const r = await pickCombo(el, { score });
-          if (r.ok) { n++; logFill(el, "languages"); }
+          if (r.ok) { n++; log(el); }
         }
       }
-      if (rank >= 4) for (const b of boxes) if (!b.checked) { press(b); await sleep(STEP_MS * 2); if (b.checked) { n++; logFill(b, "languages"); } }
+      if (rank >= 4 && !common) for (const b of boxes) if (!b.checked) { press(b); await sleep(STEP_MS * 2); if (b.checked) { n++; logFill(b, "languages"); } }
     }
     return n;
+  }
+  function langDelete(row) {
+    return qsaSafe("button, [role='button']", row).find((b) => (LANG_DEL_RE.test(cleanText(b.textContent || "")) || LANG_DEL_RE.test(b.getAttribute("aria-label") || "")
+      || /delete/i.test(b.getAttribute("data-automation-id") || "")) && boxShown(b) && !b.disabled) || null;
+  }
+  function langRequired(pick) {
+    const lab = String(rawLabel(pick) || "") + " " + String(pick.getAttribute("aria-label") || "");
+    return pick.getAttribute("aria-required") === "true" || pick.required === true || /\brequired\b|\*/i.test(lab);
   }
   function langRowEmpty(row, pick) {
     if (ctlValue(pick)) return false;
@@ -2967,13 +3881,26 @@ function qsaSafe(sel, root) {
       _section = "Languages " + (i + 1);
       out.filled += await fillLanguageRow(rows[i], picks[i], langs[i]);
     }
+    // (2026-11-19, Home Depot) No languages saved, and the form REQUIRES its first Language row:
+    // common sense says a person whose resume and application are in English speaks English
+    // (``payload.language_default``, set by the app only then). English only, never another
+    // language, flagged as one to check.
+    let used = langs.length;
+    const dflt = payload && payload.language_default;
+    // A row with its own Delete is not required: it is removed below instead.
+    if (!langs.length && dflt && String(dflt.name || "").trim() && picks.length && langRequired(picks[0]) && langRowEmpty(rows[0], picks[0])
+        && !langDelete(rows[0])) {
+      _section = "Languages 1";
+      const n = await fillLanguageRow(rows[0], picks[0], { name: String(dflt.name), level: "" }, true);
+      out.filled += n;
+      if (n) { used = 1; out.common = true; }
+    }
     _section = was;
     // a row nothing fills: removed with its own Delete, from the last one up; never filled with a
     // language the person did not save
-    for (let i = picks.length - 1; i >= langs.length; i--) {
+    for (let i = picks.length - 1; i >= used; i--) {
       if (!rows[i] || !rows[i].isConnected || !langRowEmpty(rows[i], picks[i])) continue;
-      const del = qsaSafe("button, [role='button']", rows[i]).find((b) => (LANG_DEL_RE.test(cleanText(b.textContent || "")) || LANG_DEL_RE.test(b.getAttribute("aria-label") || "")
-        || /delete/i.test(b.getAttribute("data-automation-id") || "")) && boxShown(b) && !b.disabled);
+      const del = langDelete(rows[i]);
       if (!del) { out.kept++; continue; }
       press(del);
       for (let t = 0; t < 20 && picks[i].isConnected; t++) await sleep(STEP_MS);
@@ -3000,13 +3927,13 @@ function qsaSafe(sel, root) {
       if (!lg || !SIGN_DATE_RE.test(cleanLabel(lg.textContent)) || seen.has(g)) continue;
       if ([...seen].some((x) => x.contains(g) || g.contains(x))) continue;
       seen.add(g);
-      if (fillDate(g, today)) { n++; logFill(g, "today", dateWords(today), cleanLabel(lg.textContent)); }
+      if (fillDate(g, today, cleanLabel(lg.textContent)) === true) { n++; logFill(g, "today", dateWords(today), cleanLabel(lg.textContent)); }
     }
     for (const el of qsaDeep("input")) {
       if (!/^(date|text)$/i.test(el.type || "text") || el.getAttribute("role") === "spinbutton" || !emptyBox(el)) continue;
       if ([...seen].some((x) => x.contains(el))) continue;
       if (!SIGN_DATE_RE.test(boxLabel(el))) continue;
-      if (fillDate(el, today)) { markFilled(el, "today"); n++; }
+      if (fillDate(el, today) === true) { markFilled(el, "today"); n++; }
     }
     return n;
   }
@@ -3021,18 +3948,29 @@ function qsaSafe(sel, root) {
     const base = startBudget("engine", opts && opts.budgetMs);
     _keyOps = [];
     _searchOps = [];
+    _keyGroups = [];
     _logOn = true;
     _fillLog = [];
+    passStart();
+    if (opts && "debug" in opts) setTrace(opts.debug);
+    _trace = [];                               // this pass's own lines only
+    _promptScale = opts && Number(opts.promptMs) > 0 ? Number(opts.promptMs) / PROMPT_MS.results : 1;
     const r = fill(payload);
     if (!r || !r.ok) { endBudget(base); return r; }
     tick(0);
+    trace(null, "labels-filled-" + (r.filled || 0), Date.now() - _beat.at);
     let w = { filled: 0, fields: 0, screening: 0, eeo: 0 };
+    const tw = Date.now();
     try { w = await fillWidgets(payload); } catch (e) { /* a widget threw: the rest stands */ }
+    trace(null, "widgets-filled-" + (w.filled || 0), Date.now() - tw);
     let h = { filled: 0 };
     try { h = await fillHistory(payload); } catch (e) { /* the rest stands */ }
     _from = "today";
     try { h.filled += fillSignatureDate(); } catch (e) { /* the rest stands */ }
     _from = "";
+    // nothing this pass opened stays open (a list, or a prompt's popup dialog over the form)
+    try { r.left_open = await closeOpened(); } catch (e) { r.left_open = 0; }
+    if (_traceOn) { trace(null, "keys-queued-" + _keyOps.length + "-searches-" + _searchOps.length); r.trace = takeTrace(); }
     r.filled += w.fields + h.filled;
     r.history = h.filled;
     r.keys = _keyOps.slice(0, 60);
@@ -3126,6 +4064,7 @@ function qsaSafe(sel, root) {
       if (!label || !value) continue;
       if (e.section && !label.toLowerCase().startsWith(e.section.toLowerCase())) label = e.section + ": " + label;
       const row = { label: label.slice(0, LOG_MAX), value: value.slice(0, LOG_MAX), from: e.from };
+      if (e.evidence) { row.agent = true; row.evidence = String(e.evidence).slice(0, LOG_MAX); }
       if (at.has(e.el)) out[at.get(e.el)] = row;                 // the same control again: its last word
       else { at.set(e.el, out.length); out.push(row); }
     }
@@ -3158,6 +4097,8 @@ function qsaSafe(sel, root) {
       const label = cleanLabel(f.label);
       if (label && !out.includes(label)) out.push(label);
     }
+    // a list whose search did not finish, or is still open: the person's (or the agent's) to look at
+    for (const label of searchTroubles()) if (!out.includes(label)) out.push(label);
     return out;
   }
 
@@ -3179,7 +4120,8 @@ function qsaSafe(sel, root) {
     rawLabel, answerableTextareas, pageJobContext, screeningAnswer,
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
     // deep DOM + custom widgets + multi-page (desktop shell)
-    fillAsync, fillWidgets, fillHistory, fillLanguages, fillSignatureDate, searchChoice, closeSearch, extractFormAsync,
+    fillAsync, fillWidgets, fillHistory, fillLanguages, fillSignatureDate, searchChoice, searchTook, searchSeen, searchClose, promptSearch, closeSearch, searchTarget, searchFocus, searchTroubles,
+    keysLanded, closeOpened, pickerPopups, takeTrace, setTrace, extractFormAsync, setSpin, spinDigits,
     cleanLabel, readBack, fileListed, fileListing: fileListingAt, dropDuplicateFiles, dropUnsizedCopy, fileCopies, sizeReadings, sizeMatches, applyOpsAsync, leftover, pageSignature, setRefPrefix, takeFillLog,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
     agentPick, agentOptions, agentClickOption, agentQueries,                // the apply agent's own hands (agent_view.js)

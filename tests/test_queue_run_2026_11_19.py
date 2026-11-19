@@ -356,23 +356,66 @@ def test_the_brains_typed_date_there_passes_the_protocol():
 
 
 @browser
-def test_a_workday_date_trio_takes_one_run_of_real_keys(tmp_path):
+def test_a_date_trio_the_page_will_not_take_from_script_falls_back_to_real_keys(tmp_path):
+    """The in-page recipe first (main's setSpin, measured on a real Workday form); a widget that
+    keeps only real keys gets its segments handed to the shell, and real keys fill it."""
     import datetime as dt
     today = dt.date.today()
-    want = f"{today.month:02d}{today.day:02d}{today.year}"
+    seg = lambda n: f"#sid--dateSignedOn-dateSection{n}-input"
     r = run_page(tmp_path, "workday_date.html", [
         {"do": "inject"},
         {"do": "eval", "as": "rep", "js": "window.TailorAutofill.fillAsync({fields: {}, screening: {}, eeo: {}})"},
-        {"do": "eval", "as": "month", "js": "document.getElementById('sid--dateSignedOn-dateSectionMonth-input').getAttribute('data-tailor-ref')"},
-        # a value set from script is not kept by this widget
-        {"do": "eval", "js": "(() => { const T = window.TailorAutofill; for (const n of ['Month','Day','Year']) T.setNativeValue(document.getElementById('sid--dateSignedOn-dateSection' + n + '-input'), '1'); })()"},
-        {"do": "wait", "ms": 50},
         {"do": "eval", "as": "scripted", "js": "window.fxValues()"},
-        # what the shell does with the op: a real press on the first segment, then the digits
-        {"do": "keys", "sel": "#sid--dateSignedOn-dateSectionMonth-input", "text": want},
+        {"do": "keys", "sel": seg("Month"), "text": str(today.month)},
+        {"do": "keys", "sel": seg("Day"), "text": str(today.day)},
+        {"do": "keys", "sel": seg("Year"), "text": str(today.year)},
         {"do": "eval", "as": "v", "js": "window.fxValues()"},
     ])
-    keys = r["rep"]["keys"]
-    assert len(keys) == 1 and keys[0]["ref"] == r["month"] and keys[0]["text"] == want and keys[0]["press"]
-    assert r["scripted"]["date"] == "//"
-    assert r["v"]["date"] == f"{today.month:02d}/{today.day:02d}/{today.year}", r["v"]
+    assert [k["text"] for k in r["rep"]["keys"]] == [str(today.month), str(today.day), str(today.year)]
+    assert r["scripted"]["date"] == "//"                          # the script's values were not kept
+    got = r["v"]["date"].split("/")
+    assert [int(x) for x in got] == [today.month, today.day, today.year], r["v"]
+
+
+# --------------------------------------------------------------------------- English by common sense
+EN_PROFILE = {"summary": "Operations analyst with a record of improving reports and processes for the teams I support.",
+              "experience": [{"org": "Northwind Labs", "roles": [{"title": "Business Analyst", "bullets": [
+                  "Led the analysis of weekly sales data and built dashboards for the operations team",
+                  "Improved the reporting process across three regions, using SQL and Excel"]}]}]}
+
+
+def test_english_is_the_default_only_with_no_languages_saved_and_an_english_resume():
+    from autoapply.history import language_default, resume_in_english
+    assert resume_in_english(EN_PROFILE)
+    assert language_default(EN_PROFILE) == {"name": "English", "common_sense": True}
+    assert language_default(dict(EN_PROFILE, languages=["Spanish (Native)"])) is None      # saved: never the default
+    es = {"summary": "Analista de operaciones con experiencia en la mejora de procesos y la elaboracion de informes "
+                     "para los equipos de ventas y la direccion de la empresa en varias regiones del pais"}
+    assert language_default(es) is None and language_default({}) is None
+
+
+@browser
+def test_a_required_language_row_with_nothing_saved_takes_english_by_common_sense(tmp_path):
+    payload = {"languages": [], "language_default": {"name": "English", "common_sense": True}}
+    r = run_page(tmp_path, "workday_languages.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": f"window.TailorAutofill.fillAsync({json.dumps(dict(payload, fields={}, screening={}, eeo={}))})"},
+        {"do": "wait", "ms": 300},
+        {"do": "eval", "as": "v", "js": "window.fxValues()"},
+        {"do": "eval", "as": "log", "js": "window.TailorAutofill.takeFillLog()"},
+    ], query="?nodelete")
+    v = r["v"]
+    assert v["rows"] == 1                                              # never another row, never another language
+    # the highest level the list offers that is not native; the fluent box left alone
+    assert v["values"][0] == {"language": "English", "native": False, "read": "Fluent", "speak": "Fluent", "write": "Fluent"}
+    assert v["siteLang"] == ""
+    lang = [x for x in r["log"] if x["value"] == "English"]
+    assert lang and lang[0]["from"] == "common_sense" and lang[0]["agent"] is True and "English" in lang[0]["evidence"], r["log"]
+    # a row with its own Delete is not required: removed, never filled
+    r = run_page(tmp_path, "workday_languages.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": f"window.TailorAutofill.fillLanguages({json.dumps(payload)})"},
+        {"do": "wait", "ms": 300},
+        {"do": "eval", "as": "v", "js": "window.fxValues()"},
+    ])
+    assert r["rep"]["removed"] == 1 and r["v"]["rows"] == 0

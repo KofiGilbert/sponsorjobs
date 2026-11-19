@@ -182,7 +182,8 @@ PAYLOAD = {
     "history": form_history(PROFILE)["history"], "education": form_history(PROFILE)["education"],
     "skills": ["Excel", "SQL", "Python"],
 }
-FILL = f"window.TailorAutofill.fillAsync({json.dumps(PAYLOAD)})"
+# (promptMs: the in-page prompt search's waits, scaled down; this fixture ignores a script's Enter)
+FILL = f"window.TailorAutofill.fillAsync({json.dumps(PAYLOAD)}, {{promptMs: 500}})"
 
 
 @browser
@@ -211,6 +212,7 @@ def test_workday_work_history_and_education_filled_from_the_profile(tmp_path):
         {"do": "eval", "as": "report", "js": FILL},
         {"do": "wait", "ms": 300},
         {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "dates", "js": "[...document.querySelectorAll('input[role=spinbutton]')].map((i) => i.value)"},
         {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
     ])
     v, rep = r["values"], r["report"]
@@ -220,9 +222,10 @@ def test_workday_work_history_and_education_filled_from_the_profile(tmp_path):
     assert v["current"] == [True, False]
     assert v["schools"] == ["Example State University", "Sample College"]
     assert v["degrees"] == ["Masters", "Bachelors"]
-    # the dates go to the shell to type with real keys: month then year, no To for the current job
-    keys = [k["text"] for k in rep["keys"]]
-    assert keys == ["3", "2026", "2", "2018", "9", "2024"], keys
+    # the dates are set in the page (month then year, no To for the current job); nothing is left
+    # for the shell to type with real keys (they do not reach a page that is out of sight)
+    assert rep["keys"] == [], rep["keys"]
+    assert r["dates"] == ["3", "2026", "", "", "2", "2018", "9", "2024"], r["dates"]
     # Field of Study and Skills are searched by the shell (a real Enter), optional, never "left"
     kinds = [s["kind"] for s in rep["searches"]]
     assert kinds == ["field", "field", "skills"], kinds
@@ -265,6 +268,7 @@ def test_cc305_date_is_today_and_the_styled_boxes_are_fields(tmp_path):
     r = run(tmp_path, "cc305_selfid.html", [
         {"do": "inject"},
         {"do": "eval", "as": "report", "js": "window.TailorAutofill.fillAsync({fields: {}, screening: {}, eeo: {}})"},
+        {"do": "eval", "as": "sigdate", "js": "[...document.querySelectorAll('input[role=spinbutton]')].map((i) => i.value)"},
         {"do": "eval", "as": "fields", "js": "window.TailorAutofill.extractForm({onlyEmpty: true})"},
         {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
         # the plan's op for the saved answer's box (planner test above): exactly that one box
@@ -275,12 +279,9 @@ def test_cc305_date_is_today_and_the_styled_boxes_are_fields(tmp_path):
         {"do": "eval", "as": "left2", "js": "window.TailorAutofill.leftover()"},
     ])
     today = _dt.date.today()
-    # (2026-11-19) the whole trio as ONE run of digits on a real press of its first segment, the
-    # segments one by one as the shell's fallback
-    keys = r["report"]["keys"]
-    assert len(keys) == 1 and keys[0]["press"] is True
-    assert keys[0]["text"] == f"{today.month:02d}{today.day:02d}{today.year}"
-    assert [p["text"] for p in keys[0]["parts"]] == [f"{today.month:02d}", f"{today.day:02d}", str(today.year)]
+    # set in the page (nothing left for the shell to type with real keys)
+    assert r["report"]["keys"] == []
+    assert r["sigdate"] == [str(today.month), str(today.day), str(today.year)], r["sigdate"]
     # ONE question with three choices (the legend of the OUTER fieldset), never three questions
     boxes = [f["label"] for f in r["fields"] if f["type"] == "checkbox"]
     assert boxes == [f"Please check one of the boxes below:*: {o}" for o in CC305], boxes

@@ -4,8 +4,9 @@
 <body>
 <!-- Modelled on the "Date" of Workday's Voluntary Self-Identification of Disability (CC-305) form
      (2026-11-19): Month / Day / Year spinbuttons that keep only REAL key presses (a value set from
-     script shows until the next render, then the widget's own value comes back), and move on to
-     the next segment by themselves once a segment is full (2, 2 and 4 digits). -->
+     script is taken back at once), and move on to the next segment by themselves once a segment is
+     full (2, 2 and 4 digits). The engine's in-page recipe cannot set it, so the shell's real keys,
+     the fallback, are what fill it here. -->
 <h3>Voluntary Self-Identification of Disability</h3>
 <fieldset id="date"><legend><label>Date*</label></legend>
   <div role="group">
@@ -30,7 +31,7 @@
       render();
       if (state[i].length === size[i] && segs[i + 1]) segs[i + 1].focus();
     });
-    el.addEventListener("input", () => setTimeout(render, 0));     // a script's value never stays
+    el.addEventListener("input", (e) => { if (!e.isTrusted) render(); });   // a script's value never stays
     el.addEventListener("blur", render);
   });
   window.fxValues = () => ({ date: state[0] + "/" + state[1] + "/" + state[2], shown: segs.map((s) => s.value) });
