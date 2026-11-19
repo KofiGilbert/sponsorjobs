@@ -1842,3 +1842,42 @@ date.
 tests/test_queue_run_2026_11_19.py (with the headless fixtures workday_languages.html,
 icims_upload.html and workday_date.html), tests/js/test_queue_run_2026_11_19.js and
 tests/js/test_icims_upload.js.
+
+## 33. A notice behind a button; a job on a board that forbids automation (2026-11-19, the re-run)
+
+### A required privacy notice behind a button
+
+SAP SuccessFactors' Create Account at Gainwell takes the data privacy statement through a
+REQUIRED link, "Terms of Use: Read and accept the data privacy statement", which opens a dialog
+with Accept and Decline. Create Account was refused until it was accepted. The page view listed
+neither shape `termsItems` knew (an open dialog, a required box), and the in-page click refused
+it as a policy link, so the brain reported needs-consent.
+
+- `termsItems` has a third kind, "opener": a required button or link that opens the notice to read
+  and accept it (OPENER_RE: read and accept, review and accept, accept the privacy statement),
+  never a marketing one, never one inside a dialog, and only when no dialog is already open.
+- `handleTerms` treats it like a required box under the person's consent to required notices
+  (`accept_required_terms`, or their answer): it opens it ONCE per site and notice in a run, then
+  presses the dialog's single Accept (the dialog must be a notice with exactly one accept button),
+  and records it through `/api/autoapply/agent/terms/accepted` (kind "opener"), so Ready to send
+  names it. Without consent nothing is pressed (in a batch the job parks on the question).
+- Such an opener is no longer refused as a policy link (`policyLink`); a plain link to read a
+  policy still is.
+- Tests: tests/js/test_consent_dialog.js on tests/fixtures/forms/sapsf_privacy.html.
+
+### A job on a board that forbids automated applications
+
+An Adzuna ad (record 28) went to dice.com. The run stopped, rightly, but said "the site sent me to
+dice.com".
+
+- The shell now says it plainly: "This job is on Dice, which does not allow automated
+  applications. Open it and apply yourself." (`BOARD_LINE`, the board named from PROHIBITED_HOSTS:
+  LinkedIn, Indeed, Glassdoor, ZipRecruiter, Monster, Dice). The run ends with reason
+  "prohibited-board" and `aside`; a batch counts it as set aside, never as stopped.
+- The record keeps it (`agent_left`, kind "prohibited", with the board). The Auto-apply row shows
+  the line (five locales) and offers "Open and finish" (`open_self`), which opens the posting in
+  the browser for the person; the agent never runs it again, so Auto's plan does not pick it.
+- Auto's plan also skips every OTHER job with the same ad link (`_ad_key`: host and path, no
+  query) once a run has recorded that ad landing on such a board. Only from what a run recorded;
+  nothing is fetched to find out.
+- Tests: tests/test_consent_dialog_and_dice.py, tests/js/test_prohibited_board.js.

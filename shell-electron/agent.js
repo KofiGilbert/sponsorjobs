@@ -164,6 +164,12 @@ function offSiteVerdict(o) {
   }
   return "left";
 }
+// (2026-11-19) A job that lands on a board whose terms forbid automated applications (Dice,
+// Indeed, LinkedIn ...): said plainly, the job set aside, never "the site sent me somewhere else".
+const BOARD_NAMES = { "linkedin.com": "LinkedIn", "indeed.com": "Indeed", "glassdoor.com": "Glassdoor",
+  "ziprecruiter.com": "ZipRecruiter", "monster.com": "Monster", "dice.com": "Dice" };
+const boardName = (host) => { for (const [d, n] of Object.entries(BOARD_NAMES)) if (host === d || String(host).endsWith("." + d)) return n; return host; };
+const BOARD_LINE = (name) => "This job is on " + name + ", which does not allow automated applications. Open it and apply yourself.";
 const SURVEY_LINE = (host) => "This employer needs a short survey on another site (" + host + "). Do it yourself, then press Continue and I will finish.";
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1987,6 +1993,16 @@ function createAgent(deps) {
               await deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, host: h, step, from_host: fromHost, kind: "survey" }).catch(() => null);
               return park("person", SURVEY_LINE(h), { url: lastOn, pageUrl: lastOn, survey: h });
             }
+            if (hostIn(h, PROHIBITED_HOSTS) || hostIn(h, fence.prohibited)) {
+              // a board that forbids automated applications: set aside, not a failure
+              const board = boardName(h);
+              dlog("left-site", "step " + step + " " + fromHost + " -> " + h + " (prohibited board)");
+              await deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, host: h, step, from_host: fromHost, kind: "prohibited", board }).catch(() => null);
+              feed.close();
+              feed.push("stop", "Set aside", "the job is on " + board, { state: "done", detail: BOARD_LINE(board) });
+              progress(recordId, "stopped", lead + BOARD_LINE(board), { reason: "prohibited-board", aside: true, host: h, board, steps: history.length });
+              return finish({ ok: false, reason: "prohibited-board", aside: true, board, steps: history.length });
+            }
             dlog("left-site", "step " + step + " " + fromHost + " -> " + h);
             await deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, host: h, step, from_host: fromHost, kind: "left" }).catch(() => null);
             return stopped("left-site", "The site sent me somewhere else (" + h + "). Stopped.", { host: h, from_host: fromHost, step });
@@ -3034,18 +3050,21 @@ function createAgent(deps) {
     const endQuiet = () => { if (quiet && deps.setQuiet) deps.setQuiet(false); };
     const n = (pred) => results.filter(pred).length;
     const readyN = n((r) => r.ready), sentN = n((r) => r.submitted), parkedN = n((r) => r.parked), closedN = n((r) => r.closed);
-    const stoppedN = results.length - readyN - sentN - parkedN - closedN;
+    // (2026-11-19) on a board that forbids automated applications: set aside, never a failure
+    const asideN = n((r) => r.aside);
+    const stoppedN = results.length - readyN - sentN - parkedN - closedN - asideN;
     const parts = [];
     if (sentN) parts.push(sentN + " sent");
     if (readyN) parts.push(readyN + " ready to send");
     if (parkedN) parts.push(parkedN + " paused, waiting on you");
     if (closedN) parts.push(closedN + " closed by the employer");
+    if (asideN) parts.push(asideN + " set aside (on a job board that does not allow automated applications)");
     if (stoppedN) parts.push(stoppedN + " stopped");
     const msg = (b.stop ? "Stopped after " : "Done with ") + results.length + " application" + (results.length === 1 ? "" : "s")
       + (parts.length ? ": " + parts.join(", ") + "." : ".")
       + (b.fatal ? " " + b.fatal : "")
       + (parkedN ? " Answer them in Auto-apply, Needs you" + (d && d.sent ? " or on Telegram" : "") + ", and I carry on with each one." : "");
-    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, closed: closedN, stopped: stoppedN, fatal: b.fatal || "" } });
+    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, closed: closedN, aside: asideN, stopped: stoppedN, fatal: b.fatal || "" } });
     batchOn = null;
     endQuiet();
     if (parkedN) startPolling();
@@ -4200,7 +4219,7 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
-                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
+                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, BOARD_LINE, boardName, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
