@@ -115,6 +115,42 @@ def test_no_answers_when_none_are_stored_or_the_application_is_not_waiting_at_re
     assert mod._ready_answers_clean(None) is None and mod._ready_answers_clean([1]) is None
 
 
+def test_an_application_ready_before_this_change_falls_back_to_the_answers_the_agent_chose(mod):
+    """Records that reached Ready to send before agent_ready.answers was kept still hold the
+    answers the agent chose itself (agent_answers, #311): the panel lists those, a best guess
+    and a legal answer flagged, the count the same rule."""
+    chosen = [
+        {"page": 1, "label": "Do you have full work rights in the country the position is located?", "value": "Yes",
+         "source": "best_guess", "evidence": "you saved US work authorization", "class": "legal"},
+        {"page": 1, "label": "How did you hear about us?", "value": "Job board", "source": "common_sense", "evidence": "", "class": ""},
+        {"page": 2, "label": "Have you been convicted of a crime?", "value": "No", "source": "history",
+         "evidence": "nothing in your history", "class": "legal"},
+        {"page": 2, "label": "Highest degree", "value": "Master's Degree", "source": "history", "evidence": "edu1", "class": "factual"},
+        {"page": 2, "label": "Are you a veteran?", "value": SELF, "source": "profile", "evidence": "", "class": ""},
+    ]
+    rid = _add(mod, "Data Analyst", "Brightwater Freight", agent_ready={"sig": "x", "run": {}}, agent_answers=chosen)
+    c = mod.app.test_client()
+    it = c.get(f"/api/autoapply/item/{rid}", headers=H).get_json()
+    a = it["answers"]
+    assert [x["label"] for x in a["rows"]] == [x["label"] for x in chosen]
+    work, heard, crime, degree, vet = a["rows"]
+    assert work["flag"] == "best_guess" and work["from"] == "best_guess" and work["evidence"] == "you saved US work authorization"
+    assert heard["flag"] == "" and heard["from"] == "common_sense"
+    assert crime["flag"] == "agent" and crime["evidence"] == "nothing in your history"
+    assert degree["flag"] == "" and degree["from"] == "history" and degree["value"] == "Master's Degree"
+    assert vet["self_id"] and vet["held"] and vet["value"] == ""
+    assert SELF not in json.dumps(it)
+    assert a["files"] == [] and a["flagged"] == 2
+    row = next(x for x in c.get("/api/autoapply/board", headers=H).get_json()["tiles"]["waiting"] if x["id"] == rid)
+    assert row["answers_n"] == 5 and row["answers_check"] == 2
+    # the full list, once a run sends it, wins over the fallback
+    c.post("/api/autoapply/agent/ready", headers=H, json={"record_id": rid, "sig": "y", "answers": ANSWERS})
+    assert len(c.get(f"/api/autoapply/item/{rid}", headers=H).get_json()["answers"]["rows"]) == 6
+    # not waiting at Ready to send: no fallback either
+    other = _add(mod, "Engineer", "Larkspur Labs", agent_answers=chosen)
+    assert c.get(f"/api/autoapply/item/{other}", headers=H).get_json()["answers"] is None
+
+
 def test_the_panel_rendering_model_under_node():
     if not shutil.which("node"):
         pytest.skip("needs node")
