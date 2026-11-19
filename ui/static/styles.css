@@ -2134,21 +2134,35 @@ mark.jd-gap { text-decoration-color: var(--flag); }
    grouped by page; a line that deserves a look carries a small "!" and its reason under it in
    the flag tone. Same chrome as Steps; no new colour. */
 .bb-fill .bb-ans-flag { color: var(--flag); }
+/* Scoped to .ans-box: the memory page's .ans-list / .ans-row (later in this file) are a different
+   grammar (framed cards, flex rows) and used to win over these. */
 .ans-box { max-height: 40vh; overflow-y: auto; padding: 2px 0 6px; }
-.ans-pg { padding: 8px 0 2px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
-.ans-list { list-style: none; margin: 0; padding: 0; }
-.ans-row { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 5fr) minmax(0, 3fr); column-gap: 14px;
-  padding: 3px 0; font-size: 12.5px; line-height: 1.45; border-bottom: 1px solid var(--border); }
-.ans-row:last-child { border-bottom: 0; }
-.ans-q { color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
-.ans-v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
-.ans-f { color: var(--muted); font-size: 11.5px; min-width: 0; overflow-wrap: anywhere; padding-top: 1px; }
-.ans-mk { color: var(--flag); font-weight: 700; margin-right: 6px; }
-.ans-note { grid-column: 2 / -1; color: var(--flag); font-size: 11.5px; }
+.ans-box .ans-pg { padding: 8px 0 2px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.ans-box .ans-list { list-style: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: visible; }
+.ans-box .ans-row { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 5fr) minmax(0, 3fr); gap: 0 14px;
+  align-items: start; padding: 3px 0; font-size: 12.5px; line-height: 1.45; border-bottom: 1px solid var(--border); }
+.ans-box .ans-row + .ans-row { border-top: 0; }
+.ans-box .ans-row:last-child { border-bottom: 0; }
+.ans-box .ans-q { color: var(--ink-2); font-size: inherit; font-weight: 400; min-width: 0; overflow-wrap: anywhere; }
+.ans-box .ans-v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.ans-box .ans-f { color: var(--muted); font-size: 11.5px; min-width: 0; overflow-wrap: anywhere; padding-top: 1px; }
+.ans-box .ans-mk { color: var(--flag); font-weight: 700; margin-right: 6px; }
+.ans-box .ans-note { grid-column: 2 / -1; color: var(--flag); font-size: 11.5px; }
+.ans-box .ans-row.is-held .ans-v { color: var(--muted); }
 @media (max-width: 640px) {
-  .ans-row { grid-template-columns: minmax(0, 1fr); }
-  .ans-note { grid-column: 1; }
+  .ans-box .ans-row { grid-template-columns: minmax(0, 1fr); }
+  .ans-box .ans-note { grid-column: 1; }
 }
+/* The same list in an application's panel (Auto-apply): under "What will be sent", the lines to
+   check first, the rest behind "Show all N". No height cap: the panel scrolls. */
+.view-autoapply .aa-ans { margin-top: 22px; scroll-margin-top: 16px; outline: none; }
+.view-autoapply .aa-ans .aa-h-n { color: var(--faint); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.view-autoapply .aa-ans .aa-h-flag { margin-left: 10px; color: var(--flag); text-transform: none; letter-spacing: 0; font-weight: 600; }
+.view-autoapply .aa-ans-body { padding: 8px 15px 10px; }
+.view-autoapply .aa-ans-body .ans-box { max-height: none; overflow: visible; }
+.view-autoapply .aa-ans-more { margin: 6px 0 4px; padding: 0; font-size: 12.5px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; }
+.view-autoapply .aa-ans-more:hover { color: var(--ink); }
+.view-autoapply .aa-s .aa-tocheck { flex: none; font-size: 11.5px; font-weight: 600; color: var(--flag); }
 @media (max-width: 640px) { .act-step { grid-template-columns: 64px 14px minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) {
   .act-spin { animation: none; width: 8px; height: 8px; border: 0; background: var(--accent); }
