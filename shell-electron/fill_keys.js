@@ -14,16 +14,21 @@
 //   * each job has a wall-clock cap (KEYS_MS, SEARCH_MS) checked before every step;
 //   * each field is handled at most once per fill (a ref named twice is skipped), and a search
 //     runs at most MAX_QUERIES queries per field;
-//   * both always return what they did: {typed | picked, ..., timed_out, dead}.
+//   * both always return what they did: {typed | picked, ..., timed_out, dead}. ``dead`` (a call
+//     did not answer) only ends THIS job: both jobs are optional extras after the engine's fill,
+//     so the fill itself is never reported as stalled for them (a fill of 21 fields was thrown
+//     away four times over one search call, 2026-11-18). main.js reports the fields instead.
 // ``log`` (optional): one line per sub-step, a field's position in the list and the step's name
 // and time, never a label or a value. main.js passes it when SJ_AGENT_DEBUG=1.
 "use strict";
 
-const CALL_MS = 4000;          // one page or debugger call
+const CALL_MS = 2500;          // one page or debugger call (every page call here is synchronous)
 const KEYS_MS = 15000;         // all the date typing of one fill
-const SEARCH_MS = 20000;       // all the searches of one fill
+const SEARCH_MS = 30000;       // all the searches of one fill
 const CLOSE_MS = 3000;         // the close of one search, allowed even after SEARCH_MS
-const RESULTS_MS = 1500;       // a search's results, after Enter
+const RESULTS_MS = 4000;       // at most, for a search's results after Enter (it ends as soon as they show)
+const NONE_MS = 2000;          // a list that says it has nothing is believed after this long
+const IN_PAGE_MS = 1500;       // an in-page search the list did not react to is given up after this long
 const MAX_QUERIES = 4;
 const MAX_FIELDS = 8;
 
@@ -39,7 +44,7 @@ function limits(o) {
   o = o || {};
   const n = (v, d) => (Number(v) > 0 ? Number(v) : d);
   return { call: n(o.callMs, CALL_MS), keys: n(o.keysMs, KEYS_MS), search: n(o.searchMs, SEARCH_MS),
-           close: n(o.closeMs, CLOSE_MS), results: n(o.resultsMs, RESULTS_MS) };
+           close: n(o.closeMs, CLOSE_MS), results: n(o.resultsMs, RESULTS_MS), claim: n(o.claimMs, CLAIM_MS) };
 }
 
 // One runner per job: every step goes through ``step``, which stops everything when the job's
@@ -112,12 +117,24 @@ async function typeKeys(driver, keys, opts) {
 }
 
 // Search lists that filter only on a real Enter (Workday's Field of Study and Skills). For each
-// one the engine names ({ref, kind, queries, want | items, max}): ask the engine where to click
-// (the box, or the search box of its popup), click, type a query, Enter, let the engine pick the
-// best REAL option (searchChoice); the next query only when nothing fit. Then ONE close
-// (closeSearch), which also says how many choices really reached the page. Both lists are
-// optional: nothing that fits leaves them empty.
-// -> {picked, fields, left_open, timed_out, dead, ms}
+// one the engine names ({ref, kind, queries, want | items, max, label}), per query: FIRST the
+// search from inside the page (searchInPage: the query set into the prompt's own input and Enter
+// sent to it, no click and no debugger keys); if the list did not react, real input instead:
+// ask the engine where to click (the box, or the search box of its popup), click, give the page
+// up to CLAIM_MS to bring up a popup (the engine claims it; none means an inline list, typed
+// into the box itself), type the query, Enter. Then the engine presses the best REAL option
+// (searchChoice); the next query only when nothing fit. Once the page has shown which way it
+// takes a search, the other is not tried again in this fill. Then the close, step by step (Done, Escape, a press outside, and one real
+// Escape key if the engine asks for it), and closeSearch for what really reached the page.
+// Every page call here is synchronous on the page side; all the waiting is done HERE, with this
+// process's timers (a page with a popup open did not run its own, 2026-11-18).
+// A problem in this optional job is never the fill's problem: the fields it could not finish
+// come back in ``trouble`` (their labels, for the fill's ``left`` list; never logged).
+// -> {picked, fields, left_open, trouble: [label], timed_out, dead, ms}
+const CLAIM_MS = 1000;         // how long a click's popup may take to show
+const POLL_MS = 150;
+const TOOK_MS = 1000;          // how long a pressed choice may take to show
+const CLOSE_STEP_MS = 250;
 async function searchPicks(driver, ops, opts) {
   const L = limits(opts);
   const log = opts && opts.log;
@@ -129,45 +146,122 @@ async function searchPicks(driver, ops, opts) {
   };
   const seen = new Set();
   const list = (ops || []).filter((o) => o && o.ref && !seen.has(o.ref) && seen.add(o.ref)).slice(0, MAX_FIELDS);
-  const out = { picked: 0, fields: 0, left_open: 0, timed_out: false, dead: false, ms: 0 };
+  const out = { picked: 0, fields: 0, left_open: 0, trouble: [], timed_out: false, dead: false, ms: 0 };
+  let inPage = (opts && opts.inPage) || "";         // "" not known yet, "yes" the page takes it, "no" real keys only
+  const troubled = (op) => { if (op.label && !out.trouble.includes(op.label)) out.trouble.push(op.label); };
   for (let i = 0; i < list.length; i++) {
     if (run.st.dead || run.left() <= 0) { run.st.timed_out = true; break; }
     const op = list[i], ref = JSON.stringify(op.ref), f = "field " + (i + 1);
     out.fields++;
-    let got = 0, started = false;
+    let got = 0, started = false, popup = false;
     const queries = (op.queries || []).slice(0, MAX_QUERIES);
     for (let q = 0; q < queries.length; q++) {
       if (run.st.dead || run.left() <= 0 || got >= (op.max || 1)) break;
       const w = f + " query " + (q + 1) + " ";
       const box = await run.step(w + "target", () => driver.evalJs(`window.TailorAutofill.searchTarget(${ref})`));
-      if (!box || !(box.w > 0)) break;                  // gone, or left alone (its popup would not close before)
+      if (!box || !(box.w > 0)) break;                  // gone, or left alone (a popup would not close before)
       started = true;
-      await run.step(w + "press", () => driver.send("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 }));
-      await run.step(w + "release", () => driver.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 }));
-      await run.step(w + "focus", () => driver.evalJs(`window.TailorAutofill.searchFocus(${ref})`));
-      await key(w + "clear", "Backspace", 8);
-      if (!(await typeText(run, w + "type", queries[q]))) break;
-      await key(w + "enter", "Enter", 13);
-      if (run.st.dead) break;
-      await sleep(Math.max(0, Math.min(L.results, run.left())));
+      popup = popup || !!box.popup;
+      const query = JSON.stringify(String(queries[q]));
+      // the popup may render late: look for it for up to L.claim, on a field's first query only
+      const awaitPopup = async () => {
+        const t0 = Date.now(), waitFor = popup || q > 0 ? 0 : Math.min(L.claim, Math.max(0, run.left()));
+        while (!popup && !run.st.dead && Date.now() - t0 < waitFor) {
+          await sleep(POLL_MS);
+          const look = await run.step(w + "look", () => driver.evalJs(`window.TailorAutofill.searchFocus(${ref}, false)`));
+          if (look && look.popup) popup = true;
+        }
+      };
+      // The results of a query: polled until the list has changed and holds choices (twice the
+      // same), or says it has none for long enough ("No Items." can flash before results come),
+      // or L.results is up. -> the last look, or null.
+      const awaitResults = async (needChange) => {
+        const t0 = Date.now();
+        let last = null, same = 0, n = -1;
+        while (!run.st.dead && run.left() > 0) {
+          await sleep(Math.min(POLL_MS, L.results));
+          const seen = await run.step(w + "results", () => driver.evalJs(`window.TailorAutofill.searchSeen(${ref})`));
+          if (!seen) break;
+          last = seen;
+          const age = Date.now() - t0;
+          same = seen.options === n ? same + 1 : 0; n = seen.options;
+          if ((seen.changed || !needChange) && seen.options > 0 && same >= 1) break;
+          if (age >= L.results) break;
+          if (seen.changed && seen.options === 0 && age >= Math.min(NONE_MS, L.results)) break;
+          if (needChange && !seen.changed && age >= Math.min(IN_PAGE_MS, L.results)) break;
+        }
+        return last;
+      };
+      // 1. the search from inside the page (no click, no debugger keys): the query set into the
+      //    prompt's own input, Enter on it. Kept only if the list answered (it changed).
+      let answered = false;
+      if (inPage !== "no") {
+        let r = await run.step(w + "in-page", () => driver.evalJs(`window.TailorAutofill.searchInPage(${ref}, ${query})`));
+        if (r && !r.popup && !popup) {
+          await awaitPopup();
+          if (popup) r = await run.step(w + "in-page popup", () => driver.evalJs(`window.TailorAutofill.searchInPage(${ref}, ${query})`));
+        }
+        if (r && r.popup) popup = true;
+        const seen = r ? await awaitResults(true) : null;
+        answered = !!(seen && seen.changed);
+        if (answered) inPage = "yes";
+        else if (inPage !== "yes") { inPage = "no"; if (log) log("searchPicks: " + w + "the in-page search did not register; real keys from here on"); }
+        if (run.st.dead) break;
+      }
+      // 2. real input through the debugger, when the page did not take the in-page search
+      if (!answered && inPage !== "yes") {
+        const at = await run.step(w + "target", () => driver.evalJs(`window.TailorAutofill.searchTarget(${ref})`));
+        if (!at || !(at.w > 0)) break;
+        await run.step(w + "press", () => driver.send("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 }));
+        await run.step(w + "release", () => driver.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "left", clickCount: 1 }));
+        popup = popup || !!at.popup;
+        await awaitPopup();
+        const foc = await run.step(w + "focus", () => driver.evalJs(`window.TailorAutofill.searchFocus(${ref}, true)`));
+        if (foc && foc.popup) popup = true;
+        if (log && foc && !foc.popup) log("searchPicks: " + w + "no popup claimed; the page added: " + ((foc.added || []).join(" ") || "nothing"));
+        if (run.st.dead) break;
+        await key(w + "clear", "Backspace", 8);
+        if (!(await typeText(run, w + "type", queries[q]))) break;
+        await key(w + "enter", "Enter", 13);
+        if (run.st.dead) break;
+        await awaitResults(false);
+      }
       const spec = JSON.stringify({ kind: op.kind, want: op.want || [], items: op.items || [] });
-      const r = await run.step(w + "choice", () => driver.evalJs(`window.TailorAutofill.searchChoice(${ref}, ${spec})`));
+      let r = await run.step(w + "choice", () => driver.evalJs(`window.TailorAutofill.searchChoice(${ref}, ${spec})`));
+      const t1 = Date.now();
+      let again = false;
+      while (r && r.pending && !run.st.dead && Date.now() - t1 < TOOK_MS) {
+        await sleep(POLL_MS);
+        // half way with nothing to show: the row itself is pressed, once
+        const retry = !again && Date.now() - t1 >= TOOK_MS / 2;
+        if (retry) again = true;
+        r = await run.step(w + "took", () => driver.evalJs(`window.TailorAutofill.searchTook(${ref}, ${retry})`));
+      }
       if (r && r.ok) got++;
     }
     if (!started) continue;
-    // ONE close, also when the time is up (a list is never left open on purpose); never asked
-    // of a page that stopped answering.
-    const c = await run.step(f + " close", () => driver.evalJs(`(async () => { const el = document.querySelector(${refSel(op.ref)}); if (el && el.value) {
-        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; set.call(el, "");
-        el.dispatchEvent(new Event("input", { bubbles: true })); }
-      return window.TailorAutofill.closeSearch(${ref}); })()`), L.close);
+    // The close: always tried, also when the time is up (a list is never left open on purpose),
+    // unless the page stopped answering. Each step is one short page call; the waits are ours.
+    let state = null;
+    for (let stepNo = 0; stepNo < 3 && !run.st.dead; stepNo++) {
+      await run.step(f + " close step " + stepNo, () => driver.evalJs(`window.TailorAutofill.searchClose(${ref}, ${stepNo})`), L.close);
+      await sleep(CLOSE_STEP_MS);
+      state = await run.step(f + " close look", () => driver.evalJs(`window.TailorAutofill.searchClose(${ref}, -1)`), L.close);
+      if (state && !state.open) break;
+    }
+    if (state && state.open && state.real_escape && !run.st.dead) {
+      await run.step(f + " close real escape", () => driver.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }), L.close);
+      await run.step(f + " close real escape", () => driver.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }), L.close);
+      await sleep(CLOSE_STEP_MS);
+    }
+    const c = await run.step(f + " end", () => driver.evalJs(`window.TailorAutofill.closeSearch(${ref})`), L.close);
     // what really reached the page once the list (or its popup) was closed
     if (c && typeof c.picked === "number") out.picked += c.picked;
-    if (!c || c.ok === false) out.left_open++;
+    if (!c || c.ok === false) { out.left_open++; troubled(op); }
   }
   out.timed_out = run.st.timed_out; out.dead = run.st.dead; out.ms = run.ms();
   if (log) log("searchPicks: picked " + out.picked + " in " + out.fields + " of " + list.length + " fields, left open " + out.left_open
-               + (out.timed_out ? ", out of time" : "") + (out.dead ? ", the page did not answer" : "") + " " + out.ms + "ms");
+               + (out.timed_out ? ", out of time" : "") + (out.dead ? ", a page call did not answer" : "") + " " + out.ms + "ms");
   return out;
 }
 

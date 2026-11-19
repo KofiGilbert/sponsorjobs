@@ -783,3 +783,129 @@ def test_shell_real_input_jobs_always_return():
     never answers, a slow page, nothing fitting and a field named twice all return, bounded."""
     out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_fill_keys.js")], capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stderr[-2000:]
+
+
+# The second real run (2026-11-18): no hang, 21 fields filled, and then the search's ``focus``
+# call never answered, the fill was reported as stalled, and the agent reloaded and threw the 21
+# fields away, four times. Nothing claimed the real popup either.
+def _no_claim(lines):
+    return [l for l in lines if "no popup claimed" in l]
+
+
+def test_workday_late_portal_popup_is_claimed_and_closed(tmp_path):
+    # ?late=1: the popup shows 400 ms after the click, in a portal that is neither role=dialog
+    # nor aria-modal (data-automation-id=promptSearchPopup)
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS, query="?late=1")
+    v, s = r["values"], r["search"]
+    assert v["fields"] == [["Business Administration/Management"], ["Economics"]] and v["skills"] == ["Excel", "SQL"]
+    assert s["picked"] == 4 and s["left_open"] == 0 and s["trouble"] == [] and not s["dead"]
+    assert v["open"] is False
+    assert _no_claim(s["lines"]) == [], s["lines"]              # every click's popup was claimed
+    assert any("look" in l for l in s["lines"])                  # ... after being waited for
+
+
+def test_workday_no_popup_falls_back_to_typing_in_the_control(tmp_path):
+    # ?inline=1: no popup at all; the list is a plain box, the control's own input takes the query
+    steps = [dict(st, js=_xp_timed()) if st.get("as") == "rep" else st for st in XP_ONE_PASS]   # with the debug trace on
+    r = run(tmp_path, XP_PAGE, steps, query="?inline=1")
+    v, s = r["values"], r["search"]
+    assert len(_no_claim(s["lines"])) >= 3, s["lines"]           # said so in the debug lines, with what the page added
+    assert any("the page added: div" in l for l in _no_claim(s["lines"]))
+    assert v["fields"] == [["Business Administration/Management"], ["Economics"]] and v["skills"] == ["Excel", "SQL"]
+    assert s["picked"] == 4 and s["left_open"] == 0 and s["trouble"] == []
+    assert v["open"] is False
+    # debug lines carry tags and ids only: no label, no query, no option text
+    assert not any(x in l for l in s["lines"] for x in ("Field of Study", "Business", "Economics", "Excel", "Skills"))
+
+
+def test_workday_page_timers_frozen_under_a_popup_still_returns_and_closes(tmp_path):
+    # ?freeze=1: the page's own timers never fire while a popup is open
+    r = run(tmp_path, XP_PAGE, [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _xp_timed()},
+        {"do": "eval", "as": "after_engine", "js": "window.fxValues()"},
+        {"do": "shellKeys", "from": "rep", "as": "keys"},
+        {"do": "shellSearch", "from": "rep", "as": "search"},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "read", "js": "(async () => { const t = performance.now(); await window.TailorAutofill.extractFormAsync({onlyEmpty: true, budgetMs: 4000});"
+                                           " return Math.round(performance.now() - t); })()"},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+    ], query="?freeze=1")
+    rep, v, s = r["rep"], r["values"], r["search"]
+    assert r["after_engine"]["popupOpens"] >= 1 and r["after_engine"]["open"] is False     # opened, and closed, by the engine
+    assert rep["left_open"] == 0 and rep["wall_ms"] < XP_BUDGET_MS + 2000 and not rep["timed_out"], rep["wall_ms"]
+    assert r["keys"]["landed"] == 7
+    assert v["fields"] == [["Business Administration/Management"], ["Economics"]] and v["skills"] == ["Excel", "SQL"]
+    assert s["left_open"] == 0 and not s["dead"] and v["open"] is False
+    assert r["read"] < 6000 and r["values2"]["open"] is False
+
+
+def test_workday_inline_lists_of_the_earlier_fixture_through_the_shell_search(tmp_path):
+    # the 2026-11-16 page (a list portalled to <body> that closes only on a press away from it)
+    r = run(tmp_path, "workday_experience.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": _xp_fill()},
+        {"do": "shellKeys", "from": "rep", "as": "keys"},
+        {"do": "shellSearch", "from": "rep", "as": "search"},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "fos", "js": "window.fx.fos.map((p) => p.value)"},
+        {"do": "eval", "as": "skills", "js": "window.fx.skills.value"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+    ])
+    s = r["search"]
+    assert r["fos"] == [["Business Administration/Management"], ["Economics"]] and r["skills"] == ["Excel", "SQL"]
+    assert s["picked"] == 4 and s["left_open"] == 0 and s["trouble"] == [] and r["values"]["open"] is False
+    assert "Field of Study" not in r["left"]
+
+
+def test_workday_a_search_left_open_names_its_field_in_left(tmp_path):
+    # the search started (searchTarget) and never finished: the field is named until it holds a choice
+    js = ("(() => { const T = window.TailorAutofill; const el = document.querySelector('[data-automation-id=monikerSearchBox]');"
+          " return !!T.searchTarget(T.fieldRef(el)); })()")
+    done = ("(() => { const T = window.TailorAutofill; const el = document.querySelector('[data-automation-id=monikerSearchBox]');"
+            " return T.closeSearch(T.fieldRef(el)); })()")
+    r = run(tmp_path, XP_PAGE, [
+        {"do": "inject"},
+        {"do": "eval", "as": "before", "js": "window.TailorAutofill.leftover()"},
+        {"do": "eval", "as": "started", "js": js},
+        {"do": "eval", "as": "during", "js": "window.TailorAutofill.leftover()"},
+        {"do": "eval", "as": "ended", "js": done},
+        {"do": "eval", "as": "after", "js": "window.TailorAutofill.leftover()"},
+    ])
+    assert "Field of Study" not in r["before"] and r["started"] is True
+    assert "Field of Study" in r["during"]                       # optional, but its search did not finish
+    assert r["ended"]["ok"] is True and "Field of Study" not in r["after"]
+
+
+def test_shell_never_calls_a_fill_stalled_over_the_dates_or_a_list_search():
+    """The date typing and the list search are extras after the engine's fill: whatever happens in
+    them, the fill keeps its counts; the field goes into ``left``. Only the engine going silent, or
+    a page that no longer answers a plain read, is a stall."""
+    main = (ROOT / "shell-electron" / "main.js").read_text(encoding="utf-8")
+    fill = main[main.index("async function runAutoApplyOnPane("):main.index("// ------------------------------------------------------------- multi-page forms")]
+    part = fill[fill.index("const kr = await typeKeyOps"):fill.index('lap("engine", "reading the form")')]
+    assert " cut = " not in part and "stalled" not in part.replace("timed out or stalled", "")
+    assert "searchTrouble = sr.trouble" in part and "left.concat(searchTrouble)" in fill
+    assert 'stalled: r.stalled && !alive' in fill                # a silent form read: a stall only if the plain read is silent too
+    keys = (ROOT / "shell-electron" / "fill_keys.js").read_text(encoding="utf-8")
+    assert "async" not in "".join(l for l in keys.splitlines() if "TailorAutofill." in l)   # no page call awaits a page-side wait
+
+
+@pytest.mark.parametrize("query", ["?softenter=1", "?softenter=1&inline=1", "?softenter=1&late=1"])
+def test_workday_in_page_search_needs_no_click_and_no_debugger_keys(tmp_path, query):
+    """Where the page takes a script's Enter on the prompt's own input, the search runs wholly in
+    the page (value set natively, Enter on the input): no real click, no real key, same picks."""
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS, query=query)
+    v, s = r["values"], r["search"]
+    assert v["fields"] == [["Business Administration/Management"], ["Economics"]] and v["skills"] == ["Excel", "SQL"], s["lines"]
+    assert s["picked"] == 4 and s["left_open"] == 0 and s["trouble"] == [] and v["open"] is False
+    assert any("in-page" in l for l in s["lines"])
+    assert not any(x in l for l in s["lines"] for x in (" press ", " release ", " type ", " enter ", "did not register")), s["lines"]
+
+
+def test_workday_in_page_search_that_does_not_register_falls_back_to_real_keys(tmp_path):
+    r = run(tmp_path, XP_PAGE, XP_ONE_PASS)                     # this page ignores a script's Enter
+    lines = r["search"]["lines"]
+    assert sum(1 for l in lines if "did not register" in l) == 1   # found out once, on the first query
+    assert sum(1 for l in lines if " in-page " in l) <= 2 and any(" type " in l for l in lines)
+    assert r["values"]["fields"] == [["Business Administration/Management"], ["Economics"]]

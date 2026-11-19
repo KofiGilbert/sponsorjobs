@@ -129,6 +129,8 @@ function fillLogLine(rep) {
                  "from_memory=" + (c.from_memory || 0), "opens=" + (c.opens || 0),
                  "total_ms=" + total];
   if (c.left_open) parts.push("left_open=" + c.left_open);      // popups of ours that would not close
+  if (c.keys_cut) parts.push("keys_cut=1");                    // the date typing did not finish
+  if (c.search_cut) parts.push("search_cut=1");                // a list search did not finish (its field is in ``left``)
   for (const k of ["payload", "engine", "keys", "search", "extract", "plan", "ops", "leftover"]) if (ms[k] != null) parts.push(k + "_ms=" + ms[k]);
   if (r.timed_out) parts.push("timed_out=" + (r.timed_out_phase || "yes") + (r.stalled ? " stalled" : ""));
   return parts.join(" ");

@@ -841,7 +841,7 @@ async function typeKeyOps(wc, keys, capMs) {
   finally { release(); }
 }
 async function searchPicks(wc, ops, capMs) {
-  const none = { picked: 0, fields: 0, left_open: 0, timed_out: false, dead: false, ms: 0 };
+  const none = { picked: 0, fields: 0, left_open: 0, trouble: [], timed_out: false, dead: false, ms: 0 };
   if (!ops || !ops.length) return none;
   const release = acquireDebugger(wc);
   if (!release) return none;
@@ -954,6 +954,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     const fillExpr = (budgetMs) => (havePayload
       ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
     const pres = [];
+    let searchTrouble = [];                              // labels of lists whose search did not finish
     if (havePayload) {
       try { pres.push(await run("filling the page", "engine", (b) => wc.executeJavaScript(fillExpr(b), true), beatMain)); } catch (e) { /* fill what we can below */ }
       tally(pres[0]);
@@ -968,15 +969,19 @@ async function runAutoApplyOnPane(recordId, opts) {
         // a typed date counts as filled only when the page holds it (the engine reads it back)
         const kr = await typeKeyOps(wc, pres[0].keys, inputRoom());
         pres[0].filled = (pres[0].filled || 0) + kr.landed;
-        if (kr.timed_out) cut = cut || { phase: "typing the dates", stalled: kr.dead };
+        // Typing the dates and searching a list are extras after the engine's own fill: a
+        // problem in them is counted (and the field named in ``left``), and NEVER makes the fill
+        // timed out or stalled. Only the engine going silent is a stall.
+        if (kr.timed_out) counts.keys_cut = 1;
         lap("keys", "filling the page");
       }
-      if (pres[0] && pres[0].searches && pres[0].searches.length && !(cut && cut.stalled) && inputRoom() >= 1000) {
+      if (pres[0] && pres[0].searches && pres[0].searches.length && inputRoom() >= 1000) {
         lap("engine", "searching a list");
         const sr = await searchPicks(wc, pres[0].searches, inputRoom());
         pres[0].filled = (pres[0].filled || 0) + sr.picked;
         counts.left_open = (counts.left_open || 0) + sr.left_open;
-        if (sr.timed_out) cut = cut || { phase: "searching a list", stalled: sr.dead };
+        if (sr.timed_out) counts.search_cut = 1;
+        searchTrouble = sr.trouble || [];
         lap("search", "filling the page");
       }
     }
@@ -1006,7 +1011,17 @@ async function runAutoApplyOnPane(recordId, opts) {
         return [];
       }
       const r = await fillBudget.runPhase({ name: "reading the form", capMs, stallMs: C.stall, pollMs: C.poll, graceMs: 0, start: () => start(extract()), beat });
-      if (r.timedOut) { cut = cut && cut.stalled ? cut : { phase: "reading the form", stalled: r.stalled }; return []; }
+      if (r.timedOut) {
+        // The read with open dropdowns did not come back. That is a stall only if the page no
+        // longer answers at all: ask it for the plain read (no waits on the page side). If that
+        // answers, the fill carries on with those fields; a fill is never thrown away because
+        // the slower read ran out of time.
+        const plain = await fillKeys.capped(start("window.TailorAutofill.extractForm({ onlyEmpty: true })"), 3000);
+        const alive = plain !== fillKeys.TIMED_OUT && plain != null;
+        if (debugLine) debugLine("readForm: the read with dropdowns " + (r.stalled ? "went silent" : "ran out of time") + "; the plain read " + (alive ? "answered" : "did not answer"));
+        cut = cut && cut.stalled ? cut : { phase: "reading the form", stalled: r.stalled && !alive };
+        return alive && Array.isArray(plain) ? plain : [];
+      }
       return r.value || [];
     };
     let fields = await readForm((expr) => wc.executeJavaScript(expr, true), beatMain);
@@ -1091,7 +1106,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     // What is still blank and needs the person, across the page and its frames.
     let left = (await wc.executeJavaScript("window.TailorAutofill.leftover()", true)) || [];
     for (const ctx of liveFrames) left = left.concat((await fr.eval(ctx, "window.TailorAutofill.leftover()")) || []);
-    left = [...new Set(left)].slice(0, 60);
+    left = [...new Set(left.concat(searchTrouble))].slice(0, 60);
     // (the agent only) What this fill set and where each value came from, for the Review answers
     // list at Ready to send. Kept in the shell: never in the fill report, a log or a model call.
     let answers = [];

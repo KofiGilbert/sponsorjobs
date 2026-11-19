@@ -30,7 +30,15 @@
                   nothing) is on the page the whole time
        ?sep=1     a typed date is kept outside the box: the box reads back empty, the text beside
                   it shows "03" / "2026" and the hidden text says "current value is 03/2026"
-       ?nokeys=1  the date sections take no keys at all -->
+       ?nokeys=1  the date sections take no keys at all
+       ?late=1    the popup shows 400 ms after the click, in a portal at the end of the page that
+                  is neither role=dialog nor aria-modal (data-automation-id=promptSearchPopup)
+       ?freeze=1  while a popup is open the page's own timers never fire (what the real page
+                  appeared to do: every page call that waited on a timer there never came back)
+       ?inline=1  no popup at all: the list is a plain box under the control, the control's own
+                  input takes the query (filtered on a real Enter), a press elsewhere closes it
+       ?softenter=1  a script's Enter on the search box runs the search too (what other tools
+                  that drive Workday's prompts rely on; combine with the variants above) -->
 <div id="page">
 <h3>My Experience</h3>
 <div id="work" role="group" aria-labelledby="wh"><h4 id="wh">Work Experience</h4><div id="workList"></div>
@@ -42,7 +50,11 @@
 </div>
 <script>
   const flag = (k) => new RegExp("[?&]" + k + "=1").test(location.search);
-  const NODONE = flag("nodone"), STUCK = flag("stuck"), MODAL = flag("modal"), SEP = flag("sep"), NOKEYS = flag("nokeys");
+  const NODONE = flag("nodone"), STUCK = flag("stuck"), MODAL = flag("modal"), SEP = flag("sep"), NOKEYS = flag("nokeys"),
+        LATE = flag("late"), FREEZE = flag("freeze"), INLINE = flag("inline"), SOFT = flag("softenter");
+  const realTimeout = window.setTimeout.bind(window);
+  let popupsUp = 0;
+  if (FREEZE) window.setTimeout = (fn, ms) => (popupsUp > 0 ? 0 : realTimeout(fn, ms));     // frozen while a popup is open
   let seq = 0;
   const h = (tag, attrs, kids) => { const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs || {})) { if (k === "text") e.textContent = v; else e.setAttribute(k, v); }
@@ -103,30 +115,52 @@
     const close = () => {
       if (!overlay || STUCK) return;
       for (const o of ticked) if (!chosen.includes(o)) { chosen.push(o); pills.appendChild(h("li", { role: "option", "data-automation-id": "selectedItem", text: o })); }
-      overlay.remove(); overlay = dialog = search = ul = null;
+      overlay.remove(); overlay = dialog = search = ul = null; popupsUp--;
       document.getElementById("page").removeAttribute("aria-hidden");
     };
+    // ?inline=1: a plain list under the control, no popup
+    let inline = null;
+    const inlineShow = () => {
+      if (inline) inline.remove();
+      inline = h("div", { class: "inline-list" }, [h("ul", { role: "listbox", "aria-label": cfg.label + " options" })]);
+      for (const o of list) {
+        const li = h("li", { role: "option", text: o });
+        li.addEventListener("click", () => { if (!chosen.includes(o)) { chosen.push(o); pills.appendChild(h("li", { role: "option", "data-automation-id": "selectedItem", text: o })); } });
+        inline.firstChild.appendChild(li);
+      }
+      document.body.appendChild(inline);
+    };
+    if (INLINE) {
+      input.addEventListener("mousedown", () => { window.fx.opens++; list = cfg.options.slice(0, 8); inlineShow(); });
+      input.addEventListener("keydown", (e) => {
+        if ((e.isTrusted || SOFT) && e.key === "Enter") { const q = input.value.toLowerCase(); list = cfg.options.filter((o) => o.toLowerCase().includes(q)); inlineShow(); }
+      });
+      document.addEventListener("mousedown", (e) => { if (inline && !box.contains(e.target) && !inline.contains(e.target)) { inline.remove(); inline = null; } });
+      return { get value() { return chosen.slice(); }, get open() { return !!inline; }, input };
+    }
     const open = () => {
       if (overlay) return;
-      window.fx.opens++;
+      if (LATE && !open.due) { open.due = true; realTimeout(() => { open(); open.due = false; }, 400); return; }
+      window.fx.opens++; popupsUp++;
       list = cfg.options.slice(0, 8);
       search = h("input", { type: "text", "data-uxi-widget-type": "selectinput", "data-automation-id": "searchBox",
                             placeholder: "Search", "aria-label": "Search", autocomplete: "off", id: "selectInputId-" + id });
       ul = h("ul", { role: "listbox", "aria-label": "Options Expanded" });
       const kids = [h("h2", { text: cfg.label }), search, ul];
       if (!NODONE) { const done = h("button", { type: "button", text: "Done" }); done.addEventListener("click", close); kids.push(done); }
-      dialog = h("div", { role: "dialog", "aria-modal": "true", "aria-label": cfg.label, "data-automation-id": "popup", class: "wd-dialog" }, kids);
+      dialog = h("div", LATE ? { "data-automation-id": "promptSearchPopup", class: "wd-dialog" }
+        : { role: "dialog", "aria-modal": "true", "aria-label": cfg.label, "data-automation-id": "popup", class: "wd-dialog" }, kids);
       overlay = h("div", { class: "wd-overlay" }, [dialog]);
       document.body.appendChild(overlay);
       document.getElementById("page").setAttribute("aria-hidden", "true");
       renderList();
       search.addEventListener("keydown", (e) => {
-        if (!e.isTrusted) return;                          // a script's keys do nothing here
+        if (!e.isTrusted && !SOFT) return;                 // a script's keys do nothing here (unless ?softenter=1)
         if (e.key === "Enter") { const q = search.value.toLowerCase(); list = cfg.options.filter((o) => o.toLowerCase().includes(q)); renderList(); }
         if (e.key === "Escape" && NODONE) close();
       });
       if (NODONE) overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
-      setTimeout(() => { if (search) search.focus(); }, 30);
+      realTimeout(() => { if (search) search.focus(); }, 30);
     };
     input.addEventListener("mousedown", open);
     document.addEventListener("focusin", (e) => {          // the focus trap of a modal
@@ -193,7 +227,7 @@
     degrees: Object.keys(window.fx).filter((k) => /^degree/.test(k)).map((k) => window.fx[k].value),
     fields: window.fx.fos.map((p) => p.value), skills: window.fx.skills.value,
     popupOpens: window.fx.opens, bystanderPresses: window.fx.bystanderPresses || 0,
-    open: !!document.querySelector(".wd-overlay, [data-automation-id=activeListContainer], .wd-popup"),
+    open: !!document.querySelector(".wd-overlay, .inline-list, [data-automation-id=activeListContainer], .wd-popup"),
   });
 </script>
 </body></html>
