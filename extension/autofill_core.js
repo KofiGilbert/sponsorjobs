@@ -2913,24 +2913,54 @@ function qsaSafe(sel, root) {
     return d;
   }
   const pageVisible = () => { try { return document.visibilityState !== "hidden"; } catch (e) { return true; } };
-  // One date segment, set in the page. A segment that holds something else is emptied first
-  // (the native setter with "" and an input event of type deleteContentBackward: a plain input
-  // event did not always clear the year on the real page).
+  // One date segment, committed in the page (measured on Workday's CC-305 date at Uline,
+  // 2026-11-19): a plain input and change left Workday's own state of the segment empty while the
+  // box showed the digits, so the form said "Enter today's date". What commits it, in order:
+  // focus; the native setter with "" and an input event of type deleteContentBackward; the
+  // native setter with the value and an input event of type insertText carrying it; change;
+  // blur; a bubbling focusout. (commitSpins puts 300 ms between segments.)
   function setSpin(sp, text) {
     const view = viewOf(sp);
     const set = Object.getOwnPropertyDescriptor((view.HTMLInputElement || HTMLInputElement).prototype, "value").set;
-    try { if (sp.focus) sp.focus(); } catch (e) { /* fine */ }
-    if (String(sp.value || "") !== "" || spinDigits(sp)) {
-      set.call(sp, "");
-      try { sp.dispatchEvent(new (view.InputEvent || InputEvent)("input", { bubbles: true, inputType: "deleteContentBackward" })); }
+    const input = (type, data) => {
+      try { sp.dispatchEvent(new (view.InputEvent || InputEvent)("input", Object.assign({ bubbles: true, inputType: type }, data != null ? { data } : {}))); }
       catch (e) { sp.dispatchEvent(new (view.Event || Event)("input", { bubbles: true })); }
-      sp.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
-    }
+    };
+    try { if (sp.focus) sp.focus(); } catch (e) { /* fine */ }
+    set.call(sp, "");
+    input("deleteContentBackward");
     set.call(sp, String(text));
-    sp.dispatchEvent(new (view.Event || Event)("input", { bubbles: true }));
+    input("insertText", String(text));
     sp.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
     try { if (sp.blur) sp.blur(); } catch (e) { /* fine */ }
+    try { sp.dispatchEvent(new (view.FocusEvent || FocusEvent)("focusout", { bubbles: true })); }
+    catch (e) { sp.dispatchEvent(new (view.Event || Event)("focusout", { bubbles: true })); }
   }
+  // The segments of one date, in order, 300 ms apart (the measured pace).
+  const SPIN_GAP_MS = 300;
+  async function commitSpins(parts) {
+    for (let i = 0; i < parts.length; i++) {
+      if (i) await sleep(SPIN_GAP_MS);
+      setSpin(parts[i].el, parts[i].text);
+    }
+  }
+  // The page's own date error next to a date group ("Enter today's date", "Invalid Date"): a
+  // [data-automation-id=errorMessage] or role=alert text in the group or in the boxes around it,
+  // up to the first one that holds another date. "" when there is none.
+  const DATE_ERR_RE = /date|invalid|required|enter|valid/i;
+  function dateError(group) {
+    let box = group;
+    for (let i = 0; box && i < 4; i++, box = box.parentElement) {
+      if (i && qsaSafe(SPIN_SEL, box).some((x) => !group.contains(x))) break;      // another date's area
+      for (const e of qsaSafe("[data-automation-id='errorMessage'], [role='alert']", box)) {
+        const t = cleanText(e.textContent || "");
+        if (t && DATE_ERR_RE.test(t) && boxShown(e)) return t.slice(0, 120);
+      }
+    }
+    return "";
+  }
+  // Groups re-committed once already (a page whose error does not go away is not tried forever).
+  const _recommitted = new WeakSet();
   // Did a typed date land? The digits, in order, anywhere the group keeps them, with whatever
   // separators or padding the page uses ("3", "2026" is there in "03/2026", "current value is
   // 03/2026", "3 2026" and "032026"). Never a digit run that is part of a longer number.
@@ -2951,7 +2981,7 @@ function qsaSafe(sel, root) {
   let _keyGroups = [];
   // A month / year (/ day) date control: Workday's spinbutton trio, a native date or month input,
   // or one text box that names its format ("MM/YYYY").
-  function fillDate(group, when, label) {
+  async function fillDate(group, when, label) {
     if (!when || !when.y) return false;
     const mm = when.m ? String(when.m) : "", yy = String(when.y);
     const single = tagOf(group) === "INPUT";
@@ -2973,11 +3003,25 @@ function qsaSafe(sel, root) {
         const v = part === "m" ? mm : part === "y" ? yy : part === "d" ? (when.d ? String(when.d) : "") : "";
         if (v) wanted.push({ el: sp, text: v, want: { memo: "keys:" + v } });
       }
-      if (!wanted.length || spins.every((sp) => spinDigits(sp))) return false;
+      if (spins.every((sp) => spinDigits(sp))) {
+        // (2026-11-19) A complete date is the person's and left alone, unless the page says the
+        // date next to it is wrong while the boxes show digits ("Enter today's date": the page's
+        // own state never took them). Then the digits it shows are committed once, as they are.
+        const err = dateError(group);
+        if (!err || _recommitted.has(group)) return false;
+        _recommitted.add(group);
+        await commitSpins(spins.map((sp) => ({ el: sp, text: spinDigits(sp) })));
+        trace(group, "date-recommit");
+        const after = dateError(group);
+        if (after) return false;
+        _gen++; tick(1);
+        return true;
+      }
+      if (!wanted.length) return false;
       const todo = wanted.filter((p) => Number(spinDigits(p.el) || NaN) !== Number(p.text));
       if (!todo.length) return false;
       if (todo.every((p) => missedBefore(p.el, p.want))) { _beat.skipped += todo.length; return false; }
-      for (const p of todo) setSpin(p.el, p.text);
+      await commitSpins(todo);
       const left = todo.filter((p) => Number(spinDigits(p.el) || NaN) !== Number(p.text));
       trace(group, "date-set-" + (todo.length - left.length) + "-of-" + todo.length);
       if (!left.length) { _gen++; tick(1); return true; }
@@ -3243,10 +3287,10 @@ function qsaSafe(sel, root) {
     }
     // (a date typed by the shell is counted by keysLanded once it is really there)
     const from = dateGroup(sec.box, HIST_LABELS.from);
-    if (from && fillDate(from, item.start, "From") === true) { n++; logFill(from, "", dateWords(item.start), "From"); }
+    if (from && (await fillDate(from, item.start, "From")) === true) { n++; logFill(from, "", dateWords(item.start), "From"); }
     if (!item.current) {
       const to = dateGroup(sec.box, HIST_LABELS.to);
-      if (to && fillDate(to, item.end, "To") === true) { n++; logFill(to, "", dateWords(item.end), "To"); }
+      if (to && (await fillDate(to, item.end, "To")) === true) { n++; logFill(to, "", dateWords(item.end), "To"); }
     }
     if (kind === "edu") {
       const lv = { doctorate: /doctor|ph\.?\s?d/i, masters: /master|\bm\.?s\.?\b|\bmba\b|graduate degree/i,
@@ -3915,7 +3959,7 @@ function qsaSafe(sel, root) {
   // date, on a page that is a self-identification or signature form, and only while empty.
   const SIGN_DATE_RE = /^(?:date|today'?s date|date signed|signature date|date of signature|signed on)$/i;
   const SIGN_PAGE_RE = /self[- ]?identif|\bsignature\b|\bsigned\b|electronic(?:ally)? sign/i;
-  function fillSignatureDate() {
+  async function fillSignatureDate() {
     const text = cleanText((document.body && document.body.innerText) || "").slice(0, 20000);
     if (!SIGN_PAGE_RE.test(text)) return 0;
     const now = new Date();
@@ -3927,13 +3971,13 @@ function qsaSafe(sel, root) {
       if (!lg || !SIGN_DATE_RE.test(cleanLabel(lg.textContent)) || seen.has(g)) continue;
       if ([...seen].some((x) => x.contains(g) || g.contains(x))) continue;
       seen.add(g);
-      if (fillDate(g, today, cleanLabel(lg.textContent)) === true) { n++; logFill(g, "today", dateWords(today), cleanLabel(lg.textContent)); }
+      if ((await fillDate(g, today, cleanLabel(lg.textContent))) === true) { n++; logFill(g, "today", dateWords(today), cleanLabel(lg.textContent)); }
     }
     for (const el of qsaDeep("input")) {
       if (!/^(date|text)$/i.test(el.type || "text") || el.getAttribute("role") === "spinbutton" || !emptyBox(el)) continue;
       if ([...seen].some((x) => x.contains(el))) continue;
       if (!SIGN_DATE_RE.test(boxLabel(el))) continue;
-      if (fillDate(el, today) === true) { markFilled(el, "today"); n++; }
+      if ((await fillDate(el, today)) === true) { markFilled(el, "today"); n++; }
     }
     return n;
   }
@@ -3966,7 +4010,7 @@ function qsaSafe(sel, root) {
     let h = { filled: 0 };
     try { h = await fillHistory(payload); } catch (e) { /* the rest stands */ }
     _from = "today";
-    try { h.filled += fillSignatureDate(); } catch (e) { /* the rest stands */ }
+    try { h.filled += await fillSignatureDate(); } catch (e) { /* the rest stands */ }
     _from = "";
     // nothing this pass opened stays open (a list, or a prompt's popup dialog over the form)
     try { r.left_open = await closeOpened(); } catch (e) { r.left_open = 0; }
