@@ -76,8 +76,15 @@ def test_no_recipe_can_click_anything():
             for sel in sels:
                 assert not re.search(r"\bclick\b", sel, re.I), (s["id"], sel)
     core = CORE.read_text(encoding="utf-8")
-    # The engine never calls .click() or .submit() on anything.
-    assert not re.search(r"\.click\(\)", core), "the engine must not click"
+    # The engine's only native .click() is choiceClick, which refuses buttons, links and submit
+    # inputs (a list choice or a search box only). Nothing else calls .click() or .submit().
+    m = re.search(r"function choiceClick\(el\) \{.*?\n  \}\n", core, re.S)
+    assert m, "choiceClick is the engine's one guarded click"
+    body = m.group(0)
+    assert 'tag === "BUTTON"' in body and 'tag === "A"' in body and "submit" in body, "choiceClick refuses buttons, links, submit"
+    assert body.count(".click()") == 1
+    rest = core.replace(body, "")
+    assert not re.search(r"\.click\(\)", rest), "the engine must not click outside choiceClick"
     assert not re.search(r"\.submit\(\)", core), "the engine must not submit a form"
     assert not re.search(r"requestSubmit\(", core)
 

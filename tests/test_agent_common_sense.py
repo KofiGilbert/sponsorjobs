@@ -758,7 +758,7 @@ def test_phone_type_is_never_the_phone_number_and_a_saved_answer_wins_only_when_
 
 def test_the_page_engine_never_offers_the_phone_number_to_a_phone_type_list():
     js = (ROOT / "extension" / "autofill_core.js").read_text(encoding="utf-8")
-    assert 'if (c.key === "phone" && PHONE_KIND_RE.test(sig)) continue;' in js
+    assert 'if (c.key === "phone" && (PHONE_KIND_RE.test(sig) || PHONE_EXT_RE.test(sig))) continue;' in js
 
 
 # --------------------------------------------------------------------------- other names, connections

@@ -162,6 +162,7 @@ function setPaneQuiet(on) {
     // the pane is closed (agent:batch refuses otherwise).
     paneQuiet = true;
   } else {
+    dropQuietDebugger();
     paneQuiet = false;
     // The hidden page is closed (and reaped a minute later, like any closed pane). A job left at
     // Ready to send keeps its place on the record: Send fills it again and submits (agent.send).
@@ -230,6 +231,10 @@ function ensurePane() {
   };
   wc.on("will-navigate", onReturn);
   wc.on("will-redirect", onReturn);
+  // a navigation may hand the page to a new process: what it is told about itself is sent again
+  wc.on("did-navigate", () => {
+    try { if (wc.debugger.isAttached()) focusEmulation.apply(wc.debugger, { quiet: isQuietPane(wc), log: emulationLog }); } catch (e) { /* gone */ }
+  });
   return pane;
 }
 
@@ -277,6 +282,7 @@ function openInPane(url, fromAgent) {
   paneReap = null;
   ensurePane();
   paneOpen = true;
+  if (fromAgent) holdQuietDebugger();                    // a quiet run: the page gets its focus and size before it loads
   pane.webContents.loadURL(url);
   layoutPane();
   pushPaneState();
@@ -517,6 +523,43 @@ function armSuccessWatch(wc, startUrl, recordId) {
 // success check): attached on first use, detached when the last user is done, and never torn
 // down under another user's feet. If DevTools already holds the debugger, CDP is unavailable
 // and each caller falls back (the person attaches the resume; frames are left to them).
+// Every time it is taken, the page is told it is focused and visible, and, while a quiet run
+// keeps the pane out of sight, that it is 1280 x 900 (focus_emulation.js: a parked pane's page
+// measured 0 x 0, hidden and unfocused; real keys did not reach it and Workday drew its
+// small-screen pickers). Sent right after attaching and again on each later use and after every
+// navigation; not waited for here, and a refusal changes nothing else. Both last only while the
+// debugger is attached, so a quiet run holds it for its whole length (holdQuietDebugger) and it
+// is not detached under it. SJ_AGENT_DEBUG=1 says once what the page reports afterwards.
+const focusEmulation = require("./focus_emulation");
+const emulationLog = process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null;
+const isQuietPane = (wc) => !!(paneQuiet && pane && pane.webContents === wc);
+let _quietHold = null;                // {wc, release}: the quiet run's own hold on the debugger
+function holdQuietDebugger() {
+  if (!paneQuiet || !pane) return;
+  const wc = pane.webContents;
+  if (_quietHold && _quietHold.wc === wc) return;
+  dropQuietDebugger();
+  const release = acquireDebugger(wc);
+  if (release) _quietHold = { wc, release };
+  else if (emulationLog) emulationLog("page emulation: the debugger could not be attached (DevTools open?)");
+}
+// The quiet run is over, or the person takes the pane: the size override is cleared before the
+// pane is shown, and the run's hold on the debugger is given back.
+function dropQuietDebugger() {
+  const h = _quietHold;
+  _quietHold = null;
+  if (!h) return;
+  try { if (!h.wc.isDestroyed() && h.wc.debugger.isAttached()) focusEmulation.show(h.wc.debugger).finally(h.release); else h.release(); }
+  catch (e) { try { h.release(); } catch (e2) { /* gone */ } }
+}
+// Before a fill in a quiet run: a page under 600 wide (0 x 0 when parked) is sized and read
+// again. false = still no real size: nothing is filled on it.
+async function ensureQuietViewport(wc) {
+  if (!isQuietPane(wc)) return { ok: true, width: -1, applied: false };
+  holdQuietDebugger();
+  return focusEmulation.ensureViewport({ width: () => wc.executeJavaScript("window.innerWidth", true),
+                                         dbg: wc.debugger.isAttached() ? wc.debugger : null }, { log: emulationLog });
+}
 const _dbgUsers = new WeakMap();      // webContents -> {n, owned}
 function acquireDebugger(wc) {
   const dbg = wc.debugger;
@@ -528,6 +571,7 @@ function acquireDebugger(wc) {
     } catch (e) { return null; }
     _dbgUsers.set(wc, st);
   }
+  focusEmulation.apply(dbg, { quiet: isQuietPane(wc), log: emulationLog });
   st.n++;
   let released = false;
   return () => {
@@ -821,88 +865,33 @@ async function openFrameSession(wc) {
   }
 }
 
-// Type into boxes that take only real key presses (Workday's date segments: a value set from
-// script shows but is not kept, so Next says "Invalid Date"). The engine names them ({ref, text}),
-// empty ones only; each is focused and typed with real key events, then left with a blur.
-// Main frame only.
-async function typeKeyOps(wc, keys) {
-  if (!keys || !keys.length) return 0;
-  const release = acquireDebugger(wc);
-  if (!release) { if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps: debugger busy"); return 0; }
-  let n = 0;
-  try {
-    const dbg = wc.debugger;
-    for (const k of keys) {
-      const sel = JSON.stringify('[data-tailor-ref="' + k.ref + '"]');
-      const ok = await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (!el) return false;
-        try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
-        el.focus(); return document.activeElement === el; })()`, true).catch(() => false);
-      if (!ok) continue;
-      // The engine only names EMPTY boxes, so nothing is cleared first: a Backspace in an empty
-      // date segment steps back into the one before it and erases that.
-      for (const ch of String(k.text)) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
-      }
-      n++;
-    }
-    await wc.executeJavaScript("(() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); })()", true).catch(() => null);
-  } catch (e) {                                  // what was typed stands; the rest is left on the page
-    if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps:", String(e && e.message || e));
-  } finally { release(); }
-  if (process.env.SJ_AGENT_DEBUG === "1") console.warn("typeKeyOps: typed " + n + " of " + keys.length);
-  return n;
+// Real input for a fill (fill_keys.js): typing date segments, and searching lists that filter
+// only on a real Enter. Both are bounded there (a cap per call and per job, each field once) and
+// always return; SJ_AGENT_DEBUG=1 prints one line per sub-step (positions and times, never a
+// label or a value). Main frame only.
+const fillKeys = require("./fill_keys");
+const debugLine = process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null;
+function inputDriver(wc) {
+  return { evalJs: (expr) => wc.executeJavaScript(expr, true),
+           send: (method, params) => wc.debugger.sendCommand(method, params) };
 }
-
-// Search lists that filter only on a real Enter (Workday's Field of Study and Skills): for each
-// one the engine names, click it, type a query with real keys, press Enter, and let the engine
-// pick the best REAL option it lists (searchChoice); the next query only when nothing fit. Both
-// are optional questions: nothing that fits leaves them empty. At most SEARCH_MS in all.
-const SEARCH_MS = 20000;
-async function searchPicks(wc, ops) {
-  if (!ops || !ops.length) return 0;
+async function typeKeyOps(wc, keys, capMs) {
+  const none = { typed: 0, of: (keys || []).length, landed: 0, missed: 0, timed_out: false, dead: false, ms: 0 };
+  if (!keys || !keys.length) return none;
   const release = acquireDebugger(wc);
-  if (!release) return 0;
-  const dbg = wc.debugger;
-  const key = async (k, code, vk) => {
-    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, windowsVirtualKeyCode: vk });
-    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: k, code, windowsVirtualKeyCode: vk });
-  };
-  const until = Date.now() + SEARCH_MS;
-  let picked = 0;
-  try {
-    for (const op of ops) {
-      const sel = JSON.stringify('[data-tailor-ref="' + op.ref + '"]');
-      let got = 0;
-      for (const q of (op.queries || [])) {
-        if (Date.now() > until || got >= (op.max || 1)) break;
-        const box = await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (!el) return null;
-          try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
-          const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width }; })()`, true).catch(() => null);
-        if (!box || !(box.w > 0)) break;
-        await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
-        await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
-        await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (el && el.select) el.select(); })()`, true).catch(() => null);
-        await key("Backspace", "Backspace", 8);
-        for (const ch of String(q)) {
-          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
-          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
-        }
-        await key("Enter", "Enter", 13);
-        await new Promise((r) => setTimeout(r, 1500));
-        const spec = JSON.stringify({ kind: op.kind, want: op.want || [], items: op.items || [] });
-        const r = await wc.executeJavaScript(`window.TailorAutofill.searchChoice(${JSON.stringify(op.ref)}, ${spec})`, true).catch(() => null);
-        if (r && r.ok) { got++; picked++; }
-      }
-      await wc.executeJavaScript(`(async () => { const el = document.querySelector(${sel}); if (el && el.value) {
-          const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; set.call(el, "");
-          el.dispatchEvent(new Event("input", { bubbles: true })); }
-        return window.TailorAutofill.closeSearch(${JSON.stringify(op.ref)}); })()`, true).catch(() => null);
-    }
-  } catch (e) {
-    if (process.env.SJ_AGENT_DEBUG === "1") console.warn("searchPicks:", String(e && e.message || e));
-  } finally { release(); }
-  return picked;
+  if (!release) { if (debugLine) debugLine("typeKeyOps: debugger busy"); return none; }
+  try { return await fillKeys.typeKeys(inputDriver(wc), keys, { log: debugLine, keysMs: Math.min(fillKeys.KEYS_MS, capMs || fillKeys.KEYS_MS) }); }
+  catch (e) { if (debugLine) debugLine("typeKeyOps: " + String(e && e.message || e)); return none; }
+  finally { release(); }
+}
+async function searchPicks(wc, ops, capMs) {
+  const none = { picked: 0, fields: 0, left_open: 0, trouble: [], timed_out: false, dead: false, ms: 0 };
+  if (!ops || !ops.length) return none;
+  const release = acquireDebugger(wc);
+  if (!release) return none;
+  try { return await fillKeys.searchPicks(inputDriver(wc), ops, { log: debugLine, searchMs: Math.min(fillKeys.SEARCH_MS, capMs || fillKeys.SEARCH_MS) }); }
+  catch (e) { if (debugLine) debugLine("searchPicks: " + String(e && e.message || e)); return none; }
+  finally { release(); }
 }
 
 // What one fill run did on one page, summed over the top page and its frames.
@@ -945,6 +934,11 @@ async function runAutoApplyOnPane(recordId, opts) {
 
   let fr = null;
   try {
+    // never fill a page with no size (a parked pane measured 0 x 0, and sites drew their
+    // small-screen forms): size it first; if it still has none, say so instead of filling
+    const vp = await ensureQuietViewport(wc);
+    if (!vp.ok) return { ok: false, reason: "no-viewport", page: opts.page || 0, left: [],
+                         message: "The page has no size yet (" + vp.width + " wide)." };
     await wc.insertCSS(FILLED_CSS);
     await wc.executeJavaScript(autofillCore(), true);
     const page = opts.page || pageNumberFor(wc, recordId, await mainSignature(wc));
@@ -1007,13 +1001,47 @@ async function runAutoApplyOnPane(recordId, opts) {
     lap("payload", "filling the page");
     const havePayload = !!(payload && payload.loaded !== false);
     const fillExpr = (budgetMs) => (havePayload
-      ? `window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })})` : "null");
+      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
     const pres = [];
+    let searchTrouble = [];                              // labels of lists whose search did not finish
     if (havePayload) {
       try { pres.push(await run("filling the page", "engine", (b) => wc.executeJavaScript(fillExpr(b), true), beatMain)); } catch (e) { /* fill what we can below */ }
       tally(pres[0]);
-      if (pres[0] && pres[0].keys && pres[0].keys.length) await typeKeyOps(wc, pres[0].keys);
-      if (pres[0] && pres[0].searches && pres[0].searches.length) pres[0].filled = (pres[0].filled || 0) + await searchPicks(wc, pres[0].searches);
+      if (pres[0] && debugLine) for (const line of (pres[0].trace || [])) debugLine("engine: " + line);
+      if (!pres[0] && debugLine) {                         // cut or silent: what it had got to, if the page still answers
+        const sofar = await fillKeys.capped(wc.executeJavaScript("window.TailorAutofill.takeTrace()", true), 1000);
+        for (const line of (Array.isArray(sofar) ? sofar : [])) debugLine("engine (cut): " + line);
+        if (!Array.isArray(sofar)) debugLine("engine (cut): the page did not answer a plain call either");
+      }
+      // Real input, after the engine's pass: each bounded, each field once, and a page that stops
+      // answering ends it at once (the fill carries on to its report).
+      if (pres[0] && pres[0].left_open) counts.left_open = pres[0].left_open;
+      // what the fill's overall cap still allows the real-input jobs (0: skipped)
+      const inputRoom = () => Math.max(0, C.overall - (Date.now() - t0) - 3000);
+      if (pres[0] && pres[0].keys && pres[0].keys.length && inputRoom() >= 1000) {
+        lap("engine", "typing the dates");
+        // a typed date counts as filled only when the page holds it (the engine reads it back)
+        const kr = await typeKeyOps(wc, pres[0].keys, inputRoom());
+        pres[0].filled = (pres[0].filled || 0) + kr.landed;
+        // Typing the dates and searching a list are extras after the engine's own fill: a
+        // problem in them is counted (and the field named in ``left``), and NEVER makes the fill
+        // timed out or stalled. Only the engine going silent is a stall.
+        if (kr.timed_out) counts.keys_cut = 1;
+        lap("keys", "filling the page");
+      }
+      if (pres[0] && pres[0].searches && pres[0].searches.length && inputRoom() >= 1000) {
+        lap("engine", "searching a list");
+        const sr = await searchPicks(wc, pres[0].searches, inputRoom());
+        pres[0].filled = (pres[0].filled || 0) + sr.picked;
+        counts.left_open = (counts.left_open || 0) + sr.left_open;
+        if (sr.timed_out) counts.search_cut = 1;
+        searchTrouble = sr.trouble || [];
+        lap("search", "filling the page");
+      }
+    }
+    if (debugLine && havePayload) {                        // what the engine noted while the shell typed and searched
+      const more = await fillKeys.capped(wc.executeJavaScript("window.TailorAutofill.takeTrace()", true), 1000);
+      if (Array.isArray(more)) for (const line of more) debugLine("engine: " + line);
     }
     lap("engine", "reading the form");
     fr = await openFrameSession(wc);
@@ -1041,7 +1069,17 @@ async function runAutoApplyOnPane(recordId, opts) {
         return [];
       }
       const r = await fillBudget.runPhase({ name: "reading the form", capMs, stallMs: C.stall, pollMs: C.poll, graceMs: 0, start: () => start(extract()), beat });
-      if (r.timedOut) { cut = cut && cut.stalled ? cut : { phase: "reading the form", stalled: r.stalled }; return []; }
+      if (r.timedOut) {
+        // The read with open dropdowns did not come back. That is a stall only if the page no
+        // longer answers at all: ask it for the plain read (no waits on the page side). If that
+        // answers, the fill carries on with those fields; a fill is never thrown away because
+        // the slower read ran out of time.
+        const plain = await fillKeys.capped(start("window.TailorAutofill.extractForm({ onlyEmpty: true })"), 3000);
+        const alive = plain !== fillKeys.TIMED_OUT && plain != null;
+        if (debugLine) debugLine("readForm: the read with dropdowns " + (r.stalled ? "went silent" : "ran out of time") + "; the plain read " + (alive ? "answered" : "did not answer"));
+        cut = cut && cut.stalled ? cut : { phase: "reading the form", stalled: r.stalled && !alive };
+        return alive && Array.isArray(plain) ? plain : [];
+      }
       return r.value || [];
     };
     let fields = await readForm((expr) => wc.executeJavaScript(expr, true), beatMain);
@@ -1126,7 +1164,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     // What is still blank and needs the person, across the page and its frames.
     let left = (await wc.executeJavaScript("window.TailorAutofill.leftover()", true)) || [];
     for (const ctx of liveFrames) left = left.concat((await fr.eval(ctx, "window.TailorAutofill.leftover()")) || []);
-    left = [...new Set(left)].slice(0, 60);
+    left = [...new Set(left.concat(searchTrouble))].slice(0, 60);
     // (the agent only) What this fill set and where each value came from, for the Review answers
     // list at Ready to send. Kept in the shell: never in the fill report, a log or a model call.
     let answers = [];
@@ -1378,7 +1416,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 const agent = createAgent({
   getPane: () => pane, openInPane: (url) => openInPane(url, true), waitPaneLoad, autofillCore, agentViewSource,
   runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
-  isNewPage, attachResume, newUploadRun, setQuiet: setPaneQuiet,
+  isNewPage, attachResume, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
@@ -1424,6 +1462,7 @@ ipcMain.on("pane:set-bounds", (_e, rect) => { paneBounds = rect; layoutPane(); }
 function takePaneBack() {
   if (!paneQuiet) return;
   agent.stop();
+  dropQuietDebugger();                                   // the pane is the person's again: its own size
   paneQuiet = false;
 }
 ipcMain.on("pane:open", (_e, url) => openInPane(url));
