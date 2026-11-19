@@ -744,6 +744,10 @@
   const POLICY_LINK_RE = /privacy (notice|policy|statement|agreement)|data (privacy|protection) (notice|policy)|terms (and|&) conditions|terms of (use|service)|cookie (policy|notice)|e-?verify|right to work poster|notice at collection|(eea|ccpa|gdpr)\b.*(supplement|notice)/i;
   function policyLink(el) {
     const link = tagOf(el) === "A" || norm(attrOf(el, "role")) === "link";
+    // (2026-11-19) A control that opens the notice to read and ACCEPT it (SuccessFactors' "Read
+    // and accept the data privacy statement") is how the form takes the acceptance, not a link
+    // away to read: it may be pressed (the accept itself stays the person's consent's).
+    if (link && OPENER_RE.test(cleanText((attrOf(el, "aria-label") || "") + " " + ownText(el)))) return false;
     return link && POLICY_LINK_RE.test(ownText(el));
   }
   // Is the element at its centre point the element, one of its parts, its container, or the
@@ -1676,6 +1680,8 @@
   const MARKETING_RE = /newsletter|marketing|promotion|special offers?|job alerts?|talent (community|network|pool)|join our|(receive|send me|get|sign me up for) (emails?|e-?mails|texts?|sms|updates|communications|news|alerts)|text messages?|\bsms\b|recruiters? (can|may) contact|contact me (about|for|regarding)|future (job )?opportunit|similar (jobs|roles|positions)|subscribe|profile visible/i;
   const COOKIE_RE = /cookie/i;
   const JOB_RE = /appl(y|ying|ication|icant)|candida|employment|recruit|hiring|e-?verify/i;
+  // A control that opens the notice to read and accept it (never the accept itself).
+  const OPENER_RE = /\b(read and accept|read & accept|open (the )?(data )?privacy|view and accept|review and accept|accept the (data )?privacy (statement|agreement|policy|notice))\b/i;
   const ACCEPT_RE = /^(yes,? )?(i )?(acknowledge|agree|accept|consent)( (to )?(it|this|the (terms|notice|agreement|policy)))?( (and|&) (continue|proceed))?[.!]?$/i;
   function titleOf(box) {
     const ids = String(attrOf(box, "aria-labelledby") || "").split(/\s+/).filter(Boolean);
@@ -1735,6 +1741,24 @@
       if (!own || (!required && !loose)) continue;
       if (MARKETING_RE.test(own) || !TERMS_RE.test(own)) continue;
       out.push({ kind: "checkbox", title: termsName(own), index: refIndex(c), button: "" });
+    }
+    // 3. (2026-11-19, SAP SuccessFactors at Gainwell) a REQUIRED button or link that OPENS the
+    // notice ("Terms of Use: Read and accept the data privacy statement. Required"): the form is
+    // refused until its dialog's own Accept is pressed. The shell opens it and presses that
+    // Accept under the same consent as a required box. Never a marketing one, never optional
+    // (unless loose), never one inside a dialog (that is kind 1).
+    if (!out.some((x) => x.kind === "modal")) {
+      for (const b of deepAll("button, [role='button'], a")) {
+        if (isDisabled(b) || !onScreen(b)) continue;
+        if (b.closest && b.closest("[role='dialog'], [role='alertdialog'], dialog, [aria-modal='true']")) continue;
+        const words = cleanText((attrOf(b, "aria-label") || "") + " " + (b.textContent || "")).slice(0, 300);
+        if (!OPENER_RE.test(words) || !TERMS_RE.test(words) || MARKETING_RE.test(words) || submitLike(b)) continue;
+        const required = isRequired(b) || /[*\u2731]|\(required\)|\brequired\b/i.test(words);
+        if (!required && !loose) continue;
+        const named = termsName(ownText(b));
+        out.push({ kind: "opener", title: named !== "Terms" ? named : termsName(words), index: refIndex(b), button: ownText(b).slice(0, 40) });
+        break;
+      }
     }
     return out.slice(0, 4);
   }

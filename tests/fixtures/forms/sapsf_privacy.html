@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Create an Account (SuccessFactors-style fixture)</title>
+<link rel="stylesheet" href="style.css">
+<style>.dlg{position:fixed;left:40px;top:40px;width:520px;background:#fff;border:1px solid #999;padding:12px;z-index:9}</style></head>
+<body>
+<!-- Modelled on SAP SuccessFactors' career site Create Account (Gainwell, 2026-11-19): the data
+     privacy statement is accepted through a REQUIRED link that opens a dialog with Accept and
+     Decline; Create Account is refused until it is accepted. A job alerts link beside it is
+     marketing and must never be opened. -->
+<h2>Create an Account</h2>
+<form onsubmit="return false">
+  <label for="email">Email Address*</label><input type="email" id="email" required>
+  <label for="pw">Choose Password*</label><input type="password" id="pw" required>
+  <div class="field">Terms of Use:
+    <a href="#" id="dataPrivacyId" role="button" aria-label="Terms of Use Read and accept the data privacy statement. Required">Read and accept the data privacy statement</a>
+    <span id="state">Not accepted</span></div>
+  <div class="field"><a href="#" id="alerts" role="button">Read and accept the job alerts newsletter terms</a></div>
+  <button type="button" id="create">Create Account</button>
+</form>
+<script>
+  window.fx = { opened: 0, accepted: false, declined: false, alerts: 0 };
+  document.getElementById("alerts").addEventListener("click", (e) => { e.preventDefault(); window.fx.alerts++; });
+  document.getElementById("dataPrivacyId").addEventListener("click", (e) => {
+    e.preventDefault();
+    window.fx.opened++;
+    const d = document.createElement("div");
+    d.className = "dlg"; d.setAttribute("role", "dialog"); d.setAttribute("aria-modal", "true"); d.setAttribute("aria-labelledby", "dh");
+    d.innerHTML = '<h3 id="dh">Data Privacy Statement</h3><p>We collect and process your personal data to consider your application for employment.</p>'
+      + '<button type="button" id="acc">Accept</button> <button type="button" id="dec">Decline</button>';
+    document.body.appendChild(d);
+    d.querySelector("#acc").addEventListener("click", () => { window.fx.accepted = true; document.getElementById("state").textContent = "Accepted"; d.remove(); });
+    d.querySelector("#dec").addEventListener("click", () => { window.fx.declined = true; d.remove(); });
+  });
+  window.fxValues = () => Object.assign({}, window.fx);
+</script>
+</body></html>

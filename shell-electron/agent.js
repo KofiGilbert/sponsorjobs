@@ -1147,9 +1147,31 @@ function createAgent(deps) {
       }
       // The person said yes: click the accept button / tick the box like a person would.
       const before = url;
-      let res = await realClick(wc, it.index);
-      if (!res) res = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: it.index })})`, true),
-                                  ACTION_MS, "accept").catch(() => null);
+      const press = async (index) => {
+        let r = await realClick(wc, index);
+        if (!r) r = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index })})`, true),
+                                ACTION_MS, "accept").catch(() => null);
+        return r;
+      };
+      let target = it.index;
+      if (it.kind === "opener") {
+        // (2026-11-19, SAP SuccessFactors at Gainwell) A required notice behind a button: open it
+        // (once per site and notice in a run), then press the dialog's own Accept. Nothing in
+        // the dialog is ever pressed unless it is that notice's single accept button.
+        if (!run.openers) run.openers = new Set();
+        if (run.openers.has(key)) continue;
+        run.openers.add(key);
+        const o = await press(it.index);
+        if (!(o && o.ok)) continue;
+        await settle(wc, before);
+        try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
+        let now = [];
+        try { now = (await wc.executeJavaScript("window.TailorAgent.termsItems(true)", true)) || []; } catch (e) { now = []; }
+        const dlg = now.find((x) => x && x.kind === "modal");
+        if (!dlg) { dlog("terms", "the notice's button opened no dialog with one accept button"); continue; }
+        target = dlg.index;
+      }
+      let res = await press(target);
       if (!(res && res.ok)) continue;                    // tried again on the next pass
       await settle(wc, before);
       try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
@@ -3279,7 +3301,7 @@ function createAgent(deps) {
 
   return { run, batch, send, sendAll, stop, guideNext, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
            quiet: () => !!(batchOn && batchOn.quiet),
-           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard } };
+           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard, handleTerms } };
 }
 
 // ---- the sign-in wall, read deterministically (section 13, the e2e of 2026-11-02) ---------
