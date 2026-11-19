@@ -27,6 +27,8 @@ REASONS = {
     # (2026-11-19) a required field the agent never guesses or fills without the person's saved
     # value (an ID number, a date of birth, bank details, a password, a signature)
     "cannot_fill": "The form requires something I never fill in for you",
+    # (2026-11-19) the form's upload box would not take the resume (a site problem, not a question)
+    "no_upload": "I could not attach the resume on this site",
 }
 # What to do next, per reason. A closed posting has nothing left to do.
 NEXT = {
@@ -35,6 +37,7 @@ NEXT = {
     "needs_signin": " Open it to finish.",
     "site_error": " Open it to submit it yourself.",
     "cannot_fill": " Open it to apply yourself.",
+    "no_upload": " Open it to attach it yourself.",
 }
 
 STAGE_LABEL = {

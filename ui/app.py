@@ -17671,8 +17671,13 @@ def autoapply_agent_skip():
     if rec is None:
         return jsonify({"ok": False, "reason": "no-record"})
     field = " ".join(str(b.get("field") or "").split())[:120]
-    patch = failed_patch({"reason": "cannot_fill",
-                          "message": "Skipped: the form requires " + (f"\u201c{field}\u201d" if field else "a field") + ", which I never guess."})
+    if b.get("reason") == "upload":
+        # (2026-11-19) the form's upload box would not take the resume: a site problem, never a
+        # question for the person
+        patch = failed_patch({"reason": "no_upload", "message": "Stopped: I could not attach the resume on this site."})
+    else:
+        patch = failed_patch({"reason": "cannot_fill",
+                              "message": "Skipped: the form requires " + (f"\u201c{field}\u201d" if field else "a field") + ", which I never guess."})
     patch["agent_skip"] = {"at": _now_iso(), "field": field, "url": str(b.get("url") or "")[:1000]}
     patch["agent_ready"] = None
     patch["agent_park"] = None

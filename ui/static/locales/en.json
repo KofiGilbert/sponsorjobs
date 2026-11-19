@@ -871,6 +871,7 @@
   "aa.reason.form": "A form question needs you",
   "aa.reason.site": "The site had an error",
   "aa.reason.cannotFill": "I could not do this form: it requires something I never fill in for you",
+  "aa.reason.noUpload": "I could not attach the resume on this site",
   "aa.reason.closed": "Job closed",
   "aa.closedFound": "{n} closed by the employer. Nothing was spent on them.",
   "aa.termMiss": "The job asks for this; your resume does not show it",

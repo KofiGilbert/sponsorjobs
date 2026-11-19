@@ -1783,3 +1783,28 @@ resident's answer was left to the person before; it is now answered this way. Mo
 reach the citizenship key ("Under the Export Administration Regulations (EAR), please state your
 citizenship", "What is your citizenship for export control purposes?"); a citizenship STATUS or a
 yes/no question keeps its own.
+
+### An upload box is never a question
+
+On Schneider Electric's iCIMS profile the agent attached the resume, saved the profile, and the
+page came back from its resume parse with the upload box empty again ("Please upload your
+resume/CV (Max size: 5 MB)", required). The page has a password box (the account is made on the
+same form), so the engine's fill and its resume attach never ran there, and the empty box went
+into the list of questions: the job was set aside for "no saved answer" on an upload.
+
+- `questionsFor` never takes an upload label (`isUploadLabel`: upload or attach with resume, CV,
+  cover letter, document or file, or a "(Max size" note), so an upload never becomes a question,
+  a deferred question or a "Needs you" row.
+- Every step, a required upload box of the resume still empty (`uploadsOpen`: a file box with no
+  file, a box worded as an upload, or one the engine left) gets the application's own resume:
+  the page's file box first (`attachResume`, which still never uploads a copy the box already
+  lists), else the upload button's own file chooser (`attachViaChooser` in main.js,
+  shell-electron/chooser.js: the chooser is intercepted through the debugger, a real press on the
+  button found by `uploadButtonPoint`, and the file box it opened gets the resume). Never a cover
+  letter's box or button. At most twice per box.
+- When neither takes it twice, the run stops: "I could not attach the resume on this site." The
+  record moves to Needs you with that reason (`no_upload`, five locales: "Open it to attach it
+  yourself"), a site problem, never a question.
+
+The same run's real blocker was "Preferred Engagement Language", a required list the brain's pick
+was refused on (a preference with nothing to cite); see the report for it.

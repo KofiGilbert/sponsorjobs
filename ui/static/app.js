@@ -11678,7 +11678,8 @@
     form_blocker: ["aa.reason.form", "A form question needs you"],
     site_error: ["aa.reason.site", "The site had an error"],
     posting_closed: ["aa.reason.closed", "Job closed"],
-    cannot_fill: ["aa.reason.cannotFill", "I could not do this form: it requires something I never fill in for you"] };
+    cannot_fill: ["aa.reason.cannotFill", "I could not do this form: it requires something I never fill in for you"],
+    no_upload: ["aa.reason.noUpload", "I could not attach the resume on this site"] };
 
   // Per-viewer convenience only: the focus fields come back as you left them.
   (function aaRestoreFocus() {

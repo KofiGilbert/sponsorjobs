@@ -871,6 +871,7 @@
   "aa.reason.form": "Une question du formulaire vous attend",
   "aa.reason.site": "Le site a rencontré une erreur",
   "aa.reason.cannotFill": "Je n'ai pas pu remplir ce formulaire : il demande une information que je ne remplis jamais à votre place",
+  "aa.reason.noUpload": "Je n'ai pas pu joindre le CV sur ce site",
   "aa.reason.closed": "L'offre est close",
   "aa.closedFound": "{n} closes par l'employeur. Rien n'a été dépensé pour elles.",
   "aa.termMiss": "L'offre le demande ; votre CV ne le montre pas",

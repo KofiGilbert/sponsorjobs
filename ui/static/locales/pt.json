@@ -871,6 +871,7 @@
   "aa.reason.form": "Uma pergunta do formulário precisa de você",
   "aa.reason.site": "O site teve um erro",
   "aa.reason.cannotFill": "Não consegui fazer este formulário: ele pede algo que nunca preencho por você",
+  "aa.reason.noUpload": "Não consegui anexar o currículo neste site",
   "aa.reason.closed": "A vaga está encerrada",
   "aa.closedFound": "{n} encerradas pela empresa. Nada foi gasto com elas.",
   "aa.termMiss": "A vaga pede isso; seu currículo não mostra",

@@ -1217,6 +1217,8 @@ function createAgent(deps) {
     // park returns to it), whether an aggregator's landing site was adopted, the agent's clicks
     // while still on the aggregator, and its last click's name.
     let lastOn = applyUrl, adopted = !!(S && S.adopted), lastClick = "", surveyBack = false;
+    const upTries = new Map();           // upload box -> attach attempts this run
+    let upMisses = 0;                    // attach attempts in a row that took nothing
     const aggClicks = [];
     const history = (S && S.history) || [];
     const portals = (S && S.portals) || new Set();   // hosts whose portal account was ensured this run
@@ -2051,6 +2053,33 @@ function createAgent(deps) {
         if (filled) { ladder.key = ""; }                      // progress: a new problem starts a fresh ladder
         runUrls.add(url);
         curV = v;
+        // (2026-11-19, iCIMS) A required upload box still empty: the application's own resume goes
+        // in through the page's file box, else through its upload button's file chooser (the
+        // debugger's), never as a question. Twice in vain and the run stops: a site problem.
+        if (opts.resumePath) {
+          const ups = uploadsOpen(v.text, left);
+          const up = ups.find((q) => (upTries.get(q) || 0) < 2);
+          if (up) {
+            upTries.set(up, (upTries.get(up) || 0) + 1);
+            const attach = (fn, what) => guard(fn(), 20000, what).catch((e) => { if (e && e.stopped) throw e; return false; });
+            let got = await attach(() => deps.attachResume(wc, opts.resumePath), "attach");
+            if (!got && deps.attachViaChooser) got = await attach(() => deps.attachViaChooser(wc, opts.resumePath, up), "chooser");
+            dlog("step " + step + " upload:", got ? "attached (" + got + ")" : "could not attach");
+            if (got) {
+              upMisses = 0;
+              addFile(ans, { page, kind: "resume", path: opts.resumePath, how: got === "listed" ? "listed" : "attached", earlier: got === "earlier" || got === "own-earlier" });
+              if (got === true || got === "earlier") {
+                feed.push("fill", "Attached", "your resume", { state: "done" });
+                await settle(wc, url);
+                v = await view(wc, fr);
+                curV = v;
+              }
+            } else if (++upMisses >= 2) {
+              await deps.postApp("/api/autoapply/agent/skip", { record_id: recordId, field: up, url, reason: "upload" }).catch(() => null);
+              return stopped("no-upload", (batch ? lead : "") + "I could not attach the resume on this site. Stopped.", { url, field: up });
+            }
+          }
+        }
         // (2026-11-02) A closed job, before any model call: the posting's own short line says it
         // is gone and there is no Apply control and no field. Zero AI cost, no "needs you".
         // (2026-11-17) The site itself says this job was already applied to (the person sent it
@@ -3499,6 +3528,31 @@ function linesFor(viewText, label) {
   return String(viewText || "").split("\n").filter((ln) => /^\*?\[\d+\]</.test(ln) && sameLabel(lineLabel(ln), label));
 }
 
+// (2026-11-19, iCIMS) An upload box is never a question: "Please upload your resume/CV (Max size:
+// 5 MB)" ended a run as "no saved answer". The resume goes in by itself (uploadsOpen, the run's
+// upload step); a box that will not take it stops the run as a site problem.
+const UPLOAD_Q_RE = /\b(upload|attach)\w*\b[^.?]{0,60}\b(r[eé]sum[eé]s?|cv|curriculum vitae|cover ?letter|documents?|files?)\b|\b(r[eé]sum[eé]|cv)\b[^.?]{0,40}\b(upload|attach)\w*|\(\s*max(imum)?\.?\s*(file\s*)?size\b/i;
+const LETTER_Q_RE = /cover.?letter|letter of (interest|motivation)|motivation(al)? letter/i;
+const isUploadLabel = (q) => UPLOAD_Q_RE.test(String(q || ""));
+// The required upload boxes of the resume still empty on this view (never a cover letter's): a
+// file box with no file, a box the page words as an upload, or one the engine left open.
+function uploadsOpen(viewText, left) {
+  const out = [];
+  const add = (q) => { q = String(q || "").trim(); if (q && !LETTER_Q_RE.test(q) && !out.some((o) => sameLabel(o, q))) out.push(q); };
+  for (const ln of String(viewText || "").split("\n")) {
+    if (!/^\*?\[\d+\]</.test(ln) || !/\brequired\b/.test(ln)) continue;
+    const lab = /\blabel="((?:[^"\\]|\\.)*)"/.exec(ln);
+    const label = lab ? lab[1].replace(/\\(.)/g, "$1") : "";
+    if (/^\*?\[\d+\]<file\b/.test(ln)) { if (/\bfile=none\b/.test(ln)) add(label || "Resume"); continue; }
+    if (isUploadLabel(label) && /\bvalue=""/.test(ln)) add(label);
+  }
+  for (const x of left || []) {
+    const q = typeof x === "string" ? x : (x && x.label) || "";
+    if (isUploadLabel(q)) add(q);
+  }
+  return out;
+}
+
 // What to ask: the engine's open fields, else the fields the page's own errors name ("The
 // field X is required"), else empty required boxes in the view. Labels only, never values,
 // and without the furniture round them (cleanQuestion): the person is asked X, never "Error:
@@ -3509,7 +3563,7 @@ function questionsFor(viewText, left, includeFilled) {
   const text = String(viewText || "");
   const add = (q) => {
     q = cleanQuestion(q);
-    if (!q) return;
+    if (!q || isUploadLabel(q)) return;               // an upload is never a question
     const i = out.findIndex((o) => sameLabel(o, q));
     if (i < 0) out.push(q);
     else if (q.length > out[i].length) out[i] = q;
@@ -4079,7 +4133,7 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
-                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, MAX_STEPS, COST_CAP_USD, EEO_RE,
+                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,

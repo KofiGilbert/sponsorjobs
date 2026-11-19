@@ -5,7 +5,7 @@
 // Everyone and every site here is made up.
 "use strict";
 const path = require("path");
-const { createAgent, offSiteVerdict, SURVEY_LINE } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
+const { createAgent, offSiteVerdict, SURVEY_LINE, uploadsOpen, questionsFor } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
 // ---- the verdict, pure ------------------------------------------------------------------------
@@ -132,6 +132,70 @@ const leftPosts = (posts) => posts.filter(([p, b]) => p === "/api/autoapply/agen
     const said = progress.find((x) => x.state === "parked");
     assert(said && /Moving on\./.test(said.message) && /short survey/.test(said.message), "the batch moves on: " + (said && said.message));
     assert(!progress.some((x) => x.reason === "left-site"), "never left-site");
+  }
+  // ---- an upload box is never a question (record 3, iCIMS) ------------------------------------
+  {
+    const UP = "Please upload your resume/CV (Max size: 5 MB)";
+    const page = "Candidate Profile\n[3]<input type=text label=\"" + UP + "\" value=\"\" required>\n"
+      + "[4]<file label=\"Cover Letter\" file=none>\n[9]<button>Submit Profile</button>";
+    assert(JSON.stringify(uploadsOpen(page, [])) === JSON.stringify([UP]), "the open upload: " + JSON.stringify(uploadsOpen(page, [])));
+    assert(!questionsFor(page, [UP]).length, "never asked: " + JSON.stringify(questionsFor(page, [UP])));
+    assert(JSON.stringify(uploadsOpen("[5]<file label=\"Resume\" file=chosen required>\n[6]<file label=\"Cover letter\" file=none required>", [])) === "[]", "chosen, or a letter: none");
+    const runWith = async (attachResume, attachViaChooser) => {
+      const posts = [], progress = [];
+      let views = 0;
+      const wc = {
+        getURL: () => "https://careers-acme.icims.com/jobs/1/candidate", isDestroyed: () => false, on: () => {}, removeListener: () => {}, session: null,
+        navigationHistory: { canGoBack: () => false },
+        executeJavaScript: async (expr) => {
+          if (expr.includes("!!window.TailorAutofill && !!window.TailorAgent")) return true;
+          if (expr.includes("__tailorQuiet")) return "5000|complete|";
+          if (expr.includes("pageSignature")) return { labels: ["Upload"] };
+          if (expr.includes("termsItems")) return [];
+          if (expr.includes("crossOriginFrames")) return 0;
+          if (expr.includes("pageShape")) return { fields: 3, buttons: 3, skeleton: false, words: 80 };
+          if (expr.includes("TailorAutofill.leftover()")) return [];
+          if (expr.includes("TailorAgent.view(")) { views++; return { text: "URL: https://careers-acme.icims.com/jobs/1/candidate\n" + page }; }
+          if (expr.includes("resumeInputOpen")) return false;
+          return true;
+        },
+      };
+      const pane = { webContents: wc };
+      const deps = {
+        noPolling: true, getPane: () => pane, openInPane: () => {}, waitPaneLoad: async () => {},
+        autofillCore: () => "", agentViewSource: () => "",
+        runAutoApplyOnPane: async () => ({ ok: true, filled: 0, left: [UP] }),
+        sendProgress: (info) => progress.push(info), acquireDebugger: () => null, frames: {},
+        applyDecision: async () => ({ fill: true, click_submit: false }), isNewPage: () => false,
+        attachResume, attachViaChooser,
+        getApp: async (p) => (p.startsWith("/api/autoapply/agent/parked") ? { ok: true, parked: [] } : { hosts: ["icims.com"] }),
+        postApp: async (p, b) => {
+          posts.push([p, b]);
+          if (p === "/api/autoapply/agent/step") return { ok: true, summary: "Stuck", actions: [], done: { outcome: "blocked", reason: "needs-answers" }, cost: 0.01 };
+          if (p === "/api/autoapply/agent/ask") return { ok: true, answers: {} };
+          return { ok: true };
+        },
+      };
+      const agent = createAgent(deps);
+      const r = await agent.run("3", { url: "https://careers-acme.icims.com/jobs/1/candidate", mode: "batch", quiet: true, resumePath: __filename });
+      return { r, posts, progress };
+    };
+    // the box takes nothing, twice: stopped as a site problem, never "no saved answer"
+    let tries = 0;
+    const a = await runWith(async () => { tries++; return false; }, async () => false);
+    assert(a.r.reason === "no-upload", "stopped: " + JSON.stringify(a.r));
+    assert(tries === 2, "two tries: " + tries);
+    const stop = a.progress.find((x) => x.reason === "no-upload");
+    assert(stop && /I could not attach the resume on this site\. Stopped\./.test(stop.message), "the reason: " + (stop && stop.message));
+    const sk = a.posts.find(([p]) => p === "/api/autoapply/agent/skip");
+    assert(sk && sk[1].reason === "upload", "kept on the record as a site problem");
+    const asked = a.posts.filter(([p]) => p === "/api/autoapply/agent/ask").map(([, b]) => JSON.stringify(b));
+    assert(!asked.some((x) => x.includes("Please upload")), "the upload is never asked: " + asked.join(" | "));
+    // the page's own file chooser takes it: no stop for the upload
+    let chose = 0;
+    const b = await runWith(async () => false, async (_wc, file, label) => { chose++; return label === UP && !!file; });
+    assert(chose >= 1 && b.r.reason !== "no-upload", "attached through the chooser: " + JSON.stringify(b.r));
+    assert(!b.posts.some(([p, x]) => p === "/api/autoapply/agent/ask" && JSON.stringify(x).includes("Please upload")), "never asked");
   }
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -685,6 +685,31 @@ async function attachResume(wc, filePath) {
   return uploadFate(d, attached);
 }
 
+// (2026-11-19, iCIMS) An upload box with no file input of its own until its button is pressed:
+// the resume goes in through the page's own file chooser (shell-electron/chooser.js), the way a
+// person presses Upload and picks the file. Only this application's resume.
+async function attachViaChooser(wc, filePath, label) {
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  let pt = null;
+  try {
+    pt = await wc.executeJavaScript(`window.TailorAutofill && window.TailorAutofill.uploadButtonPoint ? window.TailorAutofill.uploadButtonPoint(${JSON.stringify(String(label || ""))}) : null`, true);
+  } catch (e) { pt = null; }
+  if (!pt) return false;
+  const release = acquireDebugger(wc);
+  if (!release) return false;
+  const dbg = wc.debugger;
+  const cdp = {
+    send: (m, p) => dbg.sendCommand(m, p || {}),
+    on: (fn) => { const h = (_e, method, params) => fn(method, params); dbg.on("message", h); return () => dbg.removeListener("message", h); },
+  };
+  let ok = false;
+  try { ok = await require("./chooser").uploadViaChooser(cdp, pt, filePath); } catch (e) { ok = false; } finally { release(); }
+  if (ok) {
+    try { uploads.noteUpload(uploadLog, { name: path.basename(filePath), path: filePath, size: fs.statSync(filePath).size }); } catch (e) { /* noted or not */ }
+  }
+  return ok;
+}
+
 // A wall we are NOT allowed to walk through (CLAUDE.md 7): a captcha or a sign-in gate is
 // the site saying it does not want an automated submission. Detected so the apply path can
 // stop and hand back to the person, never so it can try to get around it.
@@ -1378,7 +1403,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 const agent = createAgent({
   getPane: () => pane, openInPane: (url) => openInPane(url, true), waitPaneLoad, autofillCore, agentViewSource,
   runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
-  isNewPage, attachResume, newUploadRun, setQuiet: setPaneQuiet,
+  isNewPage, attachResume, attachViaChooser, newUploadRun, setQuiet: setPaneQuiet,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
 });
 ipcMain.handle("agent:run", async (_e, opts) => {

@@ -8,6 +8,9 @@
   closest proficiency, an empty row removed with its own Delete, a language never invented;
 * the export-control question (record 1, Lam on Phenom): answered from the saved citizenship (and
   a permanent residence when it asks), the list's own "Other" when the country is not on it;
+* an upload box is never a question (record 3, iCIMS): the resume goes in through the page's file
+  box, else its upload button's file chooser (tests/js/test_icims_upload.js, headless); a box
+  that takes nothing stops the run as a site problem;
 * the shell under node (tests/js/test_queue_run_2026_11_19.js).
 
 Everyone and every site here is made up.
@@ -289,3 +292,25 @@ def test_the_planner_fills_the_lam_list(lib):
     from autoapply.fields import FormField
     res = plan_known([FormField("s", LAM, "select", CONTROLLED, required=True)], KnownContext(library=lib, work_auth=H1B))
     assert [(a.ref, a.value, a.origin) for a in res.actions] == [("s", "Other", "library")] and not res.left
+
+
+# --------------------------------------------------------------------------- uploads
+@browser
+def test_an_icims_style_upload_goes_in_through_the_file_chooser():
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_icims_upload.js")], capture_output=True, text=True, timeout=240)
+    assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stdout + out.stderr
+
+
+def test_an_upload_that_would_not_go_in_is_a_site_problem_on_the_record(A):
+    mod = A
+    rid = _add(mod, "https://careers-acme.icims.com/jobs/1/candidate")
+    assert _post(mod, "/api/autoapply/agent/skip", {"record_id": rid, "field": "Please upload your resume/CV", "reason": "upload"})["ok"]
+    data = mod._record_data(mod._get_record(rid))
+    assert data["submission"]["reason"] == "no_upload"
+    assert "could not attach the resume" in data["submission"]["message"]
+    from submit.stages import app_stage
+    st = app_stage(data)
+    assert st["reason"] == "no_upload" and "attach it yourself" in st["detail"]
+    for loc in ("de", "en", "es", "fr", "pt"):
+        t = json.loads((ROOT / "ui" / "static" / "locales" / f"{loc}.json").read_text(encoding="utf-8"))
+        assert t["aa.reason.noUpload"] and "\u2014" not in t["aa.reason.noUpload"]

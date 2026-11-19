@@ -871,6 +871,7 @@
   "aa.reason.form": "Eine Formularfrage braucht dich",
   "aa.reason.site": "Die Seite hatte einen Fehler",
   "aa.reason.cannotFill": "Dieses Formular konnte ich nicht ausfüllen: Es verlangt etwas, das ich nie für dich eintrage",
+  "aa.reason.noUpload": "Ich konnte den Lebenslauf auf dieser Seite nicht anhängen",
   "aa.reason.closed": "Die Anzeige ist geschlossen",
   "aa.closedFound": "{n} vom Arbeitgeber geschlossen. Dafür wurde nichts verbraucht.",
   "aa.termMiss": "Der Job verlangt das; dein Lebenslauf zeigt es nicht",

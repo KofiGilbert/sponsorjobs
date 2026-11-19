@@ -885,6 +885,38 @@ function qsaSafe(sel, root) {
     return rest.length === 1 ? rest[0] : null;
   }
   function resumeInputOpen() { return !!resumeInput(); }
+  // (2026-11-19, iCIMS) The upload control of a box that has no file input of its own until it is
+  // pressed: a button or link worded as an upload, in the area of the question's words (or of the
+  // resume's). Its centre in viewport pixels, for the shell's upload through the page's own file
+  // chooser (shell-electron/chooser.js); null when there is none. Never a cover letter's.
+  const UPLOAD_BTN_RE = /^(?:upload|browse|attach)\b.{0,30}$|^(?:choose|select|add) (?:a |your )?(?:file|files|r[eé]sum[eé]|cv|document)\b|\b(?:upload|attach) (?:a |your |new )?(?:file|r[eé]sum[eé]|cv|document)\b/i;
+  function uploadButtonPoint(label) {
+    const want = canon(label || "").slice(0, 40);
+    const words = (b) => cleanText(b.getAttribute("aria-label") || b.textContent || b.value || "");
+    const scored = [];
+    for (const b of qsaSafe("button, [role='button'], a, label, input[type='button']", document)) {
+      if (!boxShown(b) || b.disabled) continue;
+      const w = words(b);
+      if (!w || w.length > 60 || !UPLOAD_BTN_RE.test(w) || LETTER_BOX_RE.test(w)) continue;
+      let box = b.parentElement, near = "";
+      for (let i = 0; box && i < 4; i++, box = box.parentElement) {
+        near = cleanText(box.textContent || "").slice(0, 400);
+        if (near.length > w.length + 10) break;
+      }
+      if (LETTER_BOX_RE.test(near) && !RESUME_BOX_RE.test(near)) continue;
+      let sc = 1;
+      if (want && canon(near).includes(want)) sc += 5;
+      if (RESUME_BOX_RE.test(near) || RESUME_BOX_RE.test(w)) sc += 3;
+      scored.push({ b, sc });
+    }
+    if (!scored.length) return null;
+    scored.sort((a, b) => b.sc - a.sc);
+    const el = scored[0].b;
+    try { el.scrollIntoView({ block: "center" }); } catch (e) { /* fine */ }
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), text: words(el).slice(0, 40) };
+  }
 
   // ---- a file the box already holds: never upload it twice, never skip the right one
   // Workday keeps a draft application across visits and clears its file input after each upload,
@@ -3123,7 +3155,7 @@ function qsaSafe(sel, root) {
 
   window.TailorAutofill = {
     fill, pageBlocker, applicationForm, applyButtonLabel, siteSearch, planFill, applyFill, fillScreening, fillTextAnswers, answerKeyForLabel,
-    fillEeo, hasResumeUpload, resumeInput, resumeInputOpen, isLetterBox, candidates, categorize, signature, setNativeValue, markFilled,
+    fillEeo, hasResumeUpload, resumeInput, resumeInputOpen, uploadButtonPoint, isLetterBox, candidates, categorize, signature, setNativeValue, markFilled,
     rawLabel, answerableTextareas, pageJobContext, screeningAnswer,
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
     // deep DOM + custom widgets + multi-page (desktop shell)
