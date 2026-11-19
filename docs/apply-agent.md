@@ -1747,3 +1747,17 @@ Three of eight runs stopped as "left-site", and the host they went to was kept n
   moves on.
 - Unchanged: a run never wanders to an unrelated site, and never to LinkedIn or another
   prohibited board.
+
+### Workday's Languages rows
+
+Home Depot's My Experience had a Languages row open (Language, Read, Speak, Write and "I am fluent
+in this language"); nothing filled it, its fields became required, and Save and Continue held for
+48 steps. The fill engine now handles the rows (`fillLanguages` in extension/autofill_core.js,
+called from the history pass): the profile's languages (`autoapply/history.form_languages`, in
+the fill payload as `languages: [{name, level}]`, this application's profile first) go one per
+row, "Add" for more; each proficiency list takes the closest level it offers ("Native" takes
+"Native or bilingual", else "Fluent", else "Advanced"), and native or fluent ticks the fluent box.
+A row nothing fills is removed with its own Delete. A language is never invented: with none saved
+and no Delete (a section that requires a row), the row stays for the person, and a language or
+its level is never a best guess (`guess.is_language_question`). Only a Language control with
+proficiency lists or the fluent box beside it counts, never a site's own language picker.

@@ -76,6 +76,17 @@ _MAJORITY = (
 )
 
 
+# (2026-11-19, Home Depot on Workday) A spoken language and its level are facts about the person:
+# filled only from the languages they saved (the fill engine's Languages rows), never guessed.
+_LANGUAGE_Q = re.compile(r"^\W*(?:languages?|spoken languages?|read(?:ing)?|speak(?:ing)?|writ(?:e|ing)|"
+                         r"i am fluent in this language)\W*$|\b(?:which|what) languages?\b|\blanguages? (?:do )?you (?:speak|know)\b", re.I)
+LANGUAGE_REASON = "a language and its level are never made up: they come only from the languages you saved"
+
+
+def is_language_question(question: str) -> bool:
+    return bool(_LANGUAGE_Q.search(" ".join(str(question or "").split())))
+
+
 def neutral_choice(options) -> str | None:
     """The form's own neutral choice: a decline ("Prefer not to say", "I do not wish to answer"),
     else a lone "N/A" / "None of the above". None when there is none or several."""
@@ -102,7 +113,7 @@ def choose(question: str, options, *, company: str = "", employers=()) -> tuple[
     settle nothing (the brain's own best guess then, checked by ``accept``)."""
     q = " ".join(str(question or "").split())
     opts = [str(o) for o in (options or []) if str(o).strip()]
-    if not q or not opts or qclass.never_guess(q) or qclass.is_consent(q):
+    if not q or not opts or qclass.never_guess(q) or qclass.is_consent(q) or is_language_question(q):
         return None
     n = neutral_choice(opts)
     if qclass.is_self_id(q, opts):
@@ -132,6 +143,8 @@ def accept(question: str, value: str, options, *, typed: bool = False, reason: s
         return False, "never"
     if qclass.is_consent(q):
         return False, "consent"
+    if is_language_question(q):
+        return False, LANGUAGE_REASON
     n = neutral_choice(opts)
     if qclass.is_self_id(q, opts):
         if (n and v.lower() == n.lower()) or (not n and eeo.DECLINE.search(v)):

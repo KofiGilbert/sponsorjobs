@@ -4,6 +4,8 @@
   aggregator's ad link adopts the employer site it lands on; a careers site's hand-off to its
   hiring system (SAP SuccessFactors on sapsf.com, Oracle Recruiting Cloud, Phenom, Jibe ...)
   stays on the run; a third-party survey is a person step, not left-site;
+* Workday's Languages rows (record 23, 48 steps): filled from the profile's languages with the
+  closest proficiency, an empty row removed with its own Delete, a language never invented;
 * the shell under node (tests/js/test_queue_run_2026_11_19.js).
 
 Everyone and every site here is made up.
@@ -11,6 +13,8 @@ Everyone and every site here is made up.
 from __future__ import annotations
 
 import importlib
+import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -125,3 +129,82 @@ def test_the_shell_under_node():
         pytest.skip("needs node")
     out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_queue_run_2026_11_19.js")], capture_output=True, text=True, timeout=240)
     assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stdout + out.stderr
+
+
+# --------------------------------------------------------------------------- languages
+def _playwright_dir():
+    for c in (os.environ.get("SJ_PLAYWRIGHT_DIR"), ROOT / "shell-electron" / "node_modules" / "playwright",
+              Path.home() / "sponsorjobs" / "shell-electron" / "node_modules" / "playwright"):
+        if c and (Path(c) / "package.json").exists():
+            return Path(c)
+    return None
+
+
+browser = pytest.mark.skipif(not shutil.which("node") or _playwright_dir() is None,
+                             reason="needs node + playwright (shell-electron devDependency)")
+
+
+def run_page(tmp_path, page, steps, query=""):
+    sc = {"core": str(ROOT / "extension" / "autofill_core.js"), "page": page, "query": query, "steps": steps}
+    p = tmp_path / "scenario.json"
+    p.write_text(json.dumps(sc), encoding="utf-8")
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "forms_harness.js"), str(p)], capture_output=True, text=True, timeout=180)
+    assert out.returncode == 0, out.stderr[-2000:]
+    return json.loads(out.stdout.strip().splitlines()[-1])["results"]
+
+
+def test_the_profiles_languages_for_a_form():
+    from autoapply.history import form_languages
+    got = form_languages({"languages": ["English (Native)", "Spanish - conversational", {"name": "French", "level": "Fluent"}, "German basic"]})
+    assert got == [{"name": "English", "level": "Native"}, {"name": "Spanish", "level": "conversational"},
+                   {"name": "French", "level": "Fluent"}, {"name": "German", "level": "basic"}]
+    assert form_languages({"languages": "English, Twi"}) == [{"name": "English", "level": ""}, {"name": "Twi", "level": ""}]
+    assert form_languages({}) == [] and form_languages({"languages": []}) == []
+
+
+def test_a_language_is_never_a_best_guess():
+    from autoapply import guess
+    langs = ["Akan", "Albanian", "English", "Spanish"]
+    assert guess.choose("Language", langs) is None
+    assert guess.choose("Read", ["Basic", "Fluent", "Intermediate"]) is None
+    ok, why = guess.accept("Language", "English", langs)
+    assert not ok and "never made up" in why
+    assert not guess.accept("Speak", "Fluent", ["Basic", "Fluent", "Intermediate"])[0]
+    assert guess.choose("Are you at least 18 years of age?", ["Yes", "No"])[0] == "Yes"      # unchanged
+
+
+@browser
+def test_workday_language_rows_are_filled_from_the_profile(tmp_path):
+    payload = {"languages": [{"name": "English", "level": "Native"}, {"name": "Spanish", "level": "Intermediate"}]}
+    r = run_page(tmp_path, "workday_languages.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": f"window.TailorAutofill.fillAsync({json.dumps(dict(payload, fields={}, screening={}, eeo={}))})"},
+        {"do": "wait", "ms": 300},
+        {"do": "eval", "as": "v", "js": "window.fxValues()"},
+    ])
+    v = r["v"]
+    assert v["rows"] == 2                                              # "Add" for the second language
+    en, es = v["values"]
+    # native: the closest the list offers (Fluent), and "I am fluent in this language"
+    assert en == {"language": "English", "native": True, "read": "Fluent", "speak": "Fluent", "write": "Fluent"}
+    assert es == {"language": "Spanish", "native": False, "read": "Intermediate", "speak": "Intermediate", "write": "Intermediate"}
+    assert v["siteLang"] == ""                                         # the site's own language picker: untouched
+    assert r["rep"]["history"] >= 9
+
+
+@browser
+def test_an_empty_language_row_is_removed_never_filled_with_an_invented_language(tmp_path):
+    r = run_page(tmp_path, "workday_languages.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": "window.TailorAutofill.fillLanguages({languages: []})"},
+        {"do": "wait", "ms": 300},
+        {"do": "eval", "as": "v", "js": "window.fxValues()"},
+    ])
+    assert r["rep"]["removed"] == 1 and r["v"]["rows"] == 0 and r["v"]["siteLang"] == ""
+    # a section that requires its row (no Delete): the row stays for the person, nothing invented
+    r = run_page(tmp_path, "workday_languages.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": "window.TailorAutofill.fillLanguages({languages: []})"},
+        {"do": "eval", "as": "v", "js": "window.fxValues()"},
+    ], query="?nodelete")
+    assert r["rep"]["kept"] == 1 and r["v"]["rows"] == 1 and r["v"]["values"][0]["language"] is None

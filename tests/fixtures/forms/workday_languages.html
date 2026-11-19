@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>My Experience, Languages (Workday-style fixture)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script>
+<style>.wd-popup{position:absolute;left:10px;top:10px;background:#fff;border:1px solid #999;z-index:5}</style></head>
+<body>
+<!-- Modelled on a Workday My Experience "Languages" section (2026-11-19): one row already open,
+     each row a Language list ("Select One"), "I am fluent in this language." (name=native) and
+     Read / Speak / Write lists of Basic | Fluent | Intermediate, with a Delete per row unless the
+     page is opened with ?nodelete (a section that requires one row), and an "Add" below. A site
+     language picker in the footer must never be touched. -->
+<h3>My Experience</h3>
+<div role="group" aria-labelledby="wh"><h4 id="wh">Work Experience</h4>
+  <button type="button" id="addWork">Add</button></div>
+<div id="langs" role="group" aria-labelledby="lh"><h4 id="lh">Languages</h4><div id="langList"></div>
+  <button type="button" id="addLang">Add</button></div>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+<footer><label for="siteLang">Language</label>
+  <select id="siteLang"><option value="">Select</option><option>English</option><option>Deutsch</option></select></footer>
+<script>
+  const noDelete = /nodelete/.test(location.search);
+  let seq = 0, n = 0;
+  const h = (tag, attrs, kids) => { const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) { if (k === "text") e.textContent = v; else e.setAttribute(k, v); }
+    for (const c of kids || []) e.appendChild(c); return e; };
+  const rows = [];
+  function langRow() {
+    const i = ++n;
+    const g = h("div", { role: "group", "aria-labelledby": "l" + i, "data-automation-id": "panel-set" }, [h("h5", { id: "l" + i, text: "Languages " + i })]);
+    if (!noDelete) {
+      const del = h("button", { type: "button", "data-automation-id": "panel-set-delete-button", "aria-label": "Delete Languages " + i, text: "Delete" });
+      del.addEventListener("click", () => setTimeout(() => { g.remove(); rows.splice(rows.indexOf(row), 1); }, 80));
+      g.appendChild(del);
+    }
+    document.getElementById("langList").appendChild(g);
+    const row = { g };
+    row.language = window.FixtureWidgets.WorkdayListbox(g, { aid: "language", label: "Language",
+      options: ["Akan", "Albanian", "Arabic", "Chinese - Cantonese", "Chinese - Mandarin", "English", "French", "Spanish"] });
+    const cb = h("input", { type: "checkbox", name: "native", id: "language-" + i + "--native" });
+    g.appendChild(h("div", {}, [cb, h("label", { for: cb.id, text: "I am fluent in this language." })]));
+    row.native = cb;
+    for (const part of ["Read", "Speak", "Write"]) row[part] = window.FixtureWidgets.WorkdayListbox(g, { aid: "languageProficiency-" + part, label: part, options: ["Basic", "Fluent", "Intermediate"] });
+    rows.push(row);
+  }
+  langRow();
+  document.getElementById("addLang").addEventListener("click", () => setTimeout(langRow, 100));
+  window.fxValues = () => ({
+    rows: rows.length,
+    values: rows.map((r) => ({ language: r.language.value, native: r.native.checked, read: r.Read.value, speak: r.Speak.value, write: r.Write.value })),
+    siteLang: document.getElementById("siteLang").value,
+  });
+</script>
+</body></html>
