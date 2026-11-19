@@ -1433,6 +1433,7 @@
   "act.plan": "Plan",
   "act.ladder": "Trying another way",
   "aa.st.ai": "The AI was unavailable, nothing changed. Try again.",
+  "aa.st.left": "Stopped: the site sent me to {host}",
   "outage.aiCompany.h": "SponsorJobs' AI is temporarily unavailable",
   "outage.aiCompany.p": "Your pass and packages are not affected. We have been alerted; try again in a little while.",
   "outage.aiTransient.h": "The AI is busy",

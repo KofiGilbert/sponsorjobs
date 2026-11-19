@@ -11806,6 +11806,8 @@
     }
     // The AI itself was unavailable on the last run (out of credits, no key): said plainly, never "needs you".
     if (it.tile === "waiting" && it.agent_note) return ["flag", T("aa.st.ai", "The AI was unavailable, nothing changed. Try again.")];
+    // (2026-11-19) The last run stopped because the site sent it to another site: which one.
+    if (it.tile === "waiting" && it.left_site && it.left_site.host) return ["flag", T("aa.st.left", "Stopped: the site sent me to {host}").replace("{host}", it.left_site.host)];
     if (it.tile === "waiting") return ["ready", it.queued ? T("aa.st.queued", "Queued to send for you") : T("aa.st.waiting", "Approved, ready to fill")];
     // Paused by the agent: "Paused: needs you" here; what it needs (the exact question) is the
     // row's own muted line under the company (aaRow), never cut short.

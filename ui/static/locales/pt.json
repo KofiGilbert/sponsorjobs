@@ -1433,6 +1433,7 @@
   "act.plan": "Plano",
   "act.ladder": "Tentando outro caminho",
   "aa.st.ai": "A IA estava indisponível, nada mudou. Tente de novo.",
+  "aa.st.left": "Parado: o site me mandou para {host}",
   "outage.aiCompany.h": "A IA do SponsorJobs está temporariamente indisponível",
   "outage.aiCompany.p": "O seu passe e os seus pacotes não são afetados. Já fomos avisados; tente novamente daqui a pouco.",
   "outage.aiTransient.h": "A IA está ocupada",

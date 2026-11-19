@@ -118,9 +118,53 @@ const SUBMIT_RE = /^(submit( application)?|send( application)?|review and submit
 // that is slow or unavailable. Honest identification, never evasion.
 const SIGN_MS = 1500;
 const SIGNED_TYPES = new Set(["mainFrame", "subFrame"]);
+// Mirrors submit/policy.py (ATS_HOSTS, ATS_HOST_PATTERNS, AGGREGATOR_HOSTS, SURVEY_HOSTS and
+// submit/allowlist.py PROHIBITED_HOSTS); the engine's lists win when its route answers.
 const ATS_HOSTS = ["greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com",
   "recruitee.com", "myworkdayjobs.com", "icims.com", "taleo.net", "successfactors.com", "jobvite.com",
-  "bamboohr.com", "paylocity.com", "ultipro.com", "adp.com"];
+  "bamboohr.com", "paylocity.com", "ultipro.com", "adp.com",
+  "sapsf.com", "sapsf.eu", "successfactors.eu", "myworkdaysite.com", "myworkday.com",
+  "jibeapply.com", "phenompeople.com", "avature.net", "eightfold.ai", "brassring.com", "csod.com",
+  "dayforcehcm.com", "paycomonline.net", "ukg.net", "applytojob.com", "breezy.hr", "teamtailor.com",
+  "personio.de", "personio.com", "pinpointhq.com", "jazzhr.com", "applicantpro.com", "isolvedhire.com",
+  "hrmdirect.com", "zohorecruit.com", "freshteam.com", "governmentjobs.com", "paradox.ai"];
+const ATS_HOST_RES = [/(^|\.)fa(\.[a-z0-9-]+)?\.oraclecloud\.com$/];
+const AGGREGATOR_HOSTS = ["adzuna.com", "adzuna.co.uk", "adzuna.ca", "adzuna.com.au", "adzuna.de", "adzuna.fr",
+  "adzuna.in", "adzuna.nl", "adzuna.it", "adzuna.es", "adzuna.at", "adzuna.ch", "adzuna.pl", "adzuna.sg",
+  "adzuna.co.nz", "adzuna.co.za", "adzuna.com.br", "adzuna.com.mx",
+  "remotive.com", "arbeitnow.com", "remoteok.com", "remoteok.io", "freehire.me"];
+const SURVEY_HOSTS = ["wotcgs.ey.com", "wotc.com", "taxcreditco.com", "cost-wotc.com", "wotcsolutions.com",
+  "hirevue.com", "shl.com", "pymetrics.ai", "criteriacorp.com", "harver.com", "plum.io", "wonderlic.com",
+  "testgorilla.com", "codility.com", "hackerrank.com", "codesignal.com", "talentlens.com",
+  "berkeassessment.com", "modernhire.com"];
+const PROHIBITED_HOSTS = ["linkedin.com", "indeed.com", "glassdoor.com", "ziprecruiter.com", "monster.com", "dice.com"];
+const hostIn = (h, list) => !!h && (list || []).some((a) => h === a || h.endsWith("." + a));
+// The aggregator ad's own way through to the employer ("Apply", "Apply now", "Apply on company site").
+const APPLY_LINK_RE = /\b(apply|bewerben|postuler|postular|candidatar)/i;
+// A control that sends the person to a third-party questionnaire ("Take Assessment" on Workday).
+const SURVEY_CLICK_RE = /\b(assessments?|surveys?|questionnaires?|tax credits?|wotc)\b/i;
+// (2026-11-19) What a run does at a page outside its allowed hosts. ``o``: { host (where it is
+// now), fence (the engine's allowed-hosts answer), adopted (a landing was adopted already),
+// fromHost (the last allowed page's host), clicks (the agent's clicks while on the aggregator),
+// lastClick (the name of the agent's last click) }.
+//   "adopt":  an aggregator's ad link redirected (with no click by the agent, or with one click
+//             on the ad's own Apply link) to the employer's site: that site becomes the run's own.
+//   "survey": a third-party questionnaire for the person (a tax-credit survey, an assessment).
+//   "left":   anything else, a prohibited site always: the run stops.
+function offSiteVerdict(o) {
+  const f = (o && o.fence) || {};
+  const h = String((o && o.host) || "");
+  if (!h) return "left";
+  if (hostIn(h, PROHIBITED_HOSTS) || hostIn(h, f.prohibited)) return "left";
+  const aggs = (f.aggregators && f.aggregators.length) ? f.aggregators : AGGREGATOR_HOSTS;
+  if (hostIn(h, SURVEY_HOSTS) || hostIn(h, f.surveys) || SURVEY_CLICK_RE.test(String((o && o.lastClick) || ""))) return "survey";
+  if (f.aggregator && !o.adopted && hostIn(String(o.fromHost || ""), aggs) && !hostIn(h, aggs)) {
+    const c = (o.clicks || []).map(String);
+    if (!c.length || (c.length === 1 && APPLY_LINK_RE.test(c[0]))) return "adopt";
+  }
+  return "left";
+}
+const SURVEY_LINE = (host) => "This employer needs a short survey on another site (" + host + "). Do it yourself, then press Continue and I will finish.";
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 // SJ_AGENT_DEBUG=1 writes each step's view and reply to <tmp>/sj-agent.log (the e2e reads it).
@@ -442,22 +486,50 @@ function createAgent(deps) {
   }
 
   // ---- guards ------------------------------------------------------------------------------
-  async function allowedHosts(applyUrl) {
+  // The run's navigation fence: the hosts (a Set), and the engine's whole answer in ``fence``
+  // (whether the apply URL is an aggregator's ad link, the survey and prohibited lists).
+  const fencePatterns = ATS_HOST_RES.slice();
+  async function allowedHosts(applyUrl, fence) {
     const host = hostOf(applyUrl);
     const parts = host.split(".");
-    const base = new Set([host, parts.slice(-2).join("."), ...ATS_HOSTS]);
+    const prohibited = hostIn(host, PROHIBITED_HOSTS);
+    const base = new Set(prohibited ? [...ATS_HOSTS] : [host, parts.slice(-2).join("."), ...ATS_HOSTS]);
     try {
       const r = await deps.getApp("/api/autoapply/agent/allowed-hosts?url=" + encodeURIComponent(applyUrl));
       for (const h of (r && r.hosts) || []) base.add(String(h).toLowerCase());
+      for (const p of (r && r.patterns) || []) {
+        try { if (!fencePatterns.some((x) => x.source === new RegExp(p).source)) fencePatterns.push(new RegExp(p)); } catch (e) { /* not a pattern */ }
+      }
+      if (fence && r && typeof r === "object") {
+        if (r.aggregator !== undefined) fence.aggregator = !!r.aggregator;
+        for (const k of ["aggregators", "surveys", "prohibited"]) if (Array.isArray(r[k]) && r[k].length) fence[k] = r[k].map((x) => String(x).toLowerCase());
+      }
     } catch (e) { /* the built-in list */ }
+    if (fence) {
+      if (!fence.aggregators) fence.aggregators = AGGREGATOR_HOSTS;
+      if (fence.aggregator === undefined) fence.aggregator = hostIn(host, fence.aggregators);
+      if (!fence.surveys) fence.surveys = SURVEY_HOSTS;
+      if (!fence.prohibited) fence.prohibited = PROHIBITED_HOSTS;
+    }
     base.delete("");
     return base;
+  }
+  // The hosts an adopted landing page brings (the engine's run_allowed_hosts for it; empty for a
+  // prohibited site), else its host and registrable domain.
+  async function landingHosts(url) {
+    const h = hostOf(url);
+    if (!h || hostIn(h, PROHIBITED_HOSTS)) return [];
+    try {
+      const r = await deps.getApp("/api/autoapply/agent/allowed-hosts?url=" + encodeURIComponent(url));
+      if (r && Array.isArray(r.hosts)) return r.hosts.map((x) => String(x).toLowerCase());
+    } catch (e) { /* the fallback */ }
+    return [h, h.split(".").slice(-2).join(".")];
   }
   const onSite = (hosts, url) => {
     const h = hostOf(url);
     if (!h) return url === "about:blank" || url === "";
     for (const a of hosts) if (h === a || h.endsWith("." + a)) return true;
-    return false;
+    return fencePatterns.some((re) => re.test(h));
   };
 
   async function signature(wc) {
@@ -1136,9 +1208,16 @@ function createAgent(deps) {
     if (!R && deps.newUploadRun) deps.newUploadRun();
     deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
     deps.postApp("/api/autoapply/agent/unavailable", { record_id: recordId, clear: true }).catch(() => null);
+    deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, clear: true }).catch(() => null);
     const S = (R && R.state) || null;     // the parked run's own state, when it carries on in place
-    const hosts = await allowedHosts(applyUrl);
+    const fence = {};
+    const hosts = await allowedHosts(applyUrl, fence);
     if (S && S.hosts) for (const h of S.hosts) hosts.add(h);
+    // (2026-11-19) Where the run is allowed to be, as it goes: the last allowed page (a survey's
+    // park returns to it), whether an aggregator's landing site was adopted, the agent's clicks
+    // while still on the aggregator, and its last click's name.
+    let lastOn = applyUrl, adopted = !!(S && S.adopted), lastClick = "", surveyBack = false;
+    const aggClicks = [];
     const history = (S && S.history) || [];
     const portals = (S && S.portals) || new Set();   // hosts whose portal account was ensured this run
     const portalNew = (S && S.portalNew) || new Set(); // hosts whose account was CREATED this run (the site does not know it yet)
@@ -1511,9 +1590,12 @@ function createAgent(deps) {
     // an answer (or Continue) re-runs it. ``kind`` "questions" | "terms" (the engine already parked
     // the ask) or "captcha" | "person" (parked here, nothing to answer).
     const park = async (kind, message, extra) => {
-      const pageUrl = where();
+      // ``extra.pageUrl``: the page Continue opens again (a survey's park: the application's own
+      // page before it left, never the survey's)
+      const pageUrl = (extra && extra.pageUrl) || where();
+      if (extra && extra.pageUrl) { extra = Object.assign({}, extra); delete extra.pageUrl; }
       parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single", batchAt: null, expectSig: "" }), kind,
-                                     state: { history, portals, portalNew, startedAt, runAnswers, runOrigins, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts),
+                                     state: { history, portals, portalNew, startedAt, runAnswers, runOrigins, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts), adopted,
                                               plan, spent, checkedPages, await: awaitInfo, formReached } });
       if (kind === "captcha" || kind === "person") {
         await deps.postApp("/api/autoapply/agent/park", { record_id: recordId, kind, message, page_url: pageUrl, run: runOpts(opts), batch: quick }).catch(() => null);
@@ -1805,7 +1887,43 @@ function createAgent(deps) {
         }
         try {
         const url = wc.getURL() || "";
-        if (!onSite(hosts, url)) return stopped("left-site", "The site sent me somewhere else (" + hostOf(url) + "). Stopped.");
+        if (!onSite(hosts, url)) {
+          const h = hostOf(url), fromHost = hostOf(lastOn);
+          const verdict = offSiteVerdict({ host: h, fence, adopted, fromHost, clicks: aggClicks, lastClick });
+          if (verdict === "adopt") {
+            // The aggregator's ad link landed on the employer's site: that site (and the hiring
+            // systems it hands off to) is this run's own from here. Decided once per run.
+            adopted = true;
+            for (const x of await landingHosts(url)) hosts.add(x);
+            dlog("adopted", "step " + step + " " + fromHost + " -> " + h);
+          }
+          if (!onSite(hosts, url)) {
+            if (verdict === "survey") {
+              // Back from Continue on the person's survey and still on its site: the
+              // application's own page again, once, and carry on.
+              if (R && !surveyBack) {
+                surveyBack = true;
+                const back = (R.entry && R.entry.page_url) || applyUrl;
+                if (onSite(hosts, back)) {
+                  dlog("survey", "step " + step + " back from " + h + " to " + hostOf(back));
+                  navEpoch++; paneEpoch++;
+                  deps.openInPane(back);
+                  await delay(400);
+                  await deps.waitPaneLoad();
+                  await settle(wc, url);
+                  continue;
+                }
+              }
+              dlog("survey", "step " + step + " " + fromHost + " -> " + h);
+              await deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, host: h, step, from_host: fromHost, kind: "survey" }).catch(() => null);
+              return park("person", SURVEY_LINE(h), { url: lastOn, pageUrl: lastOn, survey: h });
+            }
+            dlog("left-site", "step " + step + " " + fromHost + " -> " + h);
+            await deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, host: h, step, from_host: fromHost, kind: "left" }).catch(() => null);
+            return stopped("left-site", "The site sent me somewhere else (" + h + "). Stopped.", { host: h, from_host: fromHost, step });
+          }
+        }
+        lastOn = url;
         await ensureScripts(wc);
         const sig = (await signature(wc)) || {};
         if (sig.success) {
@@ -2610,6 +2728,11 @@ function createAgent(deps) {
             break;
           }
           const r = await act(wc, fr, v, a, opts.resumePath || "");
+          if (a.op === "click" && r && r.ok) {
+            // (2026-11-19) for the navigation fence (offSiteVerdict)
+            lastClick = v.frameOf.has(a.index) ? "" : lineName(viewLine(v.text, a.index));
+            if (hostIn(hostOf(url), fence.aggregators || AGGREGATOR_HOSTS)) aggClicks.push(lastClick);
+          }
           if (a.op === "click" && r && r.ok && !v.frameOf.has(a.index)) {
             const nm = lineName(viewLine(v.text, a.index));
             const au = auth(hostOf(url)), onCreate = isCreateView(v.text);
@@ -3956,7 +4079,7 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
-                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
+                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,

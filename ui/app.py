@@ -17903,8 +17903,35 @@ def autoapply_agent_portal_account_create():
 def autoapply_agent_allowed_hosts():
     """The hosts an apply-agent run may navigate to for this apply URL (submit.policy
     .run_allowed_hosts); the shell stops the run anywhere else. Empty on a prohibited site."""
-    from submit.policy import run_allowed_hosts
-    return jsonify({"ok": True, "hosts": sorted(run_allowed_hosts(request.args.get("url") or ""))})
+    from submit.policy import run_fence
+    return jsonify(dict({"ok": True}, **run_fence(request.args.get("url") or "")))
+
+
+@app.post("/api/autoapply/agent/left-site")
+@_guard
+def autoapply_agent_left_site():
+    """(2026-11-19) A run stopped because the site sent it to another host: body {record_id,
+    host, step, from_host, kind} keeps WHERE it went on the record (``agent_left``: hosts and
+    the step only, never the address with its tokens), so the Auto-apply row can say it.
+    {record_id, clear: true} clears it when a run starts again."""
+    b = request.json or {}
+    rid = b.get("record_id")
+    rec = _get_record(rid) if rid not in (None, "") else None
+    if rec is None:
+        return jsonify({"ok": False, "reason": "no-record"})
+    if b.get("clear"):
+        if (_record_data(rec) or {}).get("agent_left"):
+            _records().merge_data(rec["id"], {"agent_left": None})
+        return jsonify({"ok": True})
+    host = str(b.get("host") or "").strip().lower()[:200]
+    try:
+        step = int(b.get("step") or 0)
+    except (TypeError, ValueError):
+        step = 0
+    left = {"host": host, "step": step, "from_host": str(b.get("from_host") or "").strip().lower()[:200],
+            "kind": "survey" if b.get("kind") == "survey" else "left", "at": _now_iso()}
+    _records().merge_data(rec["id"], {"agent_left": left})
+    return jsonify({"ok": True, "left": left})
 
 
 def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -> dict:
@@ -19195,10 +19222,14 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
     else:
         ready = None
     note = data.get("agent_note") if isinstance(data.get("agent_note"), dict) else None
+    left = data.get("agent_left") if isinstance(data.get("agent_left"), dict) else None
     return {
         "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
         "company": company, "location": location,
         "agent_note": (note or {}).get("message") or "",
+        # (2026-11-19) Where the site sent the last run when it stopped as "left-site"
+        "left_site": ({"host": left.get("host") or "", "step": left.get("step") or 0}
+                      if left and left.get("kind") == "left" and left.get("host") else None),
         "visa": tagged.get("visa") or [], "sponsorship_stated": job.get("sponsorship_stated"),
         **stance,
         "match": round(match) if match is not None else None,

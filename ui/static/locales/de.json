@@ -1433,6 +1433,7 @@
   "act.plan": "Plan",
   "act.ladder": "Versucht einen anderen Weg",
   "aa.st.ai": "Die KI war nicht erreichbar, nichts geändert. Versuch es noch einmal.",
+  "aa.st.left": "Gestoppt: Die Seite hat mich zu {host} geschickt",
   "outage.aiCompany.h": "Die KI von SponsorJobs ist vorübergehend nicht verfügbar",
   "outage.aiCompany.p": "Dein Pass und deine Pakete sind nicht betroffen. Wir wurden benachrichtigt; versuche es in einer Weile noch einmal.",
   "outage.aiTransient.h": "Die KI ist ausgelastet",

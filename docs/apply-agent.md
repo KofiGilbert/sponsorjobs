@@ -1713,3 +1713,37 @@ checklist's declarations (`@excluded_programs`).
 ### Tests
 
 tests/test_auto_never_stops.py and tests/js/test_auto_never_stops.js.
+
+## 32. The hidden Auto run of 2026-11-19: eight applications, five fixes
+
+### Left-site: where it went, aggregators, hand-offs, surveys
+
+Three of eight runs stopped as "left-site", and the host they went to was kept nowhere.
+
+- **Where it went is kept.** The stop logs `left-site step N <from host> -> <host>` and posts
+  `/api/autoapply/agent/left-site` (`agent_left` on the record: the host, the step, the host it
+  came from, never the address with its tokens). The Auto-apply row says "Stopped: the site sent
+  me to <host>" (five locales). A new run clears it.
+- **An aggregator's ad link** (Adzuna's `adzuna.com/land/ad/...`, and the other aggregators the
+  sourcing code reads: Remotive, Arbeitnow, RemoteOK, freehire; `submit.policy.AGGREGATOR_HOSTS`)
+  only redirects. The first page that is not the aggregator becomes the run's own site
+  (`offSiteVerdict` "adopt": the hosts the engine allows for that page are added), when the agent
+  made no click on the aggregator, or one click on the ad's own Apply link. Once per run, and
+  never a prohibited site.
+- **A careers site's hand-off to its hiring system.** Gainwell's careers site runs on SAP
+  SuccessFactors and applies on `career41.sapsf.com`, which was not on the list. `ATS_HOSTS`
+  (submit/policy.py, mirrored in agent.js) now holds the hiring systems' own domains: SAP
+  SuccessFactors (sapsf.com, sapsf.eu, successfactors.eu), Workday's career sites, Jibe, Phenom,
+  Avature, Eightfold, BrassRing, Cornerstone, Dayforce, Paycom, UKG and the small ATSs. Oracle
+  Recruiting Cloud is allowed by its shape (`<pod>.fa.<region>.oraclecloud.com`,
+  `ATS_HOST_PATTERNS`), never all of oraclecloud.com.
+- **A third-party survey is the person's.** A bank's Workday requires an assessment that opens
+  EY's tax-credit survey (`wotcgs.ey.com`). A survey host (`SURVEY_HOSTS`: tax-credit screeners
+  and assessment vendors), or any host reached by a click named like an assessment or survey,
+  parks the job as a person step: "This employer needs a short survey on another site (<host>).
+  Do it yourself, then press Continue and I will finish." Continue opens the application's own
+  page (the last allowed page), never the survey; a resumed run that finds itself still on the
+  survey goes back to that page once. In Auto the job is set aside with that reason and the batch
+  moves on.
+- Unchanged: a run never wanders to an unrelated site, and never to LinkedIn or another
+  prohibited board.
