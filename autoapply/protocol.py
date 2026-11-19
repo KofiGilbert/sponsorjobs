@@ -50,10 +50,10 @@ from dataclasses import dataclass
 from autoapply import commonsense, qclass
 from autoapply.asks import is_filler
 
-SOURCES = ("profile", "resume", "saved_answer", "common_sense", "posting")
+SOURCES = ("profile", "resume", "saved_answer", "common_sense", "posting", "best_guess")
 # The Review answers origin each source shows as (ui/static/app.js aaAnsFrom).
 ORIGIN = {"profile": "profile", "resume": "history", "saved_answer": "library", "common_sense": "common_sense",
-          "posting": "job"}
+          "posting": "job", "best_guess": "best_guess"}
 # The source a fact of each kind stands for, when the engine attaches the evidence itself.
 KIND_SOURCE = {"location": "profile", "links": "profile", "job": "resume", "school": "resume", "skills": "resume",
                "years": "resume", "languages": "resume", "answer": "saved_answer", "posting": "posting"}
@@ -115,7 +115,8 @@ def meta(action: dict) -> dict:
     get = lambda *keys: next((str(d.get(k)) for d in (a, inner) for k in keys if d.get(k) not in (None, "", True, False)), "")  # noqa: E731
     src = get("source", "origin").strip().lower().replace(" ", "_").replace("-", "_")
     src = {"saved": "saved_answer", "answer": "saved_answer", "library": "saved_answer", "history": "resume", "cv": "resume",
-           "job": "posting", "job_posting": "posting", "jd": "posting", "commonsense": "common_sense"}.get(src, src)
+           "job": "posting", "job_posting": "posting", "jd": "posting", "commonsense": "common_sense",
+           "guess": "best_guess", "bestguess": "best_guess", "my_best_guess": "best_guess"}.get(src, src)
     cls = get("class", "klass", "category").strip().lower().replace(" ", "_").replace("-", "_")
     cls = {"commonsense": "common_sense", "fact": "factual"}.get(cls, cls)
     ev = " ".join(get("evidence", "reason", "fact").split())[:MAX_EVIDENCE]
@@ -253,7 +254,39 @@ def default_answer(kind: str, value: str, question: str, options, material) -> t
 
 
 # --------------------------------------------------------------------------- the check
-def check(action: dict, question: str, options=(), material=None, *, saved: bool = False) -> Verdict:
+NEVER = ("never guessed, in any mode: an ID number, a date of birth, bank or payment details, a password or a typed "
+         "signature is filled only from the person's saved value. Leave it; if the form requires it, this "
+         "application cannot be done by the agent")
+
+
+def check(action: dict, question: str, options=(), material=None, *, saved: bool = False, auto: bool = False) -> Verdict:
+    """May this answer go on the page? The check of ``_check``, and in Auto (``auto``; the owner,
+    2026-11-19: Auto never stops to ask) one more door: an answer nothing supports is taken as a
+    flagged BEST GUESS (autoapply/guess.py) instead of being refused, so the run goes on. Never
+    for a never-guessed field, a consent, a long number or filler; where the form offers a
+    neutral choice the guess is that one (always, on a self-identification question)."""
+    v = _check(action, question, options, material, saved=saved)
+    if v.ok or saved or not auto:
+        return v
+    from autoapply import guess
+    op = str(action.get("op") or "")
+    value = str(action.get("text") if op == "type" else action.get("option") or action.get("value") or "")
+    if v.hard == "6" or (op == "type" and is_filler(value) and not _NONE_WORD.match(value)):
+        return v
+    ok, why = guess.accept(question, value, options, typed=op == "type")
+    if ok:
+        said = meta(action)["evidence"]
+        m = guess.majority(question)
+        return Verdict(True, klass=v.klass or meta(action)["class"], source=guess.SOURCE,
+                       evidence=(said or (m[1] if m else "") or "nothing saved or in the material answers this")[:MAX_EVIDENCE])
+    if why == "never":
+        return Verdict(False, NEVER + ".", v.klass, hard="9")
+    if why == "consent":
+        return v
+    return Verdict(False, "Auto takes a best guess here, but not this one: " + why + ".", v.klass)
+
+
+def _check(action: dict, question: str, options=(), material=None, *, saved: bool = False) -> Verdict:
     """May this answer go on the page? ``action``: the brain's type / select / click with its
     source, evidence and class (any of them may be missing); ``question``: the field's own label;
     ``options``: the choices the view shows for it; ``material``: autoapply/material.Material;

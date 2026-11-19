@@ -5431,6 +5431,9 @@
         ${suInput("heard", suT("setup.heard", "How you heard about the job"), f.heard || suT("setup.heardDefault", "Job board"), { max: 60 })}
         ${suField(suT("setup.over18", "At least 18 years old"), suSeg("over_18", f.over_18, SU_YN))}
         ${suField(suT("setup.covenants", "A non-compete or other restrictive covenant"), suSeg("covenants", f.covenants, SU_YN))}
+        ${suField(suT("setup.criminal", "A conviction or a pending charge"), suSeg("criminal", f.criminal, SU_YN))}
+        ${suField(suT("setup.dismissed", "Ever dismissed or asked to resign"), suSeg("dismissed", f.dismissed, SU_YN))}
+        ${suField(suT("setup.excluded", "Excluded or sanctioned from a health care or government program"), suSeg("excluded", f.excluded, SU_YN))}
         ${suInput("other_names", suT("setup.otherNames", "Other names you have used (write None if there are none)"), f.other_names || "", { max: 120, ph: suT("setup.otherNamesPh", "None"), cls: "ans-span2" })}
         ${suField(suT("setup.relatives", "Do any of your relatives work at companies you apply to?"), suSeg("relatives", f.relatives, [["No", "ans.no", "No"], ["ask", "setup.relativesAsk", "Yes, ask me each time"]]), "ans-span2")}
       </div>
@@ -5502,6 +5505,7 @@
     return `<div class="su-rows">
         ${suField(suT("mode.title", "How to apply"), suSeg("mode", a.mode || (a.autonomous ? "auto" : "assisted"), APPLY_MODES), "su-row")}
         <p class="ans-eeo-note su-note" id="suModeNote">${esc(applyModeLine(a.mode || (a.autonomous ? "auto" : "assisted"), a.auto_sites))}</p>
+        <div class="aa-mode-check" id="suModeCheck"${(a.mode || (a.autonomous ? "auto" : "assisted")) === "auto" ? "" : " hidden"}>${SU.d.auto_checklist ? aaChecklistHTML(SU.d.auto_checklist, false) : ""}</div>
         <div id="suModeMin"${(a.mode || (a.autonomous ? "auto" : "assisted")) === "auto" ? "" : " hidden"}>
           ${suInput("auto_min_match", suT("mode.minMatch", "Only send by myself at this match or better (%)"), a.auto_min_match || "", { type: "number", min: 1, maxv: 100, num: true, max: 3 })}
           ${suNote("mode.minMatchS", "Leave it empty to send on every site that allows it. Lower matches wait for your Send.")}
@@ -5646,6 +5650,7 @@
       const m = (seg.querySelector(".is-on") || {}).dataset?.v || "";
       if ($("#suModeNote") && m) $("#suModeNote").textContent = applyModeLine(m, SU.d.apply.auto_sites);
       if ($("#suModeMin")) $("#suModeMin").hidden = m !== "auto";
+      if ($("#suModeCheck")) $("#suModeCheck").hidden = m !== "auto";
     }
   });
   $("#view-setup")?.addEventListener("change", e => {
@@ -11672,7 +11677,8 @@
   const AA_REASON = { needs_signin: ["aa.reason.signin", "Needs your sign-in"],
     form_blocker: ["aa.reason.form", "A form question needs you"],
     site_error: ["aa.reason.site", "The site had an error"],
-    posting_closed: ["aa.reason.closed", "Job closed"] };
+    posting_closed: ["aa.reason.closed", "Job closed"],
+    cannot_fill: ["aa.reason.cannotFill", "I could not do this form: it requires something I never fill in for you"] };
 
   // Per-viewer convenience only: the focus fields come back as you left them.
   (function aaRestoreFocus() {
@@ -11793,7 +11799,11 @@
     }
     // Left on its review page by the agent (Send): the engine's own words, its first sentence
     // here ("Ready to send"); the whole line is the status's tooltip.
-    if (it.action === "send") return ["ready", aaFirst(it.stage_detail) || T("aa.st.readySend", "Ready to send")];
+    if (it.action === "send") {
+      const base = aaFirst(it.stage_detail) || T("aa.st.readySend", "Ready to send");
+      // (2026-11-19) Auto's best guesses on it: said on the row, before the person's Send
+      return it.guessed ? ["flag", base + ". " + aaCheckWords(it.guessed)] : ["ready", base];
+    }
     // The AI itself was unavailable on the last run (out of credits, no key): said plainly, never "needs you".
     if (it.tile === "waiting" && it.agent_note) return ["flag", T("aa.st.ai", "The AI was unavailable, nothing changed. Try again.")];
     if (it.tile === "waiting") return ["ready", it.queued ? T("aa.st.queued", "Queued to send for you") : T("aa.st.waiting", "Approved, ready to fill")];
@@ -11817,6 +11827,7 @@
     return visaBadges(it, { primary: true });
   }
 
+  const aaCheckWords = (n) => (n === 1 ? T("mode.check1", "1 answer needs your check") : T("mode.checkN", "{n} answers need your check").replace("{n}", fmtN(n)));
   // The first sentence of an engine line, without its full stop ("Ready to send").
   const aaFirst = (s) => String(s || "").trim().split(/(?<=\.)\s+/)[0].replace(/\.$/, "");
   function aaRow(it) {
@@ -11959,9 +11970,41 @@
         catch { toast(T("tracker.saveFail", "Couldn't save that, try again.")); }
       });
     }
+    aaAutoChecklist(mode);
     const live = $("#aaModeLive");
     live.hidden = !(mode === "auto" && AA_AUTO.running);
     live.textContent = T("mode.working", "Working in the background.");
+  }
+  // (2026-11-19) Auto never stops to ask. Where it is switched on: the standard declarations it
+  // would otherwise answer by best guess, how many are still unanswered, each with a way to
+  // answer it once, and the plain words about best judgement. It never blocks turning Auto on.
+  let AA_CHECK = null;
+  function aaChecklistHTML(c, go) {
+    const open = c.items.filter(x => !x.answered);
+    const head = `<p class="aa-check-s">${esc(T("mode.autoAsk", "Auto never stops to ask. Answer these once so it never has to guess. Anything left blank, I answer with my best guess and flag for you."))}</p>`
+      + `<p class="aa-check-s">${esc(T("mode.autoTerms", "In Auto I may answer a form's questions with my best judgement when you have not saved an answer. Those answers are flagged, and you are responsible for checking them before an application is sent."))}</p>`;
+    const count = `<p class="aa-check-n">${esc(open.length ? (open.length === 1 ? T("mode.autoOpen1", "1 of {m} still unanswered").replace("{m}", c.total)
+      : T("mode.autoOpenN", "{n} of {m} still unanswered").replace("{n}", open.length).replace("{m}", c.total)) : T("mode.autoOpen0", "All {m} are answered.").replace("{m}", c.total))}</p>`;
+    const list = c.items.map(x => `<li class="aa-check-i${x.answered ? " is-done" : ""}"><span class="aa-check-m" aria-hidden="true">${x.answered ? "\u2713" : "\u25cb"}</span>`
+      + `<span class="aa-check-l">${esc(T("mode.ck." + x.id, x.label))}</span>`
+      + (x.answered || !go ? "" : `<button class="link-btn" type="button" data-aa-check="${esc(x.step)}">${esc(T("setup.answer", "Answer"))}</button>`) + "</li>").join("");
+    return head + count + `<ul class="aa-check-list">${list}</ul>`;
+  }
+  async function aaAutoChecklist(mode) {
+    let box = $("#aaModeCheck");
+    if (!box) {
+      const sub = $("#aaModeSub");
+      if (!sub) return;
+      box = document.createElement("div");
+      box.id = "aaModeCheck"; box.className = "aa-set-s aa-mode-check";
+      sub.insertAdjacentElement("afterend", box);
+      box.addEventListener("click", e => { const b = e.target.closest("[data-aa-check]"); if (b) openApplySetup({ origin: "autoapply", step: b.dataset.aaCheck }); });
+    }
+    box.hidden = mode !== "auto";
+    if (box.hidden) return;
+    if (AA_CHECK) box.innerHTML = aaChecklistHTML(AA_CHECK, true);
+    try { AA_CHECK = await api("/api/autoapply/auto/checklist"); } catch { return; }
+    if (!box.hidden) box.innerHTML = aaChecklistHTML(AA_CHECK, true);
   }
   $("#aaModeSeg")?.addEventListener("click", async e => {
     const b = e.target.closest(".ans-seg-b");
@@ -12065,6 +12108,13 @@
           .replace("{sent}", fmtN(sum.sent)).replace("{ready}", fmtN(ready)).replace("{need}", fmtN(sum.need))
       : (ready === 1 ? T("mode.ready1", "1 application is filled and ready for your Send.")
                      : T("mode.readyN", "{n} applications are filled and ready for your Send.")).replace("{n}", fmtN(ready));
+    const rows = aaReadyRows();
+    const guessed = rows.reduce((n, x) => n + (Number(x.guessed) || 0), 0), legal = rows.reduce((n, x) => n + (Number(x.guessed_legal) || 0), 0);
+    if (guessed) {
+      $("#aaAutoSumText").textContent += " " + aaCheckWords(guessed) + "."
+        + (legal ? " " + (legal === 1 ? T("mode.checkLegal1", "1 of them is a best guess on a legal question. Check it before you send all.")
+                                      : T("mode.checkLegalN", "{n} of them are best guesses on legal questions. Check them before you send all.").replace("{n}", fmtN(legal))) : "");
+    }
     const btn = $("#aaSendAll");
     btn.hidden = !(ready && window.tailorShell && window.tailorShell.agentSendAll);
     btn.textContent = T("mode.sendAll", "Send all {n}").replace("{n}", fmtN(ready));
@@ -12598,6 +12648,7 @@
       optin: T("aa.ans.from.optin", "Declined marketing messages"),
       tracker: T("aa.ans.from.tracker", "Your tracker"),
       common_sense: T("aa.ans.from.commonSense", "Common sense"),
+      best_guess: T("aa.ans.from.bestGuess", "Best guess"),
       neutral: T("aa.ans.from.neutral", "Neutral choice"),
       needs_you: T("aa.ans.from.needsYou", "Needs you"), left_empty: T("aa.ans.from.leftEmpty", "Left empty"),
     };
@@ -12617,6 +12668,9 @@
   function aaAnsFlag(code, fact, value, evidence) {
     if (code === "grounded") return aaAnsGrounded(fact);
     // (2026-11-18) an answer the agent chose itself, with the fact it used
+    // (2026-11-19) Auto's best guess where nothing saved answers the question
+    if (code === "best_guess") return evidence ? T("aa.ans.flag.bestGuessWhy", "Best guess: {e}. Check it.").replace("{e}", evidence)
+      : T("aa.ans.flag.bestGuess", "Best guess. Check it.");
     if (code === "agent") return evidence ? T("aa.ans.flag.agent", "The agent answered this itself, from: {e}. Check it.").replace("{e}", evidence)
       : T("aa.ans.flag.agentPlain", "The agent answered this itself. Check it.");
     // (Fill-through) what the run chose or left because nothing saved answers it

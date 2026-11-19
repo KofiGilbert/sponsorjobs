@@ -203,23 +203,23 @@ const REFUSED = { observations: ["Your click on [5] (" + VISA_Q.slice(0, 60) + "
            "no answer value, evidence or observation in the log\n" + said.slice(0, 600));
   }
 
-  // ---- 4. Auto (a quiet batch): nothing is asked; the job is set aside and the question named
+  // ---- 4. Auto (a quiet batch): nothing is asked, and (2026-11-19) the job is NOT set aside for a
+  // question. The full behaviour is in tests/js/test_auto_never_stops.js; here: a brain that
+  // still gives no answer to the legal question leaves it flagged "Needs you" at Ready to send.
   {
     const brain = (P) => {
-      if (!P.vals[3]) return ok([{ op: "select", index: 3, option: "Master's Degree", proof: PROOF }], REFUSED);
+      if (!P.vals[3]) return ok([{ op: "select", index: 3, option: "Master's Degree", proof: PROOF }]);
       return READY;                                  // it carries on to the Submit page with the legal one open
     };
     const s = setup(brain);
-    const res = await s.agent.batch([{ recordId: 8, url: "https://jobs.brightwater.example/apply/1", company: "Brightwater Freight" }], { quiet: true });
-    const parked = s.progress.filter((x) => x.state === "parked");
+    await s.agent.batch([{ recordId: 8, url: "https://jobs.brightwater.example/apply/1", company: "Brightwater Freight" }], { quiet: true });
     const asks = s.posts.filter(([p, b]) => p === "/api/autoapply/agent/ask" && !b.known_only);
-    const guided = s.progress.filter((x) => x.state === "ask");
-    assert(!guided.length, "an Auto run shows no question");
-    assert(asks.every(([, b]) => b.no_wait === true), "and never waits for an answer " + JSON.stringify(asks.map(([, b]) => b.no_wait)));
-    assert(parked.length >= 1, "the job is set aside " + JSON.stringify({ res, states: s.progress.map((x) => x.state) }));
-    const posted = s.posts.filter(([p]) => p === "/api/autoapply/agent/park").map(([, b]) => JSON.stringify(b)).join(" ") + " " + parked.map((x) => x.message || "").join(" ");
-    assert(posted.includes(VISA_Q.slice(0, 40)), "and the reason names the question: " + posted.slice(0, 400));
-    assert(!s.posts.some(([p, b]) => p === "/api/autoapply/agent/ready" && !b.clear) && !s.progress.some((x) => x.state === "ready"), "never left at Ready to send");
+    assert(!asks.length && !s.progress.some((x) => x.state === "ask"), "an Auto run asks nothing " + JSON.stringify(asks));
+    assert(!s.progress.some((x) => x.state === "parked"), "and is never set aside for a question " + JSON.stringify(s.progress.map((x) => x.state + ":" + (x.message || "").slice(0, 40))));
+    const ready = s.progress.find((x) => x.state === "ready");
+    const row = ready && ready.answers.rows.find((x) => x.label === VISA_Q);
+    assert(row && row.flag === "needs_you", "what even a guess did not answer is flagged Needs you " + JSON.stringify(ready && ready.answers.rows));
+    assert(steps(s.posts).some((b) => (b.nudges || []).some((n) => /^AUTO: nobody is here to ask/.test(n))), "the brain was told to give its best guess");
   }
 
   // ---- 5. a stand-in is the engine's call now: the shell types what the engine let through

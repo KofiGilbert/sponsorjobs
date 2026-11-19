@@ -24,6 +24,9 @@ REASONS = {
     "form_blocker": "The form asks for something only you can give",
     "needs_signin": "The site wants a sign-in or verification",
     "site_error": "The site had an error",
+    # (2026-11-19) a required field the agent never guesses or fills without the person's saved
+    # value (an ID number, a date of birth, bank details, a password, a signature)
+    "cannot_fill": "The form requires something I never fill in for you",
 }
 # What to do next, per reason. A closed posting has nothing left to do.
 NEXT = {
@@ -31,6 +34,7 @@ NEXT = {
     "form_blocker": " Open it to finish.",
     "needs_signin": " Open it to finish.",
     "site_error": " Open it to submit it yourself.",
+    "cannot_fill": " Open it to apply yourself.",
 }
 
 STAGE_LABEL = {
@@ -125,6 +129,7 @@ REASON_SHORT = {
     "needs_signin": ("sign-in", "sign-ins"),
     "form_blocker": ("form question", "form questions"),
     "site_error": ("site error", "site errors"),
+    "cannot_fill": ("form I could not do", "forms I could not do"),
     "posting_closed": ("closed posting", "closed postings"),
     "paused": ("paused application", "paused applications"),   # the apply agent parked it (ui/app.py)
 }
@@ -132,7 +137,7 @@ REASON_SHORT = {
 # The one row action per tile (and per reason on "Needs you"). The page turns the code into
 # the button label; the server decides it so the row and the drawer never disagree.
 ROW_ACTION = {"review": "review", "waiting": "fill", "submitted": "view"}
-NEEDS_ACTION = {"needs_signin": "signin", "form_blocker": "finish", "site_error": "finish",
+NEEDS_ACTION = {"needs_signin": "signin", "form_blocker": "finish", "site_error": "finish", "cannot_fill": "finish",
                 "posting_closed": "view"}
 
 

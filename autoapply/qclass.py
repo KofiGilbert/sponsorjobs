@@ -49,6 +49,7 @@ _LEGAL = re.compile(
     r"|date of birth|birth ?date|\bdob\b|\bage\b|years? (old|of age)|social security|\bssn\b|national (id|insurance)"
     r"|passport|tax (id|identification)|government[- ]issued|driver'?s? licen[cs]e number"
     r"|accommodation|essential functions"
+    r"|suspended|sanctioned|debarred|excluded from|precluded from|exclusion list|\boig\b|medicare|medicaid|federal health ?care program"
     r"|conflicts? of interest|government official|public official|politically exposed|relative|related to|family member"
     r"|spouse|domestic partner|next of kin|household"
     r"|\bagree|consent|acknowledg|attest|certif(y|ication that)|signature|\bsign(ed)?\b|\bterms\b|privacy|polic(y|ies)"
@@ -67,7 +68,7 @@ _LEGAL_KEYS = frozenset({
     "@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability", "@transgender",
     "@sexual_orientation", "@first_gen", "@citizenship", "@citizenship2", "@restrictive_covenants",
     "@security_clearance", "@over_18", "@salary", "@start_date", "@notice_period", "@relatives_at_employer",
-    "@other_names", "@forced_consent", "@marketing_optin"})
+    "@other_names", "@forced_consent", "@marketing_optin", "@criminal_record", "@dismissed", "@excluded_programs"})
 
 # How the person heard about the job; the kind of phone; a follow-up that only applies to a Yes.
 _HEARD = re.compile(r"how did you (hear|find|learn)|where did you (hear|find|learn|see)|hear about (us|this)"
@@ -108,6 +109,44 @@ _ESSAY = re.compile(r"\bwhy\b|\bdescribe\b|tell us|\bexplain\b|elaborate|share (
                     r"|strengths?\b|proud of|example of|how would you|walk us through|in your own words|tell me about"
                     r"|what makes you|what would you bring|greatest (achievement|accomplishment)", re.I)
 _NOT_ESSAY = re.compile(r"cover letter|anything else|additional (information|comments)|\bsummary\b|comments?\W*$", re.I)
+
+
+# (2026-11-19, Auto never stops to ask) What is NEVER guessed, in any mode, because a wrong value
+# there is not a judgement call: a government ID number, an SSN, a date of birth, bank or payment
+# details, a password or code, and a typed legal signature. A required field of this kind with
+# nothing saved means the agent cannot do this application: it is skipped, never guessed.
+_NEVER = re.compile(
+    r"social security|\bssn\b|\bsin\b number|national (id|insurance|identification)|\bnino\b|tax (id|identification|file) ?(number|no)?"
+    r"|\btin\b|\bitin\b|passport (number|no)|driver'?s? licen[cs]e (number|no)|licen[cs]e number|government[- ]issued (id|identification)"
+    r"|\bid number\b|identification number|alien (registration )?number|\buscis\b number|visa number"
+    r"|date of birth|birth ?date|\bdob\b|birthday|year of birth"
+    r"|bank (account|details|name)|account number|routing number|\biban\b|\bswift\b|sort code|credit card|debit card|card number"
+    r"|\bcvv\b|payment (details|method|information)"
+    r"|password|passcode|verification code|one[- ]time (code|password)|security (question|answer)|\bpin\b"
+    r"|signature|\bsign(ed)? (here|below|your name)|type your (full )?(legal )?name (to|as|below|here)|electronic(ally)? sign|\be-?sign", re.I)
+
+
+def never_guess(label: str) -> bool:
+    """True for a field whose value is never guessed, in any mode (see _NEVER)."""
+    lbl = _squash(label)
+    return bool(lbl) and bool(_NEVER.search(lbl))
+
+
+def is_consent(label: str) -> bool:
+    """A consent, an acknowledgement of a notice or the terms, or a marketing opt-in: these
+    follow the person's consent settings (autoapply/consents.py), never a guess."""
+    lbl = _squash(label)
+    return bool(lbl) and (consents.is_acknowledgement(lbl) or consents.is_optin(lbl)
+                          or bool(re.search(r"\bterms\b|privacy (notice|policy|statement)|\bi agree\b|\bconsent\b", lbl, re.I)))
+
+
+def is_self_id(label: str, options=()) -> bool:
+    """A voluntary self-identification question (by its words or its choices)."""
+    from autoapply import eeo
+    from autoapply.asks import is_eeo
+    lbl = _squash(label)
+    return bool(lbl) and (is_eeo(lbl) or bool(_SELF_ID.search(lbl))
+                          or any(eeo.topic_key(str(o)) in eeo.KEYS for o in (options or []) if str(o).strip()))
 
 
 def default_kind(label: str) -> str:

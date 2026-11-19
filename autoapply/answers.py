@@ -228,6 +228,22 @@ _CANON: list[tuple[str, re.Pattern]] = [
     ("restrictive_covenants", re.compile(
         r"^(?!.*\b(willing|would you|will you|agree to sign|able to sign|sign an?)\b)"
         r".*\b(restrictive covenants?|non ?compete|non ?competition|non ?solicitation)\b")),
+    # (2026-11-19, Apply setup's standard declarations, so Auto never has to guess them) A
+    # conviction or pending charge, and a dismissal or forced resignation: one fact each, asked
+    # once. Never a consent to a background check (autoapply/consents.py), never a follow-up
+    # ("If yes, please explain").
+    ("criminal_record", re.compile(
+        r"^(?!\s*if (yes|so)\b)(?!.*\b(background check|consent|authori[sz]e)\b)"
+        r".*\b(convicted|convictions?|felony|felonies|misdemeanou?rs?|criminal (record|offen[cs]e|history|charges?)"
+        r"|pending (criminal )?charges?)\b")),
+    # (2026-11-19, Ochsner on Workday) Excluded, suspended, debarred or sanctioned from Medicare,
+    # Medicaid or another federal, state or private health care or government program.
+    ("excluded_programs", re.compile(
+        r"^(?!\s*if (yes|so)\b).*\b(suspended|sanctioned|debarred|excluded|precluded)\b.*"
+        r"\b(medicare|medicaid|health ?care|health insurance|federal|government|state|program|contract)")),
+    ("dismissed", re.compile(
+        r"^(?!\s*if (yes|so)\b).*\b(have you|were you|been)\b.*\b(terminated|dismissed|discharged|fired|asked to resign"
+        r"|resign(ed)? in lieu|involuntar(y|ily)|separated from)\b")),
     # The standing choice on marketing messages (autoapply/consents.py), saved by its own wording
     # only: an answer to one form's opt-in question never becomes it.
     ("marketing_optin", re.compile(r"^(may (job sites|employers|companies) send you marketing( texts| messages)?"

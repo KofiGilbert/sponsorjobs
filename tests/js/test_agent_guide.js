@@ -236,9 +236,11 @@ const hl = (s) => s.P.log.filter((l) => /^(hl|unhl) /.test(l));
   {
     const s = setup({ mode: "auto" });
     const r = await s.agent.batch([{ recordId: 5, url: s.P.url, lane: "assisted", company: "Acme" }], { quiet: true });
-    assert(r.ok && r.results[0].parked === true, "parks " + JSON.stringify(r.results));
+    // (2026-11-19, Auto never stops to ask) not parked: what was left goes over at Ready to send,
+    // flagged "Needs you", and is never sent by the agent alone (tests/js/test_auto_never_stops.js)
+    assert(r.ok && !r.results[0].parked && r.results[0].ready === true, "never set aside for a question " + JSON.stringify(r.results));
     assert(hl(s).filter((l) => /^hl /.test(l)).length === 0 && guides(s).length === 0, "nothing outlined, no line on the bar");
-    assert(s.E.asks.length === 1 && s.E.asks[0].no_wait === true && s.E.asks[0].telegram === false, "nothing asked anywhere");
+    assert(s.E.asks.length === 0, "nothing asked anywhere " + JSON.stringify(s.E.asks));
     assert(s.E.waits === 0 && s.E.answers.length === 0, "and nothing waited for");
   }
 

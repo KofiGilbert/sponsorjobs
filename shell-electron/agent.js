@@ -1222,8 +1222,9 @@ function createAgent(deps) {
     const triage = async (wc, v, items, recheck) => {
       if (!items.length) return { open: [], answered: 0 };
       const k = await deps.postApp("/api/autoapply/agent/ask", { questions: items.map(askItem), record_id: recordId,
-                                                                  known_only: true, fill_through: !recheck }).catch(() => null);
+                                                                  known_only: true, fill_through: !recheck, auto_guess: quiet }).catch(() => null);
       const known = (k && k.answers) || {};
+      const reasons = (k && k.reasons) || {}, classes = (k && k.classes) || {};
       const pick = (k && k.select) || {};
       const origins = (k && k.origins) || {};
       applyReword(items, k && k.reword);
@@ -1232,17 +1233,38 @@ function createAgent(deps) {
       for (const [q, a] of Object.entries(known)) {
         knownSeen.add(q);
         answered++;
-        const from = origins[q] === "neutral" ? "neutral" : origins[q] === "eeo_decline" ? "eeo_decline" : "eeo";
+        const from = origins[q] === "neutral" ? "neutral" : origins[q] === "eeo_decline" ? "eeo_decline" : origins[q] === "best_guess" ? "best_guess" : "eeo";
         // A self-identification or neutral choice the page lists: the shell picks it itself, and
-        // a self-identification one never travels on to the brain.
-        if (pick[q] && await pickSaved(wc, v, q, pick[q])) { addAnswer(ans, { page, label: q, value: pick[q], from }); continue; }
+        // a self-identification one never travels on to the brain. (2026-11-19) So is Auto's own
+        // best guess on a list: recorded with its reason and the question's class.
+        const extra = from === "best_guess" ? { agent: true, evidence: reasons[q] || "", klass: classes[q] || "" } : {};
+        if (pick[q] && await pickSaved(wc, v, q, pick[q])) { addAnswer(ans, { page, label: q, value: pick[q], from, ...extra }); continue; }
         runAnswers[q] = a;
       }
       // The person's standing No to a required consent with no way to decline: left empty.
       const leave = ((k && k.leave) || []).filter((q) => !(q in known));
       for (const q of leave) markLeft(q, page);
       if (leave.length) pendingNudges.push(LEFT_NUDGE(leave));
-      return { open: items.filter((it) => !(it.question in known) && !leave.includes(it.question)), answered, left: leave.length };
+      return { open: items.filter((it) => !(it.question in known) && !leave.includes(it.question)), answered, left: leave.length,
+               never: ((k && k.never) || []).filter((q) => !(q in known)) };
+    };
+    // (2026-11-19, the owner: "for auto apply, we can't stop to ask the user anything") An Auto
+    // run never sets an application aside for a question: what nothing answers gets the best
+    // guess (the engine's on a list, the brain's otherwise), flagged, and the run goes on to
+    // Ready to send. The one exception is a REQUIRED field that is never guessed (an ID number,
+    // a date of birth, bank details, a password, a signature): the agent cannot do that
+    // application, so it is skipped with the field named, and the batch moves on.
+    const quoted = (qs, n) => qs.slice(0, n || 3).map((q) => "\u201c" + String((q && q.question) || q).slice(0, 70) + "\u201d").join(", ");
+    const guessNudge = (open) => ("AUTO: nobody is here to ask. Answer now with your best guess (source best_guess, your reason as evidence): "
+      + quoted(open, 3) + ". A neutral choice first, else what is true for most applicants, else the choice that commits to nothing. Never report needs-answers for them.").slice(0, 300);
+    const skipFor = async (fields, url) => {
+      const field = String(fields[0] || "").slice(0, 120);
+      const msg = "Skipped: this form requires \u201c" + field + "\u201d, which I never guess or fill in without your saved value.";
+      await deps.postApp("/api/autoapply/agent/skip", { record_id: recordId, field, url: url || "" }).catch(() => null);
+      feed.close();
+      feed.push("stop", "Skipped", "", { state: "parked", detail: msg });
+      progress(recordId, "skipped", msg, { reason: "cannot_fill", field, steps: history.length });
+      return finish({ ok: false, reason: "skipped", field, steps: history.length });
     };
     // Note questions as left for the person (once each); returns the new ones.
     const defer = (items) => {
@@ -1279,11 +1301,8 @@ function createAgent(deps) {
       const id = Math.random().toString(16).slice(2, 10);
       const n = open.length;
       const qs = open.map(askItem);
-      // An Auto run (quiet) asks nothing: the job is set aside, and the reason names what it
-      // needs (a legal question with no saved answer, most often), so the person can save it once.
-      const named = open.slice(0, 3).map((d) => "\u201c" + String(d.question).slice(0, 80) + "\u201d").join(", ") + (n > 3 ? " and " + (n - 3) + " more" : "");
-      const shown = quiet ? "Set aside: no saved answer for " + named + ". Everything else is filled."
-                          : "I filled everything I could; " + (n === 1 ? "this one needs you." : "these " + n + " need you.");
+      // (An Auto run never gets here: it never leaves a question for the person, 2026-11-19.)
+      const shown = "I filled everything I could; " + (n === 1 ? "this one needs you." : "these " + n + " need you.");
       const ask = { id, question: qs[0].question, options: n === 1 ? qs[0].options : [], questions: qs, batch: true };
       feed.push("ask", "Asking you", n === 1 ? "1 field" : n + " fields, one at a time", { state: "asking", detail: where === "page" ? "this page will not move on without them" : "everything else is filled" });
       const body = { questions: qs, record_id: recordId, id, batch: true, force_questions: open.filter((d) => d.forced).map((d) => d.question),
@@ -2115,7 +2134,7 @@ function createAgent(deps) {
             history: history.slice(-12), email_code: emailCode, answers: runAnswers,
             plan, observations: observations.splice(0), reflect, image, last_step: overBudget || step >= MAX_STEPS,
             portal_new: portalNew.has(hostOf(url)),
-            deferred: deferredOpen().map((d) => d.question),
+            deferred: deferredOpen().map((d) => d.question), auto: quiet,
           }), STEP_BRAIN_MS, "brain");
         } catch (e) { if (e && e.stopped) throw e; reply = null; }
         dlog("step " + step + " reply:", reply);
@@ -2152,7 +2171,14 @@ function createAgent(deps) {
         // a written answer the engine drafted for this application: Review answers says "drafted"
         if (reply.origins) noteOrigins(runOrigins, reply);
         if (Array.isArray(reply.rejected) && reply.rejected.length) {
-          const rj = noteRejected(rejects, reply.rejected);
+          if (quiet) {
+            const never = reply.rejected.filter((x) => x && x.hard === "9").map((x) => String(x.label || ""));
+            const need = questionsFor(v.text, left).filter((q) => never.some((n) => sameLabel(n, q)));
+            if (need.length) return skipFor(need, url);
+          }
+          // (In Auto a refusal never turns into needs-answers: the observation says why, and the
+          // brain gives another best guess or leaves a box that takes none.)
+          const rj = quiet ? { nudge: [], force: [] } : noteRejected(rejects, reply.rejected);
           dlog("step " + step + " answers refused:", { n: reply.rejected.length, nudge: rj.nudge.length, force: rj.force.length });
           if (rj.force.length && !reply.done) {
             reply.actions = [];
@@ -2210,10 +2236,22 @@ function createAgent(deps) {
               const items = await itemsFor(wc, v, extra);
               const forcedIt = items.filter((it) => knownSeen.has(it.question));
               const t = await triage(wc, v, items.filter((it) => !forcedIt.includes(it)));
-              defer(forcedIt.concat(t.open));
+              if (quiet && t.never.length) return skipFor(t.never, url);
               answeredNow = t.answered;
+              if (quiet) {
+                // Auto: nothing is left for the person. The brain gets one more round to give
+                // its best guess; what is still open after that goes over flagged "Needs you".
+                const open = forcedIt.concat(t.open);
+                ans.held.end = (ans.held.end || 0) + 1;
+                if (open.length && ans.held.end <= 2) {
+                  pendingNudges.push(guessNudge(open));
+                  history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(ready_to_submit held)"],
+                                 results: [open.length + " required question(s) still open: best guess, then ready_to_submit"] });
+                  continue;
+                }
+              } else defer(forcedIt.concat(t.open));
             }
-            if (deferredOpen().length) {
+            if (!quiet && deferredOpen().length) {
               const b = await askBatch(wc, v, step, reply, url, left, "end");
               if (b.ret) return b.ret;
               continue;
@@ -2226,12 +2264,11 @@ function createAgent(deps) {
             // Review answers: what was left for the person and is still empty here ("Needs you").
             const still = questionsFor(v.text, left);
             ans.needs = ans.deferred.filter((d) => still.some((q) => sameLabel(q, d.question))).map((d) => ({ page: d.page, label: d.question }));
-            // An Auto run never sends, and never offers for Send all, a form that will not submit:
-            // a required question the person left empty sets the job aside for them.
-            if (quiet && ans.needs.length) {
-              return park("person", "The form will not submit without " + (ans.needs.length === 1 ? "an answer" : ans.needs.length + " answers")
-                + " you left empty: " + ans.needs.map((n) => "\u201c" + String(n.label).slice(0, 80) + "\u201d").join(", ") + ".", { url });
-            }
+            // (2026-11-19) An Auto run is never set aside for a question. What even a best guess
+            // could not answer (a box the form would not take, a self-identification list with
+            // no decline choice) goes over at Ready to send, flagged "Needs you": the agent
+            // never sends such an application alone (handOver), and the person sees it before Send.
+            if (quiet) ans.needs = still.filter((q) => !leftEmpty(q)).map((q) => ({ page, label: q }));
           }
           // ---- SJ_AX hook 2 (shell-electron/ax_view.js, docs/apply-agent.md section 20): the final form
           // check. A blocker goes back to the brain once, then the person is asked once; never handed over unseen.
@@ -2371,6 +2408,22 @@ function createAgent(deps) {
           // fit, so it waits for the person; every other question gets their material first.
           const forcedIt = items.filter((it) => knownSeen.has(it.question));
           const t = await triage(wc, v, items.filter((it) => !forcedIt.includes(it)));
+          if (quiet) {
+            // Auto never leaves a question for the person: a never-guessed required field skips
+            // the application; anything else is the brain's best guess, on its next step.
+            if (t.never.length) return skipFor(t.never, url);
+            const open = forcedIt.concat(t.open);
+            const gk = "guess:" + page;
+            ans.held[gk] = (ans.held[gk] || 0) + 1;
+            if (ans.held[gk] > 3 && open.length) {
+              return park("person", "I could not get an answer into " + quoted(open, 2) + " on this page: the form would not take one.", { url, left });
+            }
+            if (open.length) pendingNudges.push(guessNudge(open));
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                           actions: ["(Auto: nobody to ask)"],
+                           results: [(t.answered + fromPark ? (t.answered + fromPark) + " answered; " : "") + open.length + " for your best guess, carry on"] });
+            continue;
+          }
           const fresh = defer(forcedIt.concat(t.open));
           const answered = t.answered + fromPark;
           const openNow = deferredOpen();
@@ -2867,7 +2920,13 @@ function createAgent(deps) {
     // (2026-11-18) A written answer the agent drafted is the person's to read first: such an
     // application is never sent by the agent alone, on any site (autoapply/modes.py says the same).
     const holdsDraft = (((wrote && wrote.answers) || {}).rows || []).some((r) => r && r.from === "drafted");
-    const auto = !!opts.autonomous && now.click_submit === true && !holdsDraft;
+    // (2026-11-19) Nor one that holds a best guess on a legal question, or a required question
+    // still open: it waits at Ready to send for the person's own Send.
+    const rows0 = ((wrote && wrote.answers) || {}).rows || [];
+    const guessed = rows0.filter((r) => r && r.from === "best_guess").length;
+    const guessedLegal = rows0.filter((r) => r && r.from === "best_guess" && r.klass === "legal").length;
+    const stillOpen = (((wrote && wrote.answers) || {}).needs || []).length;
+    const auto = !!opts.autonomous && now.click_submit === true && !holdsDraft && !guessedLegal && !stillOpen;
     const sig = viewText ? reviewSig(viewText) : (opts.expectSig || "");
     const keep = { url: opts.url || url, resumePath: opts.resumePath || "", lane: opts.lane || "assisted",
                    autonomous: !!opts.autonomous, company: opts.company || "" };
@@ -2881,7 +2940,7 @@ function createAgent(deps) {
     // (Section 29) What the agent answered itself is kept on the application, sent or not.
     const chosen = agentAnswers(answers);
     if (auto || opts.mode === "resend") {
-      if (chosen.length) deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, answers_only: true, agent_answers: chosen }).catch(() => null);
+      if (chosen.length) deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, answers_only: true, agent_answers: chosen, guessed, guessed_legal: guessedLegal }).catch(() => null);
       if (fd) fd.push("send", "Sending", "your application", { detail: said });
       progress(recordId, "running", "Sending" + (said ? ". " + said : ""), { step });
       current = null;
@@ -2892,7 +2951,7 @@ function createAgent(deps) {
     // The engine keeps it on the record and sends the Ready to send notice on Telegram, once per
     // run (docs/notify.md): counts and the flagged lines only, never a self-identification value.
     // A quiet (Auto) run sends no notice: the daily summary counts it instead.
-    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep), agent_answers: chosen },
+    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep), agent_answers: chosen, guessed, guessed_legal: guessedLegal },
                  opts.quiet ? {} : { notice: readyNotice(answers, wrote && wrote.startedAt) })).catch(() => null);
     const notes = (noted || []).slice(0, 3);
     // The bar stays ONE short line (2026-11-16, the owner: the Gusto line ran on for five
@@ -3501,7 +3560,7 @@ function orderOptions(question, options) {
 // (Fill-through) neutral: a required choice nothing saved answers took the page's neutral
 // option; needs_you: left for the person and still empty; left_empty: an optional box left empty
 // (shown, never counted as one to check, never sent to Telegram).
-const ANSWER_FLAGS = new Set(["ai", "closest", "skills", "eeo_decline", "derived", "drafted", "grounded", "neutral", "needs_you", "left_empty"]);
+const ANSWER_FLAGS = new Set(["ai", "closest", "skills", "eeo_decline", "derived", "drafted", "grounded", "neutral", "needs_you", "left_empty", "best_guess"]);
 const FACT_KINDS = new Set(["location", "job", "school", "skills", "answer"]);
 const ANSWER_MAX = 200;
 const NO_ANSWER_PH = new Set(["portal_email", "portal_password", "email_code"]);
@@ -3557,13 +3616,15 @@ function criticInputs(ans) {
 // worked out by a standing rule, so Review answers names its source: history (the person's work
 // and school dates, or their employers), tracker (their earlier applications) and consent (an
 // acknowledgement under their standing consent). The rest are the person's own material, as before.
-const KEPT_ORIGINS = new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense", "drafted"]);
+const KEPT_ORIGINS = new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense", "drafted", "best_guess"]);
 function noteOrigins(runOrigins, reply) {
   const o = (reply && reply.origins) || {};
   for (const [q, from] of Object.entries(o)) {
     if (!KEPT_ORIGINS.has(from)) continue;
     const fact = String(((reply && reply.facts) || {})[q] || "");
     runOrigins[q] = FACT_KINDS.has(fact) ? { from, fact } : { from };
+    // Auto's best guess: its reason and the question's class ride along to Review answers
+    if (from === "best_guess") Object.assign(runOrigins[q], { reason: String(((reply && reply.reasons) || {})[q] || ""), klass: String(((reply && reply.classes) || {})[q] || "") });
   }
   return runOrigins;
 }
@@ -3584,13 +3645,14 @@ function brainAnswer(viewText, a, runAnswers, runOrigins) {
   const r = brainAnswerOf(viewText, a, runAnswers, runOrigins);
   const o = r && originFor(runOrigins, r.label);
   if (o && o.fact && r.from === o.from) r.fact = o.fact;
+  if (o && o.from === "best_guess" && r.from === "best_guess") { r.agent = true; r.evidence = o.reason || ""; r.klass = o.klass || ""; }
   // (Section 29) The brain's own answer, checked by the engine (autoapply/protocol.py): where it
   // came from (the label Review answers shows), the fact it cited, and that the agent chose it.
   const p = r && a && a.proof;
   if (p && AGENT_ORIGINS.has(p.origin)) { r.from = p.origin; r.agent = true; r.evidence = String(p.evidence || ""); r.klass = String(p.class || ""); delete r.fact; }
   return r;
 }
-const AGENT_ORIGINS = new Set(["profile", "history", "library", "common_sense", "job"]);
+const AGENT_ORIGINS = new Set(["profile", "history", "library", "common_sense", "job", "best_guess"]);
 // Count the answers the answer protocol refused, by question: { nudge: [questions refused a second
 // time (a hard limit: the first)], force: [questions refused a third time (a hard limit: the
 // second)] }. ``counts``: the run's Map(question -> n).
@@ -3685,7 +3747,8 @@ function readyAnswers(ans, ctx) {
     const from = self && /^(eeo|library|profile|you)$/.test(r.from) ? "eeo" : r.from;
     const row = { page: r.page, label: r.label, value: r.value, from, flag: ANSWER_FLAGS.has(from) ? from : "", self_id: self, i };
     if (from === "grounded" && r.fact) row.fact = r.fact;
-    if (r.agent && !self) { row.agent = true; row.flag = "agent"; row.evidence = r.evidence || ""; row.klass = r.klass || ""; }
+    if (r.agent && !self) { row.agent = true; row.flag = from === "best_guess" ? "best_guess" : "agent"; row.evidence = r.evidence || ""; row.klass = r.klass || ""; }
+    else if (from === "best_guess") { row.evidence = r.evidence || ""; row.klass = r.klass || ""; }
     return row;
   });
   // (Fill-through) What was left for the person and is still empty, and the optional boxes left
@@ -3732,7 +3795,7 @@ const ANSWER_FROM_WORDS = {
   ai: "AI pick, check it", closest: "closest match, check it", skills: "from your skills, check it",
   grounded: "from your saved facts, check it", consent: "you said yes to required notices in setup",
   optin: "declined marketing messages", tracker: "from your tracker", common_sense: "common sense",
-  neutral: "chose the neutral option: nothing saved answers this", needs_you: "needs you", left_empty: "left empty: optional",
+  neutral: "chose the neutral option: nothing saved answers this", best_guess: "best guess, check it", needs_you: "needs you", left_empty: "left empty: optional",
 };
 // One answer as a Telegram line: a self-identification value never leaves the app.
 function answerLine(r) {

@@ -40,6 +40,10 @@ QUESTIONS: dict[str, str] = {
     "heard": "How did you hear about us?",
     "over_18": "Are you at least 18 years of age?",
     "covenants": "Do you have a non-compete or other restrictive covenant with a current or past employer?",
+    # (2026-11-19) the standard declarations Auto would otherwise answer by best guess
+    "criminal": "Have you ever been convicted of a crime, or do you have a pending charge?",
+    "dismissed": "Have you ever been dismissed or asked to resign from a job?",
+    "excluded": "Have you ever been excluded, suspended or sanctioned from a health care or government program?",
     "marketing": "May job sites send you marketing texts and emails?",
     "forced": "Accept a required consent whose only choice is yes?",
     # (2026-11-17, autoapply/commonsense.py) "No" answers No on every form; "Yes" means some do:
@@ -57,7 +61,7 @@ QUESTIONS: dict[str, str] = {
     "current_equity": "What is your current equity?",
 }
 KEYS: dict[str, str] = {f: normalize(q) for f, q in QUESTIONS.items()}
-YES_NO = ("over_18", "covenants", "marketing", "forced", "license", "related_degree")
+YES_NO = ("over_18", "covenants", "criminal", "dismissed", "excluded", "marketing", "forced", "license", "related_degree")
 CLEARANCES = ("None", "Public Trust", "Confidential", "Secret", "Top Secret", "TS/SCI")
 
 LEVELS = ("internship", "entry", "mid", "senior", "lead")
@@ -219,3 +223,54 @@ def coverage(snap: dict) -> dict:
     got = answered(snap)
     open_ = [{"id": i, "label": label, "step": step} for i, label, step in ITEMS if not got.get(i)]
     return {"answered": len(ITEMS) - len(open_), "total": len(ITEMS), "open": open_}
+
+
+# ------------------------------------------------------------------------- Auto's checklist
+# (2026-11-19, the owner: Auto never stops to ask.) The standard declarations Auto would otherwise
+# answer by best guess, each answered once in this setup and saved under its own key. Shown as a
+# checklist where Auto is switched on, with how many are still unanswered. It never blocks Auto:
+# what is left blank gets a flagged best guess (autoapply/guess.py).
+AUTO_SENTENCE = ("Auto never stops to ask. Answer these once so it never has to guess. "
+                 "Anything left blank, I answer with my best guess and flag for you.")
+AUTO_TERMS = ("In Auto I may answer a form's questions with my best judgement when you have not saved an answer. "
+              "Those answers are flagged, and you are responsible for checking them before an application is sent.")
+# (id, label, the setup step that answers it, the saved key or what holds it)
+AUTO_ITEMS: tuple[tuple[str, str, str, str], ...] = (
+    ("authorized", "Authorized to work", "workauth", "work authorization profile"),
+    ("sponsorship", "Visa sponsorship, now and later", "workauth", "work authorization profile"),
+    ("other_names", "Other names you have used", "forms", "@other_names"),
+    ("relatives", "Relatives at a company you apply to", "forms", "@relatives_at_employer"),
+    ("covenants", "Non-compete or other restrictive agreement", "forms", "@restrictive_covenants"),
+    ("criminal", "Conviction or pending charge", "forms", "@criminal_record"),
+    ("dismissed", "Ever dismissed or asked to resign", "forms", "@dismissed"),
+    ("excluded", "Excluded or sanctioned from a health care or government program", "forms", "@excluded_programs"),
+    ("background", "Background check and drug screen", "forms", "accept_required_terms"),
+    ("relocate", "Willing to relocate", "wants", "work authorization profile (relocate)"),
+    ("start", "Notice period or earliest start date", "wants", "@notice_period / @start_date"),
+    ("current_salary", "Current salary", "forms", "@current_salary"),
+    ("salary", "Wanted salary", "wants", "@salary"),
+    ("clearance", "Security clearance", "forms", "@security_clearance"),
+)
+
+
+def auto_checklist(snap: dict) -> dict:
+    """{items: [{id, label, step, answered}], open, total, sentence, terms} from the same snapshot
+    ``answered`` reads, plus ``terms_decided`` (the person chose how required notices and
+    background checks are handled)."""
+    got = answered(snap)
+    saved = snap.get("saved") or {}
+    has = lambda k: bool(str(saved.get(k) or "").strip())           # noqa: E731
+    done = {
+        "authorized": got.get("authorized"), "sponsorship": got.get("sponsorship"),
+        "other_names": has(KEYS["other_names"]), "relatives": has(KEYS["relatives"]),
+        "covenants": has(KEYS["covenants"]), "criminal": has(KEYS["criminal"]), "dismissed": has(KEYS["dismissed"]),
+        "excluded": has(KEYS["excluded"]),
+        "background": bool(snap.get("terms_decided")),
+        "relocate": got.get("relocate"),
+        "start": has(KEYS["start_date"]) or has(KEYS["notice"]),
+        "current_salary": has(KEYS["current_salary"]), "salary": got.get("salary"),
+        "clearance": has(KEYS["clearance"]),
+    }
+    items = [{"id": i, "label": label, "step": step, "answered": bool(done.get(i))} for i, label, step, _k in AUTO_ITEMS]
+    return {"items": items, "open": sum(1 for x in items if not x["answered"]), "total": len(items),
+            "sentence": AUTO_SENTENCE, "terms": AUTO_TERMS}

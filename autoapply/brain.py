@@ -349,6 +349,7 @@ def build_user_message(req: dict, placeholders: list, nudges: list, values: dict
         portal_s = "no saved account for this site"
     parts = [
         f"<job>\nrole: {role or '(unknown)'}\ncompany: {company or '(unknown)'}\nlane: {lane}\n</job>",
+        "<mode>\n" + (AUTO_MODE if req.get("auto") else "the person is here: a required question nothing answers is needs-answers") + "\n</mode>",
         "<portal>\n" + portal_s + "\n</portal>",
         "<plan>\n" + ("\n".join(plan) if plan else "(none yet: write one)") + "\n</plan>",
         "<history>\n" + ("\n".join(hist) if hist else "(first step)") + "\n</history>",
@@ -720,7 +721,8 @@ def _typed_saved(history) -> bool:
     return bool(last) and any(re.match(r"^type \d+ \(secret\)", _action_key(a)) for a in (last.get("actions") or []))
 
 
-def check_answers(actions: list, lines: dict, material, observations: list, rejected: list, history=None) -> list:
+def check_answers(actions: list, lines: dict, material, observations: list, rejected: list, history=None,
+                  auto: bool = False) -> list:
     """The answer protocol over one step's actions (autoapply/protocol.py). An answer that passes
     keeps ``proof`` ({source, origin, evidence, class}) for the Review answers list; one that
     does not is taken out and comes back to the brain in ``observations`` with the reason.
@@ -740,7 +742,7 @@ def check_answers(actions: list, lines: dict, material, observations: list, reje
             # value was the answer, and the brain cannot read it.
             out.append(a)
             continue
-        v = protocol.check({**a, "value": t["value"]}, t["label"], t["options"], material)
+        v = protocol.check({**a, "value": t["value"]}, t["label"], t["options"], material, auto=auto)
         if v.ok:
             out.append({**{k: x for k, x in a.items() if k not in ("source", "evidence", "class", "proof", "answer")},
                         "proof": protocol.record(a, v)})
@@ -933,6 +935,20 @@ def system_blocks(material=None) -> list[str]:
     return [SYSTEM_PROMPT] + ([PERSON_LEAD + "\n" + block] if block else [])
 
 
+# (2026-11-19, the owner: "for auto apply, we can't stop to ask the user anything") What the brain
+# is told on every step of an Auto run. It rides in the state message, so the cached system
+# prompt is the same text in every mode.
+AUTO_MODE = ("AUTO: nobody is here to ask, so never report needs-answers for a question. Every question gets an answer and "
+             "you carry on to the Submit page. In this order: its saved-answer placeholder; <person> or the posting under "
+             "rule 6; a common-sense default; and when none of those exists your BEST GUESS, with \"source\": \"best_guess\" "
+             "and your reason as evidence: first a neutral choice the form offers (Prefer not to say, Decline to "
+             "self-identify, I do not wish to answer, N/A where the question invites it), else the choice true for the "
+             "great majority of applicants that commits the person to the least (No to relatives here, to a non-compete, "
+             "to a conviction), else the first choice that commits to nothing. A self-identification question takes its "
+             "decline choice. A legal question with no placeholder is answered this way too in AUTO. Never guessed, "
+             "whatever the mode: an ID number, a date of birth, bank or payment details, a password, a typed signature, "
+             "and consents: leave those.")
+
 PERSON_LEAD = ("What you know about this person, for rule 6. These are facts from their resume and saved profile; "
                "cite one by its id as evidence. What is not here, you do not know.")
 
@@ -1066,7 +1082,7 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
     observations += ["Not done: " + n + "." for n in notes[n_notes:]]
     # (Section 29) The answer protocol: an answer the brain chose itself is checked against the
     # person's material before it runs; a refusal goes back with its reason.
-    actions = check_answers(actions, lines, material, observations, rejected, req.get("history"))
+    actions = check_answers(actions, lines, material, observations, rejected, req.get("history"), auto=bool(req.get("auto")))
     # Nothing unrendered ever reaches the page: an action whose text, option or file still holds
     # "{{" or "}}" after the placeholders were resolved is dropped (2026-11-16, belt and braces).
     clean = []

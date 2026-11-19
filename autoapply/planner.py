@@ -212,7 +212,9 @@ _EMPLOYEE_OF = re.compile(
     r"|^\W*(?P<who2>[^?()]{2,80}?)\s+(?:employee|contractor|intern)s?\s*\(\s*" + _WHEN
     + r"|\b" + _WHEN + r"(?:\s*(?:or|/|and)\s*" + _WHEN + r")?\s+(?:employee|contractor|intern)s?\s+(?:of|at|with|for)\s+"
     r"(?P<who3>[^?()]{2,80})", re.I)
-_SOMEONE_ELSE = re.compile(r"relative|related|family|friend|spouse|anyone|someone|know|refer|partner", re.I)
+# (2026-11-19, Ochsner on Workday) "companies, partners, or affiliates" is the employer's own group,
+# never someone else: only a lone "partner" (a domestic partner) is.
+_SOMEONE_ELSE = re.compile(r"relative|related|family|friend|spouse|anyone|someone|know|refer|\bpartner\b(?!s)", re.I)
 _CO_SUFFIX = re.compile(r"\b(inc|incorporated|llc|l l c|llp|l l p|pllc|lp|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|sa"
                         r"|group|holdings?|technologies|labs|usa|u s a|north america|americas|international|global)\b", re.I)
 # "Why do you want to work at Acme?", "Would you like to work for Acme?": a wish, not a history.
@@ -277,6 +279,20 @@ def worked_here_question(label: str, company: str) -> bool:
     if not (re.search(r"\b(have|are|were|did|do) you\b", lbl, re.I) or _LEADS.search(lbl)):
         return False
     return any(has(m.group("who")) for m in _WORKED_AT.finditer(lbl))
+
+
+# "Are you currently employed by any of the following Acme companies, partners, or affiliates?":
+# the CURRENT job only, never the history (2026-11-19, Ochsner on Workday).
+_CURRENTLY = re.compile(r"\b(currently|presently|now|at present)\b[^?]{0,30}\b(employed|working|work|an employee)\b"
+                        r"|\b(current|present) (employee|staff member|team member)\b", re.I)
+
+
+def currently_here_question(label: str, company: str) -> bool:
+    """True for "are you CURRENTLY employed by <company or its group>?": answered from the
+    person's current job, never from the rest of their history."""
+    lbl = str(label or "")
+    return bool(_CURRENTLY.search(lbl)) and not re.search(r"\b(former|previously|ever|before|past|prior)\b", lbl, re.I) \
+        and worked_here_question(lbl, company)
 
 
 def asks_worked_here(label: str, company: str, confirm=None) -> bool:
@@ -983,6 +999,10 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
         if ctx.per_company and qkey0 == "@previously_worked":
             # (Phase 4) a Yes read from the resume waits for the person's one tap per company
             wh = ctx.worked_here if ctx.worked_here and ctx.worked_here[1] != "confirm" else None
+            # "currently employed by": No when the employer is nowhere in the history; a Yes would
+            # only say they worked there once, so that stays the person's one-tap confirm
+            if wh and wh[0] == "Yes" and currently_here_question(label, ctx.company):
+                wh = None
             if wh and wh[1] == "history" and not commonsense.fast_path("worked_here"):
                 wh = None                                  # the rule is off: the brain answers it
             v = _literal(f, wh[0]) if wh else None

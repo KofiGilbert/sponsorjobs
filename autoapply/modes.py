@@ -38,7 +38,8 @@ def clamp_threshold(value, default: int = 0) -> int:
     return max(0, min(100, n))
 
 
-def may_send_alone(mode: str, lane: str, match, threshold=0, *, drafted: bool = False) -> bool:
+def may_send_alone(mode: str, lane: str, match, threshold=0, *, drafted: bool = False,
+                   guessed_legal: bool = False) -> bool:
     """May the agent press the site's Submit with nobody there? Only in Auto, only on a site the
     verified allowlist put in the auto lane, and, with a threshold set, only when the match is
     known and at least that high. Everything else waits at Ready to send for the person.
@@ -46,7 +47,9 @@ def may_send_alone(mode: str, lane: str, match, threshold=0, *, drafted: bool = 
     (2026-11-18) ``drafted``: the application holds a written answer the agent drafted for an
     open-ended question (autoapply/drafts.py). It is the person's to read first: never sent
     alone, on any site."""
-    if drafted or mode != AUTO or lane != "auto":
+    # (2026-11-19) ``guessed_legal``: Auto answered a legal or attestation question on it with a
+    # best guess (autoapply/guess.py). It waits at Ready to send for the person's own Send.
+    if drafted or guessed_legal or mode != AUTO or lane != "auto":
         return False
     t = clamp_threshold(threshold)
     if not t:

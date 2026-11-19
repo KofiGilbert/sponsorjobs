@@ -5220,3 +5220,13 @@ a.cv-act { display: inline-flex; align-items: center; justify-content: center; t
   .view-inbox .ib-back { display: inline-flex; }
   .view-inbox .ib-tab-end { margin-left: 0; }
 }
+
+/* Auto's checklist (2026-11-19): the standard declarations Auto would otherwise answer by best guess */
+.aa-mode-check { margin-top: 8px; }
+.aa-check-s { margin: 0 0 6px; }
+.aa-check-n { margin: 6px 0 4px; font-weight: 600; }
+.aa-check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.aa-check-i { display: flex; gap: 8px; align-items: baseline; }
+.aa-check-i.is-done { color: var(--muted); }
+.aa-check-m { width: 1em; flex: none; }
+.aa-check-l { flex: 1; min-width: 0; }

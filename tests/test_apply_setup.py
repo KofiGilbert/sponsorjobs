@@ -84,6 +84,7 @@ def _full_setup(c):
 def test_each_standing_answer_is_saved_under_its_canonical_key():
     assert S.KEYS == {"start_date": "@start_date", "notice": "@notice_period", "heard": "@heard_about",
                       "over_18": "@over_18", "covenants": "@restrictive_covenants", "marketing": "@marketing_optin",
+                      "criminal": "@criminal_record", "dismissed": "@dismissed", "excluded": "@excluded_programs",   # Auto's checklist
                       "forced": "@forced_consent", "relatives": "@relatives_at_employer", "other_names": "@other_names", "clearance": "@security_clearance", "license": "@drivers_license",
                       "gpa": "@gpa", "related_degree": "@related_degree", "current_salary": "@current_salary",
                       "current_bonus": "@current_bonus", "current_equity": "@current_equity"}
