@@ -36,6 +36,7 @@ const LETTER_MS = Number(process.env.SJ_AGENT_LETTER_MS) > 0 ? Number(process.en
 // margin, for a fill that never comes back at all.
 const { caps: fillCaps, fillOutcome, fillLogLine } = require("./fill_budget");
 const { paneGoneError } = require("./pane_guard");
+const { SENT_PROBE_JS, sentVerdict } = require("./sent_watch");
 const FILL_OVERALL_MS = Math.max(PANE_MS, fillCaps(process.env).overall);
 const FILL_MS = FILL_OVERALL_MS + Math.min(10000, Math.round(FILL_OVERALL_MS / 4));
 // A page with nothing to do on it (a skeleton, "Loading", no fields) for this long is a hang.
@@ -235,6 +236,11 @@ const QUIET_READ = "(window.__tailorQuiet ? Date.now() - window.__tailorQuiet.at
 // resume upload, aria-busy, a progress bar) is waited for this much longer, once, before the next
 // step reads it: a read in the middle showed "Next is disabled" and cost steps (Uline 2026-11-16).
 const SETTLE_BUSY_MS = 8000;
+// The watch on a job left at Ready to send (armReadyWatch): how often, for how long, and on which
+// pane events it looks again.
+const READY_WATCH_EVERY_MS = 2500;
+const READY_WATCH_MS = 30 * 60 * 1000;
+const WATCH_EVENTS = ["did-navigate", "did-navigate-in-page", "did-finish-load"];
 // After an upload, how long an ask waits for the site to fill boxes from the resume by itself.
 const ASK_REREAD_MS = Number(process.env.SJ_AGENT_ASK_REREAD_MS) >= 0 && process.env.SJ_AGENT_ASK_REREAD_MS !== undefined
   ? Number(process.env.SJ_AGENT_ASK_REREAD_MS) : 9000;
@@ -534,6 +540,67 @@ function createAgent(deps) {
 
   async function signature(wc) {
     try { return await wc.executeJavaScript("window.TailorAutofill.pageSignature()", true); } catch (e) { return null; }
+  }
+
+  // ---- after Submit: did the site take it? (sent_watch.js) -----------------------------------
+  // The page's answer, read with a cap (a page in the middle of a navigation never holds a tick).
+  async function sentProbe(wc) {
+    const real = (wc && wc.__real) || wc;
+    try {
+      return await guard((async () => { await ensureScripts(real); return real.executeJavaScript(SENT_PROBE_JS, true); })(), 8000, "sent check");
+    } catch (e) { return null; }
+  }
+  // (2026-11-19, a real Workday tenant) The person may press the site's own Submit while the bar
+  // says Ready to send. The pane is watched from the moment the job is left ready, the same way
+  // as after the shell's own Send: on every navigation and every few seconds, until the job is
+  // sent, sent by Send, taken by another run or another page, or READY_WATCH_MS pass.
+  let readyWatch = null;
+  function disarmReadyWatch() {
+    const w = readyWatch;
+    readyWatch = null;
+    if (!w) return;
+    w.stop = true;
+    clearInterval(w.timer);
+    try { for (const ev of WATCH_EVENTS) w.wc.removeListener(ev, w.onNav); } catch (e) { /* pane gone */ }
+  }
+  function armReadyWatch(recordId, wc0) {
+    disarmReadyWatch();
+    const wc = (wc0 && wc0.__real) || wc0;
+    const r = ready.get(recordId);
+    if (!wc || !r || (wc.isDestroyed && wc.isDestroyed())) return null;
+    const w = { recordId, wc, r, host: hostOf(wc.getURL() || r.url), since: Date.now(), stop: false, busy: false };
+    const live = () => !w.stop && readyWatch === w && !current && ready.get(recordId) === r && r.epoch === paneEpoch
+      && !wc.isDestroyed() && (() => { const p = deps.getPane(); return !!p && (p.webContents === wc || p.webContents === wc0); })();
+    w.tick = async () => {
+      if (w.busy) return false;
+      if (!live() || Date.now() - w.since > READY_WATCH_MS) { if (readyWatch === w) disarmReadyWatch(); return false; }
+      w.busy = true;
+      try {
+        const seen = sentVerdict(await sentProbe(wc), { host: w.host, since: w.since, now: Date.now() });
+        if (!seen || !live()) return false;
+        disarmReadyWatch();
+        await sentByPerson(recordId, wc, r, seen);
+        return true;
+      } finally { w.busy = false; }
+    };
+    w.onNav = () => { const t = setTimeout(() => { w.tick().catch(() => {}); }, 1200); if (t.unref) t.unref(); };
+    w.timer = setInterval(() => { w.tick().catch(() => {}); }, READY_WATCH_EVERY_MS);
+    if (w.timer.unref) w.timer.unref();
+    try { for (const ev of WATCH_EVENTS) wc.on(ev, w.onNav); } catch (e) { /* pane gone */ }
+    readyWatch = w;
+    w.tick().catch(() => {});                 // arms the page's Submit note at once
+    return w;
+  }
+  // The person's own Submit went through: the record is applied (theirs, never counted as sent by
+  // the agent), the Ready to send notice is cleared, and the bar says Sent, with the site's words.
+  async function sentByPerson(recordId, wc, r, seen) {
+    ready.delete(recordId);
+    const pageUrl = (!wc.isDestroyed() && wc.getURL()) || "";
+    await deps.postApp("/api/autofill/applied", { url: r.url, page_url: pageUrl, record_id: recordId }).catch(() => null);
+    deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
+    const fd = feedOf(recordId);
+    if (fd) { fd.close(); fd.push("sent", "Sent", "and the site confirmed it", { state: "done", detail: seen.phrase || "you pressed Submit on the page" }); }
+    progress(recordId, "submitted", "Sent, and the site confirmed it.", { confirmed: true, by: "person", how: seen.how, phrase: seen.phrase || "" });
   }
 
   // ---- the page view, main frame + cross-origin frames --------------------------------------
@@ -1229,6 +1296,7 @@ function createAgent(deps) {
 
     const st = { recordId, stop: false, disarmSigning: () => {} };
     current = st;
+    disarmReadyWatch();                       // the pane is this run's now
     // The saved mode, asked once per run: only Hybrid sends the run's questions to Telegram as
     // well as the bar. Assisted asks on the bar only; a quiet (Auto) run asks nowhere. When the
     // engine does not answer, nothing goes to Telegram.
@@ -3165,6 +3233,7 @@ function createAgent(deps) {
              + "Ready to send. " + (said ? said + " " : "") + (notedLine ? notedLine + " " : "") + "Check it, then press Send.",
              { step, ready: true, accepted: (accepted || []).slice(), noted: notes, letter: !!(wrote && wrote.letter), answers });
     current = null;
+    armReadyWatch(recordId, wc);
     setTimeout(() => { pollParked().catch(() => {}); }, 50);     // a parked job may be waiting its turn
     return { ok: true, ready: true, steps: step };
   }
@@ -3239,22 +3308,28 @@ function createAgent(deps) {
       const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, label: (el.innerText || el.value || "").trim() };
     })()`, true).catch(() => null);
     if (!box) return { ok: false, reason: "no-submit-button" };
+    disarmReadyWatch();
     const zoom = wc.getZoomFactor ? wc.getZoomFactor() : 1;
     const x = Math.round(box.x * zoom), y = Math.round(box.y * zoom);
     const url = wc.getURL() || "";
     wc.sendInputEvent({ type: "mouseMove", x, y });
     wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
     wc.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+    const pressedAt = Date.now();
     ready.delete(recordId);
     await settle(wc, url);
     let confirmed = false;
-    for (let i = 0; i < 6 && !confirmed; i++) {        // the site's "received" marker, up to ~8 s
-      try { await ensureScripts(wc); confirmed = !!(await signature(wc) || {}).success; } catch (e) { confirmed = false; }
+    for (let i = 0; i < 6 && !confirmed; i++) {        // the site's "received" page, up to ~8 s (sent_watch.js)
+      const p = await sentProbe(wc);
+      if (p && typeof p === "object") p.clickedAt = Math.max(Number(p.clickedAt) || 0, pressedAt);
+      confirmed = !!sentVerdict(p, { host: hostOf(url), since: pressedAt, now: Date.now() });
+      if (!confirmed && (!p || typeof p !== "object")) { try { confirmed = !!((await signature(wc)) || {}).success; } catch (e) { confirmed = false; } }
       if (!confirmed) await delay(1200);
     }
     const after = (await signature(wc)) || {};
     if (!confirmed && after.blocker === "captcha") {
       ready.set(recordId, r);
+      armReadyWatch(recordId, wc);           // solved and submitted on the page: still noticed
       { const fd = feedOf(recordId); if (fd) { fd.close(); fd.push("send", "Paused", "", { state: "parked", detail: "the submit hit a captcha" }); } }
       progress(recordId, "ready", "The submit hit a captcha. Solve it on the page, then press Send again.", { ready: true, answers: r.answers });
       return { ok: false, reason: "captcha" };
@@ -3279,7 +3354,7 @@ function createAgent(deps) {
 
   return { run, batch, send, sendAll, stop, guideNext, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
            quiet: () => !!(batchOn && batchOn.quiet),
-           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard } };
+           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard, readyWatch: () => readyWatch } };
 }
 
 // ---- the sign-in wall, read deterministically (section 13, the e2e of 2026-11-02) ---------

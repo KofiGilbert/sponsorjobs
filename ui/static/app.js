@@ -9693,6 +9693,9 @@
   // (Kofi, 2026-10-14): it runs on a pass or a pack, on the company key held by the broker. Nobody
   // adds their own Tavus key.
   let R2 = null, LIVE_STREAM = null, R2_CTX = null, CVI_CLOCK = null, CVI_PREV_W = "", CVI_UNBILLED = 0;
+  // The old side-pane call put the interview in the Browser pane; only then does its teardown
+  // close the pane (it runs on every sidebar click, and closed an application's page, 2026-11-19).
+  let CVI_IN_PANE = false;
   async function round2Status() {
     try { return await api("/api/interview/round2/status"); } catch { return null; }
   }
@@ -9958,6 +9961,7 @@
       CVI_CALL.join({ url, token }).catch((e) => cviDropped((e && e.message) || "join"));
     } else if (window.tailorShell) {
       window.tailorShell.openBrowser(s.join_url);          // fallback: the old side-pane call, no timekeeper
+      CVI_IN_PANE = true;
     } else {
       window.open(s.join_url, "_blank");
     }
@@ -10028,7 +10032,8 @@
     clearTimeout(CVI_WAIT);
     CVI_TK = null;
     if (CVI_CALL) { const c = CVI_CALL; CVI_CALL = null; c.leave().catch(() => {}).finally(() => { try { c.destroy(); } catch (e) {} }); }
-    if (window.tailorShell) window.tailorShell.closeBrowser();
+    if (CVI_IN_PANE && window.tailorShell) window.tailorShell.closeBrowser();
+    CVI_IN_PANE = false;
     if (CVI_PREV_W) {                                      // restore the panel width an old-style call widened
       document.documentElement.style.setProperty("--panel-w", CVI_PREV_W);
       CVI_PREV_W = "";
@@ -14880,8 +14885,16 @@
     slot.style.display = "none";
     document.querySelector("#spBodyBrowser .browser-bar").style.display = "none";
   } else {
+    // The panel follows the shell's pane both ways (pane_sync.js): a pane the shell closed is
+    // never left on screen as a black slot.
+    let shellOpen = false;
     shell.onState((st) => {
-      if (st.open) open("browser");
+      const onBrowser = body.classList.contains("panel-open") && tab === "browser";
+      const act = window.SJPaneSync ? window.SJPaneSync.panelOnState(shellOpen, st, onBrowser)
+                                    : (st.open ? "open" : "");
+      shellOpen = !!st.open;
+      if (act === "open") open("browser");
+      else if (act === "close") close();
       if (document.activeElement !== urlBox) urlBox.value = st.url || "";
       back.disabled = !st.canGoBack;
       fwd.disabled = !st.canGoForward;
