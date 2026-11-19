@@ -5230,3 +5230,11 @@ a.cv-act { display: inline-flex; align-items: center; justify-content: center; t
 .aa-check-i.is-done { color: var(--muted); }
 .aa-check-m { width: 1em; flex: none; }
 .aa-check-l { flex: 1; min-width: 0; }
+
+/* Send all's one confirmation (2026-11-19): the outage card's frame, left-aligned for a list */
+.sa-card { max-width: 480px; text-align: left; padding: 28px 28px 22px; }
+.sa-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 6px; max-height: 40vh; overflow: auto; }
+.sa-item { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; color: var(--ink);
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); }
+.sa-n { color: var(--flag); white-space: nowrap; font-size: 12.5px; }
+.sa-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 18px; }

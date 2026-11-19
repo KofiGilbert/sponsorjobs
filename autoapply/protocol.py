@@ -259,7 +259,8 @@ NEVER = ("never guessed, in any mode: an ID number, a date of birth, bank or pay
          "application cannot be done by the agent")
 
 
-def check(action: dict, question: str, options=(), material=None, *, saved: bool = False, auto: bool = False) -> Verdict:
+def check(action: dict, question: str, options=(), material=None, *, saved: bool = False, auto: bool = False,
+          reason: str = "") -> Verdict:
     """May this answer go on the page? The check of ``_check``, and in Auto (``auto``; the owner,
     2026-11-19: Auto never stops to ask) one more door: an answer nothing supports is taken as a
     flagged BEST GUESS (autoapply/guess.py) instead of being refused, so the run goes on. Never
@@ -277,8 +278,10 @@ def check(action: dict, question: str, options=(), material=None, *, saved: bool
     if ok:
         said = meta(action)["evidence"]
         m = guess.majority(question)
+        # ``reason``: the engine's own word on why this is a guess (a saved work authorization the
+        # form's choices could not be matched to), before the brain's and the majority's
         return Verdict(True, klass=v.klass or meta(action)["class"], source=guess.SOURCE,
-                       evidence=(said or (m[1] if m else "") or "nothing saved or in the material answers this")[:MAX_EVIDENCE])
+                       evidence=(reason or said or (m[1] if m else "") or "nothing saved or in the material answers this")[:MAX_EVIDENCE])
     if why == "never":
         return Verdict(False, NEVER + ".", v.klass, hard="9")
     if why == "consent":

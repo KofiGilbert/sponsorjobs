@@ -524,3 +524,46 @@ def test_the_ochsner_page_in_auto_three_from_the_material_one_flagged_guess_none
     # Assisted: the same three from the material, and the declaration is asked
     r2 = _post(mod, "/api/autoapply/agent/ask", {"known_only": True, "fill_through": True, "record_id": rid, "questions": qs})
     assert r2["open"] == [EXCL_Q] and EXCL_Q not in r2["answers"]
+
+
+# --------------------------------------------------------------------------- Send all, and a saved work authorization the form words differently
+def test_send_all_asks_once_before_sending_a_guessed_legal_answer():
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_send_all.js")], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stdout + out.stderr
+    html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    assert 'id="saConfirm"' in html and "send_all.js" in html
+    for code in ("de", "en", "es", "fr", "pt"):
+        loc = json.loads((ROOT / "ui" / "static" / "locales" / f"{code}.json").read_text(encoding="utf-8"))
+        for k in ("sendall.titleN", "sendall.lead", "sendall.review", "sendall.othersN", "sendall.all", "sendall.countN"):
+            assert loc.get(k) and not re.search(r"[\u2014\u2013]", loc[k]), (code, k)
+
+
+ODD_OPTS = ["Option A: authorized, status known", "Option B: different status"]
+
+
+def test_a_saved_work_authorization_the_form_words_differently_says_so_on_the_flag():
+    wa = _wa("No", "Yes")
+    assert guess.reason_for(WA_Q, wa) == guess.WA_SAVED_REASON == "your work authorization is saved but this form words it differently"
+    assert guess.reason_for(WA_Q, {}) == "" and guess.reason_for(LEGAL_Q, wa) == ""
+    # the brain's guess on such a question: legal, best_guess, and that reason, whatever it wrote
+    v = protocol.check({"op": "select", "index": 4, "option": ODD_OPTS[0], "evidence": "picked the closest"}, WA_Q, ODD_OPTS, None,
+                       auto=True, reason=guess.reason_for(WA_Q, wa))
+    assert v.ok and v.source == "best_guess" and v.klass == qclass.LEGAL and v.evidence == guess.WA_SAVED_REASON
+    # and through the brain's step, from the reasons the step route hands in
+    view = f'URL: https://jobs.example/apply\n[3]<select label="{WA_Q[:80]}" value="" options=2 first="{"|".join(ODD_OPTS)}" required>\n[9]<button>Next</button>'
+    reply = json.dumps({"memory": "", "evaluation": "", "summary": "", "done": None,
+                        "actions": [{"op": "select", "index": 3, "option": ODD_OPTS[0], "source": "best_guess", "evidence": "closest"}]})
+    out = brain.step({"view": view, "step": 2, "left": [WA_Q], "history": [], "auto": True,
+                      "guess_reasons": {WA_Q: guess.WA_SAVED_REASON}}, Scripted(reply), {}, None, placeholders=[])
+    assert out["actions"][0]["proof"] == {"source": "best_guess", "origin": "best_guess", "evidence": guess.WA_SAVED_REASON, "class": "legal"}
+
+
+def test_the_ask_route_gives_that_reason_to_its_own_guess(A, monkeypatch):
+    mod = A
+    monkeypatch.setattr(mod, "_work_auth", lambda: _wa("No", "Yes"))
+    opts = ["Yes, I am authorized", "Prefer not to say"]           # a form whose wording the profile cannot be matched to
+    r = _post(mod, "/api/autoapply/agent/ask", {"known_only": True, "auto_guess": True,
+                                                "questions": [{"question": WA_Q, "options": opts}]})
+    assert r["origins"][WA_Q] == "best_guess" and r["reasons"][WA_Q] == guess.WA_SAVED_REASON and r["classes"][WA_Q] == "legal"

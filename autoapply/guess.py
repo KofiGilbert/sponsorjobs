@@ -34,6 +34,19 @@ import re
 from autoapply import eeo, qclass, workauth
 
 SOURCE = "best_guess"
+# (2026-11-19) A work-authorization question the saved profile answers, on a form that words its
+# choices so none can be matched to it: still a best guess, but the flag says why.
+WA_SAVED_REASON = "your work authorization is saved but this form words it differently"
+
+
+def reason_for(question: str, work_auth=None, job_country: str = "US") -> str:
+    """The reason a best guess carries when it is not the usual one: the work-authorization
+    profile holds this answer, but the form's choices could not be matched to it. "" otherwise."""
+    kind = workauth.classify(question)
+    if not kind or not work_auth:
+        return ""
+    country = workauth.question_country(question, job_country)
+    return WA_SAVED_REASON if workauth.fact(kind, work_auth, country) is not None else ""
 _NEUTRAL = re.compile(r"^\W*(n\s?/\s?a|not applicable|none of the above|none|other|unsure|not sure|unknown|do(n'?t| not) know)\W*$", re.I)
 _NON_COMMITTAL = re.compile(r"^\W*(other|not applicable|n\s?/\s?a|none|none of the above|not sure|unsure|maybe|undecided|flexible|open|negotiable)\b", re.I)
 # The majority answer, by the question's words: (pattern, the answer, the reason).

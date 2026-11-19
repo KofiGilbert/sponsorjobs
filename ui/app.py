@@ -15771,6 +15771,7 @@ def autoapply_agent_ask():
         reasons, never, classes = {}, [], {}
         if b.get("auto_guess"):
             from autoapply import guess as _G, qclass as _Q
+            wa_g = _work_auth()
             for it in items:
                 if it["answer"]:
                     continue
@@ -15780,7 +15781,7 @@ def autoapply_agent_ask():
                 g = _G.choose(it["question"], it["page_options"], company=company)
                 if g:
                     it["answer"], it["origin"] = g[0], "best_guess"
-                    reasons[it["question"]] = g[1]
+                    reasons[it["question"]] = _G.reason_for(it["question"], wa_g, country) or g[1]
                     classes[it["question"]] = _Q.question_class(it["question"], it["page_options"], company=company)
         select = {it["question"]: it["answer"] for it in items
                   if it["answer"] and (AK.is_eeo(it["question"]) or it["origin"] in ("neutral", "best_guess"))
@@ -17426,6 +17427,12 @@ def autoapply_agent_step():
         # (2026-11-19) an Auto run: nobody to ask, so an unknown is a flagged best guess (autoapply/guess.py)
         "auto": bool(b.get("auto")),
     }
+    if req["auto"]:
+        # a saved work authorization the form words differently: the guess's flag says so
+        from autoapply import guess as _G
+        wa_now = _work_auth()
+        req["guess_reasons"] = {lab: r for lab in req["left"] for r in [_G.reason_for(re.sub(r" \([^()]*\)$", "", lab), wa_now,
+                                                                                    _job_country(data))] if r}
     if b.get("shell_signin"):
         # The shell signs in itself on a sign-in form (no model call): the saved account goes in
         # through the same placeholders, resolved here, marked sensitive, never logged.

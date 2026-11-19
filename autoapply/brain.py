@@ -721,8 +721,16 @@ def _typed_saved(history) -> bool:
     return bool(last) and any(re.match(r"^type \d+ \(secret\)", _action_key(a)) for a in (last.get("actions") or []))
 
 
+def _guess_reason(label: str, reasons) -> str:
+    """The engine's reason for a best guess on this field (``req["guess_reasons"]``), by its label."""
+    if not reasons:
+        return ""
+    k = " ".join(str(label or "").split()).lower()
+    return next((str(v) for q, v in reasons.items() if " ".join(str(q).split()).lower()[:75] == k[:75]), "")
+
+
 def check_answers(actions: list, lines: dict, material, observations: list, rejected: list, history=None,
-                  auto: bool = False) -> list:
+                  auto: bool = False, reasons=None) -> list:
     """The answer protocol over one step's actions (autoapply/protocol.py). An answer that passes
     keeps ``proof`` ({source, origin, evidence, class}) for the Review answers list; one that
     does not is taken out and comes back to the brain in ``observations`` with the reason.
@@ -742,7 +750,8 @@ def check_answers(actions: list, lines: dict, material, observations: list, reje
             # value was the answer, and the brain cannot read it.
             out.append(a)
             continue
-        v = protocol.check({**a, "value": t["value"]}, t["label"], t["options"], material, auto=auto)
+        v = protocol.check({**a, "value": t["value"]}, t["label"], t["options"], material, auto=auto,
+                           reason=_guess_reason(t["label"], reasons))
         if v.ok:
             out.append({**{k: x for k, x in a.items() if k not in ("source", "evidence", "class", "proof", "answer")},
                         "proof": protocol.record(a, v)})
@@ -1082,7 +1091,8 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
     observations += ["Not done: " + n + "." for n in notes[n_notes:]]
     # (Section 29) The answer protocol: an answer the brain chose itself is checked against the
     # person's material before it runs; a refusal goes back with its reason.
-    actions = check_answers(actions, lines, material, observations, rejected, req.get("history"), auto=bool(req.get("auto")))
+    actions = check_answers(actions, lines, material, observations, rejected, req.get("history"), auto=bool(req.get("auto")),
+                            reasons=req.get("guess_reasons") if isinstance(req.get("guess_reasons"), dict) else None)
     # Nothing unrendered ever reaches the page: an action whose text, option or file still holds
     # "{{" or "}}" after the placeholders were resolved is dropped (2026-11-16, belt and braces).
     clean = []

@@ -12126,11 +12126,52 @@
   });
   // Send all: every application at Ready to send goes through the SAME Send as the bar's, one at
   // a time, in the Browser tab where the person can watch. A captcha stops the list there.
+  // (2026-11-19) When any of them holds a best guess on a legal question: ONE confirmation that
+  // names them, before anything is sent (ui/static/send_all.js). Resolves to "review", "others",
+  // "all", or "" (closed, Escape: nothing is sent).
+  function aaSendAllConfirm(rows) {
+    const SA = window.SJSendAll;
+    const box = $("#saConfirm");
+    if (!SA || !box) return Promise.resolve("all");
+    const m = SA.confirmModel(rows, T);
+    $("#saH").textContent = m.title;
+    $("#saP").textContent = m.lead;
+    $("#saList").innerHTML = m.items.map(x => `<li class="sa-item"><span>${esc(x.text)}</span><span class="sa-n">${esc(x.count)}</span></li>`).join("");
+    $("#saActs").innerHTML = m.choices.slice().reverse().map(c =>
+      `<button type="button" class="btn ${c.primary ? "btn-primary" : "btn-ghost"} btn-sm" data-sa="${c.id}"${c.disabled ? " disabled" : ""}>${esc(c.label)}</button>`).join("");
+    const was = document.activeElement;
+    box.hidden = false;
+    box.querySelector('[data-sa="review"]')?.focus();
+    return new Promise(resolve => {
+      const done = (v) => { box.hidden = true; box.removeEventListener("click", onClick); box.removeEventListener("keydown", onKey);
+                            try { was && was.focus && was.focus(); } catch { /* gone */ } resolve(v); };
+      const onClick = (e) => {
+        const b = e.target.closest("[data-sa]");
+        if (b && !b.disabled) return done(b.dataset.sa);
+        if (e.target.closest("#saClose") || e.target === box) done("");
+      };
+      const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(""); } };
+      box.addEventListener("click", onClick);
+      box.addEventListener("keydown", onKey);
+    });
+  }
+
   async function aaSendAll() {
     if (!window.tailorShell || !window.tailorShell.agentSendAll) return;
     if (AA_AGENT || AA_AUTO.running) { toast(T("aa.agentBusy", "One application at a time. Stop the current one first.")); return; }
-    const rows = aaReadyRows();
+    let rows = aaReadyRows();
     if (!rows.length) return;
+    if (window.SJSendAll && window.SJSendAll.needsConfirm(rows)) {
+      const choice = await aaSendAllConfirm(rows);
+      const d = window.SJSendAll.decide(choice, rows);
+      if (d.review != null) {                      // open the first one at its Review answers
+        await aaOpen(Number(d.review));
+        AA_ANS.open = true; AA_ANS.rid = Number(d.review); aaAnsRender();
+        return;
+      }
+      rows = d.send;
+      if (!rows.length) return;
+    }
     if (AA.open != null) aaClose();
     AA_AGENT = { batch: true };
     if (window.Panel && !window.Panel.isOpen("browser")) window.Panel.open("browser");

@@ -1607,8 +1607,16 @@ it counts as one to check. The application keeps the counts (`agent_guessed`: `g
   question still open). Such an application waits at Ready to send. Its row says "N answers
   need your check", the daily summary says how many answers need a check, and the line beside
   Send all says how many of them are best guesses on legal questions before the person presses
-  it. The person's own Send and Send all work as before. There was no Send all confirmation
-  dialog to add a line to, and none was added: the line sits beside the button.
+  it. The person's own Send works as before. **Send all** asks ONCE when any application it
+  would send holds a guessed legal answer (ui/static/send_all.js, the outage card's frame): it
+  names each one (role at company) with its count, and offers "Review them first" (sends
+  nothing, opens the first one's Review answers), "Send the other N, keep these" (only the
+  applications without one; the rest stay at Ready to send) and "Send all anyway". Closing it
+  sends nothing. With no guessed legal answer there is no confirmation.
+- **A saved work authorization the form words differently.** When the profile answers a work
+  authorization question but none of the form's choices can be matched to it, the answer is
+  still a best guess (class legal), and its flag reads "your work authorization is saved but
+  this form words it differently" (`guess.reason_for`), so it explains itself.
 - **Never guessed, in any mode** (`qclass.never_guess`): a government ID number, an SSN or
   national ID, a passport or licence number, a date of birth, bank, card or payment details, a
   password, a code or a security answer, and a typed signature. A wrong value there is not a
