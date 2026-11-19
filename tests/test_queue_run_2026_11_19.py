@@ -128,7 +128,7 @@ def test_the_row_line_is_in_five_locales():
     import json
     for loc in ("de", "en", "es", "fr", "pt"):
         t = json.loads((ROOT / "ui" / "static" / "locales" / f"{loc}.json").read_text(encoding="utf-8"))
-        assert "{host}" in t["aa.st.left"] and "—" not in t["aa.st.left"] and "–" not in t["aa.st.left"]
+        assert "{host}" in t["aa.st.left"] and "\u2014" not in t["aa.st.left"] and "\u2013" not in t["aa.st.left"]
 
 
 # --------------------------------------------------------------------------- the shell

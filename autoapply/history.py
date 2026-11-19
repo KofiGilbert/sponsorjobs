@@ -164,7 +164,7 @@ def form_languages(profile: dict, limit: int = 4) -> list:
             level = str(it.get("level") or it.get("proficiency") or "").strip()
         else:
             text = " ".join(str(it or "").split())
-            m = re.match(r"^(.*?)\s*(?:\((.*?)\)|[-:–—]\s*(.+))?$", text)
+            m = re.match(r"^(.*?)\s*(?:\((.*?)\)|[-:\u2013\u2014]\s*(.+))?$", text)
             name, level = (m.group(1) or "").strip(), (m.group(2) or m.group(3) or "").strip()
             if not level:
                 lm = _LEVEL.search(name)
