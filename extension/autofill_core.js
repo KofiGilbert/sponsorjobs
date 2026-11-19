@@ -1583,6 +1583,22 @@ function qsaSafe(sel, root) {
   function press(el) {
     for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) fire(el, t, { button: 0 });
   }
+  // The engine's only native click: a list's own choice or a search box, never a button, a link
+  // or anything that could send the form (CLAUDE.md section 7; tests/test_fill_recipes.py pins it).
+  const CHOICE_ROLE = /^(option|menuitem|menuitemradio|menuitemcheckbox|treeitem|combobox|searchbox|textbox)$/;
+  function choiceClick(el) {
+    if (!el || typeof el.click !== "function") return false;
+    const tag = tagOf(el), type = String(el.type || "").toLowerCase();
+    const role = String((el.getAttribute && el.getAttribute("role")) || "").toLowerCase();
+    const aid = String((el.getAttribute && el.getAttribute("data-automation-id")) || "");
+    if (tag === "BUTTON" || tag === "A" || tag === "FORM" || /^(submit|button|image|reset)$/.test(type)) return false;
+    if (el.closest && el.closest("button, a[href], [type='submit']")) return false;
+    const ok = (tag === "INPUT" && /^(text|search|)$/.test(type)) || CHOICE_ROLE.test(role)
+      || /^(promptOption|menuItem|promptLeafNode)$/.test(aid);
+    if (!ok) return false;
+    el.click();
+    return true;
+  }
   function boxShown(el) {
     if (!el || !el.getBoundingClientRect) return false;
     const r = el.getBoundingClientRect() || {};
@@ -3089,7 +3105,7 @@ function qsaSafe(sel, root) {
       if (promptListOpen(el)) await closePromptList(el);
       // click and focus first; what that alone brings up (a list of first choices on some pages)
       // is not the search's answer, so the list is read after it and before the query goes in
-      try { if (el.click) el.click(); if (el.focus) el.focus(); } catch (e) { /* fine */ }
+      try { choiceClick(el); if (el.focus) el.focus(); } catch (e) { /* fine */ }
       const sig = listSig(el), wasOpen = promptListOpen(el), node0 = listboxFor(el);
       setNativeValue(el, String(q));
       fire(el, "keydown", enter); fire(el, "keypress", enter); fire(el, "keyup", enter);
@@ -3123,7 +3139,7 @@ function qsaSafe(sel, root) {
       if (!reacted) break;                                 // the page does not take a script's Enter: no further query
       if (!best) continue;
       const shown = cleanText(best.o.textContent), had = promptPicked(el);
-      try { best.o.click(); } catch (e) { press(best.o); }
+      try { if (!choiceClick(best.o)) press(best.o); } catch (e) { press(best.o); }
       for (const stop = untilMs(pms("took")); promptPicked(el) <= had && Date.now() < stop;) await sleep(STEP_MS);
       if (promptPicked(el) <= had && best.o.isConnected) {      // the row's own box, then the full press
         const box = best.o.querySelector("input[type='radio'], input[type='checkbox']");
