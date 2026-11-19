@@ -845,10 +845,38 @@
     return { ok: true, note: "", changed: fingerprint() !== before };
   }
 
-  async function doType(el, text) {
+  // (2026-11-18) What the agent's pick on a combobox says back: what it picked, or what was there.
+  // ``picked`` holds the option's own words apart from the note, so the shell can keep them out of
+  // its log when the value is the person's.
+  function pickResult(r, before) {
+    if (r && r.ok) {
+      return { ok: true, note: r.other ? "nothing matched what was typed; picked the list's own Other choice" : "picked",
+               picked: String(r.value || "").slice(0, 80), changed: fingerprint() !== before };
+    }
+    const opts = ((r && r.options) || []).map((o) => String(o).slice(0, 40)).join(", ");
+    const why = r && r.why;
+    const note = why === "no-match" ? "no result for what was typed" + (opts ? "; options: " + opts : "; the list is empty for it")
+      : why === "did-not-stick" ? "an option was pressed but the box does not show it" + (opts ? "; options: " + opts : "")
+      : why === "over-budget" ? "the list took too long to answer" + (opts ? "; options so far: " + opts : "")
+      : "no list opened for this box";
+    return { ok: false, note, why: why || "no-list", changed: fingerprint() !== before };
+  }
+  const isCombo = (el) => kindOf(el) === "combobox" && !isSiteSearch(el);
+
+  async function doType(el, text, opts0) {
     if (tagOf(el) === "LABEL") { const c = controlOfLabel(el); if (c) el = c; }
     text = String(text == null ? "" : text);
     const tag = tagOf(el);
+    // A combobox or typeahead (a react-select, a school search): typing is a pick. The engine's
+    // own machinery opens the list, types so it filters, waits for the results, presses the best
+    // match, reads the value back and closes; it reports what it picked or what was there.
+    const E0 = T();
+    if (text && isCombo(el) && !isDisabled(el) && E0 && typeof E0.agentPick === "function" && !(opts0 && opts0.plain)) {
+      const before0 = fingerprint();
+      let r = null;
+      try { r = await E0.agentPick(el, text, { strict: !!(opts0 && opts0.answer), other: !(opts0 && opts0.answer) }); } catch (e) { r = null; }
+      if (r) return pickResult(r, before0);
+    }
     const type = tag === "INPUT" ? String(el.type || "text").toLowerCase() : "";
     if (tag === "SELECT") return { ok: false, note: "use select", changed: false };
     if (type === "file") return { ok: false, note: "use upload", changed: false };
@@ -937,6 +965,13 @@
       return { ok: false, note: "use click", changed: false };
     }
     const E = T();
+    if (!answer && E && typeof E.agentPick === "function" && isCombo(el)) {
+      // the brain's own choice: the engine's pick (open, filter, press, verify, close)
+      let r = null;
+      try { r = await E.agentPick(el, want, {}); } catch (e) { r = null; }
+      if (r && r.ok) return pickResult(r, before);
+      if (r && r.why === "no-match") return { ok: false, note: "no such option; options: " + (r.options || []).join(", "), changed: fingerprint() !== before };
+    }
     if (heard && typeof E.pickHeard === "function") {
       let r = null;
       try { r = await E.pickHeard(el, { text: want, score: E.answerScorer(want) }); } catch (e) { r = null; }
@@ -987,6 +1022,30 @@
     }
     return { ok: false, note: "picked \"" + said.slice(0, 40) + "\" but the box does not show it; options: " + optionList(opts),
              changed: fingerprint() !== before };
+  }
+  // (2026-11-18) A click on an option of an open list (role=option, a react-select's option):
+  // pressed the way the engine's pick presses it (mouseover, then pointer and mouse down and up
+  // and click on the option itself) and read back from its box. null when the option belongs to
+  // no combobox the engine knows: the caller then clicks it the plain way.
+  async function pickOption(el) {
+    const E = T();
+    if (!E || typeof E.agentClickOption !== "function") return null;
+    const before = fingerprint();
+    let r = null;
+    try { r = await E.agentClickOption(el); } catch (e) { r = null; }
+    if (!r) return null;
+    if (r.ok) return { ok: true, note: "picked", picked: String(r.value || "").slice(0, 80), changed: fingerprint() !== before };
+    return { ok: false, note: "the option was pressed but its box does not show it; use select with the option's words", changed: fingerprint() !== before };
+  }
+  // Every choice of a combobox, closed or open: the engine opens it, reads it and closes it again.
+  async function listOptions(index) {
+    const el = element(index);
+    const E = T();
+    if (!el || !isCombo(el) || !E || typeof E.agentOptions !== "function") return null;
+    let r = null;
+    try { r = await E.agentOptions(el); } catch (e) { r = null; }
+    if (!r || !Array.isArray(r.options)) return null;
+    return { options: r.options.map((o) => cleanText(o).slice(0, 120)).filter((o) => o && !isPlaceholder(o)), partial: !!r.partial };
   }
   // The options of THIS box's popup: the list its aria-controls / aria-owns names when it has
   // one, else every visible option (one popup open at a time is the usual case). Disabled
@@ -1054,7 +1113,8 @@
     if (!el.isConnected) return { ok: false, note: "element gone", changed: false };
     try {
       if (op === "click") return await doClick(el);
-      if (op === "type") return await doType(el, action.text);
+      if (op === "type") return await doType(el, action.text, { answer: !!action.answer, plain: !!action.plain });
+      if (op === "pick_option") return await pickOption(el);
       if (op === "select") return await doSelect(el, action.option != null ? action.option : action.text, { answer: !!action.answer });
       if (op === "upload") return { ok: false, note: "upload is done by the shell", changed: false };
     } catch (e) {
@@ -1697,7 +1757,7 @@
   }
 
   window.TailorAgent = {
-    view, element, act, submitButton, rect, markPopups, popupOptions, popupOpen, closePopup, selectOptions,
+    view, element, act, submitButton, rect, markPopups, popupOptions, popupOpen, closePopup, selectOptions, listOptions,
     closeOthers, optionIndex, chosenIs, termsItems,
     readPage, find, inspect, readErrors, pageCheck, has, pageShape, honeypotField, announcement,
     refs: () => window.__tailorAgentRefs || [],

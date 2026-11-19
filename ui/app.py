@@ -2218,11 +2218,13 @@ def _auto_min_match() -> int:
     return modes.clamp_threshold(_prefs().get("auto_min_match"))
 
 
-def _may_send_alone(lane: str, match) -> bool:
+def _may_send_alone(lane: str, match, data: dict | None = None) -> bool:
     """The agent may press Submit by itself for this application: Auto mode, a site on the
-    verified allowlist, and the match at or above the person's threshold when one is set."""
+    verified allowlist, the match at or above the person's threshold when one is set, and no
+    written answer on it that the agent drafted and the person has not read (``data``)."""
     from autoapply import modes
-    return modes.may_send_alone(_apply_mode(), lane, match, _auto_min_match())
+    return modes.may_send_alone(_apply_mode(), lane, match, _auto_min_match(),
+                                drafted=_holds_agent_draft(data or {}))
 
 
 def _submit_driver_for(url: str):
@@ -14747,6 +14749,69 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict, origins: 
     return out
 
 
+# ---- written answers (autoapply/drafts.py, docs/apply-agent.md section 30): an open-ended question
+# on the form is drafted from the person's real history by the Review page's drafter, saved on the
+# application's screening answers (by: "agent") and typed through a placeholder; Review answers
+# shows it as drafted, to read before Send. At most two new drafts a step; a question that could
+# not be drafted is tried once per run of the app, then it is the person's.
+_DRAFT_TRIED: set = set()
+MAX_DRAFTS_A_STEP = 2
+
+
+def _agent_drafts(rec, data: dict, prof: dict, labels: list, view: str) -> dict:
+    """Draft the open essay questions among ``labels`` that hold no draft yet; returns the
+    record's data with the new drafts in ``screening`` (the same dict when nothing was drafted)."""
+    from autoapply import brain as _B, drafts as _D, qclass as _Q
+    from autoapply.answers import clean_label, normalize as _nq
+    if not rec or not labels:
+        return data
+    company = rec.get("company") or ""
+    have = {_nq(x.get("question") or "") for x in (data.get("screening") or [])
+            if isinstance(x, dict) and str(x.get("answer") or "").strip()}
+    lines = list(_B.view_lines(view).values())
+    todo = []
+    for lab in labels:
+        q = clean_label(lab) or lab
+        key = _nq(q)
+        if not key or key in have or (rec.get("id"), key) in _DRAFT_TRIED or not _Q.is_essay(q, company=company):
+            continue
+        # a text box only: the view's line for this question (its label is cut at 80 characters)
+        ln = next((x for x in lines if x.get("label") and q.lower().startswith(x["label"].lower()[:75])), None)
+        if ln is None or ln.get("tag") not in ("textarea", "input") or re.search(r"type=(?!text)", ln.get("attrs") or ""):
+            continue
+        todo.append((q, key))
+    if not todo:
+        return data
+    try:
+        llm = _make_llm()
+    except Exception:          # noqa: BLE001 - no model: the questions stay the person's
+        return data
+    profile = prof if (prof or {}).get("experience") else (_saved_full_profile() or prof or {})
+    jd = str(data.get("jd_text") or data.get("jd") or rec.get("jd_label") or rec.get("role") or "")
+    scr = [dict(x) for x in (data.get("screening") or []) if isinstance(x, dict)]
+    added = 0
+    for q, key in todo[:MAX_DRAFTS_A_STEP]:
+        _DRAFT_TRIED.add((rec.get("id"), key))
+        text = _D.draft(jd, profile, llm, q)
+        if text:
+            scr.append({"question": q, "answer": text, "by": "agent"})
+            added += 1
+    if not added:
+        return data
+    recs = _records()
+    try:
+        return recs.merge_data(rec["id"], {"screening": scr}) or {**data, "screening": scr}
+    finally:
+        recs.close()
+
+
+def _holds_agent_draft(data: dict) -> bool:
+    """Does this application hold a written answer the agent drafted (and the person has not
+    edited)? Then the agent never sends it alone (autoapply/modes.py)."""
+    return any(isinstance(x, dict) and x.get("by") == "agent" and not x.get("edited") and str(x.get("answer") or "").strip()
+               for x in ((data or {}).get("screening") or []))
+
+
 # (2026-11-18, docs/apply-agent.md section 29) An answer a fast-path rule worked out, not one the
 # person saved: shown to the brain as the engine's SUGGESTION, in words, so it may do otherwise.
 _SUGGESTED_ORIGINS = frozenset({"common_sense", "history", "tracker"})
@@ -14767,9 +14832,24 @@ def _agent_material(rec, data: dict, prof: dict, applicant: dict, questions: lis
         skip = set(recall.get("hold", ())) | set(recall.get("withhold", ()))
         if recall.get("job_salary"):
             skip.add("@salary")
+        # (2026-11-18) the job posting's key facts (title, location, employment type, the
+        # conditions it states), so a common-sense default has something to cite
+        sj = (data or {}).get("source_job") if isinstance((data or {}).get("source_job"), dict) else {}
+        jd = str((data or {}).get("jd_text") or (data or {}).get("jd") or "")
+        where = str(sj.get("location") or "")
+        if not where and str(sj.get("source_id") or "").strip():
+            w = _watchlist()
+            try:
+                where = str((w.get_job(str(sj["source_id"]).strip()) or {}).get("location") or "")
+            except Exception:  # noqa: BLE001 - no stored location: the posting's own words
+                where = ""
+            finally:
+                w.close()
+        posting = _Mat.posting_facts((rec.get("role") if rec else "") or "", where or _jd_location(jd), jd)
         lib = _answer_lib()
         try:
-            mat = _Mat.build(applicant, full, lib, company=company, questions=questions, skip_keys=frozenset(skip))
+            mat = _Mat.build(applicant, full, lib, company=company, questions=questions, skip_keys=frozenset(skip),
+                             posting=posting)
         finally:
             lib.close()
         seen = {e.lower() for e in mat.employers}
@@ -16300,7 +16380,7 @@ def autoapply_agent_parked_take(rid: int):
     return jsonify({"ok": True, "entry": e})
 
 
-_AGENT_ANSWER_SOURCES = ("profile", "history", "library", "common_sense")
+_AGENT_ANSWER_SOURCES = ("profile", "history", "library", "common_sense", "job")
 
 
 def _agent_answers_clean(rows) -> list | None:
@@ -17123,6 +17203,8 @@ def autoapply_agent_step():
     # next to the field and fills it itself. Workday's "How did you hear about us" is a widget
     # the engine cannot drive but the model can: type, wait, click the suggestion.
     known_from: dict = {}
+    # (Section 30) an open-ended question still open is drafted first, from the person's history
+    data = _agent_drafts(rec, data, prof, [x for x in left if x.strip()], view) if rec else data
     known = _known_answers_for([x for x in left if x.strip()], rec, data, applicant, known_from)
     if rec and known:                       # (Phase 6) the memory page's history: filled from memory
         from applicant import page as _Pg
@@ -17149,6 +17231,8 @@ def autoapply_agent_step():
         if known_from.get(label) in _SUGGESTED_ORIGINS:
             said = re.sub(r"[()]", "", " ".join(str(value).split()))[:60]
             note = f"(the engine suggests {said}: type {{{{{key}}}}})"
+        elif known_from.get(label) == "drafted":
+            note = f"(drafted for the person from their resume and the posting: type {{{{{key}}}}})"
         else:
             note = f"(saved answer: type {{{{{key}}}}})"
         left = [f"{x} {note}" if x == label else x for x in left]
@@ -17202,6 +17286,8 @@ def autoapply_agent_step():
     out = brain.step(req, llm, values, portal, placeholders=placeholders, resume_path=resume,
                      letter_path=_cover_upload_path(rec) if rec else "", withheld=withheld, material=material)
     out["placeholders"] = placeholders
+    # Review answers names a drafted answer as drafted (the shell's noteOrigins keeps it)
+    out["origins"] = {lab: "drafted" for lab, o in known_from.items() if o == "drafted"}
     return jsonify(out)
 
 
@@ -18928,7 +19014,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "ready_sig": (ready or {}).get("sig") or "",
         "lane": plan["tier"],
         # Auto mode may press Submit by itself for this one (allowlist, and the match threshold)
-        "auto_send": _may_send_alone(plan["tier"], match),
+        "auto_send": _may_send_alone(plan["tier"], match, data),
         # The employer's own "we received your application" mail, when the inbox saw it
         "confirmation": (data.get("confirmation") if isinstance(data.get("confirmation"), dict) else None),
         "apply_url": _application_url(url, company) if url else "",

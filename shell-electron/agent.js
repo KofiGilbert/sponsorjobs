@@ -648,6 +648,17 @@ function createAgent(deps) {
       const social = socialRefused(label || lineName(line), v.text);
       if (social) return { ok: false, note: "refused: " + social };
       if (/^\*?\[\d+\]<(option|menuitem|li|div|span)\b/.test(line) || /role=(option|menuitem)/.test(line)) {
+        // (2026-11-18) An option of an open list: pressed in the page the way the engine's own
+        // pick presses it, and read back from its box. A real pointer did nothing on a
+        // react-select in a pane out of sight (three clicks "did not select"), and said ok.
+        // Only an option of no combobox the engine knows goes to the real pointer, as before.
+        if (/^\*?\[\d+\]<option\b/.test(line) || /role=option/.test(line)) {
+          const pexpr = `window.TailorAgent.act(${JSON.stringify({ op: "pick_option", index: a.index })})`;
+          let pr = null;
+          try { pr = await guard(wc.executeJavaScript(pexpr, true), ACTION_MS, "pick", { nav: true }); }
+          catch (e) { if (e && e.stopped) throw e; if (e && e.navigated) return { ok: true, note: "page changed", changed: true }; pr = null; }
+          if (pr && typeof pr === "object" && pr.ok === true && pr.note === "picked") return pr;
+        }
         const real = await realClick(wc, a.index);
         if (real) return real;
       }
@@ -675,6 +686,19 @@ function createAgent(deps) {
       }
       if (r && (r.ok || /^no choice on this list/.test(String(r.note || "")))) return r;
     }
+    // (2026-11-18) A combobox or typeahead: the page's own pick first (the engine's machinery:
+    // open, type so the list filters, wait, press the best match, read it back, close). It says
+    // what it picked, or what the list held. Real keys are the fallback only for a box that
+    // opened no list at all to that (Workday's prompt widgets honour only real keys); real keys
+    // on a react-select out of sight typed nothing and still said ok ("value differs" four times).
+    if (a.op === "type" && typeof a.text === "string" && a.text && /^\*?\[\d+\]<combobox\b/.test(line) && !/search=true/.test(line)) {
+      // a saved answer ({{answer_N}}) keeps its strict match here too, and never takes "Other"
+      const pickExpr = /^answer_\d+$/.test(String(a.placeholder || "")) ? `window.TailorAgent.act(${JSON.stringify(Object.assign({}, a, { answer: true }))})` : expr;
+      let pr = null;
+      try { pr = await guard(ctx ? fr.eval(ctx, pickExpr) : wc.executeJavaScript(pickExpr, true), ACTION_MS, "pick", { nav: true }); }
+      catch (e) { if (e && e.stopped) throw e; if (e && e.navigated) return { ok: true, note: "page changed", changed: true }; pr = null; }
+      if (pr && typeof pr === "object" && (pr.ok === true ? !!pr.picked : !!pr.why && pr.why !== "no-list")) return pr;
+    }
     if (!ctx && a.op === "type" && typeof a.text === "string" && /<combobox\b|<textarea\b|aria-autocomplete|search=true/.test(line)) {
       const real = await realType(wc, a.index, a.text);
       if (real) return real;
@@ -691,7 +715,8 @@ function createAgent(deps) {
       await delay(Math.max(1, Math.min(5, Number(a.seconds) || 1)) * 1000);
       return { ok: true, note: "", changed: false };
     }
-    const run = ctx ? fr.eval(ctx, expr) : wc.executeJavaScript(expr, true);
+    const plainExpr = a.op === "type" && /^\*?\[\d+\]<combobox\b/.test(line) ? `window.TailorAgent.act(${JSON.stringify(Object.assign({}, a, { plain: true }))})` : expr;
+    const run = ctx ? fr.eval(ctx, plainExpr) : wc.executeJavaScript(plainExpr, true);
     let out;
     try { out = (await guard(run, ACTION_MS, a.op, { nav: true })) || { ok: false, note: "no result" }; }
     catch (e) {
@@ -799,6 +824,14 @@ function createAgent(deps) {
     if (!idx || v.frameOf.has(idx)) return none;
     if (!/^\*?\[\d+\]<combobox\b/.test(viewLine(v.text, idx))) return none;
     const js = (expr) => wc.executeJavaScript(expr, true);
+    // (2026-11-18) The page's own read first: the engine opens the list, reads it and closes it
+    // (a real click opened nothing on a react-select out of sight: "none could be read", five times).
+    try {
+      const own = await guard(js(`window.TailorAgent.listOptions ? window.TailorAgent.listOptions(${idx}) : null`), ACTION_MS, "options");
+      if (own && typeof own === "object" && Array.isArray(own.options) && own.options.length) {
+        return { options: own.options.map((o) => String(o)).filter(Boolean), partial: !!own.partial };
+      }
+    } catch (e) { if (e && e.stopped) throw e; }
     let read = null;
     try {
       // Another dropdown still open (Phenom keeps one open through Escape and blur) would cover
@@ -2116,6 +2149,8 @@ function createAgent(deps) {
         // question takes the usual road (their material, then asked once at the end; an Auto run
         // sets the job aside there and names it).
         for (const o of (reply.observations || [])) observations.push(String(o).slice(0, 400));
+        // a written answer the engine drafted for this application: Review answers says "drafted"
+        if (reply.origins) noteOrigins(runOrigins, reply);
         if (Array.isArray(reply.rejected) && reply.rejected.length) {
           const rj = noteRejected(rejects, reply.rejected);
           dlog("step " + step + " answers refused:", { n: reply.rejected.length, nudge: rj.nudge.length, force: rj.force.length });
@@ -2537,17 +2572,19 @@ function createAgent(deps) {
           if (r && r.ok) {
             // what the brain answered, for the Review answers list (a file it attached too)
             const b = brainAnswer(v.text, a, runAnswers, runOrigins);
+            // a pick on a combobox: what the list really took (it may be the list's own "Other")
+            if (b && r.picked) b.value = String(r.picked);
             if (b) addAnswer(ans, Object.assign({ page, via: "brain" }, b));
             if (a.op === "upload") addFile(ans, { page, kind: a.file === "cover_letter" ? "cover_letter" : "resume", path: a.path || opts.resumePath || "", how: "attached" });
           }
-          results.push(r && r.ok ? (r.note ? "ok, " + r.note : "ok") : "failed: " + ((r && r.note) || "?"));
+          results.push(r && r.ok ? (r.note ? "ok, " + r.note + (r.picked && !a.sensitive ? " " + JSON.stringify(String(r.picked).slice(0, 60)) : "") : "ok") : "failed: " + ((r && r.note) || "?"));
           if (!(r && r.ok) && !(r && r.note === "submit-guard")) actFails.push(failWords(r && r.note));
           if (!(r && r.ok)) {
             const line = viewLine(v.text, a.index);
             observations.push("Your " + a.op + " on [" + a.index + "] " + (line ? line.slice(0, 120) : "") + " did not work: " + ((r && r.note) || "no result")
               + ". Inspect it or do it another way.");
           }
-          dlog("step " + step + " act " + (a.proof ? [a.op, a.index, "(answer)"].join("|") : h) + " ->", r);
+          dlog("step " + step + " act " + (a.proof ? [a.op, a.index, "(answer)"].join("|") : h) + " ->", r && r.picked ? Object.assign({}, r, { picked: "(picked)" }) : r);
           if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") {
             if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
               return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });
@@ -2827,7 +2864,10 @@ function createAgent(deps) {
   async function handOver(recordId, wc, url, opts, step, accepted, viewText, noted, wrote) {
     if (current && current.disarmSigning) current.disarmSigning();
     const now = await deps.applyDecision(opts.url || url, url);
-    const auto = !!opts.autonomous && now.click_submit === true;
+    // (2026-11-18) A written answer the agent drafted is the person's to read first: such an
+    // application is never sent by the agent alone, on any site (autoapply/modes.py says the same).
+    const holdsDraft = (((wrote && wrote.answers) || {}).rows || []).some((r) => r && r.from === "drafted");
+    const auto = !!opts.autonomous && now.click_submit === true && !holdsDraft;
     const sig = viewText ? reviewSig(viewText) : (opts.expectSig || "");
     const keep = { url: opts.url || url, resumePath: opts.resumePath || "", lane: opts.lane || "assisted",
                    autonomous: !!opts.autonomous, company: opts.company || "" };
@@ -3517,7 +3557,7 @@ function criticInputs(ans) {
 // worked out by a standing rule, so Review answers names its source: history (the person's work
 // and school dates, or their employers), tracker (their earlier applications) and consent (an
 // acknowledgement under their standing consent). The rest are the person's own material, as before.
-const KEPT_ORIGINS = new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense"]);
+const KEPT_ORIGINS = new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense", "drafted"]);
 function noteOrigins(runOrigins, reply) {
   const o = (reply && reply.origins) || {};
   for (const [q, from] of Object.entries(o)) {
@@ -3550,7 +3590,7 @@ function brainAnswer(viewText, a, runAnswers, runOrigins) {
   if (p && AGENT_ORIGINS.has(p.origin)) { r.from = p.origin; r.agent = true; r.evidence = String(p.evidence || ""); r.klass = String(p.class || ""); delete r.fact; }
   return r;
 }
-const AGENT_ORIGINS = new Set(["profile", "history", "library", "common_sense"]);
+const AGENT_ORIGINS = new Set(["profile", "history", "library", "common_sense", "job"]);
 // Count the answers the answer protocol refused, by question: { nudge: [questions refused a second
 // time (a hard limit: the first)], force: [questions refused a third time (a hard limit: the
 // second)] }. ``counts``: the run's Map(question -> n).

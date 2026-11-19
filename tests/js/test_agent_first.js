@@ -110,7 +110,8 @@ function setup(brain, hooks) {
       if (expr.includes("crossOriginFrames")) return 0;
       if (expr.includes("resumeInputOpen") || expr.includes("hasResumeUpload")) return false;
       if (expr.includes("pageShape")) return { fields: 4, buttons: 1, skeleton: false, words: 60 };
-      if (expr.includes("TailorAgent.view(")) return { text: view() };
+      if (expr.includes("TailorAgent.view(")) return { text: hooks.view ? hooks.view(P) : view() };
+      if (expr.includes("TailorAgent.listOptions")) return hooks.listOptions ? hooks.listOptions(expr) : null;
       if (expr.includes("TailorAutofill.leftover()")) return P.left();
       if (expr.includes("selectOptions(")) return null;
       if (expr.includes("chosenIs(")) return true;
@@ -120,6 +121,7 @@ function setup(brain, hooks) {
       if (expr.includes("TailorAgent.act(")) {
         const a = JSON.parse(expr.slice(expr.indexOf("(") + 1, expr.lastIndexOf(")")));
         P.acts.push(a);
+        if (hooks.act) { const r = hooks.act(P, a); if (r !== undefined) return r; }
         if (a.op === "select") P.vals[a.index] = a.option;
         if (a.op === "type") P.vals[a.index] = a.text;
         if (a.op === "click" && (a.index === 4 || a.index === 5)) P.vals[4] = a.index === 4 ? "Yes" : "No";
@@ -136,7 +138,7 @@ function setup(brain, hooks) {
     runAutoApplyOnPane: async () => ({ ok: true, filled: 0, left: P.left() }),
     sendProgress: (info) => { progress.push(JSON.parse(JSON.stringify(info))); },
     acquireDebugger: () => null, frames: {}, setQuiet: () => {},
-    applyDecision: async () => ({ fill: true, click_submit: false }),
+    applyDecision: async () => (hooks.decision || { fill: true, click_submit: false }),
     isNewPage: () => true, attachResume: async () => false,
     getApp: async (p) => (p.startsWith("/api/autoapply/agent/parked") ? { ok: true, parked: [] } : { hosts: ["jobs.brightwater.example"] }),
     postApp: async (p, b) => {
@@ -232,6 +234,86 @@ const REFUSED = { observations: ["Your click on [5] (" + VISA_Q.slice(0, 60) + "
     const r = await s.agent.run(9, { url: "https://jobs.brightwater.example/apply/1", company: "Brightwater Freight" });
     assert(r.ok && r.ready, "ready " + JSON.stringify(r));
     assert(s.P.acts.some((a) => a.op === "type" && a.index === 6 && a.text === "N/A"), "an answer the protocol passed is typed " + JSON.stringify(s.P.acts));
+  }
+  // ---- 6. the brain's hands on a react-select: the page's own pick, never a real key that types nothing
+  {
+    const SCHOOL = "Harlow State";
+    const cview = (P) => ["URL: https://jobs.brightwater.example/apply/1",
+      `[14]<combobox label="School" value="${P.vals[14] || ""}" expanded=false required>`,
+      `[16]<combobox label="Which type of employment are you seeking?" value="${P.vals[16] || ""}" expanded=${P.open16 ? "true" : "false"} required>`,
+      ...(P.open16 ? ["*[39]<option>Full-time</option>", "*[40]<option>Part-time</option>"] : []),
+      `[18]<combobox label="Team" value="${P.vals[18] || ""}" expanded=false>`,
+      "[9]<button>Submit application</button>"].join("\n");
+    const brain = (P, b, n) => {
+      if (n === 1) return ok([{ op: "list_options", index: 16 }, { op: "type", index: 14, text: "Harlow State University", sensitive: false, proof: PROOF }]);
+      if (n === 2) return ok([{ op: "click", index: 16 }]);
+      if (n === 3) return ok([{ op: "click", index: 39, proof: { source: "posting", origin: "job", evidence: "post: employment type full-time", class: "common_sense" } }]);
+      if (n === 4) return ok([{ op: "type", index: 18, text: "Blue", sensitive: false, proof: PROOF }]);
+      return READY;
+    };
+    const s = setup(brain, {
+      view: cview,
+      listOptions: () => ({ options: ["Full-time", "Part-time"], partial: false }),
+      act: (P, a) => {
+        if (a.op === "type" && a.index === 14) { P.vals[14] = SCHOOL; return { ok: true, note: "picked", picked: SCHOOL, changed: true }; }
+        if (a.op === "click" && a.index === 16) { P.open16 = true; return { ok: true, note: "", changed: true }; }
+        if (a.op === "pick_option" && a.index === 39) { P.vals[16] = "Full-time"; P.open16 = false; return { ok: true, note: "picked", picked: "Full-time", changed: true }; }
+        if (a.op === "type" && a.index === 18 && !a.plain) return { ok: false, note: "no list opened for this box", why: "no-list", changed: false };
+        if (a.op === "type" && a.index === 18 && a.plain) { P.vals[18] = a.text; return { ok: true, note: "", changed: false }; }
+        return undefined;
+      },
+    });
+    s.P.left = () => ["School", "Which type of employment are you seeking?"].filter((q) => !(q === "School" ? s.P.vals[14] : s.P.vals[16]));
+    const r = await s.agent.run(12, { url: "https://jobs.brightwater.example/apply/1", company: "Brightwater Freight" });
+    assert(r.ok && r.ready, "ready " + JSON.stringify(r) + JSON.stringify(s.P.acts));
+    const bodies = steps(s.posts);
+    // list_options on a CLOSED combobox read its choices through the page's own read
+    assert((bodies[1].observations || []).some((o) => /options for \[16\]: Full-time \| Part-time/.test(o)), "list_options read the closed list " + JSON.stringify(bodies[1].observations));
+    // type on a combobox: ONE in-page pick, and the brain is told what was picked
+    const typed = s.P.acts.filter((a) => a.index === 14);
+    assert(typed.length === 1 && typed[0].op === "type" && !typed[0].plain, "one pick for the school " + JSON.stringify(typed));
+    assert(bodies[1].history.some((h) => (h.results || []).some((x) => x === 'ok, picked "Harlow State"')), "the result names the pick " + JSON.stringify(bodies[1].history));
+    // a click on an option: the page's pick_option, never a second click
+    const on39 = s.P.acts.filter((a) => a.index === 39);
+    assert(on39.length === 1 && on39[0].op === "pick_option", "the option was picked in the page " + JSON.stringify(on39));
+    // a box that opened no list to the pick: typed the plain way, as before
+    const on18 = s.P.acts.filter((a) => a.index === 18).map((a) => !!a.plain);
+    assert(JSON.stringify(on18) === "[false,true]", "the pick first, then the plain type " + JSON.stringify(on18));
+    // Review answers: the default cites the posting ("The job"), flagged as the agent's
+    const rows = s.progress.find((x) => x.state === "ready").answers.rows;
+    const emp = rows.find((x) => /type of employment/.test(x.label));
+    assert(emp && emp.from === "job" && emp.flag === "agent" && emp.value === "Full-time" && /post: employment type/.test(emp.evidence), "the default is flagged " + JSON.stringify(emp));
+    // Review answers holds what the list really took, not what was typed
+    const sch = rows.find((x) => x.label === "School");
+    assert(sch && sch.value === SCHOOL && sch.flag === "agent", "the picked value is the recorded one " + JSON.stringify(sch));
+    // the log holds neither the pick nor the answer
+    const log = fs.readFileSync(path.join(TMP, "sj-agent.log"), "utf8").split("\n").filter((ln) => / (reply:|act )/.test(ln)).join("\n");
+    assert(!log.includes(SCHOOL) && log.includes("(picked)"), "the picked value is not logged");
+  }
+
+  // ---- 7. a written answer: recorded as drafted, and never sent by the agent alone
+  {
+    const ESSAY = "What interests you most about this opportunity?";
+    const eview = (P) => ["URL: https://jobs.brightwater.example/apply/1",
+      `[3]<textarea label="${ESSAY}" value="${P.vals[3] ? "(filled)" : ""}" required>`, "[9]<button>Submit application</button>"].join("\n");
+    const run = async (drafted) => {
+      const brain = (P) => (!P.vals[3]
+        ? ok([{ op: "type", index: 3, text: "I enjoy turning data into decisions.", placeholder: "answer_1", sensitive: true }], drafted ? { origins: { [ESSAY]: "drafted" } } : {})
+        : READY);
+      const s = setup(brain, { view: eview, decision: { fill: true, click_submit: true } });
+      s.P.left = () => (s.P.vals[3] ? [] : [ESSAY]);
+      await s.agent.run(drafted ? 13 : 14, { url: "https://jobs.brightwater.example/apply/1", company: "Brightwater Freight", autonomous: true, lane: "auto" }).catch(() => null);
+      return s;
+    };
+    const d = await run(true);
+    const ready = d.progress.find((x) => x.state === "ready");
+    assert(ready && !d.progress.some((x) => /^Sending/.test(x.message || "")), "a drafted answer waits at Ready to send " + JSON.stringify(d.progress.map((x) => x.state + ":" + (x.message || "").slice(0, 30))));
+    const row = ready.answers.rows.find((x) => x.label === ESSAY);
+    assert(row && row.from === "drafted" && row.flag === "drafted", "Review answers says drafted " + JSON.stringify(row));
+    assert(ready.answers.flagged === 1, "and it is one to read");
+    // the same application with the person's own saved answer is sent by the agent, as before
+    const n = await run(false);
+    assert(n.progress.some((x) => /^Sending/.test(x.message || "")), "without a draft the allowlisted Auto send goes on " + JSON.stringify(n.progress.map((x) => x.state + ":" + (x.message || "").slice(0, 30))));
   }
   console.log("ok");
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

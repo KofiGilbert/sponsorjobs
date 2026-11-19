@@ -44,7 +44,8 @@ _LEGAL = re.compile(
     r"|authori[sz]ed to work|right to work|legally|eligib(le|ility) to work|export control|\bitar\b|\bear\b"
     r"|clearance|polygraph|restrictive covenant|non-?compet|non-?solicit|confidentiality agreement|bound by"
     r"|convict|criminal|felon|misdemeanor|arrest|pending charge|plead|guilty|offen[cs]e|background (check|screen|investigation)"
-    r"|drug (test|screen)|terminat|dismiss|\bfired\b|discharg|resign(ed)? in lieu|disciplin|lawsuit|litigation|bankrupt"
+    r"|drug (test|screen)|terminat|dismiss|\bfired\b|discharg|resign(ed)? in lieu|disciplinar|disciplined|lawsuit|litigation|bankrupt"
+    r"|involuntar|separated from|reasons? for (leaving|separation|departure)|why (did|are|do) you (leave|leaving|left|want to leave)"
     r"|date of birth|birth ?date|\bdob\b|\bage\b|years? (old|of age)|social security|\bssn\b|national (id|insurance)"
     r"|passport|tax (id|identification)|government[- ]issued|driver'?s? licen[cs]e number"
     r"|accommodation|essential functions"
@@ -77,9 +78,65 @@ _PREFERENCE = re.compile(r"relocat|willing|open to|comfortable (with|working)|tr
                          r"|on-?site|hybrid|remote|in[- ]office|work (from|location|arrangement|schedule)"
                          r"|prefer|desired|interested in|which (office|location|site)|full[- ]time|part[- ]time", re.I)
 _FACTUAL = re.compile(r"employ|worked (at|for|with)|company|organi[sz]ation|\btitle\b|position|years|experience|degree|diploma"
-                      r"|\bgpa\b|graduat|school|universit|college|education|major|field of study|skill|proficien|familiar"
+                      r"|\bgpa\b|graduat|school|universit|college|education|major|field of study|\bdiscipline\b|skill|proficien|familiar"
                       r"|language|speak|fluent|certification|certified|licen[cs]e|located|reside|live in|address"
                       r"|\bcountry\b|\bstate\b|\bcity\b|location|linkedin|github|portfolio|website", re.I)
+
+
+# (2026-11-18, the owner: common sense first) Three kinds of question the agent may answer with a
+# stated common-sense DEFAULT (autoapply/protocol.py checks each against the job posting and the
+# person's place): the type of employment, which office or location, and a routine condition of
+# the job (overtime, days on site, travel, a shift) that the posting itself states.
+EMPLOYMENT, OFFICE, CONDITION = "employment_type", "office", "condition"
+_EMPLOYMENT_Q = re.compile(r"type of employment|employment type|type of (position|role|work) (are you|you are)|seeking (full|part)"
+                           r"|(full|part)[- ]time (or|and|/) (full|part)[- ]time|full[- ]time or|are you (seeking|looking for) "
+                           r"(a )?(full|part)[- ]time", re.I)
+_OFFICE_Q = re.compile(r"\bwhich (of our )?(offices?|locations?|sites?)\b|\b(offices?|locations?) (are you|you are|you're) "
+                       r"(open|willing|interested|applying|able)|\bin which of our (offices|locations)\b"
+                       r"|\bpreferred (office|work )?locations?\b|\b(office|location) (preference|you would like)\b"
+                       r"|\boffice locations? do you prefer\b|\bselect (one|a|your)( preferred)? (location|office)\b", re.I)
+CONDITIONS = (("overtime", re.compile(r"overtime|extra hours|additional hours", re.I)),
+              ("on site", re.compile(r"on-?site|in[- ](the )?office|in person|hybrid", re.I)),
+              ("travel", re.compile(r"\btravel", re.I)),
+              ("shift", re.compile(r"\bshifts?\b|weekend|evening|night|holiday|schedule|work hours|hours per week|on[- ]call", re.I)))
+_YES_NO_Q = re.compile(r"^\W*(are|can|will|would|do|is) (you|this)\b|\b(able|available|willing|comfortable|open) (to|for)\b", re.I)
+_WA_WORDS = re.compile(r"authori[sz]|legal|eligib|permit|visa|sponsor|citizen|relocat|resid", re.I)
+# An open question answered in the person's own words (a draft, autoapply/drafts.py): why this
+# role, what interests them, their experience with something, a strength, a project.
+_ESSAY = re.compile(r"\bwhy\b|\bdescribe\b|tell us|\bexplain\b|elaborate|share (an?|your|with)|what (excites|motivates|interests|attracts)"
+                    r"|what (do|did) you (like|enjoy|dislike)|liked and disliked|interest(s|ed)? (you )?(most )?(in|about)"
+                    r"|strengths?\b|proud of|example of|how would you|walk us through|in your own words|tell me about"
+                    r"|what makes you|what would you bring|greatest (achievement|accomplishment)", re.I)
+_NOT_ESSAY = re.compile(r"cover letter|anything else|additional (information|comments)|\bsummary\b|comments?\W*$", re.I)
+
+
+def default_kind(label: str) -> str:
+    """employment_type | office | condition for a question with a common-sense default, else ""."""
+    lbl = _squash(label)
+    if not lbl or len(lbl) > 300:
+        return ""
+    if _EMPLOYMENT_Q.search(lbl):
+        return EMPLOYMENT
+    if _OFFICE_Q.search(lbl) and not re.search(r"relocat", lbl, re.I):
+        return OFFICE
+    if _YES_NO_Q.search(lbl) and any(rx.search(lbl) for _n, rx in CONDITIONS) and not _WA_WORDS.search(lbl):
+        return CONDITION
+    return ""
+
+
+def condition_names(text: str) -> set:
+    """The job conditions a text names: overtime, on site, travel, shift."""
+    return {n for n, rx in CONDITIONS if rx.search(str(text or ""))}
+
+
+def is_essay(label: str, options=(), *, company: str = "", employers=()) -> bool:
+    """An open-ended, non-legal question the drafter may answer for the person to read (never a
+    legal or saved-only one, a follow-up that only applies to a Yes, a cover letter box or an
+    "anything else" box)."""
+    lbl = _squash(label)
+    if not lbl or len(lbl) < 12 or _FOLLOW_UP.search(lbl) or _NOT_ESSAY.search(lbl) or [o for o in (options or []) if str(o).strip()]:
+        return False
+    return bool(_ESSAY.search(lbl)) and not is_legal(lbl, company=company, employers=employers)
 
 
 def _squash(label) -> str:
@@ -106,7 +163,10 @@ def is_legal(label: str, options=(), *, company: str = "", employers=()) -> bool
         return False
     from autoapply import eeo
     from autoapply.asks import is_eeo
-    if is_eeo(lbl) or _SELF_ID.search(lbl) or workauth.classify(lbl) or _LEGAL.search(lbl):
+    # (workauth.classify reads "able to work weekends" and an office pick as its own; a question
+    # with a common-sense default that names no legal word is not one)
+    wa = workauth.classify(lbl) and not (default_kind(lbl) and not _WA_WORDS.search(lbl))
+    if is_eeo(lbl) or _SELF_ID.search(lbl) or wa or _LEGAL.search(lbl):
         return True
     key = normalize(lbl)
     if key in _LEGAL_KEYS or key in eeo.KEYS:
@@ -141,6 +201,8 @@ def question_class(label: str, options=(), *, company: str = "", employers=()) -
         return COMMON
     if commonsense.education_question(lbl):
         return FACTUAL
+    if default_kind(lbl):
+        return PREFERENCE
     if _PREFERENCE.search(lbl):
         return PREFERENCE
     if _FACTUAL.search(lbl):

@@ -36,9 +36,11 @@ class Material:
     """The person's material for one application: the block the model reads and what the checks
     read (local only)."""
     block: str = ""
-    facts: list = field(default_factory=list)          # grounded.Fact, plus "years", "links", "languages"
+    facts: list = field(default_factory=list)          # grounded.Fact, plus "years", "links", "languages", "posting"
     company: str = ""
     employers: list = field(default_factory=list)      # the organisations in the work history
+    posting: dict = field(default_factory=dict)        # {title, location, type, requirements: [...]}
+    place: dict = field(default_factory=dict)          # {city, state, code}: where the person lives
 
     def __bool__(self) -> bool:
         return bool(self.block)
@@ -75,6 +77,37 @@ def languages(profile: dict) -> list:
     return out
 
 
+# ---- the job posting's key facts (2026-11-18): what a common-sense default cites -------------
+MAX_REQUIREMENTS = 6
+_TYPE = (("full-time", re.compile(r"\bfull[- ]?time\b", re.I)), ("part-time", re.compile(r"\bpart[- ]?time\b", re.I)),
+         ("contract", re.compile(r"\bcontract(or)?\b|\btemporary\b|\btemp\b", re.I)),
+         ("internship", re.compile(r"\bintern(ship)?\b", re.I)))
+_SENTENCE = re.compile(r"(?<=[.!?;])\s+|\n+")
+
+
+def posting_facts(title: str = "", location: str = "", jd_text: str = "") -> dict:
+    """{title, location, type, requirements} from one job posting: its title, the location it
+    states, the employment type it names (the first of full-time, part-time, contract,
+    internship; "" when it names none), and the sentences that state a condition of the role
+    (overtime, days on site, travel, a shift or schedule), at most six. The posting is
+    third-party text: what a person cannot see is taken out first (llm/textguard.py), and only
+    these short lines ever reach the prompt."""
+    from autoapply import qclass
+    from llm import textguard
+    jd = textguard.clean(str(jd_text or "")).text
+    head = _short(title, 120) + "\n" + jd
+    kind = next((name for name, rx in _TYPE if rx.search(head)), "")
+    reqs = []
+    for sent in _SENTENCE.split(jd):
+        t = _short(sent.strip(" -*\u2022\t"), 170)
+        if 12 <= len(t) and qclass.condition_names(t) and t.lower() not in {r.lower() for r in reqs}:
+            reqs.append(t)
+        if len(reqs) >= MAX_REQUIREMENTS:
+            break
+    return {"title": _short(title, 120), "location": _short(textguard.clean(str(location or "")).text, 200), "type": kind,
+            "requirements": reqs}
+
+
 def _line(f) -> str:
     s = f.show
     if f.kind == "location":
@@ -94,11 +127,13 @@ def _line(f) -> str:
         return "skills: " + ", ".join(str(x) for x in (s.get("skills") or [])[:MAX_SKILLS])
     if f.kind == "answer":
         return f'{f.id} (saved answer): "{_short(s.get("question"), 110)}" = "{_short(s.get("answer"), 140)}"'
+    if f.kind == "posting":
+        return (f"{f.id} (the job posting): " if f.id == "post" else f"{f.id} (the posting states): ") + _short(s.get("text"), 420 if f.id == "post" else 180)
     return f"{f.id}: " + _short(s.get("text"), 160)
 
 
 def build(applicant: dict, profile: dict, library=None, *, company: str = "", questions=(), skip_keys=frozenset(),
-          today: _dt.date | None = None) -> Material:
+          today: _dt.date | None = None, posting: dict | None = None) -> Material:
     """The person's material for the brain. ``applicant``: the fill map (city, state, links);
     ``profile``: this application's tailored resume profile, else the saved profile; ``library``:
     the answer library (its self-identification, legal and secret rows never get here);
@@ -126,9 +161,19 @@ def build(applicant: dict, profile: dict, library=None, *, company: str = "", qu
     langs = languages(profile or {})
     if langs:
         facts.append(G.Fact("languages", "languages", {"id": "languages", "text": ", ".join(langs)}, {"languages": langs}))
+    # The job posting's key facts (``posting``: posting_facts): cited as ``post`` and ``req1``...
+    post = posting if isinstance(posting, dict) else {}
+    if post.get("title") or post.get("location") or post.get("type"):
+        bits = [("title", post.get("title")), ("location", post.get("location")),
+                ("employment type", post.get("type") or "not stated")]
+        text = "; ".join(f"{k}: {v}" for k, v in bits if v)
+        facts.append(G.Fact("post", "posting", {"id": "post", "text": text}, dict(post)))
+    for n, r in enumerate(post.get("requirements") or [], start=1):
+        facts.append(G.Fact(f"req{n}", "posting", {"id": f"req{n}", "text": '"' + r + '"'}, {"requirement": r}))
     if not facts:
         return Material(company=str(company or ""))
-    order = {"location": 0, "job": 1, "school": 2, "years": 3, "skills": 4, "languages": 5, "links": 6, "answer": 7}
+    order = {"location": 0, "job": 1, "school": 2, "years": 3, "skills": 4, "languages": 5, "links": 6, "answer": 7,
+             "posting": 8}
     facts.sort(key=lambda f: order.get(f.kind, 9))             # stable: jobs and schools keep their order
     lines, size = [], 0
     for f in facts:
@@ -141,7 +186,9 @@ def build(applicant: dict, profile: dict, library=None, *, company: str = "", qu
     if not any(f.kind == "job" for f in facts):
         lines.append("work history: none saved")
     block = "<person>\n" + "\n".join(lines) + "\n</person>"
-    return Material(block=block, facts=facts, company=str(company or ""), employers=employers)
+    loc = next((f.data for f in facts if f.kind == "location"), {})
+    return Material(block=block, facts=facts, company=str(company or ""), employers=employers, posting=dict(post),
+                    place={k: loc.get(k) or "" for k in ("city", "state", "code")})
 
 
 def tokens(text: str) -> int:

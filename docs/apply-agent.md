@@ -1185,6 +1185,10 @@ tokens) for a long profile.
 
 ### The answer protocol (autoapply/protocol.py)
 
+(Section 30 made the FORMAT forgiving after the first real run: the fields may be missing or sit
+in a `proof` object, and the engine attaches the evidence itself when the answer is in the block.
+It also added the source `posting` and the common-sense defaults. What is checked is unchanged.)
+
 An action that answers a question with the brain's own choice (a `type` of text that is not a
 placeholder, a `select`, a click on a radio, a checkbox or an option) carries three fields:
 
@@ -1397,3 +1401,135 @@ lines, the application's record, the locales) and tests/js/test_agent_first.js (
 answers record, counting refusals, a refused legal answer asked once at the end, the Auto set
 aside that names the question, a stand-in the protocol passed). tests/test_agent_view.js covers
 the page script's option hand-back.
+
+## 30. After the first real run: format, hands, defaults, written answers (2026-11-18)
+
+Section 29 was run on a real Greenhouse form with many custom questions (hidden, real model). It
+was the right direction: the brain cited its facts and no rule vetoed a sensible action in
+silence. The job still ended set aside with 7 questions after 23 steps, for four reasons.
+
+### 1. A format slip never costs a step
+
+Five steps were lost to the FORMAT of an answer (the fields missing, then moved). The check
+(autoapply/protocol.py) is now hard to fail:
+
+- The three fields are read from the action itself or from a `proof` object on it; "reason" is
+  read as evidence, "job posting" as `posting`, and so on (`protocol.meta`).
+- A missing `class` is the question's own class. It decided anyway.
+- A missing `source` or `evidence` is filled in by the engine: it looks for the answer's own words
+  in the block (`protocol.ground`) and attaches the fact it found ("edu1: matched by the engine").
+  Evidence that names nothing is treated the same way.
+- On a question common sense answers (how did you hear, the kind of phone) nothing at all is
+  needed.
+- Only an answer that is truly ungrounded, or legal, is refused, and the refusal shows one worked
+  example. The prompt has the same example on its `select` line and says so in rule 6.
+
+The "wrong index" the brain reported on step 1 was not an index problem. The view and `<left>`
+never disagreed (`<left>` carries no indices). The engine had refused a typed School for its
+format, and the brain misread the observation; on the next view the same field had another
+index because the page had grown. With the lenient check that refusal no longer happens.
+
+### 2. The brain's hands on a react-select
+
+Seen on the real form: typing into the School typeahead answered "value differs" four times,
+`list_options` read nothing from five closed comboboxes, and a click on an option "did not
+select" three times. The shell sent real key and pointer events (CDP), which did nothing in a
+pane out of sight and still said ok. Only `select` worked, because it used the engine.
+
+Now every one of the agent's ops on a combobox goes through the engine's own machinery
+(extension/autofill_core.js `agentPick`, `agentOptions`, `agentClickOption`: the same open,
+filter, wait, press and read-back the fill uses, inside its own budget of 9 s):
+
+- **`type` on a combobox or typeahead** is a pick. It opens the list, types so the list filters,
+  waits for the results, presses the best match, reads the value back and closes. It answers
+  `picked "X"`, or `no result for what was typed; options: a, b, c`. For a search with thousands
+  of entries (schools) it tries the whole value, then its first three and two words, then its
+  first distinctive word. When nothing matches, the brain's own type takes the list's "Other" or
+  "Not listed" choice when there is one, and says so. A saved answer (`{{answer_N}}`) keeps its
+  strict match and never takes "Other".
+- **`list_options` on a closed combobox** opens it, reads every choice and closes it again
+  (`TailorAgent.listOptions`).
+- **A click on a `role=option`** is pressed the way the engine's pick presses it (mouseover, then
+  pointer and mouse down, up and click on the option) and read back from its box
+  (`pick_option`).
+- **`select`** with the brain's own option uses the same pick.
+- The real keys and pointer stay as the fallback for a box that opened no list at all to the
+  page's own pick (Workday's prompt widgets), and for an option that belongs to no combobox the
+  engine knows.
+- What was picked goes to the brain; the debug log shows `(picked)`.
+
+Tests through the agent's own ops (never the engine's fill) on tests/fixtures/forms/
+react_select.html and greenhouse_live.html: tests/test_agent_view.js.
+
+### 3. Common-sense defaults
+
+Employment type, the offices and overtime were refused as "a preference without a source". The
+owner's rule is common sense first. These are the defaults the brain may choose, each checked in
+code (`protocol.default_answer`) and flagged in Review answers like every answer the agent chose:
+
+| Question (`qclass.default_kind`) | The default | Evidence |
+|---|---|---|
+| Type of employment | The posting's own type; full-time when the posting says full-time or names none | `post`, or common sense |
+| Which office or location | One the posting's location names; else one in the person's own city or state; else the first one listed | `post`, `loc`, or common sense |
+| A routine condition of the job: overtime, days on site, travel, a shift or schedule | Yes, and only when the posting itself states that condition. A No, or a condition the posting does not state, is the person's | `req1`... |
+| How did you hear, the kind of phone | As before | common sense |
+
+"Nearest office" is not computed: with no office in the person's city or state, the default is
+the first one listed.
+
+Never a default, saved answer only: compensation and salary expectations, a reason for leaving or
+a separation, a start date or notice period, relocation, a background check or drug screen
+consent (the consent settings), anything in the legal class. Two fixes to the classifier came
+with this: "Discipline" (a field of study) was read as a disciplinary question, and "able to
+work weekends" as work authorization.
+
+So that these choices have evidence, the block now carries the posting's key facts
+(`material.posting_facts`): its title, the location it states, the employment type it names, and
+up to six sentences that state a condition of the role. The posting is third-party text: hidden
+text is taken out first (llm/textguard.py) and only those short lines reach the prompt. A new
+source, `posting` (shown as "The job" in Review answers), is checked the same way a profile fact
+is. With the made-up profile and posting of the tests the block is about 256 tokens (186
+without the posting), and the rules are about 3,185.
+
+### 4. Written answers
+
+"Please tell us what you liked and disliked about your last role. What interests you most about
+this opportunity?" was left for the person. Drafting from the person's real history is what this
+product does, and the Review page's drafter already exists (drafting/drafter.py
+`screening_answers`). The agent now uses it (autoapply/drafts.py, the step route's
+`_agent_drafts`):
+
+- **Which questions.** `qclass.is_essay`: an open-ended question on a text box (motivation,
+  interest in the role, experience with something, a strength, a project). Never a legal or
+  saved-only question, a follow-up that only applies to a Yes, the cover letter box (its own
+  path) or an "anything else" box.
+- **When.** On the step where the question is open and holds no draft: at most two new drafts a
+  step, one try per question. The draft is saved on the application's screening answers
+  (`by: "agent"`), so a later step or a re-run reuses it.
+- **How the drafter is told** (`drafts.guidance`, added to the question it is given): plain first
+  person, inside the limit, no bullets, no em or en dashes, every part of the question answered,
+  only what the profile and the job show. For a question whose honest answer could hurt the
+  person if guessed (what they disliked, a weakness, a conflict, a failure): neutral and
+  professional, no person or employer spoken ill of, nothing that happened unless the profile
+  shows it, said as what they would like more of in terms of what this role offers.
+- **Length.** A limit the question states (characters, words, sentences), else about 600
+  characters; never over 1,500.
+- **Cleaning** (`drafts.clean`): dashes out, any sentence with a figure found in neither the
+  profile nor the posting dropped (tailoring/fact_gate.py), cut at a sentence end inside the
+  limit. Nothing usable left is no draft, and the question is the person's.
+- **On the form.** It reaches the brain as `Question (drafted for the person from their resume
+  and the posting: type {{answer_N}})` and is typed through the placeholder. Review answers
+  shows it as "Drafted" with "Written for this job. Read it.", counted as one to check.
+- **Never sent alone.** An application that holds a draft the person has not edited stops at
+  Ready to send, also in Auto on the verified allowlist: `modes.may_send_alone(..., drafted=True)`
+  is False, the board's `auto_send` says so, and the shell's hand-over checks its own Review
+  answers rows.
+
+### Tests
+
+tests/test_agent_first.py (either shape of the fields, engine-attached evidence, the real run's
+three reply shapes, each default and what is never one, the posting facts, which questions are
+drafted, the limit, the guidance, the cleaning, the route's draft and the send-alone rule),
+tests/js/test_agent_first.js (the shell's routing of a combobox type, an option click and
+list_options to the page's own pick; a drafted answer held at Ready to send) and
+tests/test_agent_view.js (five fixture tests of the agent's ops on react-select).
