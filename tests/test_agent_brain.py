@@ -119,23 +119,30 @@ def test_parse_reply_done_alone_wins_and_garbage_is_none():
     assert bad["done"]["reason"] == "needs-person"        # an unknown reason -> needs a person
 
 
-def test_resolve_actions_placeholders_fact_gate_and_digit_runs():
+def test_resolve_actions_resolves_placeholders_and_leaves_the_brains_own_words_to_the_protocol():
+    """(2026-11-18, the agent decides) resolve_actions only joins placeholders to values. The old
+    fact gate here ("free text on a question about the person; dropped") and the four-digit rule
+    are gone: whether the brain's own words may answer a field is the answer protocol's call
+    (autoapply/protocol.py, tests/test_agent_first.py), which says why when it refuses."""
     labels = {3: "Email Address", 11: "School or University", 12: "Veteran status", 15: "Search jobs by keyword"}
     notes = []
     out = resolve_actions([
         {"op": "type", "index": 3, "text": "{{email}}"},
         {"op": "type", "index": 4, "text": "{{portal_password}}"},
-        {"op": "type", "index": 12, "text": "No"},             # a fact question: dropped
-        {"op": "type", "index": 15, "text": "call 5551002000"},   # a digit run: dropped
+        {"op": "type", "index": 12, "text": "No"},             # the brain's own words: checked in step()
         {"op": "type", "index": 15, "text": "analyst"},        # free text on a search box: fine
         {"op": "type", "index": 15, "text": "{{ghost}}"},      # no such value: dropped
+        {"op": "type", "index": 15, "text": "call {{phone}}"},  # a placeholder inside other text: dropped
+        {"op": "select", "index": 11, "option": "{{email}}"},  # a saved value on a list: the strict pick
         {"op": "click", "index": 14},
     ], APPLICANT, PORTAL, labels, notes)
     assert out[0] == {"op": "type", "index": 3, "text": "kofi@example.com", "sensitive": True, "placeholder": "email"}
     assert out[1]["text"] == PORTAL["password"] and out[1]["sensitive"] is True
-    assert out[2] == {"op": "type", "index": 15, "text": "analyst", "sensitive": False}
-    assert out[3] == {"op": "click", "index": 14} and len(out) == 4
-    assert len(notes) == 3
+    assert out[2] == {"op": "type", "index": 12, "text": "No", "sensitive": False}
+    assert out[3] == {"op": "type", "index": 15, "text": "analyst", "sensitive": False}
+    assert out[4]["op"] == "select" and out[4]["answer"] is True and out[4]["placeholder"] == "email"
+    assert out[5] == {"op": "click", "index": 14} and len(out) == 6
+    assert len(notes) == 2
 
 
 # --- step: guards -------------------------------------------------------------------------------

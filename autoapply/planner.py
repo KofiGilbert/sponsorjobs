@@ -934,7 +934,7 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
         #      aliases or other names ... or indicate N/A": the standing answer from Apply setup,
         #      never a guess. "List all ... connections employed by <company> ... or indicate
         #      N/A": what the question asks for when there is none, under a standing No on relatives.
-        if commonsense.phone_type_question(label):
+        if commonsense.phone_type_question(label) and commonsense.fast_path("phone_type"):
             hit = ctx.library.lookup(label) if ctx.library is not None else None
             got = commonsense.phone_type_answer(label, f.options, (hit or {}).get("answer") or "", t)
             if got:
@@ -983,6 +983,8 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
         if ctx.per_company and qkey0 == "@previously_worked":
             # (Phase 4) a Yes read from the resume waits for the person's one tap per company
             wh = ctx.worked_here if ctx.worked_here and ctx.worked_here[1] != "confirm" else None
+            if wh and wh[1] == "history" and not commonsense.fast_path("worked_here"):
+                wh = None                                  # the rule is off: the brain answers it
             v = _literal(f, wh[0]) if wh else None
             if v:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin=wh[1] or "library",
@@ -1034,13 +1036,13 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             if not hit and qkey0 in ctx.withhold:
                 out.left.append(f)                         # a stale value: theirs to give again
                 continue
-        if not hit and ctx.education and commonsense.education_question(label):
+        if not hit and ctx.education and commonsense.fast_path("education") and commonsense.education_question(label):
             # (2026-11-18) the highest completed degree on the resume: the list's choice for it
             got = commonsense.education_answer(label, f.options, ctx.education, t)
             if got:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=got[0], origin=got[1], sensitive=True))
                 continue
-        if not hit and qkey0 == commonsense.HEARD_KEY:
+        if not hit and qkey0 == commonsense.HEARD_KEY and commonsense.fast_path("heard"):
             # (2026-11-18) nothing saved: someone applying through a job app found it on a job board
             v = _literal(f, commonsense.HEARD_DEFAULT, qkey0)
             if v:

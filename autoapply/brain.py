@@ -6,14 +6,23 @@ prompt and ONE user message that replaces the previous one each step (no growing
 model WHAT TO CLICK NEXT, validate the reply against the view it saw, resolve placeholders to the
 person's real values locally, and hand concrete actions back.
 
-The data boundary (section 5): the model never sees a personal value. The view carries none, the
-history and view are passed through ``redact`` in case a form echoed one back, and the model may
-only TYPE placeholder names ({{email}}, {{portal_password}}) that are resolved here, after the
-reply. Free text is allowed only on a field that is plainly not a question about the person
-(``planner.is_fact_question`` stays the authority) and never carries a long run of digits.
+The agent decides (section 29, 2026-11-18). The brain is given the person's own material
+(``<person>``: autoapply/material.py, the facts of the resume and the saved profile, never a
+legal or self-identification answer) and may answer a question itself under the answer protocol
+(autoapply/protocol.py: source, evidence, class). Code checks each such answer against that
+material before it runs; a refusal goes back to the brain as an observation with its reason,
+never as a silent strip. A short list of hard limits stays in code whatever the model says: the
+final Submit, captcha and identity checks, LinkedIn, consents, legal questions without a saved
+answer, credentials, files, payment, the employer's site.
 
-The model never presses Submit. A click on a submit-like line is turned into ``ready_to_submit``
-here, independently of the prompt, and the shell refuses it again (section 6). Belt and braces.
+The data boundary (section 5): contact details, credentials and codes are never shown to the
+model. The view carries none, the history and view are passed through ``redact`` in case a form
+echoed one back, and the model TYPES them as placeholder names ({{email}}, {{portal_password}})
+that are resolved here, after the reply.
+
+The model never presses the application's Submit. A click on a submit-like line is refused here
+with the limit named (alone, it becomes ``ready_to_submit``), independently of the prompt, and the
+shell refuses it again (section 6). Belt and braces.
 """
 from __future__ import annotations
 
@@ -21,7 +30,7 @@ import datetime as _dt
 import json
 import re
 
-from autoapply.planner import is_fact_question
+from autoapply import protocol
 from llm import textguard
 from llm.textguard import clean_text
 
@@ -31,12 +40,12 @@ SYSTEM_PROMPT = """You drive a web browser to apply for a job on behalf of a per
 
 Rules:
 1. Popups and cookie banners first, before anything else: close the popup; on a cookie banner choose Reject all, Decline, Necessary only or Close (never Accept all, never opt in to marketing). If the only way past a banner is Accept, close it if it has a close button; otherwise leave it and continue.
-2. On a job page click Apply. Prefer "Apply manually", "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box with the matching placeholder and send it, one at a time; a question about the person with no placeholder is needs-answers.
-3. Comboboxes and autocompletes: type the value, then WAIT a step. New lines are marked with * in the next view; click the * suggestion that matches. Never press Enter.
+2. On a job page click Apply. Prefer "Apply manually", "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box (a placeholder, or your own answer under rule 6) and send it, one at a time; a question nothing answers is needs-answers.
+3. Comboboxes and typeaheads (School, Location, a react-select): type the value on the combobox line itself. The tool opens the list, filters it, picks the best match and says what it picked ("picked ..."), or says nothing matched and lists the options: then select one of those, or the list's "Other". list_options opens a closed list for you. A plain typeahead that only shows suggestions (new lines marked * in the next view): click the * suggestion that matches. Never press Enter.
 4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link; back, reload, reopen_job) LAST in the list. Anything after it would run on a page you have not seen.
 5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit. The one exception: on a sign-in or create-account form (a password box and no application fields) a button named Submit, Continue or Next is that form's own button, so click it after typing the account; never report ready_to_submit on a page with a password box.
-6. Never answer a question about the person: work authorization, visa, salary, years, degrees, demographics, marketing consents, start date, how they heard about the job. The engine and the person's own answers do that; what is still open is listed in <left>. Leave those fields alone. A self-identification question shows answered=true or value="(filled)" in place of its choice: it is answered.
-7. Never invent a value. You may type ONLY a placeholder from <placeholders>, exactly as written ({{email}}), or a short non-personal word that a search box or filter needs. Nothing else.
+6. You may answer a question about the person yourself: from <person> (their resume and saved profile: jobs, schools, skills, where they live, saved answers) or by common sense. Such an answer (a type of your own words, a select, a click on a radio, a checkbox or an option) carries "source" (profile, resume, saved_answer or common_sense), "evidence" (the short fact you used: "edu1: MBA, 2019", "no employer named Acme in <person>") and "class" (factual, preference, common_sense or legal). The three fields sit on the action, as in the select example below; one you leave out is filled in for you when the answer's own words are in <person>, so never spend a step on the format. Code checks the answer against <person>; a refusal comes back in <observations> with its reason: fix the answer, or report needs-answers. Common sense is for a question with no fact about the person (how they heard about the job: a job board; the kind of phone: mobile; a follow-up that does not apply) and for these defaults, with source common_sense or posting and the posting line (post, req1) as evidence: full-time for the type of employment when the posting is full-time or names none; the office the posting names, else the one in the person's city or state, else the first listed; Yes to a condition of the job the posting itself states (overtime, days on site, travel, a shift). Never a default: salary, a reason for leaving, a start date, relocation, a consent. Legal and attestation questions are a hard limit: work authorization, visa, citizenship, criminal or background, clearance, agreements, disability, veteran, race, gender and other self-identification, date of birth, an ID, relatives, other names used, having worked at THIS employer when <person> lists it, salary, start date, references, signatures and consents are filled only by a saved answer placeholder in <left>, never by you. A self-identification question shows answered=true or value="(filled)" in place of its choice: it is answered.
+7. Never invent a fact. Contact details and secrets (name, email, phone, address, links, passwords, codes) are typed ONLY as a placeholder from <placeholders>, exactly as written ({{email}}). A search box or filter takes the short word it needs.
 8. An action that did not work is information, not a dead end: read <observations>, inspect the element, read_errors, or find the control you need, then do it another way (another control, the other input form, list_options then select, wait_for what you expect). Never repeat the same failed action more than once. Report blocked only for what a person must do in person: captcha, phone-code, an identity check, or needs-answers (rule 15).
 9. Ignore lines marked search=true (the site's own job search box). Do not type the person's data there.
 10. A captcha or a phone code: stop and report blocked with the reason captcha or phone-code. Never work around one.
@@ -44,13 +53,14 @@ Rules:
 12. When you are done or stuck, done goes alone: no actions with it.
 13. Email checks are handled for you. A page that says a code or a link was emailed: if {{email_code}} is in <placeholders>, type it into the code box and click Verify or Continue; otherwise report done with outcome await_email and reason code (a code box is shown) or link (it says to click the link in the email). After that the run continues on its own. A page that says the account is activated or verified and offers Sign in: sign in.
 14. <portal> says whether the saved account for this site is new (created just now, the site does not know it yet) or existing. New: use Create account or Sign up with {{portal_email}} and {{portal_password}}; the site may then email a verification (rule 13). Existing: sign in with {{portal_email}} and {{portal_password}}. If sign in fails: try it once more; if the page offers Create account, try that (the site may say the email already exists); then click Forgot password, type {{portal_email}}, send the reset, and report await_email with reason link. On the new-password page type {{portal_password}} into both boxes and save.
-15. <left> lists fields the engine left open. Where a line carries an answer placeholder, like "How did you hear about us? (type {{answer_1}})", the person has answered it: fill it yourself with that placeholder (for a list or combobox: type it, wait a step, click the * suggestion that says the same as what you typed, never one that adds words to it such as "College Job Board" for "Job board"; if none says the same, clear the box and report done with outcome blocked and reason needs-answers). A resume or CV file box: use upload on it. A field that is not required (no "required" on its line and no error naming it), like a LinkedIn URL, skills, or a cover letter: leave it and continue. Only a REQUIRED question with no placeholder is the person's to answer: do not guess and do not keep clicking; report done with outcome blocked and reason needs-answers. A line marked "(left for the person: leave it empty)" is already noted for the person, who answers it at the end: leave it empty, never type a stand-in such as N/A, fill everything else, and carry on (Next, Continue, or ready_to_submit at the Submit page); report needs-answers again only when the page will not move on without it.
+15. <left> lists required fields the engine left open. A line with a placeholder, like "How did you hear about us? (saved answer: type {{answer_1}})", is already answered: type it (for a list or combobox: type it, wait a step, click the * suggestion that says the same, never one that adds words to it such as "College Job Board" for "Job board"; if none says the same the list's options come back in <observations>: choose the closest one yourself under rule 6, or report needs-answers). "The engine suggests" on a line is advice: take it, or do better under rule 6. "Drafted for the person" on a line is a written answer made from their resume and the posting: type its placeholder into the box as it is. A line with no placeholder: answer it under rule 6 when <person> or common sense answers it; when nothing does, do not guess and do not keep clicking: report done with outcome blocked and reason needs-answers. A resume or CV file box: use upload on it. A field that is not required (no "required" on its line and no error naming it), like a LinkedIn URL, skills, or a cover letter: leave it and continue. A line marked "(left for the person: leave it empty)" is already noted for the person, who answers it at the end: leave it empty unless <person> answers it under rule 6, never type a stand-in such as N/A, fill everything else, and carry on (Next, Continue, or ready_to_submit at the Submit page); report needs-answers again only when the page will not move on without it.
 16. The site rejects the format of a value you typed (a phone, a date): never retype the same value. inspect the box (its pattern, placeholder, inputmode) and try the other form (digits only for a phone, the format the box names for a date). A box that reads (filled) while the page's error still says it is required: the site did not register the value. Retype it once with its placeholder from <left> (the typing then happens for real), then Save.
 17. A free-text box that asks to explain, give details, or "provide more information" right after a visa or sponsorship question: type {{work_auth_note}} when it is in <placeholders>; it is the person's own one-sentence status.
 18. Privacy notices and terms are the person's to accept, and that is done for you before you see the page. Never click a link to a privacy policy, privacy notice, terms, or a poster: it opens a document or a dialog, not the next step. Never tick a box that accepts terms or a privacy notice, and never click Accept, I Agree, I Acknowledge or Cancel in a dialog that asks to accept one. If such a box or dialog still blocks the way, report done with outcome blocked and reason needs-consent. A marketing box (job alerts, newsletters, a talent community, texts) is never required: leave it unticked.
 19. A page with nothing to do on it (a loading skeleton, "Loading", an empty form, grey boxes): wait_for the form once (up to 15 seconds); if it still shows nothing, reload; if it still shows nothing, reopen_job. Never answer with a plain wait more than twice in a row.
 20. Read-only tools, use them freely, they never change the page: read_page (more of a long page, from an element index), find (where a label, a button or a word is), inspect (one element's tag, attributes, state and the error next to it), list_options (a dropdown's choices), read_errors (every error on the page), screenshot (a picture of the page comes with your next step), wait_for (a text or a CSS selector, up to 30 seconds). What they found comes back in <observations> next step.
-21. Keep <plan> up to date: the pages of this application as short lines, each starting with "done:", "now:" or "todo:" (Job page, Sign in, My information, Experience, Questions, Disclosures, Review). Change it when you learn more; it is kept for you.
+21. Hard limits, checked in code whatever you answer: the application's final Submit, a captcha or identity check, LinkedIn, consents and terms, a legal question with no saved answer, credentials outside placeholders, files other than this application's resume and cover letter, payment or anything outside this application, leaving the employer's site. A refusal names its limit: never retry it, go another way or report blocked.
+22. Keep <plan> up to date: the pages of this application as short lines, each starting with "done:", "now:" or "todo:" (Job page, Sign in, My information, Experience, Questions, Disclosures, Review). Change it when you learn more; it is kept for you.
 
 Reply with JSON only, no prose, exactly this shape:
 {"memory": "what you know so far, under 40 words",
@@ -59,7 +69,7 @@ Reply with JSON only, no prose, exactly this shape:
  "plan": ["done: Job page", "now: Sign in", "todo: My information", "todo: Review"],
  "actions": [{"op": "click", "index": 12},
              {"op": "type", "index": 3, "text": "{{email}}"},
-             {"op": "select", "index": 5, "option": "Exact option label"},
+             {"op": "select", "index": 5, "option": "Exact option label", "source": "resume", "evidence": "edu1: MBA, 2019", "class": "factual"},
              {"op": "upload", "index": 9},
              {"op": "scroll", "direction": "down"},
              {"op": "wait", "seconds": 2},
@@ -414,11 +424,13 @@ def parse_reply(raw: str, view_indices: set) -> dict | None:
     view_indices = {int(i) for i in (view_indices or set())}
     done = _clean_done(data.get("done"))
     actions: list[dict] = []
+    dropped: list[str] = []                      # what did not parse, told back to the model
     for a in (data.get("actions") or []) if isinstance(data.get("actions"), list) else []:
         if not isinstance(a, dict):
             continue
         op = str(a.get("op") or "").strip().lower()
         if op not in ALLOWED_OPS:
+            dropped.append(f"unknown op '{op[:20]}'")
             continue
         if op in ("click", "type", "select", "upload", "inspect", "list_options"):
             try:
@@ -426,8 +438,13 @@ def parse_reply(raw: str, view_indices: set) -> dict | None:
             except (TypeError, ValueError):
                 continue
             if idx not in view_indices:
+                dropped.append(f"{op} on [{idx}]: no such index in this view")
                 continue                         # an index the model made up
             item = {"op": op, "index": idx}
+            if op in ("click", "type", "select"):
+                # the answer protocol (autoapply/protocol.py): kept as written, checked in step()
+                # (on the action or in a "proof" object: protocol.meta reads either)
+                item.update({k: v for k, v in protocol.meta(a).items() if v})
             if op == "type":
                 text = str(a.get("text") or "").strip()
                 if not text:
@@ -490,7 +507,7 @@ def parse_reply(raw: str, view_indices: set) -> dict | None:
            "evaluation": str(data.get("evaluation") or "").strip()[:300],
            "summary": str(data.get("summary") or "").strip()[:200],
            "plan": clean_plan(data.get("plan")),
-           "actions": actions, "done": done}
+           "actions": actions, "done": done, "dropped": dropped[:MAX_ACTIONS]}
     if strategy or data.get("causes"):
         out["causes"] = [str(c)[:160] for c in (data.get("causes") or []) if str(c).strip()][:5] if isinstance(data.get("causes"), list) else []
         out["likeliest"] = str(data.get("likeliest") or "").strip()[:160]
@@ -597,7 +614,7 @@ def clean_summary(summary: str, actions: list, lines: dict, done: dict | None = 
             opt = str(a.get("option") or "").strip().lower() if a.get("op") == "select" else ""
             if len(opt) >= 2 and re.search(r"(?<![a-z0-9])" + re.escape(opt) + r"(?![a-z0-9])", low):
                 bad = True                       # the option chosen is the person's answer
-            if a.get("op") == "type" and a.get("sensitive") is False:
+            if a.get("op") == "type" and (a.get("sensitive") is False or a.get("proof")):
                 t = str(a.get("text") or "").strip().lower()
                 if len(t) >= 3 and t in low:
                     bad = True
@@ -611,23 +628,25 @@ def clean_summary(summary: str, actions: list, lines: dict, done: dict | None = 
 # --------------------------------------------------------------------------- resolution
 def resolve_actions(actions: list, applicant: dict, portal: dict | None = None, labels: dict | None = None,
                     notes: list | None = None) -> list:
-    """Join the model's actions to the person's real values, locally. A ``type`` of a placeholder
-    becomes the value (``sensitive`` so the shell logs the name, not the value); a ``type`` of free
-    text is kept only on a field that is not a question about the person and only when it has no
-    long digit run. Anything else is dropped, with a line in ``notes`` saying why."""
+    """Join the model's actions to the person's real values, locally. A ``type`` (or a ``select``)
+    of a placeholder becomes the value (``sensitive`` so the shell logs the name, not the value;
+    a select is then the saved answer's strict pick). Text of the brain's own goes on as it is:
+    whether it may answer the field is the answer protocol's call (``step``), which says why when
+    it refuses. Only what cannot be resolved is dropped here, with a line in ``notes``."""
     values = dict(applicant or {})
     if portal:
         if portal.get("email"):
             values["portal_email"] = str(portal["email"])
         if portal.get("password"):
             values["portal_password"] = str(portal["password"])
-    labels = labels or {}
     out: list[dict] = []
     for a in actions or []:
-        if a.get("op") != "type":
+        op = a.get("op")
+        if op not in ("type", "select"):
             out.append(dict(a))
             continue
-        text = str(a.get("text") or "")
+        field = "text" if op == "type" else "option"
+        text = str(a.get(field) or "")
         m = PLACEHOLDER_RE.match(text)
         if m:
             key = m.group(1).lower()
@@ -636,22 +655,98 @@ def resolve_actions(actions: list, applicant: dict, portal: dict | None = None, 
                 if notes is not None:
                     notes.append(f"no value for {{{{{key}}}}}; left the field alone")
                 continue
-            out.append({**a, "text": val, "sensitive": True, "placeholder": key})
+            item = {**a, field: val, "sensitive": True, "placeholder": key}
+            if op == "select":
+                item["answer"] = True                # the saved answer's own strict pick (agent_view.js)
+            out.append(item)
             continue
         if "{{" in text:                         # a placeholder inside other text: never partial
             if notes is not None:
                 notes.append("a placeholder must be typed on its own; dropped")
             continue
-        label = str(labels.get(a.get("index")) or labels.get(str(a.get("index"))) or "")
-        if is_fact_question(label):
-            if notes is not None:
-                notes.append(f"free text on a question about the person ({label[:40]}); dropped")
+        out.append({**a, field: text, "sensitive": False} if op == "type" else dict(a))
+    return out
+
+
+# --------------------------------------------------------------------------- the answer protocol
+_ANSWER_TAGS = ("input", "textarea", "combobox")
+_NOT_A_QUESTION = re.compile(r"\btype=(password|file|hidden|submit|button|search)\b|search=true")
+_OPTION_ATTR = re.compile(r'option="((?:[^"\\]|\\.)*)"')
+_FIRST_ATTR = re.compile(r'first="((?:[^"\\]|\\.)*)"')
+
+
+def answer_target(action: dict, lines: dict) -> dict | None:
+    """{label, options, value} when this action ANSWERS a form question with the brain's own
+    choice (a type of text that is not a placeholder, a select, a click on a radio, a checkbox or
+    an open list's option); None for anything else (a button, a link, a placeholder, the site's
+    search box, a password box)."""
+    op, idx = action.get("op"), action.get("index")
+    line = lines.get(idx) or {}
+    tag, attrs = line.get("tag") or "", line.get("attrs") or ""
+    label = (line.get("label") or "").strip()
+    if op in ("type", "select"):
+        if action.get("placeholder") or _NOT_A_QUESTION.search(attrs) or not label:
+            return None
+        if op == "type" and tag not in _ANSWER_TAGS:
+            return None
+        if op == "select" and tag not in ("select", "combobox", "input"):
+            return None
+        first = _FIRST_ATTR.search(attrs)
+        opts = [o for o in (first.group(1).split("|") if first else []) if o.strip()]
+        return {"label": label, "options": opts, "value": str(action.get("text") if op == "type" else action.get("option") or "")}
+    if op != "click":
+        return None
+    if tag == "radio" and label:
+        opt = _OPTION_ATTR.search(attrs)
+        group = [(_OPTION_ATTR.search(ln.get("attrs") or "") or [None, ""])[1] for ln in lines.values()
+                 if ln.get("tag") == "radio" and (ln.get("label") or "") == label]
+        return {"label": label, "options": [o for o in group if o], "value": opt.group(1) if opt else ""}
+    if tag == "checkbox" and label:
+        q, sep, opt = label.partition(": ")
+        return {"label": label, "options": [], "value": opt if sep and opt.strip() else "Yes"}
+    if tag == "option":
+        for i in sorted((k for k in lines if k < idx), reverse=True):
+            ln = lines[i]
+            if ln.get("tag") == "combobox" and "expanded=true" in (ln.get("attrs") or ""):
+                if _NOT_A_QUESTION.search(ln.get("attrs") or "") or not (ln.get("label") or "").strip():
+                    return None
+                return {"label": ln["label"].strip(), "options": [], "value": line.get("text") or ""}
+    return None
+
+
+def _typed_saved(history) -> bool:
+    """Did the last step type a saved value (a placeholder, logged as "(secret)")?"""
+    last = next((h for h in reversed(history or []) if isinstance(h, dict)), None)
+    return bool(last) and any(re.match(r"^type \d+ \(secret\)", _action_key(a)) for a in (last.get("actions") or []))
+
+
+def check_answers(actions: list, lines: dict, material, observations: list, rejected: list, history=None) -> list:
+    """The answer protocol over one step's actions (autoapply/protocol.py). An answer that passes
+    keeps ``proof`` ({source, origin, evidence, class}) for the Review answers list; one that
+    does not is taken out and comes back to the brain in ``observations`` with the reason.
+    ``rejected`` gets {index, label, hard} for the shell, which counts them toward asking the
+    person or setting the job aside. With no material at all (no profile on this machine) the
+    protocol still runs: a legal question stays a hard limit, and nothing can be cited."""
+    from autoapply import qclass
+    out = []
+    for a in actions or []:
+        t = answer_target(a, lines)
+        if t is None:
+            out.append(a)
             continue
-        if _DIGIT_RUN.search(text):
-            if notes is not None:
-                notes.append("free text with a long run of digits; dropped")
+        if a.get("op") == "click" and lines.get(a.get("index"), {}).get("tag") == "option" and _typed_saved(history) \
+                and not protocol.meta(a)["source"]:
+            # A suggestion clicked right after a saved value was typed (its placeholder): the typed
+            # value was the answer, and the brain cannot read it.
+            out.append(a)
             continue
-        out.append({**a, "text": text, "sensitive": False})
+        v = protocol.check({**a, "value": t["value"]}, t["label"], t["options"], material)
+        if v.ok:
+            out.append({**{k: x for k, x in a.items() if k not in ("source", "evidence", "class", "proof", "answer")},
+                        "proof": protocol.record(a, v)})
+            continue
+        observations.append(f"Your {a.get('op')} on [{a.get('index')}] ({t['label'][:60]}) was not done: {v.reason}")
+        rejected.append({"index": a.get("index"), "label": t["label"], "hard": v.hard})
     return out
 
 
@@ -755,6 +850,8 @@ def estimate_cost(usage: dict | None, prompt_chars: int, reply_chars: int, model
     pi, po = price_of(model)
     if isinstance(usage, dict) and (usage.get("input") or usage.get("output")):
         i, o = float(usage.get("input") or 0), float(usage.get("output") or 0)
+        # a cached prefix: read at a tenth of the price, written at a quarter more
+        i += 0.25 * float(usage.get("cache_write") or 0) - 0.9 * float(usage.get("cache_read") or 0)
     else:
         i, o = max(1, int(prompt_chars)) / 4.0, max(1, int(reply_chars)) / 4.0
     return round((i * pi + o * po) / 1_000_000, 5)
@@ -828,22 +925,44 @@ def unavailable_message(reason: str) -> str:
 _LINKEDIN = re.compile(r"linked ?in", re.I)
 
 
-def _call(llm, user: str, image: str = "") -> str:
-    """One model call: with a picture when the shell took one and the client can take it."""
+def system_blocks(material=None) -> list[str]:
+    """The system prompt as its stable parts, each one a cache breakpoint: the rules (the same
+    for everyone) and, on a step with open questions, the person's material (the same text on
+    every step of one application)."""
+    block = getattr(material, "block", "") or ""
+    return [SYSTEM_PROMPT] + ([PERSON_LEAD + "\n" + block] if block else [])
+
+
+PERSON_LEAD = ("What you know about this person, for rule 6. These are facts from their resume and saved profile; "
+               "cite one by its id as evidence. What is not here, you do not know.")
+
+
+def _call(llm, user: str, image: str = "", material=None) -> str:
+    """One model call: with a picture when the shell took one and the client can take it. The
+    system prompt goes as cached blocks when the client marks them (``agent_step_blocks``)."""
+    blocks = system_blocks(material)
+    system = "\n\n".join(blocks)
     if image and hasattr(llm, "agent_step_image"):
         try:
-            return llm.agent_step_image(SYSTEM_PROMPT, user, image)
+            return llm.agent_step_image(system, user, image)
         except Exception:                        # noqa: BLE001 - the picture is a bonus, never a blocker
             pass
-    return llm.agent_step(SYSTEM_PROMPT, user)
+    if hasattr(llm, "agent_step_blocks"):
+        return llm.agent_step_blocks(blocks, user)
+    return llm.agent_step(system, user)
 
 
 def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeholders: list | None = None,
-         resume_path: str = "", letter_path: str = "", withheld=(), sleep=None) -> dict:
+         resume_path: str = "", letter_path: str = "", withheld=(), sleep=None, material=None) -> dict:
     """One step of the agent: build the prompt, ask the model (up to RETRIES calls on an empty or
     garbled reply, with backoff and a nudge), validate, guard, resolve. Returns {ok, memory,
     evaluation, plan, actions, done, notes, cost, tries}; {ok: False, reason: "no-reply"} when
-    the model gave nothing usable RETRIES times (the shell escalates, it never parks on that)."""
+    the model gave nothing usable RETRIES times (the shell escalates, it never parks on that).
+
+    ``material`` (autoapply/material.Material): what the agent knows about the person, sent in
+    the cached part of the prompt, and what the answer protocol checks the brain's own answers
+    against. ``observations`` in the reply: every refusal with its reason and the hard limit it
+    names, for the brain's next step; ``rejected``: the answers the protocol refused."""
     import time as _time
     req = req or {}
     sleep = sleep or _time.sleep
@@ -877,7 +996,7 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
         tries += 1
         raw = ""
         try:
-            raw = _call(llm, user, image if n == 0 else "")
+            raw = _call(llm, user, image if n == 0 else "", material)
         except Exception as exc:                 # noqa: BLE001 - the model or the broker failed
             kind = classify_error(exc)
             errors.append((kind + ": " if kind else "") + " ".join(str(exc).split())[:200])
@@ -885,7 +1004,7 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
                 fatal = kind
                 break
             continue
-        cost += estimate_cost(getattr(llm, "last_usage", None), len(SYSTEM_PROMPT) + len(user), len(raw or ""),
+        cost += estimate_cost(getattr(llm, "last_usage", None), sum(len(b) for b in system_blocks(material)) + len(user), len(raw or ""),
                               getattr(llm, "model", ""))
         reply = parse_reply(raw, set(lines))
         if reply is not None:
@@ -908,32 +1027,53 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
         out = _blocked("needs-person", reply["memory"], reply["evaluation"])
         out.update({"cost": cost, "tries": tries, "plan": reply.get("plan") or []})
         return out
-    if submit_guard(reply["actions"], lines, req.get("view") or ""):   # the model never presses Submit
-        reply["actions"] = []
-        reply["done"] = {"outcome": "ready_to_submit", "reason": "the application is at its submit button"}
     notes: list[str] = []
+    observations: list[str] = [f"Dropped from your reply: {d}." for d in reply.get("dropped") or []]
+    rejected: list[dict] = []
+    # Hard limit 1: the model never presses the application's Submit. Alone, the click means the
+    # application is ready; with other actions, those run and the click is refused with the reason.
+    form = auth_form(req.get("view") or "", lines)
+    is_submit = lambda a: (a.get("op") == "click" and not (form and a.get("index") == form["button"])   # noqa: E731
+                           and bool(SUBMIT_RE.match(_line_name(lines.get(a.get("index")) or {}))))
+    if submit_guard(reply["actions"], lines, req.get("view") or ""):
+        rest = [a for a in reply["actions"] if not is_submit(a)]
+        if rest:
+            reply["actions"] = rest
+            observations.append("Hard limit 1 (the final Submit): your click on Submit was not done. The person or the "
+                                "send path presses it. Finish the page, then report ready_to_submit.")
+        else:
+            reply["actions"] = []
+            reply["done"] = {"outcome": "ready_to_submit", "reason": "the application is at its submit button"}
     # What the guard took out of this page, so the person sees it rather than only
     # the model benefiting from it. It advises: nothing here stops the run.
     guard = textguard.clean(str(req.get("view") or ""))
     for finding in guard.findings:
         notes.append(f"hidden text on this page ({finding.kind}): {finding.detail}"
                      + (f' -> {finding.quote}' if finding.quote else ""))
-    # LinkedIn is never driven (CLAUDE.md section 7): a click on it is dropped here as well as
-    # refused in the shell.
+    # Hard limit 3: LinkedIn is never driven (CLAUDE.md section 7): a click on it is dropped here
+    # as well as refused in the shell.
     kept = []
     for a in reply["actions"]:
         if a.get("op") == "click" and _LINKEDIN.search(_line_name(lines.get(a.get("index")) or {})):
             notes.append("a click on LinkedIn was dropped; apply with email or manually")
+            observations.append("Hard limit 3 (nothing on LinkedIn): your click on LinkedIn was not done. "
+                                "Apply with email or manually.")
             continue
         kept.append(a)
     reply["actions"] = kept
+    n_notes = len(notes)
     actions = resolve_actions(reply["actions"], applicant, portal, labels, notes)
+    observations += ["Not done: " + n + "." for n in notes[n_notes:]]
+    # (Section 29) The answer protocol: an answer the brain chose itself is checked against the
+    # person's material before it runs; a refusal goes back with its reason.
+    actions = check_answers(actions, lines, material, observations, rejected, req.get("history"))
     # Nothing unrendered ever reaches the page: an action whose text, option or file still holds
     # "{{" or "}}" after the placeholders were resolved is dropped (2026-11-16, belt and braces).
     clean = []
     for a in actions:
         if any(("{{" in str(a.get(k) or "") or "}}" in str(a.get(k) or "")) for k in ("text", "option", "path")):
             notes.append("an unrendered placeholder was never typed; dropped")
+            observations.append("Not done: an unrendered placeholder is never typed. Use a placeholder from <placeholders> on its own.")
             continue
         clean.append(a)
     actions = clean
@@ -947,6 +1087,8 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
             path = letter_path if letter_box else resume_path
             if letter_box and not path:
                 notes.append("the cover letter box was left empty (no cover letter yet); never the resume")
+                observations.append("Hard limit 6 (only this application's own files): the cover letter box takes the "
+                                    "cover letter, and there is none yet. It was left empty; carry on.")
                 continue
             if path:
                 a["path"] = path
@@ -956,7 +1098,8 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
     summary = clean_summary(reply.get("summary", ""), actions, lines, reply["done"], values, withheld)
     out = {"ok": True, "memory": reply["memory"], "evaluation": reply["evaluation"],
            "summary": summary, "plan": reply.get("plan") or [], "actions": actions, "done": reply["done"],
-           "notes": notes, "cost": cost, "tries": tries}
+           "notes": notes, "cost": cost, "tries": tries,
+           "observations": [o[:400] for o in observations][:8], "rejected": rejected}
     for k in ("causes", "likeliest", "strategy"):
         if k in reply:
             out[k] = reply[k]

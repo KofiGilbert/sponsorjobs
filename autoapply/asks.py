@@ -220,7 +220,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         v = fit(got[0]) if got else None
         return (v, got[1]) if v else None
     # (2026-11-18) the kind of phone, other names used, connections employed here as a list
-    if COMMON.phone_type_question(q):
+    if COMMON.phone_type_question(q) and COMMON.fast_path("phone_type"):
         own = library.lookup(q) if library is not None else None
         return COMMON.phone_type_answer(q, opts, (own or {}).get("answer") or "", "select" if opts else "text")
     if COMMON.other_names_question(q):
@@ -238,6 +238,8 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         if v:
             return v, got[1]
     if per_company and key == "@previously_worked":
+        if worked_here and worked_here[1] == "history" and not COMMON.fast_path("worked_here"):
+            return None                         # the rule is off: the brain answers it
         ok = worked_here and worked_here[1] != "confirm" and fit(worked_here[0])
         return (fit(worked_here[0]), worked_here[1] or "library") if ok else None
     hit = library.lookup(q) if library is not None else None
@@ -247,11 +249,11 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         hit = keyed(ctx, key, hit)
         if not hit and key in (withhold or ()):
             return None
-    if not hit and education and COMMON.education_question(q):
+    if not hit and education and COMMON.fast_path("education") and COMMON.education_question(q):
         got = COMMON.education_answer(q, opts, education, "select" if opts else "text")
         if got:
             return got                      # the highest completed degree on the resume
-    if not hit and key == COMMON.HEARD_KEY:
+    if not hit and key == COMMON.HEARD_KEY and COMMON.fast_path("heard"):
         v = fit(COMMON.HEARD_DEFAULT)        # nothing saved: found on a job board (common sense)
         if v:
             return v, COMMON.HEARD_ORIGIN

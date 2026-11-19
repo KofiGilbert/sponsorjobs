@@ -2218,11 +2218,13 @@ def _auto_min_match() -> int:
     return modes.clamp_threshold(_prefs().get("auto_min_match"))
 
 
-def _may_send_alone(lane: str, match) -> bool:
+def _may_send_alone(lane: str, match, data: dict | None = None) -> bool:
     """The agent may press Submit by itself for this application: Auto mode, a site on the
-    verified allowlist, and the match at or above the person's threshold when one is set."""
+    verified allowlist, the match at or above the person's threshold when one is set, and no
+    written answer on it that the agent drafted and the person has not read (``data``)."""
     from autoapply import modes
-    return modes.may_send_alone(_apply_mode(), lane, match, _auto_min_match())
+    return modes.may_send_alone(_apply_mode(), lane, match, _auto_min_match(),
+                                drafted=_holds_agent_draft(data or {}))
 
 
 def _submit_driver_for(url: str):
@@ -14665,10 +14667,13 @@ def _agent_placeholders(applicant: dict, prof: dict, portal: dict | None) -> tup
     return names, values
 
 
-def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
+def _known_answers_for(labels: list, rec, data: dict, applicant: dict, origins: dict | None = None) -> dict:
     """{label: answer} for the open fields the person's own material already answers, through
     the same planner the fill route uses (work authorization, the answer library, this record's
     drafted answers, the profile). Nothing is invented: a field nothing answers stays out.
+    ``origins`` (when given) is filled with {label: origin}: where each answer came from, so the
+    step route can tell the brain which ones are a rule's suggestion (``common_sense``,
+    ``history``, ``tracker``) and which are the person's own saved words.
 
     Never a self-identification field (gender, race, Hispanic or Latino, veteran, disability):
     these fields reach the brain as text with no choices, where a saved "No" or "Asian" is only
@@ -14707,10 +14712,13 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
     finally:
         lib.close()
     by_ref = {f.ref: f.label for f in fields}
+    from_ref = {a.ref: a.origin for a in res.actions}
     out = {}
     for o in ops:
         if o.text and o.ref in by_ref:
             out[by_ref[o.ref]] = str(o.text)
+            if origins is not None:
+                origins[by_ref[o.ref]] = str(from_ref.get(o.ref) or "")
     # The person's own answer to this exact question (an earlier "ask") wins for anything the
     # planner left: a work-authorization question answered on the bar is answered, even when
     # the structured work-auth profile is still empty.
@@ -14734,9 +14742,122 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
             hit = lib.lookup(lab)
             if hit and str(hit.get("answer") or "").strip():
                 out[lab] = str(hit["answer"]).strip()
+                if origins is not None:
+                    origins[lab] = "library"
     finally:
         lib.close()
     return out
+
+
+# ---- written answers (autoapply/drafts.py, docs/apply-agent.md section 30): an open-ended question
+# on the form is drafted from the person's real history by the Review page's drafter, saved on the
+# application's screening answers (by: "agent") and typed through a placeholder; Review answers
+# shows it as drafted, to read before Send. At most two new drafts a step; a question that could
+# not be drafted is tried once per run of the app, then it is the person's.
+_DRAFT_TRIED: set = set()
+MAX_DRAFTS_A_STEP = 2
+
+
+def _agent_drafts(rec, data: dict, prof: dict, labels: list, view: str) -> dict:
+    """Draft the open essay questions among ``labels`` that hold no draft yet; returns the
+    record's data with the new drafts in ``screening`` (the same dict when nothing was drafted)."""
+    from autoapply import brain as _B, drafts as _D, qclass as _Q
+    from autoapply.answers import clean_label, normalize as _nq
+    if not rec or not labels:
+        return data
+    company = rec.get("company") or ""
+    have = {_nq(x.get("question") or "") for x in (data.get("screening") or [])
+            if isinstance(x, dict) and str(x.get("answer") or "").strip()}
+    lines = list(_B.view_lines(view).values())
+    todo = []
+    for lab in labels:
+        q = clean_label(lab) or lab
+        key = _nq(q)
+        if not key or key in have or (rec.get("id"), key) in _DRAFT_TRIED or not _Q.is_essay(q, company=company):
+            continue
+        # a text box only: the view's line for this question (its label is cut at 80 characters)
+        ln = next((x for x in lines if x.get("label") and q.lower().startswith(x["label"].lower()[:75])), None)
+        if ln is None or ln.get("tag") not in ("textarea", "input") or re.search(r"type=(?!text)", ln.get("attrs") or ""):
+            continue
+        todo.append((q, key))
+    if not todo:
+        return data
+    try:
+        llm = _make_llm()
+    except Exception:          # noqa: BLE001 - no model: the questions stay the person's
+        return data
+    profile = prof if (prof or {}).get("experience") else (_saved_full_profile() or prof or {})
+    jd = str(data.get("jd_text") or data.get("jd") or rec.get("jd_label") or rec.get("role") or "")
+    scr = [dict(x) for x in (data.get("screening") or []) if isinstance(x, dict)]
+    added = 0
+    for q, key in todo[:MAX_DRAFTS_A_STEP]:
+        _DRAFT_TRIED.add((rec.get("id"), key))
+        text = _D.draft(jd, profile, llm, q)
+        if text:
+            scr.append({"question": q, "answer": text, "by": "agent"})
+            added += 1
+    if not added:
+        return data
+    recs = _records()
+    try:
+        return recs.merge_data(rec["id"], {"screening": scr}) or {**data, "screening": scr}
+    finally:
+        recs.close()
+
+
+def _holds_agent_draft(data: dict) -> bool:
+    """Does this application hold a written answer the agent drafted (and the person has not
+    edited)? Then the agent never sends it alone (autoapply/modes.py)."""
+    return any(isinstance(x, dict) and x.get("by") == "agent" and not x.get("edited") and str(x.get("answer") or "").strip()
+               for x in ((data or {}).get("screening") or []))
+
+
+# (2026-11-18, docs/apply-agent.md section 29) An answer a fast-path rule worked out, not one the
+# person saved: shown to the brain as the engine's SUGGESTION, in words, so it may do otherwise.
+_SUGGESTED_ORIGINS = frozenset({"common_sense", "history", "tracker"})
+
+
+def _agent_material(rec, data: dict, prof: dict, applicant: dict, questions: list):
+    """What the apply agent knows about the person for this application (autoapply/material.py):
+    the tailored resume's facts (else the saved profile's), the saved answers that are neither
+    legal nor self-identification, and every employer in the work history (for "have you worked
+    here before?"). None when it cannot be built: the brain then answers nothing itself."""
+    from autoapply import material as _Mat
+    company = (rec.get("company") if rec else "") or ""
+    try:
+        full = prof if (prof or {}).get("experience") else (_saved_full_profile() or prof or {})
+        if not full.get("languages"):
+            full = {**full, "languages": (_saved_full_profile() or {}).get("languages") or []}
+        recall = _recall_ctx(company, data)
+        skip = set(recall.get("hold", ())) | set(recall.get("withhold", ()))
+        if recall.get("job_salary"):
+            skip.add("@salary")
+        # (2026-11-18) the job posting's key facts (title, location, employment type, the
+        # conditions it states), so a common-sense default has something to cite
+        sj = (data or {}).get("source_job") if isinstance((data or {}).get("source_job"), dict) else {}
+        jd = str((data or {}).get("jd_text") or (data or {}).get("jd") or "")
+        where = str(sj.get("location") or "")
+        if not where and str(sj.get("source_id") or "").strip():
+            w = _watchlist()
+            try:
+                where = str((w.get_job(str(sj["source_id"]).strip()) or {}).get("location") or "")
+            except Exception:  # noqa: BLE001 - no stored location: the posting's own words
+                where = ""
+            finally:
+                w.close()
+        posting = _Mat.posting_facts((rec.get("role") if rec else "") or "", where or _jd_location(jd), jd)
+        lib = _answer_lib()
+        try:
+            mat = _Mat.build(applicant, full, lib, company=company, questions=questions, skip_keys=frozenset(skip),
+                             posting=posting)
+        finally:
+            lib.close()
+        seen = {e.lower() for e in mat.employers}
+        mat.employers += [e for e in (_employers() or []) if str(e).strip() and str(e).lower() not in seen]
+        return mat
+    except Exception:          # noqa: BLE001 - no material: nothing is answered from it
+        traceback.print_exc()
+        return None
 
 
 # ---- Grounded answers before an ask (autoapply/grounded.py): an open question the person's saved
@@ -16259,6 +16380,29 @@ def autoapply_agent_parked_take(rid: int):
     return jsonify({"ok": True, "entry": e})
 
 
+_AGENT_ANSWER_SOURCES = ("profile", "history", "library", "common_sense", "job")
+
+
+def _agent_answers_clean(rows) -> list | None:
+    """The shell's list of answers the agent chose itself, as it is kept on the application
+    (never logged): at most 60 rows of {page, label, value, source, evidence, class}. None when
+    the body carried no list (nothing is changed)."""
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for r in rows[:60]:
+        if not isinstance(r, dict) or not str(r.get("label") or "").strip():
+            continue
+        src = str(r.get("source") or "")
+        out.append({"page": int(r.get("page") or 1) if str(r.get("page") or "1").isdigit() else 1,
+                    "label": " ".join(str(r.get("label")).split())[:160],
+                    "value": " ".join(str(r.get("value") or "").split())[:160],
+                    "source": src if src in _AGENT_ANSWER_SOURCES else "",
+                    "evidence": " ".join(str(r.get("evidence") or "").split())[:160],
+                    "class": str(r.get("class") or "")[:20]})
+    return out
+
+
 @app.post("/api/autoapply/agent/ready")
 @_guard
 def autoapply_agent_ready():
@@ -16281,6 +16425,13 @@ def autoapply_agent_ready():
             recs.merge_data(rid, {"agent_ready": None})
             _ready_notice_drop(rid)
             return jsonify({"ok": True, "ready": None})
+        # (Section 29) The answers the agent chose itself under the answer protocol, kept on the
+        # application: the question, what was put, where it came from and the fact it cited.
+        chosen = _agent_answers_clean(b.get("agent_answers"))
+        if chosen is not None:
+            recs.merge_data(rid, {"agent_answers": chosen})
+        if b.get("answers_only"):
+            return jsonify({"ok": True, "agent_answers": len(chosen or [])})
         run = b.get("run") if isinstance(b.get("run"), dict) else {}
         view = {"sig": str(b.get("sig") or "")[:80], "at": _now_iso(),
                 "accepted": [str(x)[:80] for x in (b.get("accepted") or [])][:10],
@@ -17051,7 +17202,10 @@ def autoapply_agent_step():
     # authorization, a drafted screening answer): the brain gets the value as a placeholder
     # next to the field and fills it itself. Workday's "How did you hear about us" is a widget
     # the engine cannot drive but the model can: type, wait, click the suggestion.
-    known = _known_answers_for([x for x in left if x.strip()], rec, data, applicant)
+    known_from: dict = {}
+    # (Section 30) an open-ended question still open is drafted first, from the person's history
+    data = _agent_drafts(rec, data, prof, [x for x in left if x.strip()], view) if rec else data
+    known = _known_answers_for([x for x in left if x.strip()], rec, data, applicant, known_from)
     if rec and known:                       # (Phase 6) the memory page's history: filled from memory
         from applicant import page as _Pg
         _brain_do(_Pg.record_fills, rec.get("id"), [(lab, "library") for lab in known])
@@ -17066,11 +17220,22 @@ def autoapply_agent_step():
         v = " ".join(str(given.get(label) or by_clean.get(clean_label(label).lower()) or "").split())[:300]
         if v:
             known[label] = v
+            known_from[label] = "you"
     for n, (label, value) in enumerate(known.items(), start=1):
         key = f"answer_{n}"
         values[key] = value
         placeholders = placeholders + [key]
-        left = [f"{x} (type {{{{{key}}}}})" if x == label else x for x in left]
+        # (Section 29) The person's own saved words: a placeholder, the value never shown. A
+        # fast-path rule's suggestion (common sense, the resume, the tracker): shown in words, as
+        # ADVICE the brain may take or better under the answer protocol.
+        if known_from.get(label) in _SUGGESTED_ORIGINS:
+            said = re.sub(r"[()]", "", " ".join(str(value).split()))[:60]
+            note = f"(the engine suggests {said}: type {{{{{key}}}}})"
+        elif known_from.get(label) == "drafted":
+            note = f"(drafted for the person from their resume and the posting: type {{{{{key}}}}})"
+        else:
+            note = f"(saved answer: type {{{{{key}}}}})"
+        left = [f"{x} {note}" if x == label else x for x in left]
     # (2026-11-17, fill-through) A required question the run left for the person, to be asked
     # once at the end with every other one: the model leaves it empty and carries on through the
     # rest of the form (autoapply/brain.py rule 15). One the library answers by now got its
@@ -17104,6 +17269,10 @@ def autoapply_agent_step():
         out["placeholders"] = placeholders
         return jsonify(out)
     resume = _resume_upload_path(rec) if rec else ""
+    # (Section 29, the agent decides) On a step with open questions the brain gets what the
+    # agent knows about the person, and its own answers are checked against it.
+    open_qs = [re.sub(r" \([^()]*\)$", "", x) for x in req["left"]] + sorted(deferred)
+    material = _agent_material(rec, data, prof, applicant, open_qs) if open_qs else None
     # (Phase 4) the redact guard on the page view: a control holding a stored legal or
     # self-identification value shows the model "(filled)", never the value
     from applicant import redact as _R
@@ -17115,8 +17284,10 @@ def autoapply_agent_step():
         return jsonify({"ok": False, "reason": "no-reply", "fatal": kind, "error": kind + ": " + str(exc)[:200],
                         "message": brain.unavailable_message(kind), "tries": 0, "cost": 0.0})
     out = brain.step(req, llm, values, portal, placeholders=placeholders, resume_path=resume,
-                     letter_path=_cover_upload_path(rec) if rec else "", withheld=withheld)
+                     letter_path=_cover_upload_path(rec) if rec else "", withheld=withheld, material=material)
     out["placeholders"] = placeholders
+    # Review answers names a drafted answer as drafted (the shell's noteOrigins keeps it)
+    out["origins"] = {lab: "drafted" for lab, o in known_from.items() if o == "drafted"}
     return jsonify(out)
 
 
@@ -18843,7 +19014,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "ready_sig": (ready or {}).get("sig") or "",
         "lane": plan["tier"],
         # Auto mode may press Submit by itself for this one (allowlist, and the match threshold)
-        "auto_send": _may_send_alone(plan["tier"], match),
+        "auto_send": _may_send_alone(plan["tier"], match, data),
         # The employer's own "we received your application" mail, when the inbox saw it
         "confirmation": (data.get("confirmation") if isinstance(data.get("confirmation"), dict) else None),
         "apply_url": _application_url(url, company) if url else "",

@@ -72,6 +72,10 @@ class OpenAILLM(AnthropicLLM):
         self.last_narrate_usage = None
         return self._complete(system, user, max_tokens=max_tokens, effort="low")
 
+    def agent_step_blocks(self, blocks: list, user: str) -> str:
+        # No cache marks on this API (it caches a repeated prefix by itself): one system text.
+        return self.agent_step("\n\n".join(str(b) for b in blocks if str(b or "").strip()), user)
+
     def _complete(self, system: str, user: str, max_tokens: int = 1024,
                   effort: str | None = None) -> str:
         resp = self._client.chat.completions.create(

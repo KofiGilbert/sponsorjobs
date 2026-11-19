@@ -59,6 +59,21 @@ from autoapply import workauth
 from autoapply.answers import normalize
 from autoapply.history import parse_span
 
+# (2026-11-18, docs/apply-agent.md section 29) These rules are a FAST PATH: they answer without a
+# model step, and they are ADVICE, never the only way a question gets answered (the brain answers
+# the same questions from the person's material under the answer protocol). So any of them can
+# be switched off, to prove that or to retire it: SJ_FASTPATH_OFF="education,worked_here" (names:
+# heard, education, phone_type, worked_here; "all" for every one).
+FAST_PATHS = ("heard", "education", "phone_type", "worked_here")
+
+
+def fast_path(name: str) -> bool:
+    """Is the fast-path rule ``name`` on? (Off only when SJ_FASTPATH_OFF names it.)"""
+    import os
+    off = {x.strip().lower() for x in str(os.environ.get("SJ_FASTPATH_OFF") or "").split(",") if x.strip()}
+    return not ("all" in off or name in off)
+
+
 ADULT_KEY = "@over_18"
 RELATIVES_KEY = "@relatives_at_employer"
 HEARD_KEY = "@heard_about"

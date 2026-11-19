@@ -1995,6 +1995,129 @@ function qsaSafe(sel, root) {
     return { ok: false, why: "did-not-stick" };
   }
 
+  // ---- the apply agent's own hands on a combobox (2026-11-18) -------------------------------
+  // The brain's `type`, `select`, `list_options` and option clicks go through the SAME machinery
+  // the fill uses (open, type so the list filters, wait for the results, press the option, read
+  // the value back, close), because that is what works on a react-select and a remote typeahead
+  // in a pane nobody is looking at: on the first real Greenhouse run real key and pointer events
+  // did nothing there ("value differs" four times, an option clicked three times, list_options
+  // empty). Unlike the fill's pick this is the brain's own decision, so there is no miss memory,
+  // a value already chosen may be replaced, it has its own short budget, and it always says what
+  // it saw: what it picked, or the options that were there.
+  const AGENT_PICK_MS = 9000;
+  const OTHER_RE = /^(other|others|other \(please specify\)|not listed|none of the above|my school is not listed)\b/;
+  const QUERY_STOP = new Set(["the", "of", "and", "at", "for", "in", "university", "college", "school", "institute", "state"]);
+  function agentOptionTexts(el) {
+    return optionsFor(el).map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  }
+  // What to type into a search-as-you-type list: the whole value, the part before a comma, then
+  // its first distinctive words (a list of thousands of schools answers "Harlow State", not the
+  // full official name), then the first distinctive word alone.
+  function agentQueries(text) {
+    const out = typeQueries(text);
+    const words = String(text || "").split(",")[0].replace(/[^\p{L}\p{N} ]+/gu, " ").split(/\s+/).filter(Boolean);
+    const strong = words.filter((w) => w.length >= 3 && !QUERY_STOP.has(w.toLowerCase()));
+    for (const q of [words.slice(0, 3).join(" "), words.slice(0, 2).join(" "), strong[0] || ""]) {
+      if (q && q.length >= 3 && !out.some((x) => x.toLowerCase() === q.toLowerCase())) out.push(q);
+    }
+    return out.slice(0, 5);
+  }
+  async function commitOption(el, opt) {
+    const label = optionText(opt);
+    try { if (opt.scrollIntoView) opt.scrollIntoView({ block: "nearest" }); } catch (e) { /* fine */ }
+    fire(opt, "mouseover"); fire(opt, "mousemove");
+    press(opt);
+    await sleep(STEP_MS * 2);
+    let v = comboValue(el);
+    if (!sameChoice(v, label) && menuOpen(el) && tagOf(el) === "INPUT") {
+      // A menu that commits on Enter. Only while the menu is open, where Enter means "choose
+      // the highlighted option", never "send the form".
+      fire(el, "keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13 });
+      await sleep(STEP_MS * 2);
+    }
+    await closeCombo(el);
+    v = comboValue(el);
+    return sameChoice(v, label) ? (opt.textContent || "").replace(/\s+/g, " ").trim() : "";
+  }
+  // {ok:true, value, other?} | {ok:false, why: "no-match"|"no-list"|"did-not-stick"|"over-budget",
+  // options: [...up to 12], typed}. ``o.strict``: the saved answer's strict scorer; ``o.other``:
+  // when nothing matches, take the list's own "Other" / "Not listed" choice and say so.
+  async function agentPick(el, text, o) {
+    o = o || {};
+    const base = startBudget("agent-pick", AGENT_PICK_MS);
+    const isInput = tagOf(el) === "INPUT";
+    const score = o.strict ? answerScorer(text) : valueScorer(text);
+    let seen = [], typed = "", sawList = false;
+    try {
+      await openCombo(el);
+      let best = await waitBest(el, score, isInput ? 400 : WIDGET_WAIT_MS, SETTLE_MS);
+      seen = agentOptionTexts(el); sawList = seen.length > 0;
+      if (!best && isInput) {
+        for (const q of agentQueries(text)) {
+          if (over()) break;
+          typed = q;
+          setNativeValue(el, q);
+          best = await waitBest(el, score, WIDGET_WAIT_MS, TYPED_SETTLE_MS);
+          const now = agentOptionTexts(el);
+          if (now.length) { seen = now; sawList = true; }
+          else if (emptyNotice(el)) sawList = true;
+          if (best) break;
+        }
+      }
+      let other = false;
+      if (!best && o.other) {
+        // nothing in the list says it: the list's own "Other", from the unfiltered list first
+        if (isInput && el.value) { setNativeValue(el, ""); await sleep(STEP_MS * 3); }
+        let pool = optionsFor(el);
+        if (!pool.some((x) => OTHER_RE.test(optionText(x))) && isInput) {
+          setNativeValue(el, "Other");
+          await waitBest(el, () => 0, WIDGET_WAIT_MS, TYPED_SETTLE_MS);
+          pool = optionsFor(el);
+        }
+        const hit = pool.find((x) => OTHER_RE.test(optionText(x)));
+        if (hit) { best = { opt: hit, score: 1 }; other = true; }
+      }
+      if (!best) {
+        if (isInput && el.value) setNativeValue(el, "");
+        await closeCombo(el);
+        if (_timedOut) return { ok: false, why: "over-budget", options: seen.slice(0, 12), typed };
+        return { ok: false, why: sawList ? "no-match" : "no-list", options: seen.slice(0, 12), typed };
+      }
+      const got = await commitOption(el, best.opt);
+      if (got) { _gen++; return other ? { ok: true, value: got, other: true } : { ok: true, value: got }; }
+      return { ok: false, why: "did-not-stick", options: seen.slice(0, 12), typed };
+    } finally { endBudget(base); }
+  }
+  // Every choice of a closed (or open) combobox: opened, read, closed again. {options, partial}.
+  async function agentOptions(el) {
+    const base = startBudget("agent-options", 5000);
+    try {
+      const was = menuOpen(el);
+      await openCombo(el);
+      let words = [];
+      const until = Date.now() + WIDGET_WAIT_MS;
+      let lastN = -1;
+      while (Date.now() < until) {
+        words = agentOptionTexts(el);
+        if (!loading(el) && (words.length && words.length === lastN || emptyNotice(el))) break;
+        lastN = words.length;
+        await sleep(STEP_MS * 2);
+      }
+      if (!was) await closeCombo(el);
+      return { options: words.slice(0, 60), partial: words.length > 60 };
+    } finally { endBudget(base); }
+  }
+  // A click on one option of an open list: pressed the way the pick presses it, and read back.
+  // null when the option belongs to no combobox this engine knows (the caller clicks it plainly).
+  async function agentClickOption(opt) {
+    const owner = comboboxes().find((c) => optionsFor(c).some((x) => x === opt || x.contains(opt) || opt.contains(x)));
+    if (!owner) return null;
+    const hit = optionsFor(owner).find((x) => x === opt || x.contains(opt) || opt.contains(x));
+    const got = await commitOption(owner, hit);
+    if (got) { _gen++; return { ok: true, value: got }; }
+    return { ok: false, why: "did-not-stick" };
+  }
+
   // A how-did-you-hear dropdown: the choice heardChoices names, through a TWO-LEVEL list too.
   // Workday's source prompt lists categories first ("Job Sites"); a click on one opens its own
   // choices ("Job Board: Indeed", ..., "Other Job Board") with a back arrow. A picked choice that
@@ -2852,6 +2975,7 @@ function qsaSafe(sel, root) {
     fillAsync, fillWidgets, fillHistory, fillSignatureDate, searchChoice, closeSearch, extractFormAsync,
     cleanLabel, readBack, fileListed, fileListing: fileListingAt, dropDuplicateFiles, dropUnsizedCopy, fileCopies, sizeReadings, sizeMatches, applyOpsAsync, leftover, pageSignature, setRefPrefix, takeFillLog,
     crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
+    agentPick, agentOptions, agentClickOption, agentQueries,                // the apply agent's own hands (agent_view.js)
     pickHeard, heardChoices, genericSources, sameSource, isHeardLabel, heardStats,
     fillProgress, openCounts, lastExtract,
     // recipes: the per-system table, success detection, continue hints, corrections

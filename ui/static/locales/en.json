@@ -1613,6 +1613,8 @@
   "aa.ans.from.tracker": "Your tracker",
   "aa.ans.from.commonSense": "Common sense",
   "aa.ans.flag.ai": "The AI chose this. Check it.",
+  "aa.ans.flag.agent": "The agent answered this itself, from: {e}. Check it.",
+  "aa.ans.flag.agentPlain": "The agent answered this itself. Check it.",
   "aa.ans.flag.closest": "Optional. Picked as the closest match on the list.",
   "aa.ans.flag.skills": "Optional. Picked from your skills.",
   "aa.ans.flag.declined": "Declined, nothing you saved answers it.",

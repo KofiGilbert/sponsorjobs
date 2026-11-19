@@ -218,6 +218,143 @@ test("a custom dropdown is picked through the engine when present, by clicking o
   await p2.close();
 });
 
+// (2026-11-18) The first real Greenhouse run: the brain's own hands did not work on a react-select.
+// Typing "did not filter" (four times), list_options read nothing from a closed list (five
+// comboboxes), and a click on an option "did not select" (three times). Each of the agent's own
+// ops now goes through the engine's machinery; these run the OPS, never the engine's fill.
+const combo = (text, label) => indices(text).find((i) => line(text, i).includes(`<combobox label="${label}`));
+
+test("the agent's type on a react-select opens it, filters, picks the best match and says what it picked", async ({ open }) => {
+  const page = await open("react_select.html");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  // a static list
+  const c = combo(v.text, "Country");
+  const r = await page.evaluate(`window.TailorAgent.act({op: "type", index: ${c}, text: "United States"})`);
+  assert.deepStrictEqual([r.ok, r.note, r.picked], [true, "picked", "United States"], JSON.stringify(r));
+  assert.strictEqual((await page.evaluate("window.fxValues()")).country, "United States");
+  // a search-as-you-type list (nothing shows until something is typed)
+  const loc = combo(v.text, "Location (City)");
+  const r2 = await page.evaluate(`window.TailorAgent.act({op: "type", index: ${loc}, text: "Chicago, Illinois"})`);
+  assert.strictEqual(r2.ok, true, JSON.stringify(r2));
+  assert.strictEqual((await page.evaluate("window.fxValues()")).location, "Chicago, Illinois, United States");
+  // the list is closed again and no filter text is left behind
+  assert.strictEqual(await page.evaluate(() => document.querySelectorAll(".select__menu").length), 0);
+  // nothing matches: said plainly, with what the list holds, and the box left clean
+  const src = combo(v.text, "How did you hear about this job?");
+  const miss = await page.evaluate(`window.TailorAgent.act({op: "type", index: ${src}, text: "Billboard", answer: true})`);
+  assert.strictEqual(miss.ok, false, JSON.stringify(miss));
+  assert.ok(/^no result for what was typed; options: .*LinkedIn.*Referral.*Other/.test(miss.note), miss.note);
+  assert.strictEqual((await page.evaluate("window.fxValues()")).source, null);
+  assert.strictEqual(await page.evaluate(() => document.getElementById("question_103").value), "");
+  // the brain's own type (no saved answer): nothing matches, so the list's own "Other", said so
+  const other = await page.evaluate(`window.TailorAgent.act({op: "type", index: ${src}, text: "Billboard"})`);
+  assert.strictEqual(other.ok, true, JSON.stringify(other));
+  assert.ok(/Other choice/.test(other.note) && other.picked === "Other", JSON.stringify(other));
+  await page.close();
+});
+
+test("list_options on a closed react-select opens it, reads every choice and closes it again", async ({ open }) => {
+  const page = await open("react_select.html");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const c = combo(v.text, "Country");
+  assert.ok(/expanded=false/.test(line(v.text, c)), line(v.text, c));
+  const got = await page.evaluate(`window.TailorAgent.listOptions(${c})`);
+  assert.deepStrictEqual(got.options, ["Canada", "Mexico", "United Kingdom", "United States", "United States Minor Outlying Islands"]);
+  assert.strictEqual(await page.evaluate(() => document.querySelectorAll(".select__menu").length), 0, "closed again");
+  assert.strictEqual((await page.evaluate("window.fxValues()")).country, null, "nothing was chosen by reading");
+  // options with no role=option (react-select's own divs) are read too
+  const g = await page.evaluate(`window.TailorAgent.listOptions(${combo(v.text, "Gender")})`);
+  assert.deepStrictEqual(g.options, ["Male", "Female", "Non-binary", "Decline To Self Identify"]);
+  // a native select or a plain box is not this tool's
+  const first = indices(v.text).find((i) => /label="First Name/.test(line(v.text, i)));
+  assert.strictEqual(await page.evaluate(`window.TailorAgent.listOptions(${first})`), null);
+  await page.close();
+});
+
+test("a click on a role=option of an open react-select selects it, and says so", async ({ open }) => {
+  const page = await open("react_select.html");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  let v = await page.evaluate("window.TailorAgent.view()");
+  const q = combo(v.text, "Are you legally authorized to work");
+  await page.evaluate(`window.TailorAgent.act({op: "click", index: ${q}})`);          // the brain opens the list
+  v = await page.evaluate("window.TailorAgent.view()");
+  const yes = indices(v.text).find((i) => /^\*?\[\d+\]<option[^>]*>Yes</.test(line(v.text, i)));
+  assert.ok(yes, v.text);
+  const r = await page.evaluate(`window.TailorAgent.act({op: "pick_option", index: ${yes}})`);
+  assert.deepStrictEqual([r.ok, r.note, r.picked], [true, "picked", "Yes"], JSON.stringify(r));
+  assert.strictEqual((await page.evaluate("window.fxValues()")).auth, "Yes");
+  assert.strictEqual(await page.evaluate(() => document.querySelectorAll(".select__menu").length), 0);
+  // something that is no option of any list: not this tool's (the shell then clicks it plainly)
+  const btn = indices(v.text).find((i) => /Submit application/.test(line(v.text, i)));
+  assert.strictEqual(await page.evaluate(`window.TailorAgent.act({op: "pick_option", index: ${btn}})`), null);
+  await page.close();
+});
+
+test("a remote school search: the first distinctive words find it; a school not listed takes the list's Other", async ({ open }) => {
+  const page = await open("react_select.html");
+  await page.evaluate(CORE);
+  await page.evaluate(() => {
+    // thousands of schools behind a search: nothing shows until something is typed, and the
+    // list holds the school under a shorter name than the resume gives it
+    const names = ["Harlow State", "Harlow Community College", "Pinecrest College", "Other"];
+    for (let i = 0; i < 3000; i++) names.push("Institute " + i);
+    window.fx.school = window.FixtureWidgets.ReactSelect(document.getElementById("widgets"),
+      { id: "school", label: "School *", required: true, async: true, delayMs: 120, options: names });
+  });
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const s = combo(v.text, "School");
+  assert.deepStrictEqual(await page.evaluate("window.TailorAutofill.agentQueries('Harlow State University of Applied Sciences')"),
+    ["Harlow State University of Applied Sciences", "Harlow State University", "Harlow State", "Harlow"]);
+  const r = await page.evaluate(`window.TailorAgent.act({op: "type", index: ${s}, text: "Harlow State University of Applied Sciences"})`);
+  assert.deepStrictEqual([r.ok, r.picked], [true, "Harlow State"], JSON.stringify(r));
+  assert.strictEqual((await page.evaluate("window.fx.school.value")), "Harlow State");
+  // a school the list does not hold: the list's own "Other", and the result says so
+  await page.evaluate(() => { document.querySelector("#school").closest(".field").remove();
+    window.fx.school = window.FixtureWidgets.ReactSelect(document.getElementById("widgets"),
+      { id: "school2", label: "School attended *", async: true, delayMs: 120, options: ["Pinecrest College", "Other"] }); });
+  const v2 = await page.evaluate("window.TailorAgent.view()");
+  const r2 = await page.evaluate(`window.TailorAgent.act({op: "type", index: ${combo(v2.text, "School attended")}, text: "Zennor Polytechnic"})`);
+  assert.strictEqual(r2.ok, true, JSON.stringify(r2));
+  assert.ok(r2.picked === "Other" && /nothing matched what was typed/.test(r2.note), JSON.stringify(r2));
+  await page.close();
+});
+
+test("Greenhouse's live react-select (a slow location search, a required hidden input) through the agent's ops", async ({ open }) => {
+  const page = await open("greenhouse_live.html?delay=900");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const c = combo(v.text, "Country");
+  const lo = await page.evaluate(`window.TailorAgent.listOptions(${c})`);
+  assert.deepStrictEqual(lo.options, ["Canada +1", "United Kingdom +44", "United States +1"]);
+  const r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${c}, option: "United States +1"})`);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  const loc = combo(v.text, "Location (City)");
+  const r2 = await page.evaluate(`window.TailorAgent.act({op: "type", index: ${loc}, text: "Chicago, Illinois"})`);
+  assert.deepStrictEqual([r2.ok, r2.picked], [true, "Chicago, Illinois, United States"], JSON.stringify(r2));
+  const vals = await page.evaluate("window.fxValues()");
+  assert.deepStrictEqual([vals.country, vals.location], ["United States +1", "Chicago, Illinois, United States"]);
+  await page.close();
+  // a search that answers with nothing: said, never a hang and never stray text in the box
+  const p2 = await open("greenhouse_live.html?delay=300&empty=1");
+  await p2.evaluate(CORE);
+  await p2.evaluate(AGENT);
+  const v2 = await p2.evaluate("window.TailorAgent.view()");
+  const t0 = Date.now();
+  const miss = await p2.evaluate(`window.TailorAgent.act({op: "type", index: ${combo(v2.text, "Location (City)")}, text: "Chicago, Illinois", answer: true})`);
+  assert.strictEqual(miss.ok, false, JSON.stringify(miss));
+  assert.ok(/^no result for what was typed/.test(miss.note), miss.note);
+  assert.ok(Date.now() - t0 < 12000, "inside its budget: " + (Date.now() - t0) + " ms");
+  assert.strictEqual(await p2.evaluate(() => document.getElementById("candidate-location").value), "");
+  await p2.close();
+});
+
 test("a saved answer never lands on a choice that adds a qualifier (Phoenix Contact, 2026-11-05)", async ({ open }) => {
   const page = await open("react_select.html");
   await page.evaluate(CORE);
@@ -254,6 +391,13 @@ test("a saved answer never lands on a choice that adds a qualifier (Phoenix Cont
   assert.strictEqual(other.ok, false, JSON.stringify(other));
   assert.ok(/^no choice on this list says the same/.test(other.note), other.note);
   assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "");
+  // (2026-11-18, the agent decides) the miss no longer says "do not pick one for them": it hands
+  // the list's own choices back, and the brain's own pick of one of them is applied as asked
+  assert.ok(/its options: .*College Job Board.*Company Website.*Other/.test(other.note), other.note);
+  assert.ok(/answer protocol/.test(other.note) && !/do not pick one for them/.test(other.note), other.note);
+  const own = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Company Website"})`);
+  assert.strictEqual(own.ok, true, JSON.stringify(own));
+  assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "Company Website");
   // a react-select: "States" is not "United States" (the loose contains match took it)
   const c = indices(v.text).find((i) => /<combobox label="Country"/.test(line(v.text, i)));
   const r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${c}, option: "States", answer: true})`);

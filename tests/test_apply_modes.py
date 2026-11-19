@@ -111,6 +111,8 @@ def test_only_auto_on_the_allowlist_lane_sends_alone_and_the_threshold_narrows_i
     assert modes.may_send_alone("auto", "auto", 79, 80) is False       # under the threshold: waits
     assert modes.may_send_alone("auto", "auto", 80, 80) is True
     assert modes.may_send_alone("auto", "auto", None, 80) is False     # an unknown match never passes one
+    # (2026-11-18) an application holding a written answer the agent drafted is never sent alone
+    assert modes.may_send_alone("auto", "auto", 99, drafted=True) is False
     assert modes.clamp_threshold("") == 0 and modes.clamp_threshold(250) == 100 and modes.clamp_threshold(-3) == 0
     assert modes.telegram_asks("hybrid") and not modes.telegram_asks("assisted") and not modes.telegram_asks("auto")
     assert modes.hidden("auto") and not modes.hidden("assisted") and not modes.hidden("hybrid")
