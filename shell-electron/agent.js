@@ -669,6 +669,37 @@ function createAgent(deps) {
     } catch (e) { return null; }
     finally { release(); }
   }
+  // (2026-11-19) A date segment (Workday's Month / Day / Year spinbuttons): typed the way a person
+  // does, a real press on it, then the digits as real keys. Never select-all and Backspace first:
+  // in an empty segment Backspace steps back into the one before it and erases that. A value set
+  // from script shows but is not kept ("Invalid Date: 11/19/").
+  async function spinType(wc, index, text) {
+    let spin = false;
+    try { spin = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); return !!el && el.getAttribute("role") === "spinbutton"; })()`, true); }
+    catch (e) { if (e && e.stopped) throw e; spin = false; }
+    if (spin !== true) return null;
+    const release = deps.acquireDebugger(wc);
+    if (!release) return null;
+    try {
+      const at = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index});
+        if (!el || el.getAttribute("role") !== "spinbutton") return null;
+        try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
+        el.focus(); const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }; })()`, true);
+      if (!at) return null;
+      const dbg = wc.debugger;
+      if (at.w > 0 && at.h > 0) {
+        await cmd(dbg, "Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 });
+        await cmd(dbg, "Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "left", clickCount: 1 });
+      }
+      for (const ch of String(text).replace(/[^0-9]/g, "")) {
+        await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
+        await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyUp", key: ch });
+      }
+      return { ok: true, note: "" };
+    } catch (e) { return null; }
+    finally { release(); }
+  }
   async function realType(wc, index, text) {
     const release = deps.acquireDebugger(wc);
     if (!release) return null;
@@ -770,6 +801,10 @@ function createAgent(deps) {
       try { pr = await guard(ctx ? fr.eval(ctx, pickExpr) : wc.executeJavaScript(pickExpr, true), ACTION_MS, "pick", { nav: true }); }
       catch (e) { if (e && e.stopped) throw e; if (e && e.navigated) return { ok: true, note: "page changed", changed: true }; pr = null; }
       if (pr && typeof pr === "object" && (pr.ok === true ? !!pr.picked : !!pr.why && pr.why !== "no-list")) return pr;
+    }
+    if (!ctx && a.op === "type" && typeof a.text === "string" && /\d/.test(a.text) && /^\*?\[\d+\]<input\b/.test(line)) {
+      const spun = await spinType(wc, a.index, a.text);
+      if (spun) return spun;
     }
     if (!ctx && a.op === "type" && typeof a.text === "string" && /<combobox\b|<textarea\b|aria-autocomplete|search=true/.test(line)) {
       const real = await realType(wc, a.index, a.text);

@@ -730,7 +730,7 @@ def _guess_reason(label: str, reasons) -> str:
 
 
 def check_answers(actions: list, lines: dict, material, observations: list, rejected: list, history=None,
-                  auto: bool = False, reasons=None) -> list:
+                  auto: bool = False, reasons=None, view: str = "") -> list:
     """The answer protocol over one step's actions (autoapply/protocol.py). An answer that passes
     keeps ``proof`` ({source, origin, evidence, class}) for the Review answers list; one that
     does not is taken out and comes back to the brain in ``observations`` with the reason.
@@ -749,6 +749,13 @@ def check_answers(actions: list, lines: dict, material, observations: list, reje
             # A suggestion clicked right after a saved value was typed (its placeholder): the typed
             # value was the answer, and the brain cannot read it.
             out.append(a)
+            continue
+        if a.get("op") == "type" and protocol.signature_date(t["label"], t["value"], view):
+            # (2026-11-19) today's date on a self-identification or signature form: not a fact
+            # about the person, the day the form is signed
+            sv = protocol.Verdict(True, klass="common_sense", source="common_sense", evidence=protocol.SIGN_DATE_EVIDENCE)
+            out.append({**{k: x for k, x in a.items() if k not in ("source", "evidence", "class", "proof", "answer")},
+                        "proof": protocol.record(a, sv)})
             continue
         v = protocol.check({**a, "value": t["value"]}, t["label"], t["options"], material, auto=auto,
                            reason=_guess_reason(t["label"], reasons))
@@ -1092,7 +1099,8 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
     # (Section 29) The answer protocol: an answer the brain chose itself is checked against the
     # person's material before it runs; a refusal goes back with its reason.
     actions = check_answers(actions, lines, material, observations, rejected, req.get("history"), auto=bool(req.get("auto")),
-                            reasons=req.get("guess_reasons") if isinstance(req.get("guess_reasons"), dict) else None)
+                            reasons=req.get("guess_reasons") if isinstance(req.get("guess_reasons"), dict) else None,
+                            view=str(req.get("view") or ""))
     # Nothing unrendered ever reaches the page: an action whose text, option or file still holds
     # "{{" or "}}" after the placeholders were resolved is dropped (2026-11-16, belt and braces).
     clean = []

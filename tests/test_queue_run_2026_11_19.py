@@ -11,6 +11,9 @@
 * an upload box is never a question (record 3, iCIMS): the resume goes in through the page's file
   box, else its upload button's file chooser (tests/js/test_icims_upload.js, headless); a box
   that takes nothing stops the run as a site problem;
+* today's date on a self-identification form (record 24's CC-305 "Invalid Date 11/19/"): the
+  signature date is not a fact about the person, so the brain may type it, and a Month / Day /
+  Year trio is typed as one run of real keys after a real press;
 * the shell under node (tests/js/test_queue_run_2026_11_19.js).
 
 Everyone and every site here is made up.
@@ -314,3 +317,62 @@ def test_an_upload_that_would_not_go_in_is_a_site_problem_on_the_record(A):
     for loc in ("de", "en", "es", "fr", "pt"):
         t = json.loads((ROOT / "ui" / "static" / "locales" / f"{loc}.json").read_text(encoding="utf-8"))
         assert t["aa.reason.noUpload"] and "\u2014" not in t["aa.reason.noUpload"]
+
+
+# --------------------------------------------------------------------------- today's date
+SELF_ID_VIEW = ("Voluntary Self-Identification of Disability\n[7]<input label=\"Name\" value=\"(filled)\" required>\n"
+                "[12]<input type=text label=\"Date\" value=\"\" required>\n[13]<input type=text label=\"Date\" value=\"\" required>\n"
+                "[14]<input type=text label=\"Date\" value=\"\" required>\n[20]<button>Next</button>")
+
+
+def test_todays_date_on_a_self_identification_form_is_not_a_fact_about_the_person():
+    import datetime as dt
+    from autoapply import protocol as P
+    t = dt.date(2026, 11, 19)
+    for v in ("11", "19", "2026", "11/19/2026", "2026-11-19", "11192026", "November 19, 2026"):
+        assert P.signature_date("Date", v, SELF_ID_VIEW, t), v
+    for v in ("12", "2025", "01/01/2026", "1990"):
+        assert not P.signature_date("Date", v, SELF_ID_VIEW, t), v
+    # never another date, never another page
+    assert not P.signature_date("Date of birth", "11/19/2026", SELF_ID_VIEW, t)
+    assert not P.signature_date("Start date", "2026", SELF_ID_VIEW, t)
+    assert not P.signature_date("Date", "2026", "My Experience\n[3]<input label=\"Date\">", t)
+
+
+def test_the_brains_typed_date_there_passes_the_protocol():
+    import datetime as dt
+    from autoapply import brain
+    lines = brain.view_lines(SELF_ID_VIEW)
+    today = dt.date.today()
+    obs, rej = [], []
+    acts = [{"op": "type", "index": 14, "text": str(today.year), "source": "resume", "class": ""}]
+    out = brain.check_answers(acts, lines, None, obs, rej, view=SELF_ID_VIEW, auto=True)
+    assert len(out) == 1 and out[0]["proof"]["source"] == "common_sense" and "signed" in out[0]["proof"]["evidence"], (out, obs)
+    assert not rej
+    # the same digits on a page that is not a signature form: the usual check (refused here)
+    plain = SELF_ID_VIEW.replace("Voluntary Self-Identification of Disability", "My Experience")
+    out2 = brain.check_answers(acts, brain.view_lines(plain), None, [], rej2 := [], view=plain, auto=True)
+    assert not out2 and rej2
+
+
+@browser
+def test_a_workday_date_trio_takes_one_run_of_real_keys(tmp_path):
+    import datetime as dt
+    today = dt.date.today()
+    want = f"{today.month:02d}{today.day:02d}{today.year}"
+    r = run_page(tmp_path, "workday_date.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "rep", "js": "window.TailorAutofill.fillAsync({fields: {}, screening: {}, eeo: {}})"},
+        {"do": "eval", "as": "month", "js": "document.getElementById('sid--dateSignedOn-dateSectionMonth-input').getAttribute('data-tailor-ref')"},
+        # a value set from script is not kept by this widget
+        {"do": "eval", "js": "(() => { const T = window.TailorAutofill; for (const n of ['Month','Day','Year']) T.setNativeValue(document.getElementById('sid--dateSignedOn-dateSection' + n + '-input'), '1'); })()"},
+        {"do": "wait", "ms": 50},
+        {"do": "eval", "as": "scripted", "js": "window.fxValues()"},
+        # what the shell does with the op: a real press on the first segment, then the digits
+        {"do": "keys", "sel": "#sid--dateSignedOn-dateSectionMonth-input", "text": want},
+        {"do": "eval", "as": "v", "js": "window.fxValues()"},
+    ])
+    keys = r["rep"]["keys"]
+    assert len(keys) == 1 and keys[0]["ref"] == r["month"] and keys[0]["text"] == want and keys[0]["press"]
+    assert r["scripted"]["date"] == "//"
+    assert r["v"]["date"] == f"{today.month:02d}/{today.day:02d}/{today.year}", r["v"]

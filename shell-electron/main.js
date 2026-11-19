@@ -857,19 +857,37 @@ async function typeKeyOps(wc, keys) {
   let n = 0;
   try {
     const dbg = wc.debugger;
-    for (const k of keys) {
+    const typeOne = async (k) => {
       const sel = JSON.stringify('[data-tailor-ref="' + k.ref + '"]');
-      const ok = await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (!el) return false;
+      const at = await wc.executeJavaScript(`(() => { const el = document.querySelector(${sel}); if (!el) return null;
         try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
-        el.focus(); return document.activeElement === el; })()`, true).catch(() => false);
-      if (!ok) continue;
+        el.focus(); const r = el.getBoundingClientRect();
+        return { ok: document.activeElement === el, x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }; })()`, true).catch(() => null);
+      if (!at || !at.ok) return false;
+      // (2026-11-19) A date trio: a real press on its first segment, the way a person starts
+      // typing a date there, so the widget's own idea of the active segment is set too.
+      if (k.press && at.w > 0 && at.h > 0) {
+        await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 });
+        await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "left", clickCount: 1 });
+      }
       // The engine only names EMPTY boxes, so nothing is cleared first: a Backspace in an empty
       // date segment steps back into the one before it and erases that.
       for (const ch of String(k.text)) {
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
       }
+      return true;
+    };
+    const valueOf = (ref) => wc.executeJavaScript(`(() => { const el = document.querySelector(${JSON.stringify('[data-tailor-ref="' + ref + '"]')});
+      return el ? String(el.value || el.getAttribute("aria-valuetext") || el.getAttribute("aria-valuenow") || "") : null; })()`, true).catch(() => null);
+    for (const k of keys) {
+      if (!(await typeOne(k))) continue;
       n++;
+      // a segment the trio's run of digits did not reach: typed on its own, pressed first
+      for (const p of k.parts || []) {
+        const v = await valueOf(p.ref);
+        if (v === "" || v === null) await typeOne({ ref: p.ref, text: p.text, press: true });
+      }
     }
     await wc.executeJavaScript("(() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); })()", true).catch(() => null);
   } catch (e) {                                  // what was typed stands; the rest is left on the page

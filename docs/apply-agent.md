@@ -1806,5 +1806,34 @@ into the list of questions: the job was set aside for "no saved answer" on an up
   record moves to Needs you with that reason (`no_upload`, five locales: "Open it to attach it
   yourself"), a site problem, never a question.
 
-The same run's real blocker was "Preferred Engagement Language", a required list the brain's pick
-was refused on (a preference with nothing to cite); see the report for it.
+The same run's other open question was "Preferred Engagement Language", a required list the
+brain's pick was refused on (a preference with nothing to cite). It is not handled here.
+
+### Today's date on a self-identification form
+
+Uline's CC-305 disability form (Workday) showed "Invalid Date: 11/19/": the engine's Month, Day
+and Year were typed one segment at a time with a focus from script in between, and the year never
+registered. The brain then typed the year itself and the answer protocol refused it as a legal
+date.
+
+- The date a self-identification or signature form is signed is today's, not a fact about the
+  person. `protocol.signature_date` (a box named "Date", "Today's date", "Date signed" and the
+  like, on a page that is a self-identification or signature form, and only today's date, whole
+  or one of its segments) lets the brain's typed date through as common sense ("today's date: the
+  date this form is signed"). The self-identification answers themselves are unchanged (the
+  decline unless saved).
+- A whole empty Month / Day / Year trio is now ONE key op (`fillDate`): a real press on its first
+  segment and every digit in one run (month and day as two digits, so each segment moves on by
+  itself), the segments one by one as the shell's fallback for any segment left empty
+  (`typeKeyOps` in main.js). A brain `type` on a date segment goes the same way (`spinType`: a
+  real press, then the digits; never select-all and Backspace, which steps back into the segment
+  before).
+- Why the year did not register on the real page could not be seen from the log (it holds the
+  view, not the widget's events). The fixture (tests/fixtures/forms/workday_date.html) models a
+  widget that keeps only real keys and moves on by itself; the real Workday page is the check.
+
+### Tests
+
+tests/test_queue_run_2026_11_19.py (with the headless fixtures workday_languages.html,
+icims_upload.html and workday_date.html), tests/js/test_queue_run_2026_11_19.js and
+tests/js/test_icims_upload.js.

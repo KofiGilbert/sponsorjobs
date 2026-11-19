@@ -380,6 +380,42 @@ def _check(action: dict, question: str, options=(), material=None, *, saved: boo
     return yes(source=src, evidence=ev)
 
 
+# (2026-11-19, the CC-305 Date at Uline on Workday) The date a self-identification or signature
+# form is signed is TODAY's date: never a fact about the person, so the agent may fill it, the
+# way the fill engine does (autofill_core.js fillSignatureDate). The brain's typed date there was
+# refused as a legal date. Only a box named plainly as that date, on such a form, and only today:
+# the month, the day or the year as a segment (Workday's Month / Day / Year spinbuttons), or the
+# whole date in a usual order. The self-identification answers themselves are unchanged.
+SIGN_DATE_LABEL = re.compile(r"^\W*(date|today'?s date|date signed|signature date|date of signature|signed on|"
+                             r"date \(mm/dd/yyyy\)|date \(dd/mm/yyyy\))\W*$", re.I)
+SIGN_PAGE = re.compile(r"self[- ]?identif|\bsignature\b|\bsigned\b|electronic(?:ally)? sign|\bcc-?305\b", re.I)
+SIGN_DATE_EVIDENCE = "today's date: the date this form is signed"
+
+
+def signature_date(question: str, value: str, page: str, today=None) -> bool:
+    """True when ``value`` is today's date (or one of its segments) typed into a signature-date box
+    of a self-identification or signature form."""
+    import datetime as _dt
+    q = " ".join(str(question or "").split())
+    v = " ".join(str(value or "").split())
+    if not SIGN_DATE_LABEL.match(q) or not SIGN_PAGE.search(str(page or "")) or not v:
+        return False
+    d = today or _dt.date.today()
+    if re.fullmatch(r"\d{1,4}", v):
+        n = int(v)
+        return (len(v) <= 2 and n in (d.month, d.day)) or (len(v) == 4 and n == d.year)
+    digits = re.sub(r"\D", "", v)
+    m, dd, y = f"{d.month:02d}", f"{d.day:02d}", str(d.year)
+    want = {m + dd + y, dd + m + y, y + m + dd, str(d.month) + str(d.day) + y, str(d.day) + str(d.month) + y,
+            y + str(d.month) + str(d.day)}
+    if digits in want:
+        return True
+    words = d.strftime("%B %d %Y").lower(), d.strftime("%b %d %Y").lower(), d.strftime("%d %B %Y").lower()
+    t = re.sub(r"[^a-z0-9 ]", " ", v.lower())
+    t = " ".join(re.sub(r"\b0(\d)\b", r"\1", t).split())
+    return t in {" ".join(re.sub(r"\b0(\d)\b", r"\1", w).split()) for w in words}
+
+
 def record(action: dict, verdict: Verdict) -> dict:
     """What rides on a checked action to the shell and the Review answers list: the source (and
     the origin label it shows as), the evidence and the class. Never the answer itself."""

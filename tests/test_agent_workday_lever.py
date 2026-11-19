@@ -275,7 +275,12 @@ def test_cc305_date_is_today_and_the_styled_boxes_are_fields(tmp_path):
         {"do": "eval", "as": "left2", "js": "window.TailorAutofill.leftover()"},
     ])
     today = _dt.date.today()
-    assert [k["text"] for k in r["report"]["keys"]] == [str(today.month), str(today.day), str(today.year)]
+    # (2026-11-19) the whole trio as ONE run of digits on a real press of its first segment, the
+    # segments one by one as the shell's fallback
+    keys = r["report"]["keys"]
+    assert len(keys) == 1 and keys[0]["press"] is True
+    assert keys[0]["text"] == f"{today.month:02d}{today.day:02d}{today.year}"
+    assert [p["text"] for p in keys[0]["parts"]] == [f"{today.month:02d}", f"{today.day:02d}", str(today.year)]
     # ONE question with three choices (the legend of the OUTER fieldset), never three questions
     boxes = [f["label"] for f in r["fields"] if f["type"] == "checkbox"]
     assert boxes == [f"Please check one of the boxes below:*: {o}" for o in CC305], boxes

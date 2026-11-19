@@ -2565,6 +2565,26 @@ function qsaSafe(sel, root) {
       // Workday's date segments take only real keys (a value set from script shows but is not
       // kept: "Invalid Date: 03/" on Next, Uline 2026-11-16). They are handed to the shell, which
       // types them with real key presses (keyOps), month first, as a person does.
+      // (2026-11-19, the CC-305 Date at Uline) A whole month / day / year trio, all empty: typed
+      // the way a person does, a real press on its first segment and every digit in one go
+      // (month and day as two digits, so each segment moves on to the next by itself). Typed one
+      // segment at a time, with a focus from script in between, the year was never registered
+      // ("Invalid Date: 11/19/"). ``parts``: the segments one by one, the shell's fallback.
+      const trio = spins.length === 3 && spins.every(emptyBox);
+      if (trio && when.m && when.d) {
+        const pad = (v, n) => String(v).padStart(n, "0");
+        const parts = [];
+        for (const sp of spins) {
+          const w = (sp.getAttribute("aria-label") || sp.id || "").toLowerCase();
+          const v = /month/.test(w) ? pad(mm, 2) : /year/.test(w) ? yy : /day/.test(w) ? pad(when.d, 2) : "";
+          if (!v) { parts.length = 0; break; }
+          parts.push({ ref: fieldRef(sp), text: v });
+        }
+        if (parts.length === 3) {
+          _keyOps.push({ ref: parts[0].ref, text: parts.map((x) => x.text).join(""), press: true, parts });
+          return true;
+        }
+      }
       let n = 0;
       for (const sp of spins) {
         if (!emptyBox(sp)) continue;
