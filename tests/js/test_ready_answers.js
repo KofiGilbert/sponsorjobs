@@ -212,6 +212,14 @@ const deps = {
   // the engine hears Ready to send once, with the notice for Telegram
   const readyPosts = posts.filter(([p, b]) => p === "/api/autoapply/agent/ready" && !JSON.parse(b).clear);
   assert(readyPosts.length === 1, "one ready post " + readyPosts.length);
+  // the application's panel gets the same list, a self-identification row without its value
+  const kept = JSON.parse(readyPosts[0][1]).answers;
+  assert(kept && kept.rows.length === L.rows.length && kept.files.length === L.files.length && kept.flagged === L.flagged, "the list on the ready post " + JSON.stringify(kept));
+  const kg = kept.rows.find((x) => x.label === "Gender");
+  assert(kg && kg.self_id && kg.held && kg.value === "", "self-ID kept off the post " + JSON.stringify(kg));
+  assert(kept.rows.find((x) => x.label === "Field of Study").flag === "closest", "flags kept");
+  // the shell's own list, values included, for the app's window only (agent:ready)
+  assert(JSON.stringify(agent.readyList(5)) === JSON.stringify(L) && agent.readyList("5") === agent.readyList(5), "readyList");
   const nb = JSON.parse(readyPosts[0][1]).notice;
   assert(nb && /^\d+(\.\d+)?$/.test(nb.run) && nb.filled === L.rows.length && nb.flagged === L.flagged, "notice on the ready post " + JSON.stringify(nb));
   assert(nb.lines.length === L.flagged && !nb.lines.some((x) => x.includes("555 0100")), "flagged lines only " + JSON.stringify(nb.lines));

@@ -544,3 +544,17 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   on that application's mail; Settings, Connections, Email gains "Copies to my own e-mail".
   Not yet checked at Kofi's window (no app run on the 8 GB builder); check at 76% zoom and 100%,
   dark and light, before release.
+- 2026-11-19: An application waiting at Ready to send shows its **Answers** in its Auto-apply panel,
+  under "What will be sent" in the same column (above Progress once the panel stacks): the `.aa-h`
+  heading "Answers" with the count in `--faint` and "N to check" in `--flag`, then one `.aa-item`
+  holding the bar's own Review answers rows (`aaAnsRowHTML`, the same origin words and reasons: "Best
+  guess: <reason>. Check it."). The lines to check come first, then the rest page by page, files
+  last; over 8 lines it shows only the lines to check and an underlined "Show all N" ("Show fewer"
+  back). The list is kept on the record (agent_ready.answers) so a quiet Auto run can be checked;
+  a self-identification value never reaches the engine, so it shows while the shell still holds
+  the run and reads "Hidden for privacy" (muted) after a restart. The Waiting on you row carries a
+  small "N to check" in `--flag` beside the chip (the stage line then drops its own "answers need
+  your check", said once). Send all's "Review them first" opens this panel scrolled to Answers.
+  The bar's list CSS is now scoped to `.ans-box` (the memory page's `.ans-row` used to override it).
+  Read-only for now. Not yet checked at Kofi's window (no app run on the 8 GB builder); check at
+  76% zoom and 100%, dark and light, before release.
