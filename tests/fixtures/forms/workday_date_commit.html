@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Self Identify (Workday date commit fixture)</title>
+<link rel="stylesheet" href="style.css"><style>.spin{width:48px}</style></head>
+<body>
+<!-- Modelled on Workday's CC-305 "Date" at Uline (measured 2026-11-19): the Month / Day / Year
+     boxes (data-automation-id dateSection*-input, role=spinbutton) can SHOW digits, in the box,
+     its aria-valuetext and the display text beside it, while the form's own state of the date is
+     empty, and then the page says "Error: Enter today's date". The state takes a segment only
+     from an input event of type insertText carrying the digits, and the date is checked again
+     on a bubbling focusout. A plain input or change event changes nothing.
+     ?shown: the boxes start showing today's date with the state empty and the error up.
+     ?ok: the boxes show today's date and the state holds it (no error): the person's, left alone.
+     ?stuck: as ?shown, but the state never takes anything (the error stays). -->
+<h3>Voluntary Self-Identification of Disability</h3>
+<div data-automation-id="formField-dateSignedOn" id="field">
+  <fieldset id="date"><legend><label>Date*</label></legend>
+    <div role="group" id="grp">
+      <input class="spin" type="text" role="spinbutton" aria-label="Month" data-automation-id="dateSectionMonth-input" id="selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-input">
+      <div data-automation-id="dateSectionMonth-display"></div>
+      <input class="spin" type="text" role="spinbutton" aria-label="Day" data-automation-id="dateSectionDay-input" id="selfIdentifiedDisabilityData--dateSignedOn-dateSectionDay-input">
+      <div data-automation-id="dateSectionDay-display"></div>
+      <input class="spin" type="text" role="spinbutton" aria-label="Year" data-automation-id="dateSectionYear-input" id="selfIdentifiedDisabilityData--dateSignedOn-dateSectionYear-input">
+      <div data-automation-id="dateSectionYear-display"></div>
+    </div>
+  </fieldset>
+  <div id="err"></div>
+</div>
+<p>Signature: please enter today's date.</p>
+<button type="button">Next</button>
+<script>
+  const segs = [...document.querySelectorAll("[data-automation-id$='-input']")];
+  const shows = [...document.querySelectorAll("[data-automation-id$='-display']")];
+  const state = ["", "", ""];
+  let inputs = 0;
+  const stuck = /stuck/.test(location.search);
+  const now = new Date(), today = [String(now.getMonth() + 1), String(now.getDate()), String(now.getFullYear())];
+  const show = (i, v) => { segs[i].value = v; segs[i].setAttribute("aria-valuetext", v); shows[i].textContent = v; };
+  const check = () => {
+    const ok = state.every((v, i) => v !== "" && Number(v) === Number(today[i]));
+    document.getElementById("err").innerHTML = ok ? "" : '<div data-automation-id="errorMessage" role="alert">Error: Enter today\'s date</div>';
+  };
+  segs.forEach((el, i) => {
+    el.addEventListener("input", (e) => {
+      inputs++;
+      if (stuck) return;
+      if (e.inputType === "deleteContentBackward") state[i] = "";
+      else if (e.inputType === "insertText" && e.data) state[i] = String(e.data).replace(/\D/g, "");
+      el.setAttribute("aria-valuetext", el.value); shows[i].textContent = el.value;
+    });
+  });
+  document.getElementById("grp").addEventListener("focusout", check);
+  if (/shown|ok|stuck/.test(location.search)) { today.forEach((v, i) => show(i, v)); if (/ok/.test(location.search)) today.forEach((v, i) => { state[i] = v; }); check(); }
+  window.fxValues = () => ({ state: state.join("/"), shown: segs.map((s) => s.value).join("/"),
+                             error: document.getElementById("err").textContent, today: today.join("/"), inputs });
+</script>
+</body></html>
