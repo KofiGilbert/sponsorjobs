@@ -38,7 +38,9 @@ def test_bad_input_never_throws_or_goes_negative():
 
 def test_the_shell_uses_it_and_re_lays_out_on_every_zoom_change():
     main = (SHELL / "main.js").read_text()
-    assert "pane.setBounds(paneRect(paneBounds, win.webContents.getZoomFactor()))" in main
+    # laid out through pane_view.js (2026-11-19), which scales the slot with paneRect
+    assert "paneSync.layout({ open: paneOpen, quiet: paneQuiet, slot: paneBounds, zoom: win.webContents.getZoomFactor() })" in main
+    assert "const rect = paneRect(s.slot, s.zoom);" in (SHELL / "pane_view.js").read_text()
     assert 'win.webContents.on("zoom-changed"' in main
     js = (ROOT / "ui/static/app.js").read_text()
     assert 'window.addEventListener("resize", () => requestAnimationFrame(sendBounds))' in js

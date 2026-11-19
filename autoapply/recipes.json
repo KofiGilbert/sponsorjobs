@@ -518,6 +518,12 @@
         },
         {
           "text": "Thank you for applying"
+        },
+        {
+          "url_re": "^https://[^/?#]*\\.(myworkdayjobs|myworkdaysite)\\.com/[^?#]*/jobTasks/completed/application"
+        },
+        {
+          "dialog_text": "Application Submitted"
         }
       ],
       "multipage": true,
