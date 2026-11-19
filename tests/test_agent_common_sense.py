@@ -484,7 +484,8 @@ def test_the_new_strings_are_in_all_five_locales_with_no_dashes():
 
 def test_the_shell_keeps_the_rule_origins_for_review_answers():
     js = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
-    assert 'new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense"])' in js
+    # (2026-11-18) "drafted" joined them: a written answer the engine drafted (autoapply/drafts.py)
+    assert 'new Set(["grounded", "neutral", "history", "tracker", "consent", "common_sense", "drafted"])' in js
     assert 'tracker: "from your tracker"' in js and 'common_sense: "common sense"' in js
 
 

@@ -1613,6 +1613,8 @@
   "aa.ans.from.tracker": "Votre suivi",
   "aa.ans.from.commonSense": "Bon sens",
   "aa.ans.flag.ai": "L'IA a choisi ceci. Vérifiez-le.",
+  "aa.ans.flag.agent": "L'agent a répondu lui-même, à partir de : {e}. Vérifiez-le.",
+  "aa.ans.flag.agentPlain": "L'agent a répondu lui-même. Vérifiez-le.",
   "aa.ans.flag.closest": "Facultatif. Choisi comme l'option la plus proche de la liste.",
   "aa.ans.flag.skills": "Facultatif. Choisi parmi vos compétences.",
   "aa.ans.flag.declined": "Refusé, aucune réponse enregistrée n'y répond.",

@@ -12614,8 +12614,11 @@
     };
     return m[fact] || T("aa.ans.flag.grounded", "Answered from your saved facts. Check it.");
   }
-  function aaAnsFlag(code, fact, value) {
+  function aaAnsFlag(code, fact, value, evidence) {
     if (code === "grounded") return aaAnsGrounded(fact);
+    // (2026-11-18) an answer the agent chose itself, with the fact it used
+    if (code === "agent") return evidence ? T("aa.ans.flag.agent", "The agent answered this itself, from: {e}. Check it.").replace("{e}", evidence)
+      : T("aa.ans.flag.agentPlain", "The agent answered this itself. Check it.");
     // (Fill-through) what the run chose or left because nothing saved answers it
     if (code === "neutral") return T("aa.ans.flag.neutral", "Chose \u201c{v}\u201d: nothing saved answers this.").replace("{v}", value || "");
     const m = {
@@ -12673,7 +12676,7 @@
         page = r.page;
         html += `<div class="ans-pg">${esc(T("aa.ans.page", "Page {n}").replace("{n}", page))}</div><ul class="ans-list">`;
       }
-      html += row(r.label, r.value || T("aa.ans.empty", "(empty)"), aaAnsFrom(r.from), r.flag ? aaAnsFlag(r.flag, r.fact, r.value) : "",
+      html += row(r.label, r.value || T("aa.ans.empty", "(empty)"), aaAnsFrom(r.from), r.flag ? aaAnsFlag(r.flag, r.fact, r.value, r.evidence) : "",
                   "");
     }
     if (page !== null) html += "</ul>";

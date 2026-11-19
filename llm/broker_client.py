@@ -120,6 +120,13 @@ class BrokerLLM(AnthropicLLM):
         return self._post({"system": system, "prompt": user, "max_tokens": max_tokens,
                            "effort": None if effort == "none" else (effort or self.effort)})
 
+    def agent_step_blocks(self, blocks: list, user: str) -> str:
+        # The apply agent's step with its system prompt as cached text blocks (the broker passes
+        # ``cache_control`` through, backend/broker_tools.py and worker/src/tools.ts).
+        return self._post({"system": [{"type": "text", "text": str(b), "cache_control": {"type": "ephemeral"}}
+                                      for b in blocks if str(b or "").strip()],
+                           "prompt": user, "max_tokens": 900, "effort": "low"})
+
     def agent_step_image(self, system: str, user: str, image_b64: str) -> str:
         # The broker takes the screenshot as one base64 PNG next to the prompt; a broker that
         # does not know the field answers from the text alone, which is still a valid step.

@@ -154,6 +154,10 @@ Reply:
 `done` is `{ "outcome": "ready_to_submit" | "submitted" | "blocked", "reason": "..." }` where
 `blocked` reasons are `captcha | verify-email | phone-code | needs-person | not-a-job | left-site`.
 
+(2026-11-18) Section 29 replaces two things below: the brain may now answer a question about the
+person itself, under the answer protocol, and the fact gate no longer strips its words. The rest
+of this section stands.
+
 Prompt rules (the short browser-use "flash" shape, under 60 lines): handle popups and cookie
 banners first; on a job page click Apply; prefer "Apply manually" / "Autofill with resume" over
 "Apply with LinkedIn"; after typing into a combobox WAIT a step and click the `*` suggestion,
@@ -1117,3 +1121,415 @@ stores are read in ui/app.py (`_common_sense`, `_earlier_applications`).
   to the company (`planner._CO_SUFFIX`), also for the worked-here rule.
 - Nothing here presses Submit or changes who may: section 6 and section 26 are untouched.
 - Tests: tests/test_agent_common_sense.py.
+
+## 29. The agent decides: hard limits, advice, the answer protocol (2026-11-18)
+
+**Why.** A day of runs on real forms showed one pattern again and again: the brain had the right
+idea and a hand-written rule overruled it, or a per-question rule did something silly. A sign-in
+button called "Submit" (the brain typed the account and clicked it; `submit_guard` emptied its
+actions and reported ready). "How did you hear about us?" (the page script refused the brain's
+pick: "do not pick one for them, report needs-answers"). "Phone Device Type" (the planner read any
+label with "phone" in it as the phone number). "Have you worked for <employer> before?", "What is
+the highest level of education you have completed?", "List any aliases ... or indicate N/A": each
+needed a rule of its own before the agent would answer, although the answer is on the resume the
+agent itself built. The owner: treat applying "like an engineering problem an AI agent has to
+fix"; "if any rule is not serving our purpose we can remove them as we progress, no rule is cast
+in stone."
+
+**The principle (step 1 of 4).**
+
+1. **The agent decides.** The brain is given the person's own material and may answer a question
+   itself.
+2. **Hard limits stay hard stops**, in code, whatever the model says. There are eight (below).
+   A hard stop always tells the brain which limit applied.
+3. **Fast-path rules are advice.** A rule that answers a question without a model step stays,
+   because it saves a step. It is never the only way that question gets answered, and nothing
+   strips the brain's own action because a rule would have done otherwise.
+4. **Rules that mostly block sensible actions, or exist only to patch another rule, are deleted.**
+
+### The hard limits
+
+| # | Limit | Where it is enforced |
+|---|-------|----------------------|
+| 1 | The application's final Submit is pressed only by the send paths: the person's Send, Send all, or the autonomous send on the verified allowlist with the mode and threshold checks. The button of a sign-in or create-account form is that form's own, whatever it is called. | `brain.submit_guard`, `brain.auth_form`, `brain.not_ready`; agent_view.js `doClick`; agent.js `act()`, `send`, `pressSubmit`; `modes.may_send_alone`; submit/allowlist.py |
+| 2 | Captcha, bot wall, MFA, identity check: stop. Never solved, never evaded. No stealth. | agent.js blockers and `PARK_REASONS`; agent_view.js never enters a captcha frame; prompt rule 10 |
+| 3 | Nothing on LinkedIn. | `submit.policy.fill_permitted`; `brain.step` (LinkedIn click); agent.js `socialRefused` |
+| 4 | Consents and terms: only what the person's saved consent settings allow. | autoapply/consents.py; agent.js `handleTerms`; agent_view.js `termsItems`; `qclass.is_legal` (an acknowledgement or opt-in is never the brain's to tick) |
+| 5 | Facts are never invented. A legal or attestation question is answered ONLY from a saved answer or saved profile field for exactly that question; none saved: ask (Assisted, Hybrid) or set the job aside (Auto). | `qclass.is_legal`, `protocol.check`; planner's work authorization, EEO, citizenship, consent and worked-here rules; agent.js `pickSaved` |
+| 6 | Credentials only through placeholders, never shown to the model or logged. Files: only this application's resume and cover letter. | `brain.resolve_actions`, `brain.redact`, `mask_values`; agent.js `upload`, `safeReply` |
+| 7 | Payment, purchases, account deletion, anything outside applying for this job: never. | `qclass._LEGAL` (payment and bank words are legal class, so never the brain's); the allowed-hosts rule |
+| 8 | The run stays on the employer's application flow. | agent.js `onSite` / `allowedHosts` (`left-site`) |
+
+### What the brain is shown: `<person>`
+
+autoapply/material.py builds one compact block from the application's tailored resume (else the
+saved profile) and the answer library, reusing autoapply/grounded.py `build_facts` (the same facts
+the grounded call already sent to the model): where the person lives, each job (title,
+organization, dates, current or not), each school (degree, field, dates), years since the first
+job, skills, languages, the links they saved (as placeholder names, never the address), and their
+saved answers (question and answer). Each line has an id (`job1`, `edu1`, `ans3`).
+
+Never in it: a self-identification or work authorization answer, a saved answer to any other
+legal-class question (it fills its own question as a placeholder), a drafted answer, a password,
+a code, and the contact details (name, email, phone, street), which stay placeholders.
+
+It is sent on every step that has open questions (`<left>` or what was left for the person), as
+the SECOND system block. The rules are the first. Both blocks are marked for prompt caching
+(`llm.agent_step_blocks`; the broker passes `cache_control` through). Before this change the
+step call sent its system prompt as a plain string, so nothing was cached, although section 5
+said it was. The block is the same text on every step of one application, which is what lets
+the cache hold. Size, with a realistic made-up profile (three jobs, two schools, nine skills,
+two languages, one saved answer): about 190 tokens for the block (230 with its lead line); the
+rules grew from about 2,490 to about 2,905 tokens. The cap is 4,200 characters (about 1,050
+tokens) for a long profile.
+
+### The answer protocol (autoapply/protocol.py)
+
+(Section 30 made the FORMAT forgiving after the first real run: the fields may be missing or sit
+in a `proof` object, and the engine attaches the evidence itself when the answer is in the block.
+It also added the source `posting` and the common-sense defaults. What is checked is unchanged.)
+
+An action that answers a question with the brain's own choice (a `type` of text that is not a
+placeholder, a `select`, a click on a radio, a checkbox or an option) carries three fields:
+
+```json
+{"op": "select", "index": 5, "option": "Master's Degree",
+ "source": "resume", "evidence": "edu1: Master of Science, 2018", "class": "factual"}
+```
+
+- `source`: `profile`, `resume`, `saved_answer` or `common_sense`.
+- `evidence`: the short fact used ("edu1: MBA, 2019", "no employer named Acme in <person>").
+- `class`: `factual`, `preference`, `common_sense` or `legal`.
+
+The engine checks it before the action runs (`brain.check_answers` -> `protocol.check`):
+
+1. **The question decides, not the brain's label.** `qclass.question_class` (ONE function,
+   autoapply/qclass.py) reads the field's own label. A legal question is refused whatever class
+   the brain claimed: only the person's saved answer fills it, and that travels as a placeholder
+   (`{{answer_N}}`) the brain cannot read. "When unsure, it is legal": the legal patterns are
+   the union of every pattern the engine already held (grounded.py, eeo.py, workauth.py,
+   consents.py, commonsense.py, planner.py).
+2. **Worked here before.** With the employer in the work history it is legal (a Yes needs the
+   person's confirmation, as before). With the employer not in it, the history answers No.
+3. **Factual and preference answers cite something that is in the block.** A cited id must
+   exist; otherwise the evidence's own words (an employer, a degree, a year) must be found in
+   the block, and every year it gives must be there. A typed answer must itself be made of the
+   material's words. An answer that says "nothing like that" may cite an absence ("no PMP in
+   skills"), and then the thing named must really be absent, and the answer may not be a Yes.
+4. **Common sense** is for a question with no fact about the person: how they heard about the
+   job, the kind of phone, a follow-up that does not apply. Never on a factual, preference or
+   legal question. "List any aliases ... or indicate N/A" is an attestation, so N/A there is not
+   common sense: the Apply setup question (PR #304) stays the only source.
+5. **Stand-ins.** "N/A" or "None" is an answer only where the question asks for it or does not
+   apply; filler ("In", "TBD", "see resume") never is. A run of seven or more digits is never
+   typed as free text (hard limit 6).
+6. **A saved value on a list** (`select` with `{{answer_N}}`) is the strict pick, as before.
+
+A refusal never strips in silence. The step reply carries `observations` (each refusal with its
+reason, a hard limit named) and `rejected` (`{index, label, hard}`). The shell feeds the
+observations to the brain's next step and counts the refusals per question: the second time (the
+first, for a hard limit) the brain is told to report needs-answers; the third time the shell
+reports it itself. From there the question takes the usual road (the person's material, then left
+for the person and asked ONCE at the end). In Auto nothing is asked: the job is set aside and
+the reason names the question ("Set aside: no saved answer for ...").
+
+An accepted answer keeps `proof` (`{source, origin, evidence, class}`). The shell records it in
+Review answers with the origin label that already existed for that source ("Your profile", "Your
+resume", "Saved answer", "Common sense"), flags it as one to check ("The agent answered this
+itself, from: ... Check it.", five locales), says so in the Telegram list, and posts the rows to
+`/api/autoapply/agent/ready` (`agent_answers`), which keeps them on the application's record.
+The debug log never holds the answer, its evidence or an observation.
+
+### Choice fields
+
+The page script's refusal "no choice on this list says the same as the person's answer; do not
+pick one for them, report needs-answers" is gone. The strict match stays for the saved answer's
+own pick (the fast path, with no model looking). When no choice says the same, the list's options
+go back to the brain in the observation, and the brain picks one itself under the protocol or
+reports needs-answers. An option the brain names itself is applied as asked.
+
+### Fast-path rules are advice
+
+- `<left>` words them as advice. The person's own saved answer: `Question (saved answer: type
+  {{answer_1}})`. A rule's answer (common sense, the resume, the tracker): `Question (the engine
+  suggests Job board: type {{answer_1}})`, in words, so the brain may take it or do better.
+- The four per-question rules of PR #304 (how-did-you-hear's default, highest education,
+  worked-here No from the history, phone type) can each be switched off:
+  `SJ_FASTPATH_OFF="education,worked_here"` (`commonsense.fast_path`). With one off, the engine
+  leaves the question open, the brain answers it from `<person>`, and the answer passes the
+  check: tests/test_agent_first.py proves it for highest education and worked-here.
+
+### The inventory: every place that overrides, strips, refuses or second-guesses
+
+HARD = one of the eight limits. ADVICE = a fast path or a hint the brain can go round. DELETE =
+removed by this change. "Was" is what the rule did before.
+
+**The brain's prompt (autoapply/brain.py `SYSTEM_PROMPT`)**
+
+| Rule | What it forbade or forced | Why it was added | Class | Now |
+|------|---------------------------|------------------|-------|-----|
+| 5 | Clicking Submit, Send application, Review and submit | section 6: the model never presses Submit | HARD 1 | kept, with the sign-in form exception |
+| 2 | LinkedIn; another social sign-in while an email path exists | CLAUDE.md section 7; the agent holds no account for those | HARD 3, HARD 6 | kept |
+| 6 (old) | "Never answer a question about the person" | the first data boundary: the model saw nothing about the person, so anything it wrote was a guess | DELETE | replaced by the answer protocol |
+| 7 (old) | "You may type ONLY a placeholder" | the same boundary | DELETE | narrowed to contact details and secrets (HARD 6) |
+| 2 (chat) | "a question about the person with no placeholder is needs-answers" | the same boundary, for chat-style applies | DELETE | the protocol applies there too |
+| 15 (old) | "if none says the same, clear the box and report needs-answers" | Phoenix Contact, 2026-11-05: "College Job Board" picked for "Job board" | DELETE | the options come back and the brain picks under the protocol |
+| 15 (old) | "Only a REQUIRED question with no placeholder is the person's: do not guess" | the same boundary | DELETE | answered from `<person>` when it answers; needs-answers when nothing does |
+| 15 | "(left for the person: leave it empty)", never a stand-in | fill-through, 2026-11-17: "In", "Not provided", "N/A" reached forms | ADVICE | left empty unless `<person>` answers it; a stand-in is still refused (protocol rule 5) |
+| 10 | Captcha, phone code: stop | CLAUDE.md section 7 | HARD 2 | kept |
+| 18 | Privacy notices and terms are never ticked or accepted by the brain; marketing boxes stay unticked | Lam Research, 2026-10-30 | HARD 4 | kept |
+| 3, 4, 8, 9, 11, 19 | Never press Enter; one page-changing action last; never repeat a failed action; ignore the site's search box; not-a-job; no more than two plain waits | lessons from real runs | ADVICE | unchanged: they are how to work, and nothing strips an action for them |
+| 21 (new) | The eight limits, stated once | this change | HARD | new |
+
+**The brain's code (autoapply/brain.py)**
+
+| Where | What it blocked | Why it was added | Class | Now |
+|-------|-----------------|------------------|-------|-----|
+| `resolve_actions`: `is_fact_question` | Free text on any field whose label matched the planner's fact pattern was dropped, with only a note | the fact gate of section 5 | DELETE | gone; `protocol.check` decides and says why |
+| `resolve_actions`: `_DIGIT_RUN` | Free text with four digits in a row was dropped (a year too) | "a phone, an SSN, a card: never smuggled as free text" | DELETE | replaced by seven or more digits, as hard limit 6, with the reason |
+| `submit_guard` | A reply with a Submit click lost ALL its actions and became ready_to_submit | section 6 | HARD 1 | kept; only the Submit click is dropped, the other actions run, and the brain is told. Alone, the click still means ready |
+| `auth_form` | The exception: a sign-in form's own button | a Workday tenant, 2026-11-18 | HARD 1 | kept |
+| `not_ready` | ready_to_submit refused on a password page, a sign-in form, a page with no Submit | Gartner, 2026-11-02 | HARD 1 | kept; it already returned its reason |
+| `step`: LinkedIn click | Dropped | CLAUDE.md section 7 | HARD 3 | kept; now also an observation |
+| `step`: unrendered `{{...}}` | Dropped | 2026-11-16, belt and braces | HARD 6 | kept; now also an observation |
+| `resolve_actions`: a placeholder with no value, or inside other text | Dropped | the data boundary | HARD 6 | kept; now also an observation |
+| `step`: upload routing | A cover letter box never takes the resume | Gusto, 2026-11-16 | HARD 6 | kept; now also an observation |
+| `parse_reply` | Unknown op or index dropped; five actions at most; done alone; one page-changing op, last | reply validation | ADVICE | kept; a dropped op or index is now told back |
+| `step`: last step | A reply with no `done` on the last step becomes blocked | the step budget (section 15) | ADVICE | unchanged |
+| `mask_self_id`, `mask_values`, `redact`, `clean_summary` | The model never reads a stored legal or self-identification choice or a contact value; the bar never shows one | docs/applicant-brain.md section 9 | HARD 5, HARD 6 | kept |
+| `false_alarm` (critic) | Drops a critic line the run's own record contradicts | Upgrade, 2026-11-17 | ADVICE | unchanged |
+| `check_answers` (new) | The answer protocol | this change | HARD 5 for legal; a check otherwise | new |
+
+**The engine's routes (ui/app.py)**
+
+| Where | What it blocked | Why it was added | Class | Now |
+|-------|-----------------|------------------|-------|-----|
+| step route: `fill_permitted` | No step on LinkedIn, Indeed, Glassdoor and the other prohibited boards | CLAUDE.md section 7 | HARD 3 | kept |
+| `_known_answers_for`: self-identification | Never handed to the brain as a placeholder | Lam Research: a bare "No" is half an answer; the shell picks it | HARD 5 | kept |
+| `_known_answers_for`: hold, withhold, confirm, `residence_withheld`, expiry | A saved answer is not used when two disagree, it expired, it is for another country, or the mapping is unconfirmed | docs/applicant-brain.md phases 3 and 4 | HARD 5 | kept: these are legal-class answers |
+| step route: the left-line mark | "(type {{answer_N}})" was the only way a list or text question got answered | 2026-10-31 | ADVICE | reworded: "saved answer" or "the engine suggests ..." |
+| plan route: `planner.parse_plan` fact gate | In the model's fill plan, a literal on a question about the person and all free text are dropped | section 5: that pass sees no personal data | HARD 5 | kept. That model call is not given `<person>`, so what it wrote would be invented. Candidate for step 2 |
+| ask route: `grounded.eligible`, `grounded.verify` | The grounded call never sees legal, consent, essay or common-sense questions; an answer whose fact does not state it is dropped ("a No about history is never proven") | 2026-11-17 | ADVICE | unchanged; it is now the second chance after the brain. Stricter than the protocol on purpose |
+| ask route: `asks.neutral_option`, `asks.is_fact_question` | The neutral choice is never taken on a fact question | fill-through, 2026-11-17 | ADVICE | unchanged (the engine's own pick, no model looking) |
+| ask route: `_forced_declined` | A required consent with no way to decline stays empty under a standing No | Phoenix Contact, 2026-11-17 | HARD 4 | kept |
+
+**The planner and its rule modules (the fast path)**
+
+| Where | What it does | Why it was added | Class | Now |
+|-------|--------------|------------------|-------|-----|
+| `planner.is_fact_question` (`_FACT`) | A question about the person nothing answers goes to "left", never to the model | the fact gate | ADVICE | no longer consulted for the brain; "left" is now what the brain reads and answers |
+| `planner.contact_key`: phone type exclusion; `_NOT_ME`; autofill_core.js `PHONE_KIND_RE`, `NAME_VETO` | A label that only looks like a contact field is not filled as one | PR #304 (phone type); references and managers | ADVICE | kept: the fast path must not do something silly |
+| `planner.match_option(strict)`, `adds_qualifier`, `_NEUTRAL`; autofill_core.js `answerScorer` | A saved answer is matched to a list only when a choice says the same | Phoenix Contact, 2026-11-05 | ADVICE | kept for the fast path only; a miss goes to the brain with the options |
+| `planner.generic_sources`; autofill_core.js `heardChoices`, `pickHeard`; agent_view.js `doSelect` | How-did-you-hear lands on the choice that names no source | PR #304 | ADVICE | kept as a fast path; no longer the only way |
+| `commonsense`: heard default, `education_answer`, `phone_type_answer`; worked-here No from the history | Answers with no model step | PR #304; 2026-11-17 | ADVICE | kept, each switchable (`SJ_FASTPATH_OFF`) |
+| `commonsense.applied_answer` | "Applied here before?" from the tracker | 2026-11-17 | ADVICE | unchanged |
+| `commonsense.adult_proof` | "At least 18?" Yes from a degree or a date four years back | 2026-11-17 | HARD 5 (see the note below) | unchanged |
+| `commonsense`: relatives, other names, connections list | Only from the standing answers of Apply setup | 2026-11-17, PR #304 | HARD 5 | kept |
+| `planner._eeo_fill`, `eeo_option`, `listed_citizenship`, `citizenship_text`, workauth and expiry | Self-identification, citizenship and work authorization only from the person's saved answers, their standing decline, or the page's decline | CLAUDE.md, docs/applicant-brain.md | HARD 5 | kept |
+| `planner` 1b; `applicant/facts.worked_here` | A worked-here Yes read from the resume waits for the person's one tap | phase 4 | HARD 5 | kept |
+| `consents.standing_answer` | Opt-ins declined, acknowledgements under the standing consent, a forced consent the person's | Phoenix Contact, 2026-11-17 | HARD 4 | kept |
+| `answers.is_per_job`, `answers.unusable` | An answer saved for one job is not reused for another | answer library hygiene | ADVICE | unchanged |
+
+**The page script (extension/agent_view.js)**
+
+| Where | What it blocked | Why it was added | Class | Now |
+|-------|-----------------|------------------|-------|-----|
+| `doSelect`, saved answer | "no choice on this list says the same as the person's answer; do not pick one for them, report needs-answers" | Phoenix Contact, 2026-11-05 | DELETE | the options go back to the brain |
+| `doClick`: `submitLike`, `authSubmit` | "submit-guard" | section 6 | HARD 1 | kept |
+| `doClick`: `policyLink` | A link to a privacy notice or terms is never followed | Lam Research, 2026-10-30 | HARD 4, HARD 8 | kept: the link usually leaves the employer's flow, which ends the run. See "what remains" |
+| `doClick`, `doType`, `doSelect`: "use select", "use upload", "use click", "disabled", "covered by ..." | The wrong tool for the control | mechanics | ADVICE | unchanged: each already comes back as an observation |
+| `view()`: honeypot fields, captcha frames, self-identification choices | Never listed, never entered, never shown | Barclays' robot-only box; CLAUDE.md | HARD 2, HARD 5 | kept |
+| `termsItems` | A marketing box never counts as a term to accept | section 8 | HARD 4 | kept |
+
+**The fill engine (extension/autofill_core.js), where no model is looking**
+
+| Where | What it leaves | Why | Class | Now |
+|-------|----------------|-----|-------|-----|
+| Whole module | Never clicks Submit, never sets a file from script | CLAUDE.md section 7 | HARD 1, HARD 6 | kept |
+| Screening rules | A question that matches both work authorization and sponsorship is left | an inverted answer | HARD 5 | kept |
+| Site search, honeypot | Never filled | Amazon's job search got the person's city | ADVICE | kept |
+| "never overwrite what you typed" | A filled box is left | assisted apply | ADVICE | kept |
+| Strict saved-answer matching, optional lists by closest match, `leftover` (required only) | What is not matched is left, and reaches the brain in `<left>` | 2026-11-05, 2026-11-16 | ADVICE | kept |
+| Captcha | Fills the form, reports the captcha, never touches it | CLAUDE.md section 7 | HARD 2 | kept |
+
+**The shell (shell-electron/agent.js)**
+
+| Where | What it blocked | Why it was added | Class | Now |
+|-------|-----------------|------------------|-------|-----|
+| `act()`: `FILLER_RE` | "refused: placeholder text" for N/A, None, "In" typed on the brain's own word | 2026-11-17 | DELETE | the protocol decides, and allows N/A where the question asks for it |
+| `act()`: saved answer typed into a list | Turned into the strict pick; a miss ended in the refusal above | Phoenix Contact, 2026-11-05 | ADVICE | kept; a miss now carries the options |
+| `act()`: unrendered placeholder | Refused | 2026-11-16 | HARD 6 | kept |
+| `act()`: `SUBMIT_RE`, `authForm` | "submit-guard", and the nudge | section 6 | HARD 1 | kept |
+| `act()`: `socialRefused` | LinkedIn always; another social sign-in while an email path exists | CLAUDE.md section 7 | HARD 3, HARD 6 | kept |
+| `upload()` | The cover letter box takes only the cover letter | Gusto, 2026-11-16 | HARD 6 | kept |
+| `pickSaved`, `fillSavedEeo` | Self-identification is put on the page by the shell, never through the model | Lam Research | HARD 5 | kept |
+| `handleTerms`, needs-consent | The person's consent, never the model's click | section 8 | HARD 4 | kept |
+| `leftEmpty`, `LEFT_NUDGE` | A question the person chose to leave empty is never filled | Phoenix Contact, 2026-11-17 | HARD 4 (the person's own choice) | kept |
+| `onSite` | "left-site" | section 7 | HARD 8 | kept |
+| Captcha, phone code blockers | Park | CLAUDE.md section 7 | HARD 2 | kept |
+| `notReady`, the critic, the form check, the resend signature | ready_to_submit is checked before the hand-over | Gartner, 2026-11-02; section 14, 20 | HARD 1 | kept; each tells the brain why |
+| Page check before Next | Holds the click once per page when required fields are empty | section 14 | ADVICE | unchanged: once, with the reason, then the brain decides |
+| Forgot password hold | Held while no account exists on the site | 2026-11-18 | ADVICE | unchanged in this pass (it holds every time). See "what remains" |
+| needs-answers with nothing open (three times parks), `MAX_WAITS`, the ladder, the step and cost budgets, the job cap | The shell takes over | sections 13, 15, 16 | ADVICE | unchanged: limits about progress, each told to the brain |
+| `noteRejected` (new) | A refused answer counts toward asking or setting aside | this change | new | new |
+
+**Note on hard limit 5 and "at least 18".** `commonsense.adult_proof` answers "Are you at least
+18?" with Yes from a degree or a date four years back, when nothing is saved. Read strictly, hard
+limit 5 (date of birth and age: only a saved answer) does not allow that. It is left as it was and
+reported to the owner, not changed here.
+
+### What remains (steps 2 to 4)
+
+- The model's fill plan (`planner.build_fill_plan`, `parse_plan`) is not given `<person>`; its fact
+  gate stays until it is.
+- The grounded call (autoapply/grounded.py) and the protocol overlap. With runs on real forms
+  showing the brain answers first, the grounded call can go.
+- The policy-link refusal and the Forgot password hold still block every time. Turning them into
+  "advise once, then allow" needs a real-form run, because both can end a run (leaving the site;
+  a reset mail that can never come).
+- The autonomous send (Auto, the allowlist) sends without the person reading Review answers. The
+  agent's own answers are kept on the application; whether an application that holds one should
+  wait at Ready to send is the owner's call.
+- The rules of autoapply/commonsense.py stay as fast paths. Each can be retired with
+  `SJ_FASTPATH_OFF` once real runs show the brain answers the question as well.
+
+### Tests
+
+tests/test_agent_first.py (the classifier, the block and its size, the validator, the brain's
+step, the option-choice path, the proof with the fast-path rules off, the step route's advice
+lines, the application's record, the locales) and tests/js/test_agent_first.js (the Review
+answers record, counting refusals, a refused legal answer asked once at the end, the Auto set
+aside that names the question, a stand-in the protocol passed). tests/test_agent_view.js covers
+the page script's option hand-back.
+
+## 30. After the first real run: format, hands, defaults, written answers (2026-11-18)
+
+Section 29 was run on a real Greenhouse form with many custom questions (hidden, real model). It
+was the right direction: the brain cited its facts and no rule vetoed a sensible action in
+silence. The job still ended set aside with 7 questions after 23 steps, for four reasons.
+
+### 1. A format slip never costs a step
+
+Five steps were lost to the FORMAT of an answer (the fields missing, then moved). The check
+(autoapply/protocol.py) is now hard to fail:
+
+- The three fields are read from the action itself or from a `proof` object on it; "reason" is
+  read as evidence, "job posting" as `posting`, and so on (`protocol.meta`).
+- A missing `class` is the question's own class. It decided anyway.
+- A missing `source` or `evidence` is filled in by the engine: it looks for the answer's own words
+  in the block (`protocol.ground`) and attaches the fact it found ("edu1: matched by the engine").
+  Evidence that names nothing is treated the same way.
+- On a question common sense answers (how did you hear, the kind of phone) nothing at all is
+  needed.
+- Only an answer that is truly ungrounded, or legal, is refused, and the refusal shows one worked
+  example. The prompt has the same example on its `select` line and says so in rule 6.
+
+The "wrong index" the brain reported on step 1 was not an index problem. The view and `<left>`
+never disagreed (`<left>` carries no indices). The engine had refused a typed School for its
+format, and the brain misread the observation; on the next view the same field had another
+index because the page had grown. With the lenient check that refusal no longer happens.
+
+### 2. The brain's hands on a react-select
+
+Seen on the real form: typing into the School typeahead answered "value differs" four times,
+`list_options` read nothing from five closed comboboxes, and a click on an option "did not
+select" three times. The shell sent real key and pointer events (CDP), which did nothing in a
+pane out of sight and still said ok. Only `select` worked, because it used the engine.
+
+Now every one of the agent's ops on a combobox goes through the engine's own machinery
+(extension/autofill_core.js `agentPick`, `agentOptions`, `agentClickOption`: the same open,
+filter, wait, press and read-back the fill uses, inside its own budget of 9 s):
+
+- **`type` on a combobox or typeahead** is a pick. It opens the list, types so the list filters,
+  waits for the results, presses the best match, reads the value back and closes. It answers
+  `picked "X"`, or `no result for what was typed; options: a, b, c`. For a search with thousands
+  of entries (schools) it tries the whole value, then its first three and two words, then its
+  first distinctive word. When nothing matches, the brain's own type takes the list's "Other" or
+  "Not listed" choice when there is one, and says so. A saved answer (`{{answer_N}}`) keeps its
+  strict match and never takes "Other".
+- **`list_options` on a closed combobox** opens it, reads every choice and closes it again
+  (`TailorAgent.listOptions`).
+- **A click on a `role=option`** is pressed the way the engine's pick presses it (mouseover, then
+  pointer and mouse down, up and click on the option) and read back from its box
+  (`pick_option`).
+- **`select`** with the brain's own option uses the same pick.
+- The real keys and pointer stay as the fallback for a box that opened no list at all to the
+  page's own pick (Workday's prompt widgets), and for an option that belongs to no combobox the
+  engine knows.
+- What was picked goes to the brain; the debug log shows `(picked)`.
+
+Tests through the agent's own ops (never the engine's fill) on tests/fixtures/forms/
+react_select.html and greenhouse_live.html: tests/test_agent_view.js.
+
+### 3. Common-sense defaults
+
+Employment type, the offices and overtime were refused as "a preference without a source". The
+owner's rule is common sense first. These are the defaults the brain may choose, each checked in
+code (`protocol.default_answer`) and flagged in Review answers like every answer the agent chose:
+
+| Question (`qclass.default_kind`) | The default | Evidence |
+|---|---|---|
+| Type of employment | The posting's own type; full-time when the posting says full-time or names none | `post`, or common sense |
+| Which office or location | One the posting's location names; else one in the person's own city or state; else the first one listed | `post`, `loc`, or common sense |
+| A routine condition of the job: overtime, days on site, travel, a shift or schedule | Yes, and only when the posting itself states that condition. A No, or a condition the posting does not state, is the person's | `req1`... |
+| How did you hear, the kind of phone | As before | common sense |
+
+"Nearest office" is not computed: with no office in the person's city or state, the default is
+the first one listed.
+
+Never a default, saved answer only: compensation and salary expectations, a reason for leaving or
+a separation, a start date or notice period, relocation, a background check or drug screen
+consent (the consent settings), anything in the legal class. Two fixes to the classifier came
+with this: "Discipline" (a field of study) was read as a disciplinary question, and "able to
+work weekends" as work authorization.
+
+So that these choices have evidence, the block now carries the posting's key facts
+(`material.posting_facts`): its title, the location it states, the employment type it names, and
+up to six sentences that state a condition of the role. The posting is third-party text: hidden
+text is taken out first (llm/textguard.py) and only those short lines reach the prompt. A new
+source, `posting` (shown as "The job" in Review answers), is checked the same way a profile fact
+is. With the made-up profile and posting of the tests the block is about 256 tokens (186
+without the posting), and the rules are about 3,185.
+
+### 4. Written answers
+
+"Please tell us what you liked and disliked about your last role. What interests you most about
+this opportunity?" was left for the person. Drafting from the person's real history is what this
+product does, and the Review page's drafter already exists (drafting/drafter.py
+`screening_answers`). The agent now uses it (autoapply/drafts.py, the step route's
+`_agent_drafts`):
+
+- **Which questions.** `qclass.is_essay`: an open-ended question on a text box (motivation,
+  interest in the role, experience with something, a strength, a project). Never a legal or
+  saved-only question, a follow-up that only applies to a Yes, the cover letter box (its own
+  path) or an "anything else" box.
+- **When.** On the step where the question is open and holds no draft: at most two new drafts a
+  step, one try per question. The draft is saved on the application's screening answers
+  (`by: "agent"`), so a later step or a re-run reuses it.
+- **How the drafter is told** (`drafts.guidance`, added to the question it is given): plain first
+  person, inside the limit, no bullets, no em or en dashes, every part of the question answered,
+  only what the profile and the job show. For a question whose honest answer could hurt the
+  person if guessed (what they disliked, a weakness, a conflict, a failure): neutral and
+  professional, no person or employer spoken ill of, nothing that happened unless the profile
+  shows it, said as what they would like more of in terms of what this role offers.
+- **Length.** A limit the question states (characters, words, sentences), else about 600
+  characters; never over 1,500.
+- **Cleaning** (`drafts.clean`): dashes out, any sentence with a figure found in neither the
+  profile nor the posting dropped (tailoring/fact_gate.py), cut at a sentence end inside the
+  limit. Nothing usable left is no draft, and the question is the person's.
+- **On the form.** It reaches the brain as `Question (drafted for the person from their resume
+  and the posting: type {{answer_N}})` and is typed through the placeholder. Review answers
+  shows it as "Drafted" with "Written for this job. Read it.", counted as one to check.
+- **Never sent alone.** An application that holds a draft the person has not edited stops at
+  Ready to send, also in Auto on the verified allowlist: `modes.may_send_alone(..., drafted=True)`
+  is False, the board's `auto_send` says so, and the shell's hand-over checks its own Review
+  answers rows.
+
+### Tests
+
+tests/test_agent_first.py (either shape of the fields, engine-attached evidence, the real run's
+three reply shapes, each default and what is never one, the posting facts, which questions are
+drafted, the limit, the guidance, the cleaning, the route's draft and the send-alone rule),
+tests/js/test_agent_first.js (the shell's routing of a combobox type, an option click and
+list_options to the page's own pick; a drafted answer held at Ready to send) and
+tests/test_agent_view.js (five fixture tests of the agent's ops on react-select).
