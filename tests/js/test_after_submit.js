@@ -21,7 +21,7 @@ process.env.SJ_AGENT_FILL_MS = "300";
 process.env.SJ_AGENT_RETRY_MS = "20";
 const ROOT = path.join(__dirname, "..", "..");
 const SHELL = path.join(ROOT, "shell-electron");
-const { createAgent } = require(path.join(SHELL, "agent.js"));
+const { createAgent, reviewSig, reviewLines, refillChanged, reviewDiff } = require(path.join(SHELL, "agent.js"));
 const { sentVerdict, SENT_PROBE_JS, HOME_AFTER_SUBMIT_MS } = require(path.join(SHELL, "sent_watch.js"));
 const paneView = require(path.join(SHELL, "pane_view.js"));
 const focus = require(path.join(SHELL, "focus_emulation.js"));
@@ -119,7 +119,7 @@ function fakePane(P) {
       if (expr.includes("crossOriginFrames")) return 0;
       if (expr.includes("resumeInputOpen") || expr.includes("hasResumeUpload")) return false;
       if (expr.includes("pageShape")) return { fields: 3, buttons: 1, skeleton: false, words: 60 };
-      if (expr.includes("TailorAgent.view(")) return { text: "URL: " + P.url + "\nReview\n[40]<button>Submit</button>" };
+      if (expr.includes("TailorAgent.view(")) return { text: "URL: " + P.url + "\n" + P.view };
       if (expr.includes("TailorAutofill.leftover()")) return [];
       if (expr.includes("pageCheck")) return { required_empty: [], errors: [] };
       if (expr.includes("innerText || el.value")) return "Submit";
@@ -128,20 +128,23 @@ function fakePane(P) {
   };
   return { webContents: wc };
 }
-function setup() {
-  const P = { url: "", page: "review", clicks: [], probes: 0, clickedAt: 0 };
+function setup(o) {
+  o = o || {};
+  const P = { url: "", page: "review", clicks: [], probes: 0, clickedAt: 0, view: "Review\n[40]<button>Submit</button>" };
   let pane = fakePane(P);
   const posts = [], progress = [];
+  const stoppedWatch = { n: 0 };
   const deps = {
     noPolling: true,
     getPane: () => pane,
     openInPane: (u) => { P.url = u; P.page = "review"; },
     waitPaneLoad: async () => {},
     autofillCore: () => "", agentViewSource: () => "",
-    runAutoApplyOnPane: async () => ({ ok: true, filled: 0, left: [] }),
+    runAutoApplyOnPane: async () => ({ ok: true, filled: (o.fills || []).length, left: [], answers: o.fills || [] }),
     sendProgress: (info) => progress.push(JSON.parse(JSON.stringify(info))),
     acquireDebugger: () => null, frames: {},
     applyDecision: async () => ({ fill: true, click_submit: false }),
+    stopSuccessWatch: () => { stoppedWatch.n++; },
     isNewPage: () => true, attachResume: async () => false,
     getApp: async (p) => (p.startsWith("/api/autoapply/agent/parked") ? { ok: true, parked: [] }
       : p === "/api/autoapply/mode" ? { ok: true, mode: "assisted", telegram_asks: false }
@@ -155,7 +158,7 @@ function setup() {
     },
   };
   const agent = createAgent(deps);
-  return { agent, posts, progress, P, wc: () => pane.webContents, swapPane: () => { pane = fakePane(P); } };
+  return { agent, posts, progress, P, stoppedWatch, wc: () => pane.webContents, swapPane: () => { pane = fakePane(P); } };
 }
 const of = (posts, p_) => posts.filter(([p]) => p === p_).map(([, b]) => b);
 
@@ -257,6 +260,87 @@ const of = (posts, p_) => posts.filter(([p]) => p === p_).map(([, b]) => b);
     assert(!(await w.tick()) && s.agent._test.readyWatch() === null, "a gone pane is not watched");
   }
 
+  // ---- 1d. Home Depot (2026-11-19): a Send's refill paused on the review page, the person
+  // pressed the site's Submit there: the bar says Sent, not Paused -------------------------------
+  // the review fingerprint: the view's own marks are not the page
+  assert(reviewSig("*[12]<button>Submit</button>\n(30 more elements below; read_page offset 77 shows them)\n[End of view]")
+         === reviewSig("[40]<button>Submit</button>\n(28 more elements below; read_page offset 90 shows them)\n[End of view]"), "marks and the cut line are not the page");
+  assert(reviewSig("Legal Name\nKofi Gilbert") !== reviewSig("Legal Name\nKofi Kofi Gilbert Gilbert"), "a value is the page");
+  // the refill against what the person had at Ready to send
+  {
+    const stored = { rows: [{ label: "Legal Name", value: "Kofi Gilbert", from: "profile" }, { label: "Gender", value: "", held: true, from: "eeo", self_id: true },
+                            { label: "Why us?", value: "The stores", from: "ai" }], files: [{ name: "cv-7.pdf" }] };
+    eq(refillChanged({ rows: [] }, stored, 7), "", "nothing typed: the same application");
+    eq(refillChanged({ rows: [{ label: "Legal Name", value: "kofi  gilbert", from: "profile" }] }, stored, 7), "", "the same value");
+    eq(refillChanged({ rows: [{ label: "Why us?", value: "The stores", from: "ai" }] }, stored, 7), "", "the same AI answer the person saw");
+    assert(/Why us/.test(refillChanged({ rows: [{ label: "Why us?", value: "Something else", from: "ai" }] }, stored, 7)), "a changed answer");
+    assert(/Salary/.test(refillChanged({ rows: [{ label: "Salary", value: "90000", from: "best_guess" }] }, stored, 7)), "a new guess the person never saw");
+    eq(refillChanged({ rows: [{ label: "Phone", value: "312", from: "profile" }] }, stored, 7), "", "new, but from saved material");
+    eq(refillChanged({ rows: [{ label: "Gender", value: "Decline", from: "eeo" }] }, stored, 7), "", "a held self-identification row");
+    eq(refillChanged({ rows: [{ label: "Legal Name", value: "Kofi Gilbert", from: "profile" }] }, null, 7), "", "after a restart: saved material");
+    assert(refillChanged({ rows: [{ label: "Why us?", value: "The stores", from: "ai" }] }, null, 7), "after a restart: an AI answer is new");
+    eq(refillChanged({ rows: [], files: [{ name: "cv-7.pdf", record_id: 7, how: "attached" }] }, null, 7), "", "this application's resume");
+    assert(/cv-9/.test(refillChanged({ rows: [], files: [{ name: "cv-9.pdf", record_id: 9, how: "attached" }] }, stored, 7)), "another application's resume");
+    assert(refillChanged({ rows: [], needs: [{ label: "Language" }] }, stored, 7), "an open question");
+    const d = reviewDiff(["Review", "Gender", "Male", "Legal Name", "Kofi"], ["Review", "Gender", "Female", "Legal Name", "Kofi"]);
+    eq(d.gone, ["(a self-identification line)"], "never a self-identification value in the log");
+  }
+  // A Send whose page was gone: the refill reads the review page differently (another width),
+  // types nothing new: sent, not paused
+  {
+    const s = setup();
+    await s.agent.run(30, { url: APPLY });
+    s.P.view = "Review\nMy Information\nLegal Name\nKofi Gilbert\n[40]<button>Submit</button>";
+    await s.agent.run(130, { url: APPLY.replace("R-101", "R-130") });   // another job took the pane: Send fills it again
+    const r = await s.agent.send(30);
+    assert(r && r.submitted, "the same answers: sent " + JSON.stringify(r));
+    assert(!s.progress.some((x) => x.state === "parked"), "never paused");
+  }
+  // The refill typed a new AI answer: paused, says why; then the person presses Submit on the
+  // page: Sent, the pause is gone here and in the engine
+  {
+    const fills = [];
+    const s = setup({ fills });
+    await s.agent.run(31, { url: APPLY });
+    fills.push({ label: "Why do you want to work here?", value: "A new answer", from: "ai" });   // only the refill types it
+    await s.agent.run(131, { url: APPLY.replace("R-101", "R-131") });
+    s.P.view = "Review\nWhy do you want to work here?\nA new answer\n[40]<button>Submit</button>";
+    const r = await s.agent.send(31);
+    assert(r && r.parked, "paused " + JSON.stringify(r));
+    const pz = s.progress.filter((x) => x.state === "parked").pop();
+    assert(/not the same as when I filled it \(a new answer for \u201cWhy do you want to work here\?\u201d\)/.test(pz.message), "says why " + pz.message);
+    await delay(50);
+    const w = s.agent._test.readyWatch();
+    assert(w && w.recordId === 31, "the paused page is watched");
+    s.P.url = DONE; s.P.page = "done";
+    s.wc().emit("did-navigate");
+    await delay(1500);
+    const last = s.progress[s.progress.length - 1];
+    assert(last.state === "submitted" && last.record_id === 31 && last.by === "person", "the bar says Sent " + JSON.stringify(last));
+    eq(of(s.posts, "/api/autofill/applied").filter((b) => b.record_id === 31).length, 1, "applied once");
+    assert(s.posts.some(([p, b]) => p === "/api/autoapply/agent/parked/31/take" && b.drop), "the engine's pause is dropped");
+    assert(!s.agent._test.parked.has("31"), "and the shell's");
+    assert(s.stoppedWatch.n >= 1, "the app's own success watch stands down (one applied, not two)");
+  }
+  // The app's own success watch (main.js) saw it first and recorded it: the agent only switches
+  // the bar, from Paused or from Ready to send
+  {
+    const fills = [];
+    const s = setup({ fills });
+    await s.agent.run(32, { url: APPLY });
+    fills.push({ label: "Why us", value: "New", from: "ai" });
+    await s.agent.run(132, { url: APPLY.replace("R-101", "R-132") });
+    s.P.view = "Review\nWhy do you want to work here?\nA new answer\n[40]<button>Submit</button>";
+    await s.agent.send(32);
+    assert(await s.agent.sentSeen(32, { url: APPLY, pageUrl: DONE }), "ours");
+    assert(s.progress[s.progress.length - 1].state === "submitted", "Sent");
+    eq(of(s.posts, "/api/autofill/applied").filter((b) => b.record_id === 32).length, 0, "not recorded twice");
+    const t = setup();
+    await t.agent.run(33, { url: APPLY });
+    assert(await t.agent.sentSeen(33, {}) && !t.agent.isReady(33) && t.progress[t.progress.length - 1].state === "submitted", "from Ready to send");
+    assert(!(await t.agent.sentSeen(99, {})), "a job the agent does not hold: nothing");
+  }
+
   // ---- 2. the pane and the Browser panel agree -----------------------------------------------
   // the layout rules
   {
@@ -346,6 +430,8 @@ const of = (posts, p_) => posts.filter(([p]) => p === p_).map(([, b]) => b);
     assert(/focusEmulation\.show\(wc\.debugger, \{ always: true \}\)/.test(main), "main.js clears the size override when the pane is shown");
     const sb = main.slice(main.indexOf('ipcMain.on("pane:set-bounds"'), main.indexOf('ipcMain.on("pane:set-bounds"') + 700);
     assert(/reopenOnSlot\(/.test(sb) && /pushPaneState\(\)/.test(sb), "pane:set-bounds reopens a closed pane the panel shows, and says so");
+    assert(/agent\.sentSeen\(rid, \{ url: startUrl, pageUrl \}\)/.test(main), "main.js's success watch switches the agent's bar too");
+    assert(/stopSuccessWatch: \(\) => disarmSuccessWatch\(\)/.test(main), "and stands down when the agent recorded it");
     const app = fs.readFileSync(path.join(ROOT, "ui", "static", "app.js"), "utf8");
     const td = app.slice(app.indexOf("function teardownCvi()"), app.indexOf("async function endCvi("));
     assert(/if \(CVI_IN_PANE && window\.tailorShell\) window\.tailorShell\.closeBrowser\(\)/.test(td), "the interview teardown closes the pane only when the interview used it");

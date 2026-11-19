@@ -366,6 +366,19 @@ function qsaSafe(sel, root) {
   ];
   // Fields we must never treat as a "name" (avoids filling username / company / referral).
   const NAME_VETO = /user|company|employer|referr|friend|contact.?name|emergency|search|coupon|reason/;
+  // (2026-11-19, Sidley and Home Depot on Workday) The candidate account's name came out "Kofi
+  // Kofi Gilbert Gilbert": Workday's Middle Name box (id name--legalName--middleName) said
+  // "name" and took the full name between First and Last. And Address Line 2 took the street
+  // again. The person's first, last and full name go only in boxes that ask for exactly those,
+  // the street only in the first line; the rest stay empty. "I have a preferred name" is never
+  // ticked: the profile keeps no preferred name. Mirrored in shell-electron/agent.js boxRefusal
+  // and autoapply/planner.py contact_key.
+  const NAME_PART_RE = /middle|preferred|nick ?name|maiden|former|previous|prior|alias|suffix|prefix|other (first |last |given )?names?|birth ?name|pronunciation|phonetic/;
+  const STREET_EXTRA_RE = /line.?[2-9]\b|address.?[2-9]\b|\bapt\b|apartment|\bsuite\b/;
+  const PREFERRED_BOX_RE = /preferred name|nick ?name|different name|other name|go(es)? by|known as|preferredname|preferredcheck/i;
+  const NAME_KEYS = new Set(["first_name", "last_name", "name"]);
+  const vetoed = (key, sig) => (key === "name" && NAME_VETO.test(sig)) || (NAME_KEYS.has(key) && NAME_PART_RE.test(sig))
+    || (key === "street" && STREET_EXTRA_RE.test(sig) && !/street|address-line1|addressline1|line.?1\b/.test(sig));
 
   const norm = (s) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -393,15 +406,19 @@ function qsaSafe(sel, root) {
 
   function categorize(el, sig) {
     const ac = norm(el.getAttribute("autocomplete"));
+    // A middle, preferred or other name, or an address's second line: none of ours, even when
+    // the page's autocomplete hint says otherwise.
+    if (NAME_PART_RE.test(sig) && /name/.test(sig)) return null;
+    if (STREET_EXTRA_RE.test(sig) && /address|street|addr/.test(sig) && !/street|address-line1|addressline1|line.?1\b/.test(sig)) return null;
     for (const c of CATEGORIES) {
       if (ac && c.ac.includes(ac)) {
-        if (c.key === "name" && NAME_VETO.test(sig)) continue;
+        if (vetoed(c.key, sig)) continue;
         return c.key;
       }
     }
     for (const c of CATEGORIES) {
       if (c.re.test(sig)) {
-        if (c.key === "name" && NAME_VETO.test(sig)) continue;
+        if (vetoed(c.key, sig)) continue;
         // (2026-11-18) "Phone Device Type" asks which KIND of phone, never the number: the
         // number was offered to that list as its answer (autoapply/commonsense.py answers it).
         if (c.key === "phone" && (PHONE_KIND_RE.test(sig) || PHONE_EXT_RE.test(sig))) continue;
@@ -637,6 +654,35 @@ function qsaSafe(sel, root) {
     return n;
   }
 
+  // (2026-11-19) The same for a name or a street an earlier fill put where it does not belong
+  // (Workday's Middle Name holding the full name, Address Line 2 holding the street again):
+  // emptied when it holds exactly the person's own full name or street. Anything else there is
+  // the person's, and stays; a preferred-name box is theirs too and is never touched.
+  function clearMisplacedName(fields) {
+    const f = fields || {};
+    const n = (v) => norm(String(v || "")).replace(/[^\p{L}\p{N} ]+/gu, "");
+    const names = new Set([f.name, [f.first_name, f.last_name].filter(Boolean).join(" ")].map(n).filter((x) => x && x.includes(" ")));
+    const street = n(f.street);
+    if (!names.size && !street) return 0;
+    let count = 0;
+    for (const el of qsaDeep("input")) {
+      if (!FILLABLE_TYPES.has(String(el.type || "").toLowerCase()) || el.disabled || el.readOnly) continue;
+      const have = n(el.value);
+      if (!have) continue;
+      const sig = norm(cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || "") + " " + (el.name || "") + " " + (el.id || ""));
+      const nameBox = /middle|maiden|suffix|prefix/.test(sig) && /name/.test(sig) && !NAME_VETO.test(sig) && !PREFERRED_BOX_RE.test(sig);
+      const lineTwo = STREET_EXTRA_RE.test(sig) && /address|street|addr/.test(sig) && !/street|address-line1|addressline1|line.?1\b/.test(sig);
+      if (!((nameBox && names.has(have)) || (lineTwo && street && have === street))) continue;
+      const view = viewOf(el);
+      Object.getOwnPropertyDescriptor((view.HTMLInputElement || HTMLInputElement).prototype, "value").set.call(el, "");
+      try { el.dispatchEvent(new (view.InputEvent || InputEvent)("input", { bubbles: true, inputType: "deleteContentBackward" })); }
+      catch (e) { el.dispatchEvent(new (view.Event || Event)("input", { bubbles: true })); }
+      el.dispatchEvent(new (view.Event || Event)("change", { bubbles: true }));
+      count++;
+    }
+    return count;
+  }
+
   function applyFill(plan) {
     let filled = 0;
     for (const { el, key, value } of plan) {
@@ -839,6 +885,14 @@ function qsaSafe(sel, root) {
     r.dispatchEvent(new Event("click", { bubbles: true }));
     r.dispatchEvent(new Event("input", { bubbles: true }));
     r.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  // "I have a preferred name" (Workday: name--preferredCheck), by its label or its own id.
+  function preferredBox(el, label) {
+    let lab = String(label || "");
+    try { if (!lab) lab = rawLabel(el) || el.getAttribute("aria-label") || ""; } catch (e) { lab = lab || ""; }
+    const ids = [el.id, el.name, el.getAttribute && el.getAttribute("data-automation-id")].filter(Boolean).join(" ");
+    return PREFERRED_BOX_RE.test(lab) || PREFERRED_BOX_RE.test(ids);
   }
 
   function pickRadio(radios, matchFn) {
@@ -1302,6 +1356,7 @@ function qsaSafe(sel, root) {
     const fields = (payload && payload.fields) || {};
     let cleared = 0;
     try { cleared = clearMisplacedPhone(fields); } catch (e) { cleared = 0; }
+    try { cleared += clearMisplacedName(fields); } catch (e) { /* nothing cleared */ }
     const plan = planFill(fields, { recipe });
     const filled = applyFill(plan);
     const was = _from;
@@ -1388,6 +1443,7 @@ function qsaSafe(sel, root) {
       let label = rawLabel(el);
       if (!label && raw !== "file") return;                                  // need a question to answer
       if (raw === "checkbox") label = checkboxLabel(el, label);
+      if (raw === "checkbox" && !el.checked && preferredBox(el, label)) return;   // never ticked
       const f = { ref: fieldRef(el), label: (label || "Résumé / CV").slice(0, 200),
                   type: fieldType(el), required: isRequired(el, label) };
       if (el.tagName.toLowerCase() === "select") {
@@ -1484,7 +1540,7 @@ function qsaSafe(sel, root) {
           if (cur && !/^(select|choose|--|please)/.test(cur)) { skipped++; continue; }
           if (fillSelect(el, text)) { markFilled(el); filled++; } else skipped++;
         } else if (type === "checkbox") {
-          if (!el.checked && /^(yes|true|1|checked|on)$/i.test(text)) { setChecked(el); markFilled(el); filled++; } else skipped++;
+          if (!el.checked && /^(yes|true|1|checked|on)$/i.test(text) && !preferredBox(el, "")) { setChecked(el); markFilled(el); filled++; } else skipped++;
         } else {
           if (String(el.value || "").trim()) { skipped++; continue; }        // never overwrite typed text
           setNativeValue(el, text); markFilled(el); filled++;
@@ -2696,6 +2752,7 @@ function qsaSafe(sel, root) {
       const label = cleanLabel(ariaLabelledText(c) || c.getAttribute("aria-label") || c.textContent || rawLabel(c));
       if (!label) continue;
       if (onlyEmpty && c.getAttribute("aria-checked") === "true") continue;
+      if (c.getAttribute("aria-checked") !== "true" && preferredBox(c, label)) continue;    // never ticked
       const ref = fieldRef(c);
       c.setAttribute("data-tailor-widget", "checkbox");
       fields.push({ ref, label: label.slice(0, 200), type: "checkbox", widget: "checkbox",
@@ -2829,7 +2886,7 @@ function qsaSafe(sel, root) {
       return (await pickAriaRadio(radios, valueScorer(text))) ? "filled" : "skipped";
     }
     if (kind === "checkbox") {
-      if (!/^(yes|true|1|checked|on)$/i.test(text)) return "skipped";
+      if (!/^(yes|true|1|checked|on)$/i.test(text) || preferredBox(el, "")) return "skipped";
       if (await toggleAria(el)) { markFilled(el); return "filled"; }
       return "skipped";
     }

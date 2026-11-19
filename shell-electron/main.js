@@ -520,6 +520,10 @@ function armSuccessWatch(wc, startUrl, recordId) {
     if (win && !win.isDestroyed()) {
       win.webContents.send("assist:applied", Object.assign({ url: startUrl, page_url: pageUrl }, res || { ok: false }));
     }
+    // A job the agent left ready or paused on this page: it leaves that state and the bar says
+    // Sent (Home Depot, 2026-11-19: the bar kept "Paused, not sent" over Workday's confirmation).
+    const rid = (res && res.matched && res.record_id != null) ? res.record_id : recordId;
+    if (rid != null) agent.sentSeen(rid, { url: startUrl, pageUrl }).catch(() => {});
   };
   const timer = setInterval(check, 2500);
   const onNav = () => setTimeout(check, 1500);
@@ -1450,6 +1454,7 @@ const agent = createAgent({
   runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
   isNewPage, attachResume, attachViaChooser, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
+  stopSuccessWatch: () => disarmSuccessWatch(),          // the agent's own watch recorded the send
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
   const o = opts || {};
