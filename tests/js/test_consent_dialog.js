@@ -35,22 +35,25 @@ function serve(dir) {
 
 (async () => {
   const srv = await serve(path.join(ROOT, "tests", "fixtures", "forms"));
-  const url = "http://127.0.0.1:" + srv.address().port + "/sapsf_privacy.html";
+  const base = "http://127.0.0.1:" + srv.address().port + "/sapsf_privacy.html";
   const { chromium } = findPlaywright();
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
-    const setup = async (decision) => {
-      await page.goto(url);
-      await page.evaluate(CORE);
-      await page.evaluate(AGENT);
+    const load = async (q) => {
+      await page.goto(base + (q || ""));
+      await page.evaluate(CORE); await page.evaluate(AGENT);
       await page.evaluate("window.TailorAgent.view({})");          // numbers the page's elements
-      const posts = [];
+    };
+    const setup = async (decision, opts) => {
+      const o = opts || {};
+      await load(o.q);
+      const posts = [], gets = [];
       const wc = { getURL: () => page.url(), isDestroyed: () => false, on: () => {}, removeListener: () => {}, executeJavaScript: (expr) => page.evaluate(expr) };
       const agent = createAgent({
         noPolling: true, getPane: () => null, acquireDebugger: () => null, frames: {},
         autofillCore: () => CORE, agentViewSource: () => AGENT, sendProgress: () => {},
-        getApp: async () => ({ ok: true }),
+        getApp: async (p) => { gets.push(p); return p.startsWith("/api/profile/autofill") ? { ok: true, fields: o.country === undefined ? { country: "United States" } : o.country } : { ok: true }; },
         postApp: async (p, b) => {
           posts.push([p, b]);
           if (p === "/api/autoapply/agent/terms" && b && b.check_only) return decision;
@@ -60,39 +63,82 @@ function serve(dir) {
       });
       const run = { recordId: 30, company: "Brightwater", termsTries: new Map(), termsOk: new Map(), accepted: [],
                     st: { stop: false }, batch: true, telegram: false, parkInfo: () => ({}) };
-      return { agent, wc, run, posts };
+      return { agent, wc, run, posts, gets };
     };
+    const fx = () => page.evaluate("window.fxValues()");
+    const ACCEPT = { ok: true, decision: "accept", via: "always" };
 
-    // the view lists it as a notice behind a button, and never the marketing link
-    await page.goto(url);
-    await page.evaluate(CORE); await page.evaluate(AGENT);
-    await page.evaluate("window.TailorAgent.view({})");
+    // the view lists the notice behind its button, never the marketing link
+    await load();
     const items = await page.evaluate("window.TailorAgent.termsItems()");
     assert(items.length === 1 && items[0].kind === "opener" && /privacy statement/i.test(items[0].title), "the opener: " + JSON.stringify(items));
     const loose = await page.evaluate("window.TailorAgent.termsItems(true)");
     assert(loose.length === 1 && loose[0].kind === "opener", "loose adds no marketing link: " + JSON.stringify(loose));
 
-    // consent to required notices on: opened once, the dialog's own Accept pressed, recorded
+    // the create-account form's required country-of-residence list, never a citizenship one,
+    // set from the profile's country by the list's own option (the engine stands back on such a page)
+    await load();
+    await page.evaluate(`(() => { const s = document.createElement("select"); s.id = "cit"; s.required = true;
+      s.innerHTML = '<option value="">Select</option><option value="GH">Ghana</option>';
+      const l = document.createElement("label"); l.htmlFor = "cit"; l.textContent = "Country of citizenship*";
+      document.getElementById("fbclc").append(l, s); })()`);
+    await page.evaluate("window.TailorAgent.view({})");
+    const lists = await page.evaluate("window.TailorAgent.residenceLists()");
+    assert(lists.length === 1, "the residence list only: " + JSON.stringify(lists));
+    assert(await page.evaluate(`window.TailorAgent.setCountry(${lists[0]}, "United States")`) === true && (await fx()).country === "US", "set to US");
+    assert(await page.evaluate("document.getElementById('cit').value") === "", "citizenship untouched");
+
+    // 1. consent on: the country of residence from the profile FIRST (the site opens nothing
+    //    without it), then the press, the SAP container awaited, its Accept, the hidden box checked
     {
-      const { agent, wc, run, posts } = await setup({ ok: true, decision: "accept", via: "always" });
+      const { agent, wc, run, posts } = await setup(ACCEPT);
       const r = await agent._test.handleTerms(wc, run);
-      const v = await page.evaluate("window.fxValues()");
-      assert(r.accepted === 1, "accepted: " + JSON.stringify(r));
-      assert(v.opened === 1 && v.accepted === true && v.declined === false && v.alerts === 0, "the dialog's Accept, nothing else: " + JSON.stringify(v));
+      const v = await fx();
+      assert(r.accepted === 1, "accepted: " + JSON.stringify([r, v]));
+      assert(v.country === "US" && v.clicks === 1 && v.focusCountry === 0 && v.opened === 1, "country first, one press: " + JSON.stringify(v));
+      assert(v.accepted && !v.declined && v.dpcs === "dpcs-1" && v.alerts === 0 && v.campaign === false, "Accept only, held by the form: " + JSON.stringify(v));
       const rec = posts.find(([p]) => p === "/api/autoapply/agent/terms/accepted");
       assert(rec && rec[1].kind === "opener" && /privacy statement/i.test(rec[1].title) && rec[1].via === "always", "recorded: " + JSON.stringify(rec));
-      assert(run.accepted.length === 1, "named at Ready to send");
-      // once per site and notice in a run: never opened again
       await page.evaluate("window.TailorAgent.view({})");
       await agent._test.handleTerms(wc, run);
-      assert((await page.evaluate("window.fxValues()")).opened === 1, "opened once");
+      assert((await fx()).clicks === 1, "never pressed again once accepted");
     }
-    // no standing consent, in a batch: nothing is pressed, the job parks on the question
+    // 2. the country list shows up only after the first press and takes the focus: filled, and
+    //    the notice pressed ONCE more
+    {
+      const { agent, wc, run } = await setup(ACCEPT, { q: "?late" });
+      const r = await agent._test.handleTerms(wc, run);
+      const v = await fx();
+      assert(r.accepted === 1 && v.clicks === 2 && v.focusCountry === 1 && v.country === "US" && v.dpcs === "dpcs-1", "late country: " + JSON.stringify([r, v]));
+    }
+    // 3. no country in the profile: one press, nothing opens, nothing recorded, no loop
+    {
+      const { agent, wc, run, posts } = await setup(ACCEPT, { q: "?late", country: {} });
+      const r = await agent._test.handleTerms(wc, run);
+      const v = await fx();
+      assert(r.accepted === 0 && v.clicks === 1 && v.opened === 0 && !posts.some(([p]) => p === "/api/autoapply/agent/terms/accepted"), "no country: " + JSON.stringify([r, v]));
+      await agent._test.handleTerms(wc, run);
+      await agent._test.handleTerms(wc, run);
+      assert((await fx()).clicks <= 2, "at most two presses in a run");
+    }
+    // 4. another required box still empty: the notice waits (the fill comes first); after the
+    //    brain reports needs-consent (loose) it is pressed anyway
+    {
+      const { agent, wc, run } = await setup(ACCEPT, { q: "?empty" });
+      let r = await agent._test.handleTerms(wc, run);
+      assert(r.accepted === 0 && (await fx()).clicks === 0, "waits for the email box");
+      r = await agent._test.handleTerms(wc, run);
+      r = await agent._test.handleTerms(wc, run);
+      assert(!r.stop, "waiting is not a try: " + JSON.stringify(r));
+      r = await agent._test.handleTerms(wc, run, true);
+      assert(r.accepted === 1 && (await fx()).clicks === 1, "loose: pressed " + JSON.stringify(r));
+    }
+    // 5. no standing consent, in a batch: nothing pressed, the job parks on the question
     {
       const { agent, wc, run } = await setup({ ok: true, decision: "ask" });
       const r = await agent._test.handleTerms(wc, run);
-      const v = await page.evaluate("window.fxValues()");
-      assert(r.park && v.opened === 0 && v.accepted === false, "nothing pressed without consent: " + JSON.stringify([r, v]));
+      const v = await fx();
+      assert(r.park && v.clicks === 0 && v.accepted === false && v.country === "", "nothing touched without consent: " + JSON.stringify([r, v]));
     }
   } finally {
     await browser.close();

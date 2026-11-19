@@ -1103,6 +1103,27 @@ function createAgent(deps) {
   // "Stop"). Every acceptance is recorded on the application and named in the Ready to send
   // summary. Then the accept button is clicked (or the box ticked) for real. Stop ends the run
   // and nothing is accepted. Returns { stop: {reason, message} } to stop, else { accepted: n }.
+  // The profile's country into the page's empty required country-of-residence lists.
+  let residenceMemo = { at: 0, country: "" };
+  async function profileCountry(recordId) {
+    if (Date.now() - residenceMemo.at < 60000) return residenceMemo.country;
+    const pay = await Promise.resolve(deps.getApp("/api/profile/autofill" + (recordId != null ? "?record_id=" + encodeURIComponent(recordId) : ""))).catch(() => null);
+    residenceMemo = { at: Date.now(), country: String((pay && pay.fields && pay.fields.country) || "") };
+    return residenceMemo.country;
+  }
+  async function setResidence(wc, recordId) {
+    let lists = [];
+    try { lists = (await wc.executeJavaScript("window.TailorAgent.residenceLists ? window.TailorAgent.residenceLists() : []", true)) || []; } catch (e) { lists = []; }
+    if (!lists.length) return 0;
+    const c = await profileCountry(recordId);
+    if (!c) return 0;
+    let n = 0;
+    for (const i of lists) {
+      try { if (await wc.executeJavaScript(`window.TailorAgent.setCountry(${Number(i)}, ${JSON.stringify(c)})`, true)) n++; } catch (e) { /* left for the brain */ }
+    }
+    if (n) dlog("residence", "set " + n + " country of residence list(s) from the profile");
+    return n;
+  }
   async function handleTerms(wc, run, loose) {
     let items = [];
     try { items = (await wc.executeJavaScript(`window.TailorAgent.termsItems(${loose ? "true" : "false"})`, true)) || []; } catch (e) { items = []; }
@@ -1161,19 +1182,57 @@ function createAgent(deps) {
       };
       let target = it.index;
       if (it.kind === "opener") {
-        // (2026-11-19, SAP SuccessFactors at Gainwell) A required notice behind a button: open it
-        // (once per site and notice in a run), then press the dialog's own Accept. Nothing in
-        // the dialog is ever pressed unless it is that notice's single accept button.
-        if (!run.openers) run.openers = new Set();
-        if (run.openers.has(key)) continue;
-        run.openers.add(key);
-        const o = await press(it.index);
+        // (2026-11-19, SAP SuccessFactors at Gainwell) A required notice behind a button. The
+        // site opens it only once the form's other required boxes are in (SuccessFactors checks
+        // the country or region of residence first and only moves the focus there), so: the
+        // country list from the person's profile, the rest left to the fill; then the press,
+        // the dialog awaited (up to about 5 s), at most one more press after filling the box the
+        // site pointed at, and only the dialog's single Accept is ever pressed.
+        if (!run.openers) run.openers = new Map();
+        const presses = run.openers.get(key) || 0;
+        if (presses >= 2) continue;
+        const formOf = async () => {
+          try { return await wc.executeJavaScript(`window.TailorAgent.openerForm(${Number(it.index)})`, true); } catch (e) { return null; }
+        };
+        const fillCountry = async (f) => {
+          if (!f || f.country == null) return false;
+          if (run.residence === undefined) run.residence = await profileCountry(run.recordId);
+          if (!run.residence) return false;
+          let ok = false;
+          try { ok = await wc.executeJavaScript(`window.TailorAgent.setCountry(${Number(f.country)}, ${JSON.stringify(run.residence)})`, true); } catch (e) { ok = false; }
+          dlog("terms", ok ? "set the country or region of residence first" : "could not set the country or region of residence");
+          return !!ok;
+        };
+        let f = await formOf();
+        if (f && f.country != null) { await fillCountry(f); f = await formOf(); }
+        if (f && f.pending && f.pending.length && !loose) {
+          dlog("terms", "the notice waits for the form's other required boxes (" + f.pending.length + ")");
+          run.termsTries.set(key, Math.max(0, (run.termsTries.get(key) || 1) - 1));   // waiting is not a try
+          continue;                                       // pressed once they are in
+        }
+        const dialogAfter = async () => {
+          for (let t = 0; t < 10; t++) {
+            await delay(500);
+            try { await ensureScripts(wc); } catch (e) { /* injected on the next try */ }
+            let d = null;
+            try { d = await wc.executeJavaScript("window.TailorAgent.noticeDialog()", true); } catch (e) { d = null; }
+            if (d && d.index != null) return d;
+          }
+          return null;
+        };
+        run.openers.set(key, presses + 1);
+        let o = await press(it.index);
         if (!(o && o.ok)) continue;
-        await settle(wc, before);
-        try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
-        let now = [];
-        try { now = (await wc.executeJavaScript("window.TailorAgent.termsItems(true)", true)) || []; } catch (e) { now = []; }
-        const dlg = now.find((x) => x && x.kind === "modal");
+        let dlg = await dialogAfter();
+        if (!dlg && presses + 1 < 2) {
+          // the site moved the focus to a box it wants first: fill it when it is the country
+          const g = await formOf();
+          if (g && g.focused && g.country != null && await fillCountry(g)) {
+            run.openers.set(key, presses + 2);
+            o = await press(it.index);
+            if (o && o.ok) dlg = await dialogAfter();
+          }
+        }
         if (!dlg) { dlog("terms", "the notice's button opened no dialog with one accept button"); continue; }
         target = dlg.index;
       }
@@ -1181,6 +1240,17 @@ function createAgent(deps) {
       if (!(res && res.ok)) continue;                    // tried again on the next pass
       await settle(wc, before);
       try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
+      if (it.kind === "opener") {
+        // the form's own record of the acceptance (SuccessFactors' fbclc_dpcsId), when it has one
+        let held = null;
+        for (let t = 0; t < 6 && held !== true; t++) {
+          try { held = await wc.executeJavaScript(`window.TailorAgent.noticeAccepted(${Number(it.index)})`, true); } catch (e) { held = null; }
+          if (held === null) break;
+          if (held !== true) await delay(300);
+        }
+        if (held === false) { dlog("terms", "Accept was pressed but the form does not hold the acceptance"); continue; }
+        run.openers.set(key, 2);                          // accepted: never opened again this run
+      }
       await deps.postApp("/api/autoapply/agent/terms/accepted", {
         record_id: run.recordId, title, url, kind: it.kind, via, company: run.company }).catch(() => null);
       if (!run.accepted.includes(title)) run.accepted.push(title);
@@ -2036,6 +2106,10 @@ function createAgent(deps) {
           if (t.park) return park("terms", t.park.question, { url, ask: batch ? undefined : t.park.ask });
         }
         if (sig.blocker === "auth") {
+          // (2026-11-19, SuccessFactors) The engine stands back on a sign-in or create-account
+          // form, but its required "Country/Region of Residence" list is the person's profile
+          // country, never a credential: set here, so the notice behind it can open too.
+          await setResidence(wc, recordId);
           const h = hostOf(url);
           if (!portals.has(h)) {
             portals.add(h);

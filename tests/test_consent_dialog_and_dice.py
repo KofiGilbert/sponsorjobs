@@ -106,3 +106,10 @@ def test_auto_skips_the_job_and_any_other_with_the_same_ad_from_what_a_run_recor
     plan = _post(mod, "/api/autoapply/auto/plan", {"peek": True})
     assert {j["recordId"] for j in plan["jobs"]} == {first, same_ad, other}
     assert mod._ad_key(AD) == "adzuna.com/land/ad/5551234"
+
+
+def test_country_or_region_of_residence_is_the_country_field():
+    from autoapply.planner import contact_key
+    assert contact_key("Country/Region of Residence:*") == "country"
+    assert contact_key("Country or region") == "country" and contact_key("Country of residence") == "country"
+    assert contact_key("Country of citizenship") == ""                  # never the residence

@@ -1857,10 +1857,26 @@ it as a policy link, so the brain reported needs-consent.
   and accept it (OPENER_RE: read and accept, review and accept, accept the privacy statement),
   never a marketing one, never one inside a dialog, and only when no dialog is already open.
 - `handleTerms` treats it like a required box under the person's consent to required notices
-  (`accept_required_terms`, or their answer): it opens it ONCE per site and notice in a run, then
-  presses the dialog's single Accept (the dialog must be a notice with exactly one accept button),
-  and records it through `/api/autoapply/agent/terms/accepted` (kind "opener"), so Ready to send
-  names it. Without consent nothing is pressed (in a batch the job parks on the question).
+  (`accept_required_terms`, or their answer). Measured on the real page: SuccessFactors'
+  `validateAndOpenDpcsDialog` first checks the required "Country/Region of Residence" list and,
+  while it is empty, only moves the focus there and opens nothing (the first version of this
+  pressed too early and saw no dialog). So, in order:
+  1. the opener's form is read (`openerForm`): an empty required country list is set from the
+     profile's country (`setCountry`, the list's own option by name or code, native setter with
+     input and change); with any OTHER required box still empty the notice waits for the fill
+     (not counted as a try), except after the brain reported needs-consent;
+  2. the opener is pressed and the dialog awaited for about 5 s (`noticeDialog`: role=dialog or
+     aria-modal, SAP UI's `<id>:container` box, or a large fixed or absolute box with Accept and
+     Decline, about a notice, with exactly one accept button);
+  3. no dialog, and the site moved the focus to an empty required country list: it is filled and
+     the opener pressed once more (at most two presses per notice in a run);
+  4. the dialog's single Accept is pressed, and the form's own record of it is checked
+     (`noticeAccepted`: a hidden box such as `fbclc_dpcsId` that holds the acceptance); only then
+     is it recorded through `/api/autoapply/agent/terms/accepted` (kind "opener") and never opened
+     again. Without consent nothing is pressed and nothing is filled (in a batch the job parks on
+     the question). Marketing boxes are never touched.
+- The planner reads "Country/Region of Residence" as the country field (`contact_key`), so the fill
+  sets that list wherever the engine runs.
 - Such an opener is no longer refused as a policy link (`policyLink`); a plain link to read a
   policy still is.
 - Tests: tests/js/test_consent_dialog.js on tests/fixtures/forms/sapsf_privacy.html.
