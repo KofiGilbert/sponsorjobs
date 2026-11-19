@@ -215,8 +215,12 @@ _CANON: list[tuple[str, re.Pattern]] = [
     # The COUNTRY of citizenship ("Country of citizenship", and Lam's export-control wording
     # "please provide your most recent country/region of citizenship or legal permanent
     # residence..."). A citizenship STATUS or a yes/no citizenship question keeps its own key.
+    # (2026-11-19) and an export-control wording that asks for the citizenship itself ("Under the
+    # Export Administration Regulations (EAR), please state your citizenship").
     ("citizenship", re.compile(r"country (or region |region )?of (citizenship|nationality)"
-                               r"|^(what is )?(your )?nationality" + _TAIL + r"|what country are you a citizen of")),
+                               r"|^(what is )?(your )?nationality" + _TAIL + r"|what country are you a citizen of"
+                               r"|\b(export|itar|ear|deemed)\b.*\b(state|provide|list|enter|give) your (current )?(citizenship|nationality)\b(?! status)"
+                               r"|^what is your (current )?(citizenship|nationality) for export (control|licens\w*|purposes?)\b")),
     ("preferred_name", re.compile(r"^(preferred|chosen) (first )?name$|what (name|should we call)")),
     ("linkedin", re.compile(r"^linkedin( profile)?( url| link)?$")),
     ("portfolio", re.compile(r"^(portfolio|personal website|website)( url| link)?$")),

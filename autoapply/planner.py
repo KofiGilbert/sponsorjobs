@@ -146,6 +146,71 @@ def residence_withheld(label: str, work_auth: dict | None) -> bool:
     return False
 
 
+# (2026-11-19, Lam Research on Phenom) An export-control screen: "For the sole purpose of
+# determining export licensing requirements, please provide your most recent country/region of
+# citizenship or legal permanent residence. If your country/region is not listed please select
+# Other." Its list holds only the controlled countries and Other. It is answered from the
+# person's saved countries (and their permanent residence, when the question asks for it), never
+# left as "no saved answer" because their country is not on the list.
+_EXPORT = re.compile(r"export (licens|control|administration|regulation|compliance|purpose)|deemed export"
+                     r"|\bitar\b|international traffic in arms|\bexport\b.{0,60}\b(citizen|nationalit)", re.I)
+_EAR = re.compile(r"\bEAR\b")
+_NOT_LISTED = re.compile(r"^\W*(other|others|other country|other countries|none of (the )?above|none|not listed"
+                         r"|(my )?country( or region|/region)? (is )?not listed( above| here)?|all other countries"
+                         r"|rest of (the )?world|not applicable)\W*$", re.I)
+
+
+def export_question(label: str) -> bool:
+    """A country-of-citizenship question asked for export control (EAR, ITAR, deemed exports)."""
+    lbl = " ".join(str(label or "").split())
+    return normalize(lbl) == "@citizenship" and bool(_EXPORT.search(lbl) or _EAR.search(lbl))
+
+
+def permanent_countries(work_auth: dict | None) -> list[str]:
+    """The countries where the person holds a permanent residence (a green card, settled status,
+    permanent residency), by name; never "European Union", which is not one country."""
+    out = []
+    for cc, e in ((work_auth or {}).get("countries") or {}).items():
+        if isinstance(e, dict) and e.get("status") in workauth.PERMANENT and cc in workauth.COUNTRY_NAMES and cc != "EU":
+            name = countries.canonical(workauth.COUNTRY_NAMES[cc]) or workauth.COUNTRY_NAMES[cc]
+            if name not in out:
+                out.append(name)
+    return out
+
+
+def export_answer(label: str, options, library, work_auth: dict | None, *, partial: bool = False) -> str | None:
+    """The answer to an export-control citizenship question, from the saved countries of
+    citizenship and, when it asks for a permanent residence too and the person holds one, that
+    residence (the more recent of the two: a permanent residence is gained after a citizenship).
+
+    On a list: the country itself when the list names it, else the list's own "Other" / "Not
+    listed" (only on a list read in full). In a text box: the countries, and the residence as
+    "<country> (permanent resident)". None when nothing is saved."""
+    if not export_question(label):
+        return None
+    first = _country_answer(library, "Country of citizenship")
+    second = _country_answer(library, "Second country of citizenship")
+    cits = [c for c in (first, second) if c]
+    if second and first and second.lower() == first.lower():
+        cits = [first]
+    prs = permanent_countries(work_auth) if _RESIDENCE.search(str(label or "")) else []
+    if not cits and not prs:
+        return None
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if opts:
+        for c in (prs or cits):
+            v = country_option(c, opts)
+            if v:
+                return v
+        if partial:
+            return None
+        other = [o for o in opts if _NOT_LISTED.match(o)]
+        return other[0] if other else None
+    if prs:
+        return "; ".join([f"{p} (permanent resident)" for p in prs] + (["citizen of " + ", ".join(cits)] if cits else []))
+    return citizenship_text(label, library, cits[0]) if _EACH.search(str(label or "")) else ", ".join(cits[:1])
+
+
 _CITIZEN_OF = re.compile(r"\bcitizen|nationality|\bnational of\b|\bnationals?\b", re.I)
 # Beyond citizenship: residence, birth, travel. A "No" to one of those is not the person's to give.
 _BEYOND = re.compile(r"resid|green card|born|birth|travel|visit|located|live[ds]? in|ordinarily|employ", re.I)
@@ -1088,6 +1153,15 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             continue
         if hit and qkey0 in ctx.hold and f.required:
             out.left.append(f)                             # two saved values disagree: asked once
+            continue
+        if hit and export_question(label):
+            v = export_answer(label, f.options, ctx.library, ctx.work_auth)
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
+                if hit.get("key"):
+                    out.used_library.append(hit["key"])
+            else:
+                out.left.append(f)
             continue
         if hit and residence_withheld(label, ctx.work_auth):
             out.left.append(f)                             # residence too: theirs to say

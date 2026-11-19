@@ -6,6 +6,8 @@
   stays on the run; a third-party survey is a person step, not left-site;
 * Workday's Languages rows (record 23, 48 steps): filled from the profile's languages with the
   closest proficiency, an empty row removed with its own Delete, a language never invented;
+* the export-control question (record 1, Lam on Phenom): answered from the saved citizenship (and
+  a permanent residence when it asks), the list's own "Other" when the country is not on it;
 * the shell under node (tests/js/test_queue_run_2026_11_19.js).
 
 Everyone and every site here is made up.
@@ -208,3 +210,82 @@ def test_an_empty_language_row_is_removed_never_filled_with_an_invented_language
         {"do": "eval", "as": "v", "js": "window.fxValues()"},
     ], query="?nodelete")
     assert r["rep"]["kept"] == 1 and r["v"]["rows"] == 1 and r["v"]["values"][0]["language"] is None
+
+
+# --------------------------------------------------------------------------- export control
+LAM = ("For the sole purpose of determining export licensing requirements, please provide your most recent "
+       "country/region of citizenship or legal permanent residence. If your country/region is not listed please select Other.")
+CONTROLLED = ["Armenia", "Azerbaijan", "Belarus", "Cambodia", "China", "Cuba", "Georgia", "Hong Kong",
+              "Iran, Islamic Republic of", "Iraq", "Kazakhstan", "Kyrgyzstan", "Macao", "Other"]
+H1B = {"countries": {"US": {"status": "h1b"}}}
+GC = {"countries": {"US": {"status": "green_card"}}}
+
+
+@pytest.fixture()
+def lib(tmp_path):
+    from autoapply import basics
+    from autoapply.answers import AnswerLibrary
+    with AnswerLibrary(tmp_path / "a.db") as L:
+        basics.write(L, {"citizenship": "Ghana"})
+        yield L
+
+
+@pytest.mark.parametrize("q", [
+    LAM, LAM[:200], LAM[:80] + " country/region of citizenship",
+    "For export control purposes, what is your country of citizenship?",
+    "Deemed export: country of citizenship",
+    "ITAR: Country of citizenship",
+    "EAR: please provide your country of citizenship",
+    "Under the Export Administration Regulations (EAR), please state your citizenship",
+    "What is your citizenship for export control purposes?",
+])
+def test_export_control_wordings_are_the_citizenship_question_and_legal(q):
+    from autoapply import planner, qclass
+    from autoapply.answers import normalize
+    assert normalize(q) == "@citizenship" and planner.export_question(q), q
+    assert qclass.question_class(q) == qclass.LEGAL
+
+
+def test_not_export_questions():
+    from autoapply import planner
+    for q in ("Country of citizenship", "Citizenship Status (for export control purposes)",
+              "Are you a citizen of Cuba, Iran, North Korea, Syria?", "Second country of citizenship"):
+        assert not planner.export_question(q), q
+
+
+def test_the_lam_list_takes_other_when_the_country_is_not_on_it(lib):
+    from autoapply import asks as AK
+    assert AK.known_answer(LAM, CONTROLLED, library=lib, work_auth=H1B) == ("Other", "library")
+    # on the list: the country itself
+    assert AK.known_answer(LAM, CONTROLLED[:-1] + ["Ghana", "Other"], library=lib, work_auth=H1B) == ("Ghana", "library")
+    # a list read only in part: "Other" is never assumed
+    assert AK.known_answer(LAM, CONTROLLED[:-1], library=lib, work_auth=H1B, partial=True) is None
+    # a list with no Other and without the country: left
+    assert AK.known_answer(LAM, CONTROLLED[:-1], library=lib, work_auth=H1B) is None
+    # a text box: the saved country
+    assert AK.known_answer(LAM, [], library=lib, work_auth=H1B) == ("Ghana", "library")
+
+
+def test_a_permanent_residence_is_the_more_recent_answer(lib):
+    from autoapply import asks as AK
+    full = ["Ghana", "United States of America", "Other"]
+    assert AK.known_answer(LAM, full, library=lib, work_auth=GC) == ("United States of America", "library")
+    assert AK.known_answer(LAM, CONTROLLED, library=lib, work_auth=GC) == ("Other", "library")
+    assert AK.known_answer(LAM, [], library=lib, work_auth=GC) == ("United States (permanent resident); citizen of Ghana", "library")
+    # a question about citizenship alone never takes the residence
+    q = "For export control purposes, what is your country of citizenship?"
+    assert AK.known_answer(q, full, library=lib, work_auth=GC) == ("Ghana", "library")
+
+
+def test_nothing_saved_leaves_it(tmp_path):
+    from autoapply import asks as AK
+    from autoapply.answers import AnswerLibrary
+    with AnswerLibrary(tmp_path / "b.db") as L:
+        assert AK.known_answer(LAM, CONTROLLED, library=L, work_auth=H1B) is None
+
+
+def test_the_planner_fills_the_lam_list(lib):
+    from autoapply import KnownContext, plan_known
+    from autoapply.fields import FormField
+    res = plan_known([FormField("s", LAM, "select", CONTROLLED, required=True)], KnownContext(library=lib, work_auth=H1B))
+    assert [(a.ref, a.value, a.origin) for a in res.actions] == [("s", "Other", "library")] and not res.left

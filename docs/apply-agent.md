@@ -1761,3 +1761,25 @@ A row nothing fills is removed with its own Delete. A language is never invented
 and no Delete (a section that requires a row), the row stays for the person, and a language or
 its level is never a best guess (`guess.is_language_question`). Only a Language control with
 proficiency lists or the fluent box beside it counts, never a site's own language picker.
+
+### The export-control question
+
+Lam's form (Phenom) asks "For the sole purpose of determining export licensing requirements,
+please provide your most recent country/region of citizenship or legal permanent residence. If
+your country/region is not listed please select Other." Its list holds only the controlled
+countries and Other. The saved country of citizenship was not on it, so nothing matched, the
+brain's own "Other" was refused (a legal question), and the job was set aside for a question the
+saved answers settle.
+
+`planner.export_question` (a country-of-citizenship question with export words: export
+licensing or control, deemed export, ITAR, EAR, the Export Administration Regulations) and
+`planner.export_answer` answer it from the saved countries of citizenship and, when it asks about
+a permanent residence and the person holds one (a green card, settled status), that residence: it
+is the more recent of the two. On a list: the country when the list names it, else the list's own
+"Other" or "Not listed" (only on a list read in full); in a text box the countries, and a
+residence as "<country> (permanent resident)". It stays legal class, answered from the saved
+answer (origin "library"), through the planner and the ask's known-only check. A permanent
+resident's answer was left to the person before; it is now answered this way. More wordings
+reach the citizenship key ("Under the Export Administration Regulations (EAR), please state your
+citizenship", "What is your citizenship for export control purposes?"); a citizenship STATUS or a
+yes/no question keeps its own.

@@ -271,6 +271,11 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         if got:
             return got[0], got[1]
         return None
+    if hit and key == "@citizenship":
+        from autoapply.planner import export_answer, export_question
+        if export_question(q):
+            v = export_answer(q, opts, library, work_auth, partial=partial)
+            return (v, "library") if v else None
     if hit and residence_withheld(q, work_auth):
         return None
     if hit:
