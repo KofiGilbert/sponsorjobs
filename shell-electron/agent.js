@@ -3216,7 +3216,11 @@ function createAgent(deps) {
     // The engine keeps it on the record and sends the Ready to send notice on Telegram, once per
     // run (docs/notify.md): counts and the flagged lines only, never a self-identification value.
     // A quiet (Auto) run sends no notice: the daily summary counts it instead.
-    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep), agent_answers: chosen, guessed, guessed_legal: guessedLegal },
+    // ``answers``: the same list for the application's own panel (Auto-apply, Waiting on you), so
+    // a quiet run's answers can be checked before Send; self-identification values stay in the
+    // shell (engineAnswers).
+    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep), agent_answers: chosen, guessed, guessed_legal: guessedLegal,
+                                                               answers: engineAnswers(answers) },
                  opts.quiet ? {} : { notice: readyNotice(answers, wrote && wrote.startedAt) })).catch(() => null);
     const notes = (noted || []).slice(0, 3);
     // The bar stays ONE short line (2026-11-16, the owner: the Gusto line ran on for five
@@ -3350,9 +3354,12 @@ function createAgent(deps) {
   // The bar's Next during the guided ask: on to the next field, this one stays flagged.
   function guideNext() { if (current && current.guide) { current.guide.next = true; return { ok: true }; } return { ok: false }; }
   const isReady = (recordId) => ready.has(recordId);
+  // The full Review answers list of a job waiting at Ready to send, self-identification values
+  // included: only for the app's own window (agent:ready), never posted to the engine.
+  const readyList = (recordId) => { const r = ready.get(recordId) || ready.get(Number(recordId)) || ready.get(String(recordId)); return (r && r.answers) || null; };
   const busy = () => !!(current || batchOn);
 
-  return { run, batch, send, sendAll, stop, guideNext, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
+  return { run, batch, send, sendAll, stop, guideNext, isReady, readyList, busy, pollParked, continueParked, startPolling, MAX_STEPS,
            quiet: () => !!(batchOn && batchOn.quiet),
            _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard, readyWatch: () => readyWatch } };
 }
@@ -4076,6 +4083,14 @@ function readyAnswers(ans, ctx) {
   const flagged = rows.filter((r) => r.flag && r.flag !== "left_empty").length + files.filter((f) => f.flag).length;
   return { rows, files, flagged };
 }
+// The Review answers list as the engine keeps it on the application (agent_ready.answers, the
+// Auto-apply panel's Answers): every row and file, with a self-identification row's value left
+// out (``held``). Those values stay in the shell, like on the bar.
+function engineAnswers(list) {
+  const L = list || {};
+  const rows = (L.rows || []).map((r) => (r.self_id ? Object.assign({}, r, { value: "", held: true }) : Object.assign({}, r)));
+  return { rows, files: (L.files || []).map((f) => Object.assign({}, f)), flagged: Number(L.flagged) || 0 };
+}
 // (Section 29) The answers the agent chose itself, for the application's own record (kept on this
 // machine with the application, ui/app.py agent/ready): the question, what was put, where it came
 // from and the fact cited. Never a self-identification row (the protocol never answers one).
@@ -4256,6 +4271,6 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
-                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
+                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, engineAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
                    isSigninView, isCreateView, authForm, pageErrors, createFailure, resetAllowed, createBlockedReason, insideView,
                    DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF };

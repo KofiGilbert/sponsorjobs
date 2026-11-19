@@ -1963,5 +1963,9 @@
   "mbox.notify.notice": "Send a short notice",
   "mbox.notify.off": "Do not send",
   "mbox.notify.saved": "Saved",
-  "mbox.notify.fail": "Couldn't save that. Check your connection and try again."
+  "mbox.notify.fail": "Couldn't save that. Check your connection and try again.",
+  "aa.ans.panelTitle": "Answers",
+  "aa.ans.showAll": "Show all {n}",
+  "aa.ans.showFewer": "Show fewer",
+  "aa.ans.held": "Hidden for privacy"
 }

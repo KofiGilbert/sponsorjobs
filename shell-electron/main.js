@@ -1483,7 +1483,7 @@ ipcMain.handle("agent:continue", async (_e, recordId) => agent.continueParked(re
 ipcMain.handle("agent:busy", async () => ({ busy: agent.busy(), quiet: agent.quiet() }));
 // Parked jobs carry on by themselves once answered, also after a restart (the engine keeps them).
 agent.startPolling();
-ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId) }));
+ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId), answers: agent.readyList(recordId) }));
 
 // AI-fill whatever page is CURRENTLY open in the pane (after the person navigated / signed in).
 ipcMain.handle("autoapply:fill-current", async (_e, recordId) => runAutoApplyOnPane(recordId));

@@ -1963,5 +1963,9 @@
   "mbox.notify.notice": "Enviar un aviso breve",
   "mbox.notify.off": "No enviar",
   "mbox.notify.saved": "Guardado",
-  "mbox.notify.fail": "No se pudo guardar. Revisa tu conexión e inténtalo de nuevo."
+  "mbox.notify.fail": "No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.",
+  "aa.ans.panelTitle": "Respuestas",
+  "aa.ans.showAll": "Mostrar las {n}",
+  "aa.ans.showFewer": "Mostrar menos",
+  "aa.ans.held": "Oculto por privacidad"
 }
