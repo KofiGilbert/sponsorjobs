@@ -164,6 +164,12 @@ function offSiteVerdict(o) {
   }
   return "left";
 }
+// (2026-11-19) A job that lands on a board whose terms forbid automated applications (Dice,
+// Indeed, LinkedIn ...): said plainly, the job set aside, never "the site sent me somewhere else".
+const BOARD_NAMES = { "linkedin.com": "LinkedIn", "indeed.com": "Indeed", "glassdoor.com": "Glassdoor",
+  "ziprecruiter.com": "ZipRecruiter", "monster.com": "Monster", "dice.com": "Dice" };
+const boardName = (host) => { for (const [d, n] of Object.entries(BOARD_NAMES)) if (host === d || String(host).endsWith("." + d)) return n; return host; };
+const BOARD_LINE = (name) => "This job is on " + name + ", which does not allow automated applications. Open it and apply yourself.";
 const SURVEY_LINE = (host) => "This employer needs a short survey on another site (" + host + "). Do it yourself, then press Continue and I will finish.";
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1097,6 +1103,27 @@ function createAgent(deps) {
   // "Stop"). Every acceptance is recorded on the application and named in the Ready to send
   // summary. Then the accept button is clicked (or the box ticked) for real. Stop ends the run
   // and nothing is accepted. Returns { stop: {reason, message} } to stop, else { accepted: n }.
+  // The profile's country into the page's empty required country-of-residence lists.
+  let residenceMemo = { at: 0, country: "" };
+  async function profileCountry(recordId) {
+    if (Date.now() - residenceMemo.at < 60000) return residenceMemo.country;
+    const pay = await Promise.resolve(deps.getApp("/api/profile/autofill" + (recordId != null ? "?record_id=" + encodeURIComponent(recordId) : ""))).catch(() => null);
+    residenceMemo = { at: Date.now(), country: String((pay && pay.fields && pay.fields.country) || "") };
+    return residenceMemo.country;
+  }
+  async function setResidence(wc, recordId) {
+    let lists = [];
+    try { lists = (await wc.executeJavaScript("window.TailorAgent.residenceLists ? window.TailorAgent.residenceLists() : []", true)) || []; } catch (e) { lists = []; }
+    if (!lists.length) return 0;
+    const c = await profileCountry(recordId);
+    if (!c) return 0;
+    let n = 0;
+    for (const i of lists) {
+      try { if (await wc.executeJavaScript(`window.TailorAgent.setCountry(${Number(i)}, ${JSON.stringify(c)})`, true)) n++; } catch (e) { /* left for the brain */ }
+    }
+    if (n) dlog("residence", "set " + n + " country of residence list(s) from the profile");
+    return n;
+  }
   async function handleTerms(wc, run, loose) {
     let items = [];
     try { items = (await wc.executeJavaScript(`window.TailorAgent.termsItems(${loose ? "true" : "false"})`, true)) || []; } catch (e) { items = []; }
@@ -1147,12 +1174,83 @@ function createAgent(deps) {
       }
       // The person said yes: click the accept button / tick the box like a person would.
       const before = url;
-      let res = await realClick(wc, it.index);
-      if (!res) res = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: it.index })})`, true),
-                                  ACTION_MS, "accept").catch(() => null);
+      const press = async (index) => {
+        let r = await realClick(wc, index);
+        if (!r) r = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index })})`, true),
+                                ACTION_MS, "accept").catch(() => null);
+        return r;
+      };
+      let target = it.index;
+      if (it.kind === "opener") {
+        // (2026-11-19, SAP SuccessFactors at Gainwell) A required notice behind a button. The
+        // site opens it only once the form's other required boxes are in (SuccessFactors checks
+        // the country or region of residence first and only moves the focus there), so: the
+        // country list from the person's profile, the rest left to the fill; then the press,
+        // the dialog awaited (up to about 5 s), at most one more press after filling the box the
+        // site pointed at, and only the dialog's single Accept is ever pressed.
+        if (!run.openers) run.openers = new Map();
+        const presses = run.openers.get(key) || 0;
+        if (presses >= 2) continue;
+        const formOf = async () => {
+          try { return await wc.executeJavaScript(`window.TailorAgent.openerForm(${Number(it.index)})`, true); } catch (e) { return null; }
+        };
+        const fillCountry = async (f) => {
+          if (!f || f.country == null) return false;
+          if (run.residence === undefined) run.residence = await profileCountry(run.recordId);
+          if (!run.residence) return false;
+          let ok = false;
+          try { ok = await wc.executeJavaScript(`window.TailorAgent.setCountry(${Number(f.country)}, ${JSON.stringify(run.residence)})`, true); } catch (e) { ok = false; }
+          dlog("terms", ok ? "set the country or region of residence first" : "could not set the country or region of residence");
+          return !!ok;
+        };
+        let f = await formOf();
+        if (f && f.country != null) { await fillCountry(f); f = await formOf(); }
+        if (f && f.pending && f.pending.length && !loose) {
+          dlog("terms", "the notice waits for the form's other required boxes (" + f.pending.length + ")");
+          run.termsTries.set(key, Math.max(0, (run.termsTries.get(key) || 1) - 1));   // waiting is not a try
+          continue;                                       // pressed once they are in
+        }
+        const dialogAfter = async () => {
+          for (let t = 0; t < 10; t++) {
+            await delay(500);
+            try { await ensureScripts(wc); } catch (e) { /* injected on the next try */ }
+            let d = null;
+            try { d = await wc.executeJavaScript("window.TailorAgent.noticeDialog()", true); } catch (e) { d = null; }
+            if (d && d.index != null) return d;
+          }
+          return null;
+        };
+        run.openers.set(key, presses + 1);
+        let o = await press(it.index);
+        if (!(o && o.ok)) continue;
+        let dlg = await dialogAfter();
+        if (!dlg && presses + 1 < 2) {
+          // the site moved the focus to a box it wants first: fill it when it is the country
+          const g = await formOf();
+          if (g && g.focused && g.country != null && await fillCountry(g)) {
+            run.openers.set(key, presses + 2);
+            o = await press(it.index);
+            if (o && o.ok) dlg = await dialogAfter();
+          }
+        }
+        if (!dlg) { dlog("terms", "the notice's button opened no dialog with one accept button"); continue; }
+        target = dlg.index;
+      }
+      let res = await press(target);
       if (!(res && res.ok)) continue;                    // tried again on the next pass
       await settle(wc, before);
       try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
+      if (it.kind === "opener") {
+        // the form's own record of the acceptance (SuccessFactors' fbclc_dpcsId), when it has one
+        let held = null;
+        for (let t = 0; t < 6 && held !== true; t++) {
+          try { held = await wc.executeJavaScript(`window.TailorAgent.noticeAccepted(${Number(it.index)})`, true); } catch (e) { held = null; }
+          if (held === null) break;
+          if (held !== true) await delay(300);
+        }
+        if (held === false) { dlog("terms", "Accept was pressed but the form does not hold the acceptance"); continue; }
+        run.openers.set(key, 2);                          // accepted: never opened again this run
+      }
       await deps.postApp("/api/autoapply/agent/terms/accepted", {
         record_id: run.recordId, title, url, kind: it.kind, via, company: run.company }).catch(() => null);
       if (!run.accepted.includes(title)) run.accepted.push(title);
@@ -1965,6 +2063,16 @@ function createAgent(deps) {
               await deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, host: h, step, from_host: fromHost, kind: "survey" }).catch(() => null);
               return park("person", SURVEY_LINE(h), { url: lastOn, pageUrl: lastOn, survey: h });
             }
+            if (hostIn(h, PROHIBITED_HOSTS) || hostIn(h, fence.prohibited)) {
+              // a board that forbids automated applications: set aside, not a failure
+              const board = boardName(h);
+              dlog("left-site", "step " + step + " " + fromHost + " -> " + h + " (prohibited board)");
+              await deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, host: h, step, from_host: fromHost, kind: "prohibited", board }).catch(() => null);
+              feed.close();
+              feed.push("stop", "Set aside", "the job is on " + board, { state: "done", detail: BOARD_LINE(board) });
+              progress(recordId, "stopped", lead + BOARD_LINE(board), { reason: "prohibited-board", aside: true, host: h, board, steps: history.length });
+              return finish({ ok: false, reason: "prohibited-board", aside: true, board, steps: history.length });
+            }
             dlog("left-site", "step " + step + " " + fromHost + " -> " + h);
             await deps.postApp("/api/autoapply/agent/left-site", { record_id: recordId, host: h, step, from_host: fromHost, kind: "left" }).catch(() => null);
             return stopped("left-site", "The site sent me somewhere else (" + h + "). Stopped.", { host: h, from_host: fromHost, step });
@@ -1998,6 +2106,10 @@ function createAgent(deps) {
           if (t.park) return park("terms", t.park.question, { url, ask: batch ? undefined : t.park.ask });
         }
         if (sig.blocker === "auth") {
+          // (2026-11-19, SuccessFactors) The engine stands back on a sign-in or create-account
+          // form, but its required "Country/Region of Residence" list is the person's profile
+          // country, never a credential: set here, so the notice behind it can open too.
+          await setResidence(wc, recordId);
           const h = hostOf(url);
           if (!portals.has(h)) {
             portals.add(h);
@@ -3012,18 +3124,21 @@ function createAgent(deps) {
     const endQuiet = () => { if (quiet && deps.setQuiet) deps.setQuiet(false); };
     const n = (pred) => results.filter(pred).length;
     const readyN = n((r) => r.ready), sentN = n((r) => r.submitted), parkedN = n((r) => r.parked), closedN = n((r) => r.closed);
-    const stoppedN = results.length - readyN - sentN - parkedN - closedN;
+    // (2026-11-19) on a board that forbids automated applications: set aside, never a failure
+    const asideN = n((r) => r.aside);
+    const stoppedN = results.length - readyN - sentN - parkedN - closedN - asideN;
     const parts = [];
     if (sentN) parts.push(sentN + " sent");
     if (readyN) parts.push(readyN + " ready to send");
     if (parkedN) parts.push(parkedN + " paused, waiting on you");
     if (closedN) parts.push(closedN + " closed by the employer");
+    if (asideN) parts.push(asideN + " set aside (on a job board that does not allow automated applications)");
     if (stoppedN) parts.push(stoppedN + " stopped");
     const msg = (b.stop ? "Stopped after " : "Done with ") + results.length + " application" + (results.length === 1 ? "" : "s")
       + (parts.length ? ": " + parts.join(", ") + "." : ".")
       + (b.fatal ? " " + b.fatal : "")
       + (parkedN ? " Answer them in Auto-apply, Needs you" + (d && d.sent ? " or on Telegram" : "") + ", and I carry on with each one." : "");
-    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, closed: closedN, stopped: stoppedN, fatal: b.fatal || "" } });
+    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, closed: closedN, aside: asideN, stopped: stoppedN, fatal: b.fatal || "" } });
     batchOn = null;
     endQuiet();
     if (parkedN) startPolling();
@@ -3279,7 +3394,7 @@ function createAgent(deps) {
 
   return { run, batch, send, sendAll, stop, guideNext, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
            quiet: () => !!(batchOn && batchOn.quiet),
-           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard } };
+           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard, handleTerms } };
 }
 
 // ---- the sign-in wall, read deterministically (section 13, the e2e of 2026-11-02) ---------
@@ -4178,7 +4293,7 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
-                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
+                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, BOARD_LINE, boardName, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
