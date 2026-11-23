@@ -40,6 +40,9 @@ def mod(tmp_path, monkeypatch):
     import ui.app as m
     importlib.reload(m)
     monkeypatch.setattr(m, "_active_channel", lambda: None)
+    # the board's open-or-closed sweep would ask the (made-up) posting over the network in a
+    # background thread and write to the same records while the test does
+    monkeypatch.setattr(m, "_liveness_kick", lambda rows: False)
     return m
 
 

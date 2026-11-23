@@ -77,18 +77,31 @@ class CVRecords:
         The package screen keeps a record's cover letter, screening answers, coverage
         detail and applied-status here (no schema migration needed). Returns the merged
         data."""
-        row = self.get(record_id)
-        if row is None:
-            raise KeyError(f"no cv_record {record_id}")
-        data = {}
+        # The read and the write are one write transaction (BEGIN IMMEDIATE): two connections
+        # merging into the same record at once (a page request and a background sweep) each see
+        # the other's change, instead of the later write putting back the data it read before.
+        conn = self._conn
+        own = not conn.in_transaction
+        if own:
+            conn.execute("BEGIN IMMEDIATE")
         try:
-            data = json.loads(row.get("data") or "{}")
-        except (TypeError, ValueError):
-            data = {}
-        data.update(patch)
-        self._conn.execute("UPDATE cv_record SET data=? WHERE id=?",
-                           (json.dumps(data), record_id))
-        self._conn.commit()
+            row = conn.execute("SELECT data FROM cv_record WHERE id=?", (record_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"no cv_record {record_id}")
+            try:
+                data = json.loads(row["data"] or "{}")
+            except (TypeError, ValueError):
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            data.update(patch)
+            conn.execute("UPDATE cv_record SET data=? WHERE id=?", (json.dumps(data), record_id))
+        except BaseException:
+            if own:
+                conn.rollback()
+            raise
+        if own:
+            conn.commit()
         return data
 
     # What the one-page fit cut and the "What changed" list (ui/session.py accept) hold copies of
