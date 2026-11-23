@@ -1964,5 +1964,9 @@
   "mbox.notify.notice": "Enviar um aviso curto",
   "mbox.notify.off": "Não enviar",
   "mbox.notify.saved": "Salvo",
-  "mbox.notify.fail": "Não foi possível salvar. Verifique a sua conexão e tente de novo."
+  "mbox.notify.fail": "Não foi possível salvar. Verifique a sua conexão e tente de novo.",
+  "aa.ans.panelTitle": "Respostas",
+  "aa.ans.showAll": "Mostrar todas as {n}",
+  "aa.ans.showFewer": "Mostrar menos",
+  "aa.ans.held": "Oculto por privacidade"
 }

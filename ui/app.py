@@ -16551,6 +16551,101 @@ def _agent_answers_clean(rows) -> list | None:
     return out
 
 
+# The Review answers list as the Auto-apply panel shows it (agent_ready.answers): where a value
+# came from, and the flags that deserve a look (shell-electron/agent.js readyAnswers; the same
+# origins and flags as the bar's list). Kept on this machine with the application only.
+_READY_FROM = ("profile", "history", "library", "you", "workauth", "eeo", "eeo_decline", "drafted", "derived",
+               "letter", "job", "today", "ai", "closest", "skills", "grounded", "consent", "optin", "tracker",
+               "common_sense", "best_guess", "neutral", "needs_you", "left_empty")
+_READY_FLAGS = ("ai", "closest", "skills", "eeo_decline", "derived", "drafted", "grounded", "neutral", "needs_you",
+                "left_empty", "best_guess", "agent")
+_READY_FILE_FLAGS = ("other_resume", "earlier_file", "kept_file")
+
+
+def _ready_answers_clean(lst) -> dict | None:
+    """The shell's Review answers list as it is kept on the application: at most 200 rows of
+    {page, label, value, from, flag, fact?, evidence?, self_id, held?} and 10 files of {kind, name,
+    record_id, flag}, plus how many lines deserve a look (``flagged``: every flag but an optional
+    box left empty, as on the bar). A self-identification value never reaches the engine (the
+    shell sends the row with ``held`` and no value); one that does is dropped here too. None when
+    the body carried no list."""
+    if not isinstance(lst, dict):
+        return None
+    one = lambda v, n: " ".join(str(v or "").split())[:n]   # noqa: E731
+    rows = []
+    for r in (lst.get("rows") or [])[:200]:
+        if not isinstance(r, dict) or not one(r.get("label"), 200):
+            continue
+        frm = str(r.get("from") or "")
+        flag = str(r.get("flag") or "")
+        self_id = bool(r.get("self_id"))
+        row = {"page": int(r.get("page")) if str(r.get("page") or "").isdigit() else 1,
+               "label": one(r.get("label"), 200),
+               "value": "" if self_id else str(r.get("value") or "").strip()[:1200],
+               "from": frm if frm in _READY_FROM else "",
+               "flag": flag if flag in _READY_FLAGS else "",
+               "self_id": self_id}
+        if self_id:
+            row["held"] = True
+        if r.get("fact"):
+            row["fact"] = one(r.get("fact"), 24)
+        if r.get("evidence"):
+            row["evidence"] = one(r.get("evidence"), 300)
+        rows.append(row)
+    files = []
+    for f in (lst.get("files") or [])[:10]:
+        if not isinstance(f, dict) or not one(f.get("name"), 200):
+            continue
+        rid = f.get("record_id")
+        flag = str(f.get("flag") or "")
+        files.append({"kind": "cover_letter" if f.get("kind") == "cover_letter" else "resume",
+                      "name": one(f.get("name"), 200),
+                      "record_id": int(rid) if str(rid if rid is not None else "").isdigit() else None,
+                      "flag": flag if flag in _READY_FILE_FLAGS else ""})
+    flagged = sum(1 for r in rows if r["flag"] and r["flag"] != "left_empty") + sum(1 for f in files if f["flag"])
+    return {"rows": rows, "files": files, "flagged": flagged}
+
+
+# A self-identification question (shell-electron/agent.js EEO_RE): its value is never shown from
+# the engine's copy of a list.
+_SELF_ID_RE = re.compile(r"gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender"
+                         r"|lgbt|queer|pronoun|first[- ]generation (professional|college|student)", re.I)
+
+
+def _agent_answers_list(rows) -> dict | None:
+    """The fallback for an application that reached Ready to send before the full list was kept
+    (agent_ready.answers): the answers the agent chose itself (data.agent_answers, kept since
+    #311) in the same shape. A best guess is flagged ``best_guess`` and an answer to a legal
+    question ``agent``, each with its evidence; the rest show with their origin. The count is the
+    same rule as the full list."""
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for r in rows[:60]:
+        if not isinstance(r, dict) or not str(r.get("label") or "").strip():
+            continue
+        src = str(r.get("source") or "")
+        legal = str(r.get("class") or "") == "legal"
+        flag = "best_guess" if src == "best_guess" else "agent" if legal else ""
+        out.append({"page": r.get("page") if isinstance(r.get("page"), int) else 1, "label": r.get("label"),
+                    "value": r.get("value") or "", "from": src or "ai", "flag": flag,
+                    "evidence": r.get("evidence") or "", "self_id": bool(_SELF_ID_RE.search(str(r.get("label"))))})
+    out.sort(key=lambda x: x["page"])
+    return _ready_answers_clean({"rows": out, "files": []}) if out else None
+
+
+def _ready_answers(data: dict) -> dict | None:
+    """The Review answers of an application waiting at Ready to send, or None: the full list the
+    shell sent (agent_ready.answers), else the answers the agent chose itself (agent_answers)."""
+    ready = (data or {}).get("agent_ready")
+    if not isinstance(ready, dict):
+        return None
+    lst = ready.get("answers")
+    if isinstance(lst, dict) and (lst.get("rows") or lst.get("files")):
+        return lst
+    return _agent_answers_list((data or {}).get("agent_answers"))
+
+
 @app.post("/api/autoapply/agent/ready")
 @_guard
 def autoapply_agent_ready():
@@ -16594,6 +16689,9 @@ def autoapply_agent_ready():
         view = {"sig": str(b.get("sig") or "")[:80], "at": _now_iso(),
                 "accepted": [str(x)[:80] for x in (b.get("accepted") or [])][:10],
                 "run": {k: run.get(k) for k in ("url", "resume_path", "lane", "autonomous", "company")}}
+        answers = _ready_answers_clean(b.get("answers"))
+        if answers is not None:
+            view["answers"] = answers
         recs.merge_data(rid, {"agent_ready": view})
     except (TypeError, ValueError):
         return jsonify({"ok": False, "reason": "no-record"}), 400
@@ -19280,6 +19378,9 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "paused": ({"state": park.get("state"), "kind": park.get("kind"), "questions": park.get("questions") or [],
                     "message": park.get("message") or ""} if park else None),
         "ready_sig": (ready or {}).get("sig") or "",
+        # The stored Review answers: how many, and how many deserve a look ("N to check")
+        "answers_n": _ready_count(data if ready else None),
+        "answers_check": int((_ready_answers(data) or {}).get("flagged") or 0) if ready else 0,
         "lane": plan["tier"],
         # Auto mode may press Submit by itself for this one (allowlist, and the match threshold)
         "auto_send": _may_send_alone(plan["tier"], match, data),
@@ -19297,6 +19398,11 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "submitted_at": data.get("applied_at") or sub.get("at") or "",
         "when": _aa_when(data, rec),
     }
+
+
+def _ready_count(data: dict | None) -> int:
+    lst = _ready_answers(data) if data else None
+    return len(lst.get("rows") or []) + len(lst.get("files") or []) if lst else 0
 
 
 def _aa_week_start():
@@ -19409,6 +19515,9 @@ def autoapply_item(rid: int):
                       for qa in (data.get("screening") or []) if isinstance(qa, dict)],
         "message": sub.get("message") or "",
         "picked": bool((data.get("source_job") or {}).get("source_id")),
+        # What the agent answered on the form, while it waits at Ready to send (the panel's
+        # Answers; self-identification values are not on the record, the shell has them)
+        "answers": _ready_answers(data) if row.get("action") == "send" else None,
     })
 
 

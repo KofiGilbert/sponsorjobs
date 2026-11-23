@@ -1843,6 +1843,26 @@ tests/test_queue_run_2026_11_19.py (with the headless fixtures workday_languages
 icims_upload.html and workday_date.html), tests/js/test_queue_run_2026_11_19.js and
 tests/js/test_icims_upload.js.
 
+### A Workday date that shows digits but was never committed (2026-11-19, measured at Uline)
+
+On the CC-305 form the Month / Day / Year boxes showed 11/19/2026 (the box, aria-valuetext and the
+display text) while Workday said "Error: Enter today's date"; the agent parked after four tries.
+The plain input and change of `setSpin` set what the boxes show, not Workday's own state of the
+date, and the rule that a date showing digits is the person's then kept it from being tried again.
+
+- `setSpin` now commits a segment the way that page takes it (measured): focus; the native setter
+  with "" and an input event of type deleteContentBackward; the native setter with the value and
+  an input event of type insertText carrying it; change; blur; a bubbling focusout.
+  `commitSpins` does a date's segments in order, 300 ms apart. `fillDate` is async for that pace
+  (its callers await it). The brain's typing on a date segment (`spinType` in agent.js) calls the
+  same `setSpin` first, so it commits the same way.
+- A date that shows digits is still the person's and left alone, unless the page reports a date
+  error beside it (`dateError`: a `[data-automation-id=errorMessage]` or role=alert text in its
+  area, such as "Enter today's date" or "Invalid Date"). Then the digits it shows are committed
+  ONCE, as they are, and the date counts as filled only when the error is gone.
+- Fixture: tests/fixtures/forms/workday_date_commit.html, whose state takes a segment only from an
+  insertText input event and checks the date on focusout. Tests: tests/test_workday_date_commit.py.
+
 ## 33. A notice behind a button; a job on a board that forbids automation (2026-11-19, the re-run)
 
 ### A required privacy notice behind a button

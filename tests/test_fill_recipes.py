@@ -60,7 +60,7 @@ def test_every_entry_is_well_formed():
         assert s["submit_buttons"], f"{sid}: a recipe must know the submit button to OUTLINE it"
         assert s["success_markers"], f"{sid}: a recipe must know how the site says 'received'"
         for m in s["success_markers"]:
-            assert isinstance(m, dict) and len(m) == 1 and set(m) <= {"text", "selector", "url_re"}, (sid, m)
+            assert isinstance(m, dict) and len(m) == 1 and set(m) <= {"text", "selector", "url_re", "dialog_text"}, (sid, m)
         v = s["verified"]
         assert {"date", "method", "urls"} <= set(v) and isinstance(v["urls"], list), sid
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", v["date"]), sid

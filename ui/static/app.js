@@ -9693,6 +9693,9 @@
   // (Kofi, 2026-10-14): it runs on a pass or a pack, on the company key held by the broker. Nobody
   // adds their own Tavus key.
   let R2 = null, LIVE_STREAM = null, R2_CTX = null, CVI_CLOCK = null, CVI_PREV_W = "", CVI_UNBILLED = 0;
+  // The old side-pane call put the interview in the Browser pane; only then does its teardown
+  // close the pane (it runs on every sidebar click, and closed an application's page, 2026-11-19).
+  let CVI_IN_PANE = false;
   async function round2Status() {
     try { return await api("/api/interview/round2/status"); } catch { return null; }
   }
@@ -9958,6 +9961,7 @@
       CVI_CALL.join({ url, token }).catch((e) => cviDropped((e && e.message) || "join"));
     } else if (window.tailorShell) {
       window.tailorShell.openBrowser(s.join_url);          // fallback: the old side-pane call, no timekeeper
+      CVI_IN_PANE = true;
     } else {
       window.open(s.join_url, "_blank");
     }
@@ -10028,7 +10032,8 @@
     clearTimeout(CVI_WAIT);
     CVI_TK = null;
     if (CVI_CALL) { const c = CVI_CALL; CVI_CALL = null; c.leave().catch(() => {}).finally(() => { try { c.destroy(); } catch (e) {} }); }
-    if (window.tailorShell) window.tailorShell.closeBrowser();
+    if (CVI_IN_PANE && window.tailorShell) window.tailorShell.closeBrowser();
+    CVI_IN_PANE = false;
     if (CVI_PREV_W) {                                      // restore the panel width an old-style call widened
       document.documentElement.style.setProperty("--panel-w", CVI_PREV_W);
       CVI_PREV_W = "";
@@ -11649,7 +11654,7 @@
      in here: approve (one or all), skip, open and edit the package, send the batch to Telegram,
      and fill the application, all on the same endpoints Review used. Only real data is shown;
      anything the app does not know is left out, never estimated. */
-  const AA = { board: null, tile: null, next: null, open: null, item: null, back: null, runBusy: false };
+  const AA = { board: null, tile: null, next: null, open: null, item: null, back: null, runBusy: false, ansAll: false };
   const AA_PREF_KEY = "sj_aa_focus";
   const csv = id => ($(id)?.value || "").split(",").map(s => s.trim()).filter(Boolean);
   const aaSponsor = () => $("#aaSponsorOnly")?.getAttribute("aria-pressed") === "true";
@@ -11802,8 +11807,9 @@
     // here ("Ready to send"); the whole line is the status's tooltip.
     if (it.action === "send") {
       const base = aaFirst(it.stage_detail) || T("aa.st.readySend", "Ready to send");
-      // (2026-11-19) Auto's best guesses on it: said on the row, before the person's Send
-      return it.guessed ? ["flag", base + ". " + aaCheckWords(it.guessed)] : ["ready", base];
+      // (2026-11-19) Auto's best guesses on it: said on the row, before the person's Send. With
+      // the answers on the record the row's "N to check" says it instead (aaRow), once.
+      return it.guessed && !it.answers_check ? ["flag", base + ". " + aaCheckWords(it.guessed)] : ["ready", base];
     }
     // The AI itself was unavailable on the last run (out of credits, no key): said plainly, never "needs you".
     if (it.tile === "waiting" && it.agent_note) return ["flag", T("aa.st.ai", "The AI was unavailable, nothing changed. Try again.")];
@@ -11832,6 +11838,10 @@
     return visaBadges(it, { primary: true });
   }
 
+  // A row waiting at Ready to send whose answers hold lines to check: a small "N to check" (the
+  // panel's Answers lists them).
+  const aaCheckMark = (it) => (it.action === "send" && Number(it.answers_check) > 0
+    ? `<span class="aa-tocheck">${esc(T("aa.ans.toCheck", "{n} to check").replace("{n}", fmtN(Number(it.answers_check))))}</span>` : "");
   const aaCheckWords = (n) => (n === 1 ? T("mode.check1", "1 answer needs your check") : T("mode.checkN", "{n} answers need your check").replace("{n}", fmtN(n)));
   // The first sentence of an engine line, without its full stop ("Ready to send").
   const aaFirst = (s) => String(s || "").trim().split(/(?<=\.)\s+/)[0].replace(/\.$/, "");
@@ -11844,7 +11854,7 @@
     return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(it.role)}, ${esc(coName(it))}">
       ${companyAvatar(it)}
       <div class="aa-row-main"><div class="aa-t">${esc(it.role || T("aa.role", "Role"))}</div>
-        <div class="aa-s"><span class="co">${esc(coName(it))}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}</div>${q ? `
+        <div class="aa-s"><span class="co">${esc(coName(it))}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}${aaCheckMark(it)}</div>${q ? `
         <div class="aa-q">${esc(q)}</div>` : ""}${it.confirmation && it.tile === "submitted" ? `
         <div class="aa-q aa-conf-line" title="${esc(it.confirmation.subject || "")}">${esc(T("aa.confirmed", "Confirmation received"))}</div>` : ""}</div>
       <span class="aa-stage ${cls}"${it.stage_detail && it.stage_detail !== text ? ` title="${esc(it.stage_detail)}"` : ""}><span class="pip"></span><span class="aa-stage-x">${esc(text)}</span></span>
@@ -12169,9 +12179,8 @@
     if (window.SJSendAll && window.SJSendAll.needsConfirm(rows)) {
       const choice = await aaSendAllConfirm(rows);
       const d = window.SJSendAll.decide(choice, rows);
-      if (d.review != null) {                      // open the first one at its Review answers
-        await aaOpen(Number(d.review));
-        AA_ANS.open = true; AA_ANS.rid = Number(d.review); aaAnsRender();
+      if (d.review != null) {                      // open the first one's panel at its Answers
+        await aaOpen(Number(d.review), { focus: "answers" });
         return;
       }
       rows = d.send;
@@ -12764,11 +12773,27 @@
     });
     return b;
   }
+  // One answer line, the same under the bar and in the application's panel: the question, what
+  // went in (a small "!" when it deserves a look), where it came from, and the reason under it.
+  const aaAnsRowHTML = (q, v, from, note, cls) => `<li class="ans-row${note ? " is-flag" : ""}${cls ? " " + cls : ""}">`
+    + `<span class="ans-q">${esc(q)}</span><span class="ans-v">${note ? '<span class="ans-mk" aria-hidden="true">!</span>' : ""}${esc(v)}</span>`
+    + `<span class="ans-f">${esc(from)}</span>${note ? `<span class="ans-note">${esc(note)}</span>` : ""}</li>`;
+  // A file's note: another application's tailored resume is flagged unless it is the same role
+  // at the same company (``me``: this application's job).
+  function aaAnsFileNote(f, me) {
+    if (f.flag === "other_resume") {
+      const job = aaAnsWordsFor(f.record_id);
+      const same = me && job && aaAnsJobWords(me).toLowerCase() === job.toLowerCase();
+      return same ? "" : job ? T("aa.ans.flag.otherJob", "Tailored for {job}, not this job.").replace("{job}", job)
+        : T("aa.ans.flag.other", "Tailored for another application, not this job.");
+    }
+    return f.flag ? aaAnsFlag(f.flag) : "";
+  }
+  const aaAnsFileKind = (f) => (f.kind === "cover_letter" ? T("aa.ans.letter", "Cover letter") : T("aa.ans.resume", "Resume"));
+  const aaAnsFileFrom = (f) => { const job = aaAnsWordsFor(f.record_id); return job ? T("aa.ans.tailoredFor", "Tailored for {job}").replace("{job}", job) : ""; };
   function aaAnsHTML(list, rid) {
     const me = aaAnsJob(rid);
-    const row = (q, v, from, note, cls) => `<li class="ans-row${note ? " is-flag" : ""}${cls ? " " + cls : ""}">`
-      + `<span class="ans-q">${esc(q)}</span><span class="ans-v">${note ? '<span class="ans-mk" aria-hidden="true">!</span>' : ""}${esc(v)}</span>`
-      + `<span class="ans-f">${esc(from)}</span>${note ? `<span class="ans-note">${esc(note)}</span>` : ""}</li>`;
+    const row = aaAnsRowHTML;
     let html = "", page = null;
     for (const r of list.rows || []) {
       if (r.page !== page) {
@@ -12782,19 +12807,7 @@
     if (page !== null) html += "</ul>";
     if ((list.files || []).length) {
       html += `<div class="ans-pg">${esc(T("aa.ans.files", "Files"))}</div><ul class="ans-list">`;
-      for (const f of list.files) {
-        const kind = f.kind === "cover_letter" ? T("aa.ans.letter", "Cover letter") : T("aa.ans.resume", "Resume");
-        const job = aaAnsWordsFor(f.record_id);
-        let note = "";
-        if (f.flag === "other_resume") {
-          // Another application's tailored file: flagged unless it is the same role at the same company.
-          const same = me && job && aaAnsJobWords(me).toLowerCase() === job.toLowerCase();
-          note = same ? "" : job ? T("aa.ans.flag.otherJob", "Tailored for {job}, not this job.").replace("{job}", job)
-            : T("aa.ans.flag.other", "Tailored for another application, not this job.");
-        } else if (f.flag) note = aaAnsFlag(f.flag);
-        const from = job ? T("aa.ans.tailoredFor", "Tailored for {job}").replace("{job}", job) : "";
-        html += row(kind, f.name, from, note);
-      }
+      for (const f of list.files) html += row(aaAnsFileKind(f), f.name, aaAnsFileFrom(f), aaAnsFileNote(f, me));
       html += "</ul>";
     }
     const foot = `<div class="act-foot"><span>${esc(T("aa.ans.local", "Only on this computer"))}</span></div>`;
@@ -12806,7 +12819,11 @@
     if (rid == null) return "";
     const j = aaAnsJob(rid);
     if (j) return aaAnsJobWords(j);
-    setTimeout(() => { if (AA_ANS.open && aaAnsJob(rid)) aaAnsRender(); }, 900);
+    setTimeout(() => {
+      if (!aaAnsJob(rid)) return;
+      if (AA_ANS.open) aaAnsRender();
+      aaDrAnsPaint();                                          // the application's panel too
+    }, 900);
     return "";
   }
   function aaAnsRender() {
@@ -12816,6 +12833,65 @@
     if (!AA_ANS.open || !list) { box.hidden = true; return; }
     box.innerHTML = aaAnsHTML(list, AA_ANS.rid);
     box.hidden = false;
+  }
+
+  // ---- Answers in the application's panel (Auto-apply, Waiting on you): the same list as Review
+  // answers under the bar, read from the application's record (GET /api/autoapply/item), so the
+  // answers of a quiet (Auto) run can be checked before Send. The lines to check come first; a
+  // long list shows only those, plus "Show all N" (ui/static/answers_panel.js). Read-only.
+  // Self-identification values are not on the record: they show while the shell still holds the
+  // run (agentReady), as on the bar, else one muted line says they are hidden.
+  function aaDrAnsModel(it, expanded) {
+    const P = window.SJAnswersPanel;
+    if (!P || !it || !it.answers) return null;
+    const me = aaFind(Number(it.id)) || it;
+    return P.model(it.answers, {
+      expanded,
+      from: aaAnsFrom,
+      note: (r) => aaAnsFlag(r.flag, r.fact, r.value, r.evidence),
+      fileNote: (f) => aaAnsFileNote(f, me), fileFrom: aaAnsFileFrom, fileKind: aaAnsFileKind,
+      empty: T("aa.ans.empty", "(empty)"),
+      held: T("aa.ans.held", "Hidden for privacy"),
+      page: (n) => T("aa.ans.page", "Page {n}").replace("{n}", n),
+      filesHead: T("aa.ans.files", "Files"),
+    });
+  }
+  function aaDrAnsInner(m, expanded) {
+    let html = "";
+    for (const g of m.groups) {
+      if (g.head) html += `<div class="ans-pg">${esc(g.head)}</div>`;
+      html += `<ul class="ans-list">${g.items.map(x => aaAnsRowHTML(x.q, x.v, x.from, x.note, x.held ? "is-held" : "")).join("")}</ul>`;
+    }
+    const more = m.collapsed
+      ? `<button class="link-btn aa-ans-more" type="button" data-dr="ans-all" aria-expanded="false">${esc(T("aa.ans.showAll", "Show all {n}").replace("{n}", fmtN(m.total)))}</button>`
+      : expanded && m.total > (window.SJAnswersPanel ? window.SJAnswersPanel.LIMIT : 8)
+        ? `<button class="link-btn aa-ans-more" type="button" data-dr="ans-all" aria-expanded="true">${esc(T("aa.ans.showFewer", "Show fewer"))}</button>` : "";
+    return `<div class="ans-box">${html}</div>${more}`
+      + `<div class="act-foot"><span>${esc(T("aa.ans.local", "Only on this computer"))}</span></div>`;
+  }
+  function aaDrAnsHTML(it) {
+    const m = aaDrAnsModel(it, !!AA.ansAll);
+    if (!m || !m.total) return "";
+    const check = m.check ? `<span class="aa-h-flag">${esc(T("aa.ans.toCheck", "{n} to check").replace("{n}", fmtN(m.check)))}</span>` : "";
+    return `<section class="aa-ans" id="aaDrAns" aria-labelledby="aaDrAnsH" tabindex="-1">
+      <div class="aa-h" id="aaDrAnsH">${esc(T("aa.ans.panelTitle", "Answers"))} <span class="aa-h-n">${esc(fmtN(m.total))}</span>${check}</div>
+      <div class="aa-item aa-ans-body" id="aaDrAnsBody">${aaDrAnsInner(m, !!AA.ansAll)}</div></section>`;
+  }
+  function aaDrAnsPaint() {
+    const body = $("#aaDrAnsBody");
+    if (!body || AA.open == null || !AA.item || AA.item.id !== AA.open) return;
+    const m = aaDrAnsModel(AA.item, !!AA.ansAll);
+    if (m) body.innerHTML = aaDrAnsInner(m, !!AA.ansAll);
+  }
+  // The full list (self-identification values included) while the shell still holds the run.
+  async function aaDrAnsLocal(id) {
+    const sh = window.tailorShell;
+    if (!sh || !sh.agentReady) return null;
+    try {
+      const r = await sh.agentReady(Number(id));
+      const l = r && r.answers;
+      return l && ((l.rows || []).length || (l.files || []).length) ? l : null;
+    } catch { return null; }
   }
 
   function aaAgentBar(info) {
@@ -13343,7 +13419,8 @@
       </div>
       <div class="aa-dr-cols">
         <div><div class="aa-h">${esc(it.tile === "submitted" ? T("aa.wasSent", "What was sent") : T("aa.willSend", "What will be sent"))}</div>
-          <div class="aa-sent">${loading ? `<div class="aa-item aa-loading">${esc(T("aa.loading", "Loading…"))}</div>` : aaSent(it)}</div></div>
+          <div class="aa-sent">${loading ? `<div class="aa-item aa-loading">${esc(T("aa.loading", "Loading…"))}</div>` : aaSent(it)}</div>
+          ${loading ? "" : aaDrAnsHTML(it)}</div>
         <aside class="aa-dr-side"><div class="aa-h">${esc(T("aa.progress", "Progress"))}</div>
           <ol class="aa-tl">${aaTimeline(it)}</ol>
           ${aaConfirmation(it)}
@@ -13359,10 +13436,12 @@
   }
   async function aaOpen(id, opts) {
     const keep = !!(opts && opts.keep);
+    const focus = (opts && opts.focus) || "";
     const row = aaFind(id);
     if (!keep) {
       if (!row) return;
       if (AA.open == null) AA.back = document.activeElement;
+      if (AA.open !== id) AA.ansAll = false;
       AA.open = id; AA.item = null;
       $("#aaDrBody").innerHTML = aaDrawerHtml(row, true);
       aaSheet(true);
@@ -13373,10 +13452,20 @@
     try { it = await api("/api/autoapply/item/" + id); }
     catch (e) { if (keep && !row) { aaClose(); } return; }
     if (AA.open !== id) return;                      // closed or moved on meanwhile
+    if (it && it.answers) {                          // the shell's own list, self-identification values included
+      const local = await aaDrAnsLocal(id);
+      if (local) it.answers = local;
+      if (AA.open !== id) return;
+    }
     AA.item = it;
     const note = $("#aaDrNote") && !$("#aaDrNote").hidden ? $("#aaDrNote").textContent : "";
     $("#aaDrBody").innerHTML = aaDrawerHtml(it, false);
     if (note) { $("#aaDrNote").textContent = note; $("#aaDrNote").hidden = false; }
+    // Send all's "Review them first": the panel opens at its Answers.
+    if (focus === "answers") {
+      const sec = $("#aaDrAns");
+      if (sec) { sec.scrollIntoView({ block: "start", behavior: "smooth" }); sec.focus({ preventScroll: true }); }
+    }
   }
   // Show or hide the drawer and its scrim with their transitions (styles.css .aa-drawer): unhide,
   // then add .is-in on the next frame so the slide plays; on close, drop .is-in and hide once the
@@ -13422,6 +13511,12 @@
     const b = e.target.closest("[data-dr]");
     if (!b || AA.open == null) return;
     const id = AA.open, act = b.dataset.dr;
+    if (act === "ans-all") {                         // Show all N / Show fewer
+      AA.ansAll = !AA.ansAll;
+      aaDrAnsPaint();
+      $("#aaDrAnsBody [data-dr=ans-all]")?.focus();
+      return;
+    }
     if (act === "fill") return aaFill(id, { btn: b });
     if (act === "again") return aaFill(id, { btn: b, here: true });
     if (act === "edit" || act === "open") { aaClose(); openPackage(id); return; }
@@ -14888,8 +14983,16 @@
     slot.style.display = "none";
     document.querySelector("#spBodyBrowser .browser-bar").style.display = "none";
   } else {
+    // The panel follows the shell's pane both ways (pane_sync.js): a pane the shell closed is
+    // never left on screen as a black slot.
+    let shellOpen = false;
     shell.onState((st) => {
-      if (st.open) open("browser");
+      const onBrowser = body.classList.contains("panel-open") && tab === "browser";
+      const act = window.SJPaneSync ? window.SJPaneSync.panelOnState(shellOpen, st, onBrowser)
+                                    : (st.open ? "open" : "");
+      shellOpen = !!st.open;
+      if (act === "open") open("browser");
+      else if (act === "close") close();
       if (document.activeElement !== urlBox) urlBox.value = st.url || "";
       back.disabled = !st.canGoBack;
       fwd.disabled = !st.canGoForward;

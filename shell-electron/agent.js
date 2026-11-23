@@ -36,6 +36,7 @@ const LETTER_MS = Number(process.env.SJ_AGENT_LETTER_MS) > 0 ? Number(process.en
 // margin, for a fill that never comes back at all.
 const { caps: fillCaps, fillOutcome, fillLogLine } = require("./fill_budget");
 const { paneGoneError } = require("./pane_guard");
+const { SENT_PROBE_JS, sentVerdict } = require("./sent_watch");
 const FILL_OVERALL_MS = Math.max(PANE_MS, fillCaps(process.env).overall);
 const FILL_MS = FILL_OVERALL_MS + Math.min(10000, Math.round(FILL_OVERALL_MS / 4));
 // A page with nothing to do on it (a skeleton, "Loading", no fields) for this long is a hang.
@@ -228,11 +229,89 @@ const QUIET_JS = `(() => {
 // A fingerprint of the review page the agent left ready ("Ready to send"): the view's words and
 // values, without the element numbers. A Send whose page is gone fills the form again and
 // submits only when the review page comes out the same.
+// (2026-11-19, Home Depot) Only what the page says: the element numbers, the view's "new since
+// the last view" marks (*) and its own "N more elements below; read_page offset N" tail change
+// from one read to the next of the same page, so they are left out.
+function reviewLines(text) {
+  return String(text || "").split("\n")
+    .map((l) => l.trim().replace(/^\*(?=\[\d+\])/, "").replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim())
+    .filter((l) => l && !/^\(\d+ more elements below/.test(l) && l !== "[End of view]" && l !== "[End of page]");
+}
 function reviewSig(text) {
-  const t = String(text || "").replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim();
+  const t = reviewLines(text).join(" ");
   let h = 5381;
   for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
   return t.length + ":" + h.toString(16);
+}
+// (2026-11-19, Sidley and Home Depot on Workday) The candidate account's name came out "Kofi
+// Kofi Gilbert Gilbert" (First, then Middle Name holding the full name, then Last) and the street
+// twice (Address Line 1 and Line 2). The person's first name, last name, full name and street go
+// in the boxes that ask for exactly those, never a middle, preferred, former or other name, an
+// address's second line or an extension; and "I have a preferred name" is never ticked (the
+// profile keeps no preferred name, so the one the person goes by is their first name).
+// Mirrored in extension/autofill_core.js (NAME_PART_RE, STREET_EXTRA_RE, PREFERRED_BOX_RE).
+const NAME_PART_RE = /middle|preferred|nick ?name|maiden|former|previous|prior|alias|suffix|prefix|other (first |last |given )?names?|birth ?name|pronunciation|phonetic/i;
+const STREET_EXTRA_RE = /line.?[2-9]\b|address.?[2-9]\b|\bapt\b|apartment|\bsuite\b/i;
+const PREFERRED_BOX_RE = /preferred name|nick ?name|different name|other name|go(es)? by|known as/i;
+function boxRefusal(line, a) {
+  const L = String(line || "");
+  const label = ((/label="([^"]*)"/.exec(L) || [])[1] || lineName(L) || "").trim();
+  if (!label || !a) return "";
+  const ph = String(a.placeholder || "");
+  if (a.op === "click" && /^\*?\[\d+\]<checkbox\b/.test(L) && !/checked=true/.test(L) && PREFERRED_BOX_RE.test(label)) {
+    return "the person has no preferred name: leave \u201c" + label + "\u201d unticked";
+  }
+  if (a.op !== "type") return "";
+  const nameKey = /^(first_name|last_name|full_name|name)$/.test(ph);
+  if (nameKey && NAME_PART_RE.test(label)) return "\u201c" + label + "\u201d is not the person's first or last name: leave it empty";
+  if (nameKey && /first.?name|given.?name|forename/i.test(label) && ph !== "first_name") return "\u201c" + label + "\u201d takes {{first_name}} only";
+  if (nameKey && /last.?name|surname|family.?name/i.test(label) && ph !== "last_name") return "\u201c" + label + "\u201d takes {{last_name}} only";
+  if (/^(address|street|address_line1)$/.test(ph) && STREET_EXTRA_RE.test(label) && !/street|line.?1\b/i.test(label)) return "\u201c" + label + "\u201d is not the street: leave it empty";
+  return "";
+}
+// What the refill of a Send put on the form, against what the person had at Ready to send: ""
+// when it is the same application (submit), else why not (park). Layout and wording around the
+// answers may differ between two reads of the same review page (another width, a quiet run's
+// size, the site's own re-render); the answers may not.
+//  * a row the refill typed or picked: the same value as the stored row with that label, or (no
+//    stored row, or no stored list after a restart) one from the person's saved material, which
+//    gives the same value every time; an AI pick, a best guess or a drafted answer the person
+//    has not seen is new;
+//  * a file the refill attached: the one tailored for this application, or one the stored list had;
+//  * a question still open on the page: never the same.
+const SAME_EVERY_TIME = new Set(["profile", "history", "library", "you", "workauth", "eeo", "eeo_decline", "consent", "optin",
+                                 "tracker", "today", "job", "letter"]);
+function refillChanged(ans, stored, recordId) {
+  const A = ans || {}, S = stored && Array.isArray(stored.rows) ? stored : null;
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
+  if ((A.needs || []).length) return "a question is still open";
+  for (const r of A.rows || []) {
+    const was = S ? S.rows.find((x) => x && sameLabel(x.label, r.label) && (x.held || x.value !== "")) : null;
+    if (was && !was.held) { if (norm(was.value) !== norm(r.value)) return "a new answer for \u201c" + r.label + "\u201d"; continue; }
+    if (!SAME_EVERY_TIME.has(r.from)) return "a new answer for \u201c" + r.label + "\u201d";
+  }
+  const names = new Set(((S && S.files) || []).map((f) => f && f.name).filter(Boolean));
+  for (const f of A.files || []) {
+    if (!f || f.how === "listed") continue;
+    if (f.record_id != null && String(f.record_id) === String(recordId)) continue;
+    if (!names.has(f.name)) return "a different file (" + f.name + ")";
+  }
+  return "";
+}
+// The lines that differ between two reads of a review page, for the log: a few of each, and
+// never the value under a self-identification label.
+function reviewDiff(before, after) {
+  const a = before || [], b = after || [];
+  const sa = new Set(a), sb = new Set(b);
+  const shown = (list, other) => {
+    const out = [];
+    for (let i = 0; i < list.length && out.length < 8; i++) {
+      if (other.has(list[i])) continue;
+      out.push(EEO_RE.test(list[i - 1] || "") || EEO_RE.test(list[i]) ? "(a self-identification line)" : list[i].slice(0, 100));
+    }
+    return out;
+  };
+  return { gone: shown(a, sb), added: shown(b, sa), was: a.length, now: b.length };
 }
 const QUIET_READ = "(window.__tailorQuiet ? Date.now() - window.__tailorQuiet.at : 0) + '|' + document.readyState"
   + " + '|' + ([...document.querySelectorAll(\"[aria-busy='true'], [role='progressbar'], [data-automation-id='loadingIndicator'], [data-automation-id*='spinner' i]\")]"
@@ -241,6 +320,11 @@ const QUIET_READ = "(window.__tailorQuiet ? Date.now() - window.__tailorQuiet.at
 // resume upload, aria-busy, a progress bar) is waited for this much longer, once, before the next
 // step reads it: a read in the middle showed "Next is disabled" and cost steps (Uline 2026-11-16).
 const SETTLE_BUSY_MS = 8000;
+// The watch on a job left at Ready to send (armReadyWatch): how often, for how long, and on which
+// pane events it looks again.
+const READY_WATCH_EVERY_MS = 2500;
+const READY_WATCH_MS = 30 * 60 * 1000;
+const WATCH_EVENTS = ["did-navigate", "did-navigate-in-page", "did-finish-load"];
 // After an upload, how long an ask waits for the site to fill boxes from the resume by itself.
 const ASK_REREAD_MS = Number(process.env.SJ_AGENT_ASK_REREAD_MS) >= 0 && process.env.SJ_AGENT_ASK_REREAD_MS !== undefined
   ? Number(process.env.SJ_AGENT_ASK_REREAD_MS) : 9000;
@@ -542,6 +626,107 @@ function createAgent(deps) {
     try { return await wc.executeJavaScript("window.TailorAutofill.pageSignature()", true); } catch (e) { return null; }
   }
 
+  // ---- after Submit: did the site take it? (sent_watch.js) -----------------------------------
+  // The page's answer, read with a cap (a page in the middle of a navigation never holds a tick).
+  async function sentProbe(wc) {
+    const real = (wc && wc.__real) || wc;
+    try {
+      return await guard((async () => { await ensureScripts(real); return real.executeJavaScript(SENT_PROBE_JS, true); })(), 8000, "sent check");
+    } catch (e) { return null; }
+  }
+  // (2026-11-19, a real Workday tenant) The person may press the site's own Submit while the bar
+  // says Ready to send, or while a job is paused on its page (Home Depot, the same day: the bar
+  // said "Paused, not sent" over Workday's "Application Submitted"). The pane is watched from the
+  // moment the job is left ready or paused on the page, the same way as after the shell's own
+  // Send: on every navigation and every few seconds, until the job is sent, sent by Send, taken by
+  // another run or another page, or READY_WATCH_MS pass.
+  let readyWatch = null;
+  function disarmReadyWatch() {
+    const w = readyWatch;
+    readyWatch = null;
+    if (!w) return;
+    w.stop = true;
+    clearInterval(w.timer);
+    try { for (const ev of WATCH_EVENTS) w.wc.removeListener(ev, w.onNav); } catch (e) { /* pane gone */ }
+  }
+  // ``hold()``: the job is still where the watch left it (the same Ready to send entry, the same
+  // park), so a watch never marks a job some other step has moved on.
+  function armWatch(recordId, wc0, hold, startUrl) {
+    disarmReadyWatch();
+    const wc = (wc0 && wc0.__real) || wc0;
+    if (!wc || (wc.isDestroyed && wc.isDestroyed()) || !hold()) return null;
+    const w = { recordId, wc, url: startUrl || "", host: hostOf(wc.getURL() || startUrl || ""), since: Date.now(), stop: false, busy: false };
+    const live = () => !w.stop && readyWatch === w && !current && hold()
+      && !wc.isDestroyed() && (() => { const p = deps.getPane(); return !!p && (p.webContents === wc || p.webContents === wc0); })();
+    w.tick = async () => {
+      if (w.busy) return false;
+      if (!live() || Date.now() - w.since > READY_WATCH_MS) { if (readyWatch === w) disarmReadyWatch(); return false; }
+      w.busy = true;
+      try {
+        const seen = sentVerdict(await sentProbe(wc), { host: w.host, since: w.since, now: Date.now() });
+        if (!seen || !live()) return false;
+        await sentByPerson(recordId, wc, w.url, seen);
+        return true;
+      } finally { w.busy = false; }
+    };
+    w.onNav = () => { const t = setTimeout(() => { w.tick().catch(() => {}); }, 1200); if (t.unref) t.unref(); };
+    w.timer = setInterval(() => { w.tick().catch(() => {}); }, READY_WATCH_EVERY_MS);
+    if (w.timer.unref) w.timer.unref();
+    try { for (const ev of WATCH_EVENTS) wc.on(ev, w.onNav); } catch (e) { /* pane gone */ }
+    readyWatch = w;
+    w.tick().catch(() => {});                 // arms the page's Submit note at once
+    return w;
+  }
+  function armReadyWatch(recordId, wc0) {
+    const r = ready.get(recordId);
+    if (!r) return null;
+    return armWatch(recordId, wc0, () => ready.get(recordId) === r && r.epoch === paneEpoch, r.url);
+  }
+  // A job paused on its own page (a captcha, a step for the person, a question): the person may
+  // finish it there and press the site's Submit themselves.
+  function armParkWatch(recordId, wc0) {
+    const key = String(recordId);
+    const e = parked.get(key);
+    if (!e) return null;
+    return armWatch(recordId, wc0, () => parked.get(key) === e && e.epoch === paneEpoch, (e.opts && e.opts.url) || e.pageUrl || "");
+  }
+  // The person's own Submit went through: the record is applied (theirs, never counted as sent by
+  // the agent), the job leaves Ready to send and any pause (here and in the engine's park list),
+  // and the bar says Sent with the site's words, whatever it said before (ready, paused).
+  // ``seen.posted``: the app's own success watch (main.js) already recorded it.
+  async function sentByPerson(recordId, wc, url, seen) {
+    if (readyWatch && String(readyWatch.recordId) === String(recordId)) disarmReadyWatch();
+    const r = ready.get(recordId);
+    ready.delete(recordId);
+    const key = String(recordId);
+    const p = parked.get(key);
+    parked.delete(key);
+    const pageUrl = (wc && !wc.isDestroyed() && wc.getURL()) || seen.pageUrl || "";
+    if (!seen.posted) {
+      if (deps.stopSuccessWatch) { try { deps.stopSuccessWatch(); } catch (e) { /* none */ } }
+      await deps.postApp("/api/autofill/applied", { url: url || (r && r.url) || "", page_url: pageUrl, record_id: recordId }).catch(() => null);
+    }
+    deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
+    if (p) deps.postApp("/api/autoapply/agent/parked/" + encodeURIComponent(key) + "/take", { drop: true }).catch(() => null);
+    const fd = feedOf(recordId);
+    if (fd) { fd.close(); fd.push("sent", "Sent", "and the site confirmed it", { state: "done", detail: seen.phrase || "you pressed Submit on the page" }); }
+    progress(recordId, "submitted", "Sent, and the site confirmed it.", { confirmed: true, by: "person", how: seen.how || "marker", phrase: seen.phrase || "" });
+    dlog("sent by the person", recordId + " " + (seen.how || "marker") + (r ? " (was ready)" : p ? " (was paused)" : ""));
+  }
+  // The app's own success watch (main.js armSuccessWatch) saw the site's confirmation and already
+  // recorded it: a job this agent holds (ready, or paused) leaves that state and the bar says
+  // Sent. True when it was one of ours.
+  async function sentSeen(recordId, info) {
+    if (recordId == null || current) return false;
+    const key = String(recordId);
+    const rid = ready.has(recordId) ? recordId : ready.has(Number(recordId)) ? Number(recordId) : recordId;
+    if (!ready.has(rid) && !parked.has(key)) return false;
+    const i = info || {};
+    const pane = deps.getPane();
+    await sentByPerson(rid, pane && pane.webContents, i.url || "", { how: "marker", phrase: "", posted: true, pageUrl: i.pageUrl || "" });
+    return true;
+  }
+
   // ---- the page view, main frame + cross-origin frames --------------------------------------
   async function openFrames(wc) {
     let count = 0;
@@ -729,6 +914,12 @@ function createAgent(deps) {
       await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA" });
       await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
       await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
+      // (2026-11-19) A box that kept its text through select-all and Backspace is emptied the way
+      // a person's delete does it, so the typing below replaces it and never adds to it.
+      await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); if (!el || !("value" in el) || !String(el.value || "")) return;
+        const P = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(P, "value").set.call(el, "");
+        try { el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" })); } catch (e) {} })()`, true).catch(() => null);
       for (const ch of String(text)) {
         await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
         await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyUp", key: ch });
@@ -752,6 +943,9 @@ function createAgent(deps) {
     const expr = `window.TailorAgent.act(${JSON.stringify(a)})`;
     const ctx = v.frameOf.get(a.index);
     if (a.op === "upload") return upload(wc, fr, ctx, a.index, resumePath, a);
+    // (2026-11-19) The person's name and street go in their own boxes only: a Workday candidate
+    // account came out "Kofi Kofi Gilbert Gilbert" and the street twice (Sidley, Home Depot).
+    { const no = boxRefusal(viewLine(v.text, a.index), a); if (no) return { ok: false, note: "refused: " + no }; }
     // Where a person's real pointer and keys matter: typeahead boxes (type for real so the
     // list opens) and the options they show (click for real). Plain fields and buttons keep
     // the in-page path, which is faster and already proven on the mock and live forms.
@@ -1327,6 +1521,7 @@ function createAgent(deps) {
 
     const st = { recordId, stop: false, disarmSigning: () => {} };
     current = st;
+    disarmReadyWatch();                       // the pane is this run's now
     // The saved mode, asked once per run: only Hybrid sends the run's questions to Telegram as
     // well as the bar. Assisted asks on the bar only; a quiet (Auto) run asks nowhere. When the
     // engine does not answer, nothing goes to Telegram.
@@ -1739,7 +1934,7 @@ function createAgent(deps) {
       // page before it left, never the survey's)
       const pageUrl = (extra && extra.pageUrl) || where();
       if (extra && extra.pageUrl) { extra = Object.assign({}, extra); delete extra.pageUrl; }
-      parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single", batchAt: null, expectSig: "" }), kind,
+      parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single", batchAt: null, expectSig: "", expectAnswers: null, expectLines: null }), kind,
                                      state: { history, portals, portalNew, startedAt, runAnswers, runOrigins, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts), adopted,
                                               plan, spent, checkedPages, await: awaitInfo, formReached } });
       if (kind === "captcha" || kind === "person") {
@@ -1757,7 +1952,12 @@ function createAgent(deps) {
       progress(recordId, "parked", said, Object.assign({ parked: { kind, batch }, steps: history.length }, extra || {}));
       dlog("parked", kind + " " + message);
       startPolling();
-      return finish({ ok: false, parked: true, reason: "parked", kind, steps: history.length });
+      const out = finish({ ok: false, parked: true, reason: "parked", kind, steps: history.length });
+      // The person may finish it on the page and press the site's Submit themselves: watched, so
+      // the bar says Sent, not Paused (Home Depot, 2026-11-19). A batch moves the pane on, and
+      // the next run's start stands the watch down.
+      if (!batch && wcNow) armParkWatch(recordId, wcNow);
+      return out;
     };
     const parkFor = (reason, message, extra) => park(reason === "captcha" ? "captcha" : "person",
       reason === "captcha" ? "This page has a captcha. Solve it on the page, then press Continue."
@@ -2586,7 +2786,9 @@ function createAgent(deps) {
           // ---- end SJ_AX hook 2
           // A Send whose page was gone: submit only when the review page came out the same.
           if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
-            return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });
+            const why = refillChanged(ans, opts.expectAnswers, recordId);
+            dlog("review page differs", JSON.stringify({ why: why || "(the same answers: sending)", diff: opts.expectLines ? reviewDiff(opts.expectLines, reviewLines(v.text)) : "(no earlier lines kept)" }));
+            if (why) return park("person", "The review page is not the same as when I filled it (" + why + "). Check it on the page, then press Continue.", { url });
           }
           // Then the critic (one cheap call): anything blank or suspicious gets the brain one
           // more round; after that the hand-over goes ahead and names what was noted.
@@ -2949,7 +3151,9 @@ function createAgent(deps) {
           dlog("step " + step + " act " + (a.proof ? [a.op, a.index, "(answer)"].join("|") : h) + " ->", r && r.picked ? Object.assign({}, r, { picked: "(picked)" }) : r);
           if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") {
             if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
-              return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });
+              const why = refillChanged(ans, opts.expectAnswers, recordId);
+              dlog("review page differs", JSON.stringify({ why: why || "(the same answers)", diff: opts.expectLines ? reviewDiff(opts.expectLines, reviewLines(v.text)) : "(no earlier lines kept)" }));
+              if (why) return park("person", "The review page is not the same as when I filled it (" + why + "). Check it on the page, then press Continue.", { url });
             }
             pendingNudges.push("That was the Submit button: never click it. Report ready_to_submit when the application is complete.");
           } continue; }
@@ -3216,6 +3420,7 @@ function createAgent(deps) {
       deps.openInPane(url);
       parked.set(key, { epoch: paneEpoch, pageUrl: url, opened: true, kind: e.kind, state: null,
                         opts: (mem && mem.opts) || optsFrom(e.run) });
+      { const pn = deps.getPane(); if (pn && pn.webContents) armParkWatch(recordId, pn.webContents); }
       progress(ridOf(recordId), "parked", e.kind === "captcha" ? "Solve the captcha on this page, then press Continue."
         : "Do the step on this page, then press Continue.", { parked: { kind: e.kind, opened: true } });
       return { ok: true, opened: true };
@@ -3244,7 +3449,9 @@ function createAgent(deps) {
                    autonomous: !!opts.autonomous, company: opts.company || "" };
     // Every field the run filled, for Review answers on the bar (the app's local list only).
     const answers = readyAnswers(wrote && wrote.answers, { recordId });
-    ready.set(recordId, { url, lane: auto ? "auto" : "assisted", epoch: paneEpoch, sig, opts: keep, answers });
+    // ``lines``: the review page as read, in this app only (never posted), for the log's diff when
+    // a Send's refill reads it differently.
+    ready.set(recordId, { url, lane: auto ? "auto" : "assisted", epoch: paneEpoch, sig, opts: keep, answers, lines: viewText ? reviewLines(viewText).slice(0, 400) : null });
     const said = acceptedLine(opts.company || "", accepted);
     // The person's own Send on a job whose page was gone: the form came out the same, so their
     // click submits it (on every site: it is their Send, not an auto-submit).
@@ -3263,7 +3470,11 @@ function createAgent(deps) {
     // The engine keeps it on the record and sends the Ready to send notice on Telegram, once per
     // run (docs/notify.md): counts and the flagged lines only, never a self-identification value.
     // A quiet (Auto) run sends no notice: the daily summary counts it instead.
-    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep), agent_answers: chosen, guessed, guessed_legal: guessedLegal },
+    // ``answers``: the same list for the application's own panel (Auto-apply, Waiting on you), so
+    // a quiet run's answers can be checked before Send; self-identification values stay in the
+    // shell (engineAnswers).
+    deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep), agent_answers: chosen, guessed, guessed_legal: guessedLegal,
+                                                               answers: engineAnswers(answers) },
                  opts.quiet ? {} : { notice: readyNotice(answers, wrote && wrote.startedAt) })).catch(() => null);
     const notes = (noted || []).slice(0, 3);
     // The bar stays ONE short line (2026-11-16, the owner: the Gusto line ran on for five
@@ -3280,6 +3491,7 @@ function createAgent(deps) {
              + "Ready to send. " + (said ? said + " " : "") + (notedLine ? notedLine + " " : "") + "Check it, then press Send.",
              { step, ready: true, accepted: (accepted || []).slice(), noted: notes, letter: !!(wrote && wrote.letter), answers });
     current = null;
+    armReadyWatch(recordId, wc);
     setTimeout(() => { pollParked().catch(() => {}); }, 50);     // a parked job may be waiting its turn
     return { ok: true, ready: true, steps: step };
   }
@@ -3299,7 +3511,8 @@ function createAgent(deps) {
       if (!/^https?:/i.test(job.url || "")) return { ok: false, reason: "not-ready" };
       if (current || (batchOn && !inSendAll)) return { ok: false, reason: "busy" };
       ready.delete(recordId);
-      return run(recordId, Object.assign({}, job, { mode: "resend", inSendAll, expectSig: (r && r.sig) || (o && o.sig) || "" }));
+      return run(recordId, Object.assign({}, job, { mode: "resend", inSendAll, expectSig: (r && r.sig) || (o && o.sig) || "",
+                                                    expectAnswers: (r && r.answers) || null, expectLines: (r && r.lines) || null }));
     }
     return pressSubmit(recordId, pane, r, by);
   }
@@ -3354,22 +3567,28 @@ function createAgent(deps) {
       const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, label: (el.innerText || el.value || "").trim() };
     })()`, true).catch(() => null);
     if (!box) return { ok: false, reason: "no-submit-button" };
+    disarmReadyWatch();
     const zoom = wc.getZoomFactor ? wc.getZoomFactor() : 1;
     const x = Math.round(box.x * zoom), y = Math.round(box.y * zoom);
     const url = wc.getURL() || "";
     wc.sendInputEvent({ type: "mouseMove", x, y });
     wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
     wc.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+    const pressedAt = Date.now();
     ready.delete(recordId);
     await settle(wc, url);
     let confirmed = false;
-    for (let i = 0; i < 6 && !confirmed; i++) {        // the site's "received" marker, up to ~8 s
-      try { await ensureScripts(wc); confirmed = !!(await signature(wc) || {}).success; } catch (e) { confirmed = false; }
+    for (let i = 0; i < 6 && !confirmed; i++) {        // the site's "received" page, up to ~8 s (sent_watch.js)
+      const p = await sentProbe(wc);
+      if (p && typeof p === "object") p.clickedAt = Math.max(Number(p.clickedAt) || 0, pressedAt);
+      confirmed = !!sentVerdict(p, { host: hostOf(url), since: pressedAt, now: Date.now() });
+      if (!confirmed && (!p || typeof p !== "object")) { try { confirmed = !!((await signature(wc)) || {}).success; } catch (e) { confirmed = false; } }
       if (!confirmed) await delay(1200);
     }
     const after = (await signature(wc)) || {};
     if (!confirmed && after.blocker === "captcha") {
       ready.set(recordId, r);
+      armReadyWatch(recordId, wc);           // solved and submitted on the page: still noticed
       { const fd = feedOf(recordId); if (fd) { fd.close(); fd.push("send", "Paused", "", { state: "parked", detail: "the submit hit a captcha" }); } }
       progress(recordId, "ready", "The submit hit a captcha. Solve it on the page, then press Send again.", { ready: true, answers: r.answers });
       return { ok: false, reason: "captcha" };
@@ -3390,11 +3609,14 @@ function createAgent(deps) {
   // The bar's Next during the guided ask: on to the next field, this one stays flagged.
   function guideNext() { if (current && current.guide) { current.guide.next = true; return { ok: true }; } return { ok: false }; }
   const isReady = (recordId) => ready.has(recordId);
+  // The full Review answers list of a job waiting at Ready to send, self-identification values
+  // included: only for the app's own window (agent:ready), never posted to the engine.
+  const readyList = (recordId) => { const r = ready.get(recordId) || ready.get(Number(recordId)) || ready.get(String(recordId)); return (r && r.answers) || null; };
   const busy = () => !!(current || batchOn);
 
-  return { run, batch, send, sendAll, stop, guideNext, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
+  return { run, batch, send, sendAll, stop, guideNext, isReady, readyList, busy, pollParked, continueParked, startPolling, sentSeen, MAX_STEPS,
            quiet: () => !!(batchOn && batchOn.quiet),
-           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard, handleTerms } };
+           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard, readyWatch: () => readyWatch, handleTerms } };
 }
 
 // ---- the sign-in wall, read deterministically (section 13, the e2e of 2026-11-02) ---------
@@ -4116,6 +4338,14 @@ function readyAnswers(ans, ctx) {
   const flagged = rows.filter((r) => r.flag && r.flag !== "left_empty").length + files.filter((f) => f.flag).length;
   return { rows, files, flagged };
 }
+// The Review answers list as the engine keeps it on the application (agent_ready.answers, the
+// Auto-apply panel's Answers): every row and file, with a self-identification row's value left
+// out (``held``). Those values stay in the shell, like on the bar.
+function engineAnswers(list) {
+  const L = list || {};
+  const rows = (L.rows || []).map((r) => (r.self_id ? Object.assign({}, r, { value: "", held: true }) : Object.assign({}, r)));
+  return { rows, files: (L.files || []).map((f) => Object.assign({}, f)), flagged: Number(L.flagged) || 0 };
+}
 // (Section 29) The answers the agent chose itself, for the application's own record (kept on this
 // machine with the application, ui/app.py agent/ready): the question, what was put, where it came
 // from and the fact cited. Never a self-identification row (the protocol never answers one).
@@ -4294,8 +4524,8 @@ function blockedMessage(reason, left) {
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
                    optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, BOARD_LINE, boardName, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
-                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
+                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, reviewLines, refillChanged, reviewDiff, boxRefusal, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
-                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
+                   createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, engineAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
                    isSigninView, isCreateView, authForm, pageErrors, createFailure, resetAllowed, createBlockedReason, insideView,
                    DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF };

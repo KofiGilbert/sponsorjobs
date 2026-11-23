@@ -11,7 +11,7 @@
  *    the app window is never carried away -- and the pane is CDP-debuggable, which is
  *    the assisted-apply takeover hook (agent fills, the person watches and clicks).
  */
-const { paneRect } = require("./panegeom");
+const paneView = require("./pane_view");
 const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme, shell, Notification } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -150,7 +150,6 @@ async function ensureServer() {
 // clicks land), parked past the window's left edge, and the page is told it is closed, so the
 // right panel never switches to the Browser tab and nothing takes the focus.
 let paneQuiet = false;
-const QUIET_BOUNDS = { x: -6000, y: 0, width: 1280, height: 900 };
 function setPaneQuiet(on) {
   on = !!on;
   if (on === paneQuiet) return;
@@ -188,15 +187,22 @@ function pushPaneState() {
   if (win && !win.isDestroyed()) win.webContents.send("pane:state", paneState());
 }
 
+// The pane at the slot's bounds while it is open and the slot has a size (CSS pixels from the
+// page, scaled to window points by the app's zoom, panegeom.js); parked out of sight in a quiet
+// run; else no size. Each time it comes into view, any device-size override a quiet run left on
+// the page is cleared, so a visible pane always lays out to its own size (pane_view.js).
+const paneSync = paneView.createPaneSync({
+  setBounds: (rect) => { if (pane) pane.setBounds(rect); },
+  onShown: () => paneShown(),
+});
 function layoutPane() {
   if (!pane || !win || win.isDestroyed()) return;
-  if (paneQuiet && paneOpen) { pane.setBounds(QUIET_BOUNDS); return; }
-  if (!paneOpen || !paneBounds) {
-    pane.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    return;
-  }
-  // CSS pixels from the page, scaled to window points by the app's zoom (panegeom.js).
-  pane.setBounds(paneRect(paneBounds, win.webContents.getZoomFactor()));
+  paneSync.layout({ open: paneOpen, quiet: paneQuiet, slot: paneBounds, zoom: win.webContents.getZoomFactor() });
+}
+function paneShown() {
+  const wc = pane && pane.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  try { if (wc.debugger.isAttached()) focusEmulation.show(wc.debugger, { always: true }).catch(() => {}); } catch (e) { /* gone */ }
 }
 
 function ensurePane() {
@@ -324,6 +330,7 @@ function destroyPane() {
   disarmPageWatch();
   const p = pane;
   pane = null;
+  paneSync.reset();
   try { if (win && !win.isDestroyed()) win.contentView.removeChildView(p); } catch (e) { /* window gone */ }
   try { if (!p.webContents.isDestroyed()) p.webContents.close(); } catch (e) { /* already closed */ }
   pushPaneState();
@@ -513,6 +520,10 @@ function armSuccessWatch(wc, startUrl, recordId) {
     if (win && !win.isDestroyed()) {
       win.webContents.send("assist:applied", Object.assign({ url: startUrl, page_url: pageUrl }, res || { ok: false }));
     }
+    // A job the agent left ready or paused on this page: it leaves that state and the bar says
+    // Sent (Home Depot, 2026-11-19: the bar kept "Paused, not sent" over Workday's confirmation).
+    const rid = (res && res.matched && res.record_id != null) ? res.record_id : recordId;
+    if (rid != null) agent.sentSeen(rid, { url: startUrl, pageUrl }).catch(() => {});
   };
   const timer = setInterval(check, 2500);
   const onNav = () => setTimeout(check, 1500);
@@ -1443,6 +1454,7 @@ const agent = createAgent({
   runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
   isNewPage, attachResume, attachViaChooser, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
+  stopSuccessWatch: () => disarmSuccessWatch(),          // the agent's own watch recorded the send
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
   const o = opts || {};
@@ -1476,12 +1488,28 @@ ipcMain.handle("agent:continue", async (_e, recordId) => agent.continueParked(re
 ipcMain.handle("agent:busy", async () => ({ busy: agent.busy(), quiet: agent.quiet() }));
 // Parked jobs carry on by themselves once answered, also after a restart (the engine keeps them).
 agent.startPolling();
-ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId) }));
+ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId), answers: agent.readyList(recordId) }));
 
 // AI-fill whatever page is CURRENTLY open in the pane (after the person navigated / signed in).
 ipcMain.handle("autoapply:fill-current", async (_e, recordId) => runAutoApplyOnPane(recordId));
 
-ipcMain.on("pane:set-bounds", (_e, rect) => { paneBounds = rect; layoutPane(); });
+// The page's Browser slot. When the page shows the panel again while the shell holds a closed
+// pane (pane_view.js reopenOnSlot), that pane is opened again: a panel on screen always shows its
+// page, never a black slot.
+ipcMain.on("pane:set-bounds", (_e, rect) => {
+  const before = paneBounds;
+  paneBounds = rect;
+  const live = !!pane && !pane.webContents.isDestroyed();
+  if (paneView.reopenOnSlot({ before, slot: rect, hasPane: live, open: paneOpen, quiet: paneQuiet })) {
+    clearTimeout(paneReap);
+    paneReap = null;
+    paneOpen = true;
+    layoutPane();
+    pushPaneState();
+    return;
+  }
+  layoutPane();
+});
 // The person opens a page themselves while an Auto run works out of sight: the browser is
 // theirs. The run stops (it picks the queue up again later) and their page opens in view.
 function takePaneBack() {

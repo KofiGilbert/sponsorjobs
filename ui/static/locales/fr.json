@@ -1964,5 +1964,9 @@
   "mbox.notify.notice": "Envoyer un court avis",
   "mbox.notify.off": "Ne rien envoyer",
   "mbox.notify.saved": "Enregistré",
-  "mbox.notify.fail": "Enregistrement impossible. Vérifiez votre connexion et réessayez."
+  "mbox.notify.fail": "Enregistrement impossible. Vérifiez votre connexion et réessayez.",
+  "aa.ans.panelTitle": "Réponses",
+  "aa.ans.showAll": "Tout afficher ({n})",
+  "aa.ans.showFewer": "Afficher moins",
+  "aa.ans.held": "Masqué pour votre confidentialité"
 }

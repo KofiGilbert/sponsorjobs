@@ -1964,5 +1964,9 @@
   "mbox.notify.notice": "Kurzen Hinweis senden",
   "mbox.notify.off": "Nichts senden",
   "mbox.notify.saved": "Gespeichert",
-  "mbox.notify.fail": "Das konnte nicht gespeichert werden. Prüf deine Verbindung und versuch es noch einmal."
+  "mbox.notify.fail": "Das konnte nicht gespeichert werden. Prüf deine Verbindung und versuch es noch einmal.",
+  "aa.ans.panelTitle": "Antworten",
+  "aa.ans.showAll": "Alle {n} anzeigen",
+  "aa.ans.showFewer": "Weniger anzeigen",
+  "aa.ans.held": "Aus Datenschutzgründen ausgeblendet"
 }
