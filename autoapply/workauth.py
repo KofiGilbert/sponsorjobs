@@ -19,7 +19,8 @@ resident of a country is authorized there and needs no sponsorship there.
 
 Stable API for other modules (the job picker hides citizen-only roles with it):
 ``load``, ``clean``, ``status``, ``is_authorized``, ``needs_sponsorship``, ``is_citizen``,
-``is_citizen_or_pr``, ``classify``, ``answer``, ``legacy_prefs``.
+``is_citizen_or_pr``, ``classify``, ``answer``, ``legacy_prefs``, and the sign-up question's
+``sponsor_answer`` / ``set_sponsor_answer`` / ``has_us_answers``.
 
 Pure: no I/O, no model. The saved shape (in the app's prefs store, key ``work_auth``)::
 
@@ -214,6 +215,61 @@ def is_citizen(wa: dict | None, country: str = "US"):
 def is_citizen_or_pr(wa: dict | None, country: str = "US"):
     st = status(wa, country)
     return (st in CITIZEN or st in PERMANENT) if st else None
+
+
+# --------------------------------------------------------------------------- the sign-up question
+# "Do you need visa sponsorship to work in the US?" Yes / No / Not sure, asked once at first run
+# and kept on My profile. It is stored in the same US entry as the full editor, never in a store
+# of its own:
+#   yes    -> sponsor_now Yes, sponsor_future Yes
+#   no     -> sponsor_now No,  sponsor_future No
+#   unsure -> sponsor_now left blank, sponsor_future Yes (a form asking "now or in the future"
+#             gets the safe Yes, and "now" stays open for the person to answer)
+SPONSOR_ANSWERS = ("yes", "no", "unsure")
+
+
+def sponsor_answer(wa: dict | None, country: str = "US") -> str:
+    """The question's answer read back from the profile: "yes", "no", "unsure", or "" when the
+    profile does not say. A citizen or permanent resident reads "no"; needing it now, or not now
+    but later (the older "Future" answer), reads "yes"."""
+    e = entry(wa, country)
+    now, fut = e["sponsor_now"], e["sponsor_future"]
+    if now == "Yes" or (now == "No" and fut == "Yes"):
+        return "yes"
+    if now == "No" and fut == "No":
+        return "no"
+    if not now and fut == "Yes":
+        return "unsure"
+    return ""
+
+
+def has_us_answers(wa: dict | None) -> bool:
+    """True when the person already told us anything about their US work authorization (a
+    status, or any yes/no): they are not asked the sign-up question again."""
+    e = ((wa or {}).get("countries") or {}).get("US") or {}
+    return any(str(v or "").strip() for v in e.values())
+
+
+def set_sponsor_answer(wa: dict | None, answer: str, country: str = "US") -> dict:
+    """The profile with the question's answer written into the country's entry; everything else
+    in the profile is kept. An answer that matches what the profile already says changes nothing
+    (so an older "Future" answer is not flattened by saving Yes again). A status that contradicts
+    the answer (a citizen who now says they need sponsorship) is cleared: the answer is newer."""
+    answer = str(answer or "").strip().lower()
+    if answer not in SPONSOR_ANSWERS:
+        raise ValueError("answer must be yes, no, or unsure")
+    out = clean(wa or {})
+    if sponsor_answer(out, country) == answer:
+        return out
+    cc = str(country or "US").upper()
+    e = dict(out["countries"].get(cc) or {"status": "", "authorized": "", "sponsor_now": "",
+                                          "sponsor_future": "", "auth_end": ""})
+    e["sponsor_now"], e["sponsor_future"] = {"yes": ("Yes", "Yes"), "no": ("No", "No"),
+                                             "unsure": ("", "Yes")}[answer]
+    if answer != "no" and (e.get("status") in CITIZEN or e.get("status") in PERMANENT):
+        e["status"] = ""
+    out["countries"][cc] = e
+    return clean(out)
 
 
 # --------------------------------------------------------------------------- reading a question

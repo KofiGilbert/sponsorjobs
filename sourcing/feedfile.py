@@ -16,7 +16,8 @@ filters it locally with sourcing/filters.py, and fetches one small JD shard when
                     ~10 MB download from zero (the CDN ignores Range). `version` is a hash of the
                     rows, so the names are content-addressed: a part never changes once published
                     and may be cached forever. Each part: {"version", "part", "parts", "jobs": [...]}.
-  manifest.json     tiny, uncompressed, never cached: {"generated_at", "count", "jobs_url", ...,
+  manifest.json     tiny, uncompressed, never cached: {"generated_at", "count" (every job),
+                    "sponsor_count" (jobs with sponsor_relevant true), "jobs_url", ...,
                     "parts": {"version", "count", "total_bytes", "attribution", "files":
                     [{"url", "sha256", "bytes", "count"}, ...]}, "stable": {...}}. jobs.json.gz is
                     still written for app versions that predate the parts.
@@ -52,7 +53,8 @@ PART_TARGET_BYTES = 1_000_000      # each list part is about this many gzipped b
 # card renderer in ui/static/app.js). jd_text is deliberately absent: it lives in the shards.
 SLIM_KEYS = ("source_id", "source", "company", "title", "location", "remote", "url", "posted_at",
              "first_seen", "salary", "sponsorship_stated", "us", "entry_level", "visa",
-             "nationality_visas", "sponsor", "ad_stance", "ad_sentence", "tags", "display_name")
+             "nationality_visas", "sponsor", "ad_stance", "ad_sentence", "tags", "display_name",
+             "sponsor_relevant")
 
 # Rows from a company's OWN board (Greenhouse, Lever, ...). When the same opening also arrives
 # through an aggregator, the board row wins: canonical URL, full JD, the employer's own wording.
@@ -630,6 +632,7 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
     # aggregator's yes/no flag was wrong for most flagged ads, and a third of ads that mention
     # sponsorship say they will NOT sponsor, which the student needs to see (2026-10-08).
     from sourcing.adstance import UNKNOWN
+    from sourcing.quality import is_sponsor_relevant
     slim = []
     for r, (st, tags) in zip(rows, _read_ads(rows, jd_by_id)):
         row = slim_row(r)
@@ -638,9 +641,14 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
         # Function tags from title + description (sourcing/jobtags.py), so the card can show
         # several specific areas the way Migrate Mate does, instead of one title-only bucket.
         row["tags"] = tags
+        # Sponsor board or general row (2026-11-20): the app's "Sponsors only" filter reads this.
+        # Read from the row's final stance, so the flag and the card always agree.
+        row["sponsor_relevant"] = is_sponsor_relevant(row)
         slim.append(row)
     sources = {r.get("source") for r in slim}
+    sponsor_count = sum(1 for r in slim if r["sponsor_relevant"])
     header = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
+              "sponsor_count": sponsor_count,
               "attribution": {k: v for k, v in ATTRIBUTION.items() if k in sources},
               "jobs": slim}
     whole = dumps_gz(header)
@@ -659,7 +667,10 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
             shards[shard_for(sid)][sid] = jd
     for s, m in shards.items():
         (out / JD_DIR / f"{s}.json.gz").write_bytes(dumps_gz(m))
+    # count = every live job; sponsor_count = the jobs at employers with a sponsorship record (or
+    # whose ad offers sponsorship): the website's "live roles at sponsoring employers" number.
     manifest = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
+                "sponsor_count": sponsor_count,
                 "jobs_url": jobs_url or JOBS_FILE, "jd_shard_count": JD_SHARDS,
                 "jd_url_template": f"{JD_DIR}/{{shard}}.json.gz", "parts": parts, "stable": stable}
     (out / MANIFEST_FILE).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
