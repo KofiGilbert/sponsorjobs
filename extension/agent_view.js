@@ -812,7 +812,7 @@
   }
   const optionList = (opts) => opts.slice(0, 12).map((o) => cleanText(o.textContent).slice(0, 40)).join(", ");
 
-  async function doClick(el) {
+  async function doClick(el, opts) {
     if (tagOf(el) === "LABEL") { const c = controlOfLabel(el); if (c) el = c; }
     if (tagOf(el) === "SELECT") return { ok: false, note: "use select", changed: false };
     if (isFileInput(el)) return { ok: false, note: "use upload", changed: false };
@@ -827,7 +827,10 @@
     const target = isToggleInput(el) && (selfHidden(el) || !boxShown(el, true)) ? (toggleCard(el) || el) : el;
     try { if (target.scrollIntoView) target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (e) { /* fine */ }
     await sleep(40);
-    const cov = covered(target);
+    // (2026-11-23) ``force``: the shell's one fallback after a real pointer press landed on the
+    // element drawn over this one and nothing happened (an SAP careers "Apply Now" menu item):
+    // the element's own click. The Submit and policy-link guards above still apply.
+    const cov = opts && opts.force ? null : covered(target);
     if (cov) return { ok: false, note: "covered by " + coverName(cov) + ": close or dismiss it first", changed: false };
     const { x, y } = centre(target);
     const init = { button: 0, buttons: 1, clientX: x, clientY: y };
@@ -1116,7 +1119,7 @@
     if (!el) return { ok: false, note: "no such index", changed: false };
     if (!el.isConnected) return { ok: false, note: "element gone", changed: false };
     try {
-      if (op === "click") return await doClick(el);
+      if (op === "click") return await doClick(el, { force: !!action.force });
       if (op === "type") return await doType(el, action.text, { answer: !!action.answer, plain: !!action.plain });
       if (op === "pick_option") return await pickOption(el);
       if (op === "select") return await doSelect(el, action.option != null ? action.option : action.text, { answer: !!action.answer });
