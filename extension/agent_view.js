@@ -834,6 +834,13 @@
     if (cov) return { ok: false, note: "covered by " + coverName(cov) + ": close or dismiss it first", changed: false };
     const { x, y } = centre(target);
     const init = { button: 0, buttons: 1, clientX: x, clientY: y };
+    // (2026-11-23) ``plain``: the element's own click alone, no pointer or mouse events first. An
+    // SAP careers "Apply Now" menu closes on mousedown, so the full sequence clicks a closed menu.
+    if (opts && opts.plain) {
+      if (typeof target.click === "function") target.click(); else fire(target, "click", init);
+      await sleep(200);
+      return { ok: true, note: "", changed: fingerprint() !== before };
+    }
     try { if (target.focus) target.focus({ preventScroll: true }); } catch (e) { /* fine */ }
     fire(target, "pointerdown", init); fire(target, "mousedown", init);
     fire(target, "pointerup", Object.assign({}, init, { buttons: 0 })); fire(target, "mouseup", Object.assign({}, init, { buttons: 0 }));
@@ -1119,7 +1126,7 @@
     if (!el) return { ok: false, note: "no such index", changed: false };
     if (!el.isConnected) return { ok: false, note: "element gone", changed: false };
     try {
-      if (op === "click") return await doClick(el, { force: !!action.force });
+      if (op === "click") return await doClick(el, { force: !!action.force, plain: !!action.plain });
       if (op === "type") return await doType(el, action.text, { answer: !!action.answer, plain: !!action.plain });
       if (op === "pick_option") return await pickOption(el);
       if (op === "select") return await doSelect(el, action.option != null ? action.option : action.text, { answer: !!action.answer });
