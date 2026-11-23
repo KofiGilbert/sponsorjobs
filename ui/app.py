@@ -1584,6 +1584,8 @@ def _guard(fn):
             # 503: SponsorJobs is temporarily unable to work, which is not the caller's fault.
             return jsonify(body), (503 if reason else 400)
     wrapper.__name__ = fn.__name__
+    if getattr(fn, "_tailor_extension_route", False):   # keep _extension_only's mark visible
+        wrapper._tailor_extension_route = True
     return wrapper
 
 
@@ -1615,6 +1617,7 @@ def _extension_only(fn):
         _EXT_SEEN["at"] = time.time()
         return fn(*a, **k)
     wrapper.__name__ = fn.__name__
+    wrapper._tailor_extension_route = True   # the session gate lets the extension's header through
     return wrapper
 
 
@@ -1653,10 +1656,110 @@ def _nostore(resp):
     return resp
 
 
+# ---- The per-launch session token. The desktop shell makes a random token each time it starts,
+# hands it to the engine it spawns (TAILOR_SESSION_TOKEN) and sets it as an HttpOnly,
+# SameSite=Strict cookie on its own window before loading the app. Every request to the engine
+# then has to carry it, so only the app's own window (and the shell's own code, which sends it
+# as a header) can use the engine. Without the variable (tests, running the engine on its own)
+# nothing changes. ----
+SESSION_ENV = "TAILOR_SESSION_TOKEN"
+SESSION_HEADER = "X-Tailor-Session"
+# Pages the person's own browser opens at the end of a sign-in; they carry no session cookie
+# and are checked by their own one-time keys instead.
+_SESSION_FREE_PAGES = ("/account/google/done", "/github/app/done")
+_SESSION_FREE_API = ("/api/account/adopt",        # needs the one-time sign-in nonce
+                     "/api/github/app/finish")    # needs the verifier kept from the start
+# Read-only status the browser extension also asks for (with its header).
+_EXTENSION_EXTRA_ROUTES = ("/api/sponsors/status",)
+_SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
+def _session_token() -> str:
+    return (os.environ.get(SESSION_ENV) or "").strip()
+
+
+def _session_cookie_name() -> str:
+    """One cookie per engine port: a browser keeps cookies per host, not per port, so the dev app
+    and the installed app on the same machine must not overwrite each other's token."""
+    host = request.host or ""
+    port = host.rsplit(":", 1)[1] if ":" in host and not host.endswith("]") else "80"
+    return f"sj_session_{port if port.isdigit() else '80'}"
+
+
+def _has_session(token: str) -> bool:
+    import hmac
+    got = request.headers.get(SESSION_HEADER) or request.cookies.get(_session_cookie_name()) or ""
+    return bool(got) and hmac.compare_digest(got.encode("utf-8", "replace"), token.encode("utf-8"))
+
+
+def _is_extension_request() -> bool:
+    """The browser extension's own routes, called with its header (a web page cannot add a custom
+    header to a request to this engine: the preflight it needs is never answered)."""
+    if not request.headers.get(EXTENSION_HEADER):
+        return False
+    if request.path in _EXTENSION_EXTRA_ROUTES:
+        return True
+    view = app.view_functions.get(request.endpoint or "")
+    return bool(getattr(view, "_tailor_extension_route", False))
+
+
+_OUTSIDE_APP_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>SponsorJobs</title>
+<style>
+:root{color-scheme:light dark;--bg:#131316;--ink:#e7e7ea;--muted:#82828c}
+@media (prefers-color-scheme: light){:root{--bg:#f7f7f8;--ink:#18181b;--muted:#71717a}}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);
+font:14px/1.5 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;text-align:center}
+h1{font-size:19px;font-weight:600;margin:0}
+p{margin:6px 0 0;color:var(--muted)}
+a{color:inherit}
+</style></head><body><main>
+<h1>__TITLE__</h1><p>__TEXT__</p>
+<p><a href="sponsorjobs://open">Open SponsorJobs</a></p></main></body></html>"""
+
+
+def _outside_app_page():
+    """The app's address opened outside the app window (a payment that finished in the person's
+    browser, an old bookmark): the app only runs in its own window, so say where to go."""
+    c = request.args.get("checkout")
+    if c == "success":
+        title, text = "Payment received", "Go back to SponsorJobs. Your pass shows up there on its own."
+    elif c == "cancel":
+        title, text = "Checkout canceled", "Nothing was charged. You can close this tab."
+    else:
+        title, text = "SponsorJobs runs in its own window", "Open the SponsorJobs app to carry on."
+    body = _OUTSIDE_APP_PAGE.replace("__TITLE__", title).replace("__TEXT__", text)
+    return body, 200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+                       "Referrer-Policy": "no-referrer"}
+
+
+def _session_gate():
+    """None when the request may go on, else the refusal."""
+    method = (request.method or "GET").upper()
+    ext = _is_extension_request()
+    # Defense in depth: a state-changing request from another site's page is refused outright
+    # (browsers mark where a request came from; the app's own page is same-origin).
+    site = (request.headers.get("Sec-Fetch-Site") or "").lower()
+    if method not in _SAFE_METHODS and site and site not in ("same-origin", "none") and not ext:
+        return jsonify({"error": "SponsorJobs only takes requests from its own window."}), 403
+    token = _session_token()
+    if not token:
+        return None
+    p = request.path or "/"
+    if p.startswith("/static/") or p in _SESSION_FREE_PAGES:
+        return None
+    if p == "/":
+        return None if _has_session(token) else _outside_app_page()
+    if p in _SESSION_FREE_API or ext or _has_session(token):
+        return None
+    return jsonify({"error": "SponsorJobs only takes requests from its own window.",
+                    "reason": "no_session"}), 403
+
+
 # ------------------------------------------------------------------ pages
 @app.before_request
 def _guard_local_and_lock():
-    """Two local-safety gates on every request:
+    """Three local-safety gates on every request:
 
     1. Host allowlist. The engine only serves the local app. Rejecting any Host that is not
        127.0.0.1/localhost defeats DNS-rebinding (a website the user visits cannot re-point
@@ -1665,10 +1768,15 @@ def _guard_local_and_lock():
     2. App Lock. When a passcode is set and the app is locked, refuse every data/AI route so
        nobody reads the profile/CVs or spends tokens through SponsorJobs. Only the shell page, its
        static assets, and the lock endpoints (needed to unlock) get through. Enforced here in
-       the ENGINE, not just a UI overlay a local process could bypass."""
+       the ENGINE, not just a UI overlay a local process could bypass.
+    3. Session token (when the desktop shell set one, see _session_gate): only the app's own
+       window and the shell itself can use the engine."""
     host = (request.host or "").rsplit(":", 1)[0].lower().strip("[]")
     if host and host not in ("127.0.0.1", "localhost", "::1"):
         return jsonify({"error": "SponsorJobs only serves the local app on this machine."}), 403
+    refused = _session_gate()
+    if refused is not None:
+        return refused
     if _LOCK.enabled() and not _LOCK.unlocked():
         p = request.path or "/"
         if p == "/" or p.startswith("/static/") or p.startswith("/api/lock/"):
@@ -4137,28 +4245,48 @@ def cv_parse_preview():
     return jsonify({"text": profile_to_plaintext(profile or {})})
 
 
-@app.get("/api/open")
+def _open_target(raw) -> str:
+    url = str(raw or "").strip()
+    if not url.lower().startswith(("http://", "https://")) or len(url) > 2000:
+        return ""
+    return url
+
+
+@app.post("/api/open")
 def open_external():
-    """Open an external link from the CV preview in the person's DEFAULT browser,
-    then send the app window straight back to where it was. This is the answer to
-    'I clicked a link and could not get back into SponsorJobs'."""
+    """Open an external link in the person's DEFAULT browser (the web build's fallback; the
+    desktop shell opens links in its own pane and never reaches this). POST only, from the app's
+    own page: {u: url}."""
     import webbrowser
 
-    url = (request.args.get("u") or "").strip()
-    if not url.lower().startswith(("http://", "https://")) or len(url) > 2000:
+    url = _open_target((request.get_json(silent=True) or {}).get("u") or request.form.get("u"))
+    if not url:
         return jsonify({"error": "only http(s) links can be opened"}), 400
     try:
         webbrowser.open(url)
     except Exception:
         pass
+    return jsonify({"ok": True})
+
+
+@app.get("/api/open")
+def open_external_link_page():
+    """A resume-preview link followed outside the desktop shell (the PDF reroutes its links here).
+    Opening anything on a plain GET is refused; the page just shows the link for the person to
+    click themselves."""
+    from html import escape
+
+    url = _open_target(request.args.get("u"))
+    link = (f"<p><a href='{escape(url, quote=True)}' target='_blank' rel='noopener noreferrer' "
+            f"style='color:#9db4ff'>{escape(url)}</a></p>") if url else ""
     return (
-        "<!doctype html><html><head><title>Opening link</title></head>"
+        "<!doctype html><html><head><title>Open link</title></head>"
         "<body style='font-family:system-ui;background:#111;color:#ddd;"
         "display:flex;align-items:center;justify-content:center;height:95vh'>"
-        "<div style='text-align:center'><p>Opened in your browser.</p>"
+        "<div style='text-align:center'><p>Open this link in your browser:</p>" + link +
         "<p><a href='/' target='_top' style='color:#9db4ff'>Back to SponsorJobs</a></p>"
-        "<script>setTimeout(function(){history.back();},1200);</script>"
-        "</div></body></html>")
+        "</div></body></html>"), 405, {"Allow": "POST", "Content-Type": "text/html; charset=utf-8",
+                                       "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
 # ------------------------------------------------------------------ company logos
@@ -12282,6 +12410,50 @@ def account_status():
     return jsonify({"email": data.get("email"), "reachable": True, **extra})
 
 
+# One-time keys for a Google sign-in this app started. The callback address carries one
+# (?n=...), the broker hands that address back untouched, and /api/account/adopt only takes a
+# token together with a key it handed out, once, within a few minutes. In memory on purpose: a
+# sign-in never outlives the engine that started it.
+_SIGNIN_NONCES: dict = {}
+_SIGNIN_NONCE_TTL = 15 * 60
+_SIGNIN_NONCE_MAX = 5
+_SIGNIN_LOCK = threading.Lock()
+
+
+def _new_signin_nonce(now: float | None = None) -> str:
+    now = time.time() if now is None else now
+    nonce = secrets.token_urlsafe(24)
+    with _SIGNIN_LOCK:
+        for k in [k for k, exp in _SIGNIN_NONCES.items() if exp <= now]:
+            _SIGNIN_NONCES.pop(k, None)
+        while len(_SIGNIN_NONCES) >= _SIGNIN_NONCE_MAX:          # the oldest goes first
+            _SIGNIN_NONCES.pop(min(_SIGNIN_NONCES, key=_SIGNIN_NONCES.get), None)
+        _SIGNIN_NONCES[nonce] = now + _SIGNIN_NONCE_TTL
+    return nonce
+
+
+def _take_signin_nonce(nonce, now: float | None = None) -> bool:
+    """True when ``nonce`` is a pending key from this engine; it is used up either way."""
+    import hmac
+    now = time.time() if now is None else now
+    nonce = str(nonce or "").strip()
+    if not nonce or len(nonce) > 200:
+        return False
+    with _SIGNIN_LOCK:
+        match = next((k for k in _SIGNIN_NONCES
+                      if hmac.compare_digest(k.encode(), nonce.encode("utf-8", "replace"))), None)
+        if match is None:
+            return False
+        return _SIGNIN_NONCES.pop(match) > now
+
+
+def _google_start_url(via: str) -> str:
+    from urllib.parse import quote
+    callback = (f"{request.host_url.rstrip('/')}/account/google/done?via={via}"
+                f"&n={_new_signin_nonce()}")
+    return f"{BROKER_URL}/account/google/start?redirect={quote(callback, safe='')}"
+
+
 @app.get("/api/account/google/url")
 @_guard
 def account_google_url():
@@ -12290,10 +12462,8 @@ def account_google_url():
     URL fragment and adopts it. ?via=browser (the desktop app: the flow runs in the person's own
     browser, since Google refuses sign-in inside embedded browsers) or ?via=tab (the web build:
     same tab, and the callback page returns to the app)."""
-    from urllib.parse import quote
     via = "tab" if request.args.get("via") == "tab" else "browser"
-    callback = f"{request.host_url.rstrip('/')}/account/google/done?via={via}"
-    return jsonify({"url": f"{BROKER_URL}/account/google/start?redirect={quote(callback, safe='')}"})
+    return jsonify({"url": _google_start_url(via)})
 
 
 @app.post("/api/account/google/open")
@@ -12303,9 +12473,7 @@ def account_google_open():
     apps must not host sign-in in an embedded view). The callback page lands back on this engine,
     adopts the token, and the app sees the email on its next status check."""
     import webbrowser
-    from urllib.parse import quote
-    callback = f"{request.host_url.rstrip('/')}/account/google/done?via=browser"
-    url = f"{BROKER_URL}/account/google/start?redirect={quote(callback, safe='')}"
+    url = _google_start_url("browser")
     try:
         webbrowser.open(url)
     except Exception:
@@ -12328,7 +12496,7 @@ p{margin:6px 0 0;color:var(--muted)}
 (function () {
   var q = new URLSearchParams(location.search), h = new URLSearchParams(location.hash.slice(1));
   var via = q.get("via") === "tab" ? "tab" : "browser";
-  var token = h.get("token") || q.get("account") || "";
+  var token = h.get("token") || "", nonce = q.get("n") || "";
   var err = h.get("error") === "cancelled" ? "cancelled" : "error";
   history.replaceState(null, "", location.pathname + "?via=" + via);   // keep the token out of history
   function done(ok, msg) {
@@ -12344,7 +12512,7 @@ p{margin:6px 0 0;color:var(--muted)}
     return;
   }
   fetch("/api/account/adopt", {method: "POST", headers: {"Content-Type": "application/json"},
-                               body: JSON.stringify({token: token})})
+                               body: JSON.stringify({token: token, nonce: nonce})})
     .then(function (r) { return r.json().then(function (d) { return {ok: r.ok && !d.error, d: d}; }); })
     .then(function (x) { done(x.ok, x.ok ? "You can close this tab and go back to SponsorJobs."
                                          : (x.d.error || "Go back to SponsorJobs and try again.")); })
@@ -12366,10 +12534,15 @@ def account_google_done():
 @_guard
 def account_adopt():
     """Adopt a bearer token handed back by Google sign-in: verify it works against the broker, then
-    store it as this install's account so every later call uses it."""
-    token = str((request.json or {}).get("token", "")).strip()
+    store it as this install's account so every later call uses it. Only for a sign-in this app
+    started: the body carries the one-time key from the callback address, used up here."""
+    b = request.get_json(silent=True) or {}
+    token = str(b.get("token", "")).strip()
     if not token:
         return jsonify({"error": "no token"}), 400
+    if not _take_signin_nonce(b.get("nonce")):
+        return jsonify({"error": "That sign-in has expired. Start again from SponsorJobs.",
+                        "reason": "stale_signin"}), 400
     import requests
     try:
         r = requests.get(f"{BROKER_URL}/me/usage",

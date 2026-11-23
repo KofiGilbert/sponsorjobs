@@ -14,6 +14,7 @@
 const paneView = require("./pane_view");
 const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme, shell, Notification } = require("electron");
 const { spawn } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
@@ -24,12 +25,21 @@ const { isNewPage, pageMessage, wallMessage } = require("./pagewatch");
 const { createAgent } = require("./agent");
 const uploads = require("./uploads");
 const { isSupportMailto, isSupportGmailCompose } = require("./links");
+const originGuard = require("./origin_guard");
 
 // TAILOR_PORT / TAILOR_CDP_PORT let the dev app (dev-start.sh) run beside the installed app, which
-// owns 57000 and 9223. The installed app never sets them.
+// owns 57000. The installed app never sets them.
 const PORT = Number(process.env.TAILOR_PORT) || 57000;
 const SERVER = `http://127.0.0.1:${PORT}`;
-const CDP_PORT = String(Number(process.env.TAILOR_CDP_PORT) || 9223);
+// The remote-debugging port is for development (9223 by default, or TAILOR_CDP_PORT). A packaged
+// build opens none unless TAILOR_CDP_PORT is set explicitly (origin_guard.debugPort).
+const CDP_PORT = originGuard.debugPort({ isPackaged: app.isPackaged, env: process.env });
+// A fresh random token each launch: handed to the engine this shell spawns and set as an
+// HttpOnly, SameSite=Strict cookie on the app window, so only this app can use the engine
+// (ui/app.py _session_gate). The shell's own requests send it as a header. TAILOR_SESSION_TOKEN
+// lets a test that starts the engine itself share one token with the shell.
+const SESSION_TOKEN = process.env.TAILOR_SESSION_TOKEN || crypto.randomBytes(32).toString("hex");
+const SESSION_HEADER = { "X-Tailor-Session": SESSION_TOKEN };
 // The STATIC job feed (docs/feed.md): a scheduled GitHub Action crawls and uploads jobs.json.gz
 // + JD shards to Cloudflare R2 behind our domain; the engine downloads the slim list hourly and
 // filters locally, so every user sees the fresh, sponsor-tagged board with no server to keep
@@ -37,8 +47,10 @@ const CDP_PORT = String(Number(process.env.TAILOR_CDP_PORT) || 9223);
 // RFC 2606 reserved name the engine recognises as "not configured", so until the real domain is
 // set the app simply runs on its local crawl instead of waiting on a lookup that cannot succeed.
 const FEED_URL = process.env.TAILOR_FEED_URL || "https://feed.sponsorjobs.ai/feed";
-// Fixed CDP port so the Python side (assisted apply) can attach to the pane.
-app.commandLine.appendSwitch("remote-debugging-port", CDP_PORT);
+// A fixed CDP port for dev tooling (e2e scripts) to attach to the pane; none in a release build.
+if (CDP_PORT) app.commandLine.appendSwitch("remote-debugging-port", CDP_PORT);
+// Every IPC handler below answers only the app's own page (origin_guard.guardIpc).
+originGuard.guardIpc(ipcMain, SERVER, (channel) => console.warn("[shell] refused IPC from another page:", channel));
 
 let win = null;
 let pane = null;           // WebContentsView for the in-app browser
@@ -58,7 +70,9 @@ function writePrefs(p) {
 
 function ping(url) {
   return new Promise((resolve) => {
-    const req = http.get(url, (res) => { res.resume(); resolve(res.statusCode === 200); });
+    // The session token goes to this app's engine only, never to the broker or anything else.
+    const headers = originGuard.sameOrigin(url, SERVER) ? SESSION_HEADER : {};
+    const req = http.get(url, { headers }, (res) => { res.resume(); resolve(res.statusCode === 200); });
     req.on("error", () => resolve(false));
     req.setTimeout(2000, () => { req.destroy(); resolve(false); });
   });
@@ -97,12 +111,18 @@ async function ensureServer() {
     // first checks it can actually serve the UI: on 2026-10-06 an engine left running from a
     // deleted checkout answered "/" but 404'd every stylesheet, and the installed app attached to
     // it and showed a bare, unstyled page.
-    if (!app.isPackaged || await ping(SERVER + "/static/styles.css")) return;
+    if (!app.isPackaged || await ping(SERVER + "/static/styles.css")) {
+      // An engine started by another launch holds a different session token, and would refuse
+      // every request from this window.
+      if (await ping(SERVER + "/api/lock/status")) return;
+      throw new Error(`Another copy of SponsorJobs is already using 127.0.0.1:${PORT}. Quit it, ` +
+                      "or restart your computer, then open SponsorJobs again.");
+    }
     throw new Error(`Another program is using SponsorJobs' port (127.0.0.1:${PORT}) and is not ` +
                     "working, most likely an older SponsorJobs engine that was left running. " +
                     "Restart your computer, then open SponsorJobs again.");
   }
-  const env = { ...process.env, TAILOR_SERVER_ONLY: "1",
+  const env = { ...process.env, TAILOR_SERVER_ONLY: "1", TAILOR_SESSION_TOKEN: SESSION_TOKEN,
     // Pull the jobs board from the static feed (fresh, high-volume) unless the user pointed us
     // elsewhere. This is what turns "82 stale local roles" into the full central feed.
     JOBS_FEED_URL: process.env.JOBS_FEED_URL || FEED_URL };
@@ -210,27 +230,26 @@ function ensurePane() {
   pane = new WebContentsView();
   win.contentView.addChildView(pane);
   const wc = pane.webContents;
-  // Popups inside the pane stay inside the pane.
+  // Popups inside the pane stay inside the pane. Only http(s) is followed; nothing opens a window.
   wc.setWindowOpenHandler(({ url }) => {
+    if (!originGuard.originOf(url)) return { action: "deny" };
     if (opensInOwnBrowser(url)) shell.openExternal(url);
-    else if (/^https?:/i.test(url)) wc.loadURL(url);
+    else wc.loadURL(url);
     return { action: "deny" };
   });
   for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-finish-load"]) {
     wc.on(ev, pushPaneState);
   }
-  // Stripe checkout AND Google sign-in run in the pane; both return to our own app URL. Don't load
-  // the app INSIDE the pane -- close it and hand the result to the main window so it continues
-  // cleanly there, instead of leaving the person staring at a mini-app in the pane.
+  // A page in the pane that heads back to our own app URL (a checkout or sign-in that ended
+  // there): don't load the app INSIDE the pane -- close it and tell the main window the outcome
+  // so it continues cleanly there. Google sign-in runs in the person's own browser and finishes
+  // on the engine's callback page; a sign-in token arriving in the pane is never passed on.
   const send = (channel, data) => { if (win && !win.isDestroyed()) win.webContents.send(channel, data); };
   const onReturn = (e, url) => {
-    if (!url || !url.startsWith(SERVER)) return;
+    if (!originGuard.sameOrigin(url, SERVER)) return;
     const co = /[?&]checkout=(success|cancel)\b/.exec(url);
     if (co) { e.preventDefault(); closePane(); send("checkout:return", co[1]); return; }
-    // Google sign-in returns the bearer token: #token=... on the app's callback page (current
-    // broker), or ?account=... (older broker).
-    const acc = /[#&]token=([^&#]+)/.exec(url) || /[?&]account=([^&#]+)/.exec(url);
-    if (acc) { e.preventDefault(); closePane(); send("signin:return", { token: decodeURIComponent(acc[1]) }); return; }
+    if (/[#&]token=|[?&]account=/.test(url)) { e.preventDefault(); closePane(); send("signin:return", { error: "signin_failed" }); return; }
     const gerr = /[#&]error=([a-z_]+)/.exec(url);   // #error=cancelled | #error=signin_failed
     if (gerr) { e.preventDefault(); closePane(); send("signin:return", { error: gerr[1] }); return; }
     if (/[?&]signin=error\b/.test(url)) { e.preventDefault(); closePane(); send("signin:return", { error: "signin_failed" }); }
@@ -384,7 +403,7 @@ async function createWindow() {
     return MEDIA.includes(permission) && allowMedia(host);
   });
 
-  // Any /api/open?u=... request (the CV preview's rerouted links) opens the pane
+  // Any /api/open?u=... request (the resume preview's rerouted links) opens the pane
   // instead of the system browser: cancel the request, keep the app where it is.
   session.defaultSession.webRequest.onBeforeRequest(
     { urls: [SERVER + "/api/open*"] },
@@ -396,25 +415,24 @@ async function createWindow() {
       callback({ cancel: true });
     });
 
-  // External links from the app page itself also stay in-app.
+  // Links the app page opens in a new window stay in-app: http(s) pages (the app's own files,
+  // such as a resume PDF, included) open in the pane, which has no preload. No child window is
+  // ever created, so nothing else gets the app's bridge; any other scheme is dropped.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isSupportMailto(url) || isSupportGmailCompose(url)) { shell.openExternal(url); return { action: "deny" }; }
-    if (/^https?:/i.test(url) && !url.startsWith(SERVER)) {
-      openInPane(url);
-      return { action: "deny" };
-    }
-    return { action: "allow" };
+    if (originGuard.originOf(url)) openInPane(url);
+    return { action: "deny" };
   });
   win.webContents.on("will-navigate", (e, url) => {
     if (isSupportMailto(url) || isSupportGmailCompose(url)) { e.preventDefault(); shell.openExternal(url); return; }
-    if (!url.startsWith(SERVER)) { e.preventDefault(); openInPane(url); return; }
+    if (!originGuard.sameOrigin(url, SERVER)) { e.preventDefault(); openInPane(url); return; }
     // /api/open?u=... is a REROUTE INSTRUCTION, not a page to visit. It is same-origin,
     // so the check above lets it through, the main frame commits the navigation, and the
     // webRequest handler above then cancels it -- stranding the window on
     // chrome-error://chromewebdata with no sidebar, no browser bar and no way back
     // (exactly the "carried away" failure this shell exists to prevent). Intercept it
     // here, before the frame commits, and hand the target to the pane.
-    if (url.startsWith(SERVER + "/api/open")) {
+    if (isOpenReroute(url)) {
       e.preventDefault();
       try {
         const u = new URL(url).searchParams.get("u");
@@ -427,13 +445,21 @@ async function createWindow() {
   // A blank window with no chrome gives the person no way to recover on their own.
   win.webContents.on("did-fail-load", (e, code, desc, url, isMainFrame) => {
     if (!isMainFrame || code === -3) return;         // -3 = aborted, normal on redirects
-    if (url && url.startsWith(SERVER) && !url.startsWith(SERVER + "/api/open")) return;
+    if (originGuard.sameOrigin(url, SERVER) && !isOpenReroute(url)) return;
     win.loadURL(SERVER + "/");
   });
 
   win.on("resize", layoutPane);
   win.webContents.on("zoom-changed", () => setTimeout(layoutPane, 50));
+  // The session cookie goes in before the app page loads, so its first request already has it.
+  await session.defaultSession.cookies.set(originGuard.sessionCookie(SERVER, PORT, SESSION_TOKEN));
   await win.loadURL(SERVER + "/");
+}
+
+// The engine's /api/open?u=... address on this app's origin (the resume preview's rerouted links).
+function isOpenReroute(url) {
+  if (!originGuard.sameOrigin(url, SERVER)) return false;
+  try { return new URL(url).pathname === "/api/open"; } catch (e) { return false; }
 }
 
 // ------------------------------------------------------------- assisted fill
@@ -468,7 +494,7 @@ function agentViewSource() {
 }
 
 function getApp(path) {
-  return net.fetch(SERVER + path, { headers: { "X-Tailor-Extension": "1" } })
+  return net.fetch(SERVER + path, { headers: { "X-Tailor-Extension": "1", ...SESSION_HEADER } })
     .then((r) => (r.ok ? r.json() : null)).catch(() => null);
 }
 
@@ -479,7 +505,7 @@ function fetchAutofillPayload(recordId) {
   // record the work history of that application's resume (for Workday's My Experience).
   const q = recordId !== undefined && recordId !== null && recordId !== "" ? "?record_id=" + encodeURIComponent(recordId) : "";
   return net.fetch(SERVER + "/api/profile/autofill" + q,
-                   { headers: { "X-Tailor-Extension": "1" } })
+                   { headers: { "X-Tailor-Extension": "1", ...SESSION_HEADER } })
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
 }
@@ -487,7 +513,7 @@ function fetchAutofillPayload(recordId) {
 function postApp(path, body) {
   return net.fetch(SERVER + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" },
+    headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1", ...SESSION_HEADER },
     body: JSON.stringify(body || {}),
   }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 }
@@ -1132,7 +1158,7 @@ async function runAutoApplyOnPane(recordId, opts) {
         // running the whole fill past the agent's cap; what the engine filled stands.
         const resp = await net.fetch(SERVER + "/api/autoapply/plan", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" },
+          headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1", ...SESSION_HEADER },
           body: JSON.stringify({ url, record_id: recordId, fields }),
           signal: AbortSignal.timeout(fillBudget.room(C, "plan", Date.now() - t0) || 1000),
         });
@@ -1355,7 +1381,7 @@ function disarmPageWatch() {
 async function applyDecision(url, pageUrl) {
   try {
     const q = "?url=" + encodeURIComponent(url || "") + "&page_url=" + encodeURIComponent(pageUrl || "");
-    const resp = await net.fetch(SERVER + "/api/submit/decision" + q);
+    const resp = await net.fetch(SERVER + "/api/submit/decision" + q, { headers: SESSION_HEADER });
     if (!resp.ok) return { fill: false, click_submit: false };
     const d = await resp.json();
     return { fill: d.fill === true, click_submit: d.click_submit === true };

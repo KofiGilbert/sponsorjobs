@@ -1,9 +1,16 @@
 # SponsorJobs desktop shell (Electron)
 
 The Cursor-style architecture: the app window and an in-app browser pane are both
-native Chromium, so any site loads (no iframe restrictions) and the pane is
-CDP-debuggable on port 9223 - the assisted-apply takeover hook (the agent fills,
-the person watches and clicks submit; CLAUDE.md section 7).
+native Chromium, so any site loads (no iframe restrictions). In a dev run the shell is
+CDP-debuggable on port 9223 (or TAILOR_CDP_PORT) for the e2e scripts; a packaged build
+opens no debugging port unless TAILOR_CDP_PORT is set. The apply agent itself drives the
+pane through Electron's own debugger API and needs no port.
+
+Session token: each launch the shell makes a random token, passes it to the engine it
+spawns (TAILOR_SESSION_TOKEN) and sets it as an HttpOnly, SameSite=Strict cookie on the
+app window. With the token set the engine answers only requests that carry it (the
+cookie, or the X-Tailor-Session header the shell's own code sends). A script that starts
+the engine itself and then the shell can set TAILOR_SESSION_TOKEN for both.
 
 Dev run (spawns the Python engine if 127.0.0.1:57000 is not already serving):
 
@@ -13,7 +20,8 @@ Dev run (spawns the Python engine if 127.0.0.1:57000 is not already serving):
 
 Links: any external link in the app (including clicks inside the embedded CV-preview
 PDF, which route through /api/open) opens in the drawer, never carrying the app away.
-Outside the shell, /api/open falls back to the system browser.
+Outside the shell, a POST to /api/open opens the link in the system browser; a plain
+GET only shows the link.
 
 Packaging (electron-builder + PyInstaller sidecar) is the next step; this directory
 is the dev shell.

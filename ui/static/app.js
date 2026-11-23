@@ -98,6 +98,12 @@
   }
   function hideOutage() { const b = $("#downModal"); if (b) b.hidden = true; }
 
+  // A link opened in the person's own browser by the engine (no desktop shell): POST only.
+  function openOutside(url) {
+    fetch("/api/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ u: url }) })
+      .then((r) => { if (!r.ok) throw new Error("not opened"); })
+      .catch(() => window.open(url, "_blank", "noopener"));
+  }
   async function api(url, body) {
     // A build request (any POST on the session, or a keyword or put back on the live page) shows
     // the build's live steps in the chat while it runs (window.__buildFeed, set up next to the
@@ -4547,7 +4553,7 @@
     m.textContent = state === "idle" ? (text || "") : ""; m.hidden = !(state === "idle" && text);
   }
   function acOpen(url) {
-    fetch("/api/open?u=" + encodeURIComponent(url)).catch(() => window.open(url, "_blank", "noopener"));
+    openOutside(url);
   }
   async function agentConnectStart(wrap, c) {
     const kind = c.integration;
@@ -9821,7 +9827,7 @@
     try {
       const d = await api("/api/interview/round2/buy", { pack });
       if (window.tailorShell) window.tailorShell.openBrowser(d.url);
-      else fetch("/api/open?u=" + encodeURIComponent(d.url)).catch(() => window.open(d.url, "_blank"));
+      else openOutside(d.url);
       r2AfterCheckout();
     } catch (err) {
       if (err.reason === "sign_in_required") { if (btn) btn.disabled = false; openSignin({ kind: "pack", id: pack }); return; }
@@ -10806,11 +10812,6 @@
     else if (buy && buy.kind === "pack") { toast(T("signin.toStripe", "Signed in. Opening checkout...")); await buyPack(buy.id); }
     else { toast(T("signin.done", "Signed in as {email}").replace("{email}", ACCT_EMAIL || "")); suMaybeFirstRun(); }
   }
-  async function adoptToken(token) {
-    try { await api("/api/account/adopt", { token }); await signedIn(); }
-    catch (e) { openSignin(pendingBuy); siErr("signinErr", e.message || T("signin.googleFailed", "Google sign-in didn't finish. Please try again.")); }
-  }
-
   // Continue with Google. Desktop: the person's OWN browser (Google refuses sign-in inside
   // embedded browsers; RFC 8252), which lands on this engine's callback page and adopts the token;
   // this screen notices by polling the account. Web build: the same tab, back to ?signin=ok.
@@ -10845,15 +10846,15 @@
     } catch (e) { siErr("signinErr", e.message || T("signin.googleFailed", "Google sign-in didn't finish. Please try again.")); }
   });
   $("#signinGoogleBack")?.addEventListener("click", () => siStep("signinStart"));
-  // An older path: Google finished inside the side pane and the shell hands us the token.
+  // Google sign-in that ended inside the side pane: the shell closes the pane and passes on only
+  // the outcome. A token is never taken from the pane; sign-in finishes in the person's browser.
   // The broker returns #error=cancelled (the person backed out at Google) or #error=signin_failed.
   function googleErrorText(why) {
     return why === "cancelled" ? T("signin.googleCancelled", "Google sign-in was cancelled. Nothing changed.")
                                : T("signin.googleFailed", "Google sign-in didn't finish. Please try again.");
   }
   window.tailorShell?.onSigninReturn?.((data) => {
-    if (data && data.token) adoptToken(data.token);
-    else { openSignin(pendingBuy); siErr("signinErr", googleErrorText(data && data.error)); }
+    openSignin(pendingBuy); siErr("signinErr", googleErrorText(data && data.error));
   });
 
   // Sign out: this device forgets the email account and goes back to a fresh free account.

@@ -31,8 +31,8 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // hands us the result ('success'|'cancel') so the main window can confirm cleanly.
   onCheckoutReturn: (cb) => ipcRenderer.on("checkout:return", (_e, status) => cb(status)),
   onReturned: (cb) => ipcRenderer.on("app:returned", () => cb()),
-  // 'Continue with Google' finished in the pane; the shell closed it and hands us {token} (or
-  // {error:true}) so the main window can adopt the account and carry on.
+  // A sign-in that ended inside the pane: the shell closed it and hands us {error} so the main
+  // window can say so. Sign-in itself finishes in the person's own browser.
   onSigninReturn: (cb) => ipcRenderer.on("signin:return", (_e, data) => cb(data)),
   // Learn from corrections: save the values the person changed after a fill to the profile.
   assistLearn: () => ipcRenderer.invoke("assist:learn"),

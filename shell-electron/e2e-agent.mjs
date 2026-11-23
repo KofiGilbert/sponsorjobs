@@ -56,6 +56,7 @@
  */
 import { _electron as electron } from "playwright";
 import { spawn, spawnSync } from "child_process";
+import crypto from "crypto";
 import http from "http";
 import fs from "fs";
 import os from "os";
@@ -71,6 +72,10 @@ const FIX_PORT = 57434;
 const PORT = Number(process.env.TAILOR_PORT) || 57000;
 const CDP = Number(process.env.TAILOR_CDP_PORT) || 9223;
 const ENGINE = "http://127.0.0.1:" + PORT;
+// One session token for the engine this test starts and the shell that reuses it, so the run goes
+// through the engine's session check like the real app (ui/app.py _session_gate).
+const SESSION = crypto.randomBytes(32).toString("hex");
+const SH = { "X-Tailor-Session": SESSION };
 const results = [];
 const check = (name, pass, detail = "") => {
   results.push({ name, pass, detail });
@@ -155,13 +160,14 @@ check("seeded seventeen queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0
 const ASK_WAIT_S = 20;
 const engineEnv = { ...process.env, RESUME_AGENT_DATA_DIR: DATA, RESUME_AGENT_DEV: "1", RESUME_AGENT_FAKE_LLM: "1",
                     RESUME_AGENT_FAKE_MAILBOX: "1", SJ_AGENT_ASK_WAIT_S: String(ASK_WAIT_S),
-                    RESUME_AGENT_CRED_FILE: path.join(DATA, "credentials.env"), TAILOR_SERVER_ONLY: "1" };
+                    RESUME_AGENT_CRED_FILE: path.join(DATA, "credentials.env"), TAILOR_SERVER_ONLY: "1",
+                    TAILOR_SESSION_TOKEN: SESSION };
 const engine = spawn(PY, ["-m", "ui.app"], { cwd: REPO, env: engineEnv, stdio: ["ignore", "ignore", "pipe"] });
 let engineErr = "";
 engine.stderr.on("data", (d) => { engineErr += d.toString(); });
 let up = false;
 for (let i = 0; i < 60 && !up; i++) {
-  try { up = (await fetch(ENGINE + "/api/health").catch(() => null))?.ok || (await fetch(ENGINE + "/").catch(() => null))?.ok; } catch { up = false; }
+  try { up = (await fetch(ENGINE + "/api/health", { headers: SH }).catch(() => null))?.ok || (await fetch(ENGINE + "/").catch(() => null))?.ok; } catch { up = false; }
   if (!up) await sleep(1000);
 }
 check("engine up on the test model", up, up ? "" : engineErr.slice(-400));
@@ -169,7 +175,7 @@ const stopEngine = () => { try { engine.kill(); } catch {} };
 process.on("exit", stopEngine);
 
 // The applicant brain migrated the legacy answer stores at start-up (counts only), and kept them.
-const brain = await fetch(ENGINE + "/api/brain/status").then((r) => r.json()).catch(() => null);
+const brain = await fetch(ENGINE + "/api/brain/status", { headers: SH }).then((r) => r.json()).catch(() => null);
 const rep = (brain && brain.report) || {};
 check("the brain migrated the legacy answers",
       !!(brain && brain.active && (rep["answers.db"] || {}).active >= 1 && (rep["app_prefs.json"] || {}).active >= 1),
@@ -184,7 +190,8 @@ const app = await electron.launch({
   cwd: HERE,
   env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined, PATH: "/opt/homebrew/bin:" + process.env.PATH,
          TAILOR_PYTHON: PY, RESUME_AGENT_DATA_DIR: DATA, RESUME_AGENT_DEV: "1", RESUME_AGENT_FAKE_LLM: "1",
-         RESUME_AGENT_CRED_FILE: path.join(DATA, "credentials.env"), SJ_AGENT_PARK_POLL_MS: "1500" },
+         RESUME_AGENT_CRED_FILE: path.join(DATA, "credentials.env"), SJ_AGENT_PARK_POLL_MS: "1500",
+         TAILOR_SESSION_TOKEN: SESSION },
 });
 const win = await app.firstWindow();
 win.on("console", (m) => { if (/apply agent|agent/i.test(m.text())) console.log("  [app]", m.text().slice(0, 300)); });
@@ -208,8 +215,8 @@ const paneEval = async (expr) => {
 await win.evaluate(() => { window.__agentLog = []; window.tailorShell.onAutoApplyProgress((i) => {
   if (i && i.agent) window.__agentLog.push({ s: i.state, r: i.record_id, m: i.message, a: i.activity || null }); }); });
 const agentLog = () => win.evaluate(() => window.__agentLog.slice());
-const api = (url, body) => fetch(ENGINE + url, body === undefined ? { headers: { "X-Tailor-Extension": "1" } }
-  : { method: "POST", headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" }, body: JSON.stringify(body) })
+const api = (url, body) => fetch(ENGINE + url, body === undefined ? { headers: { "X-Tailor-Extension": "1", ...SH } }
+  : { method: "POST", headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1", ...SH }, body: JSON.stringify(body) })
   .then((r) => r.json()).catch(() => null);
 const rowOf = async (id) => {
   const b = await api("/api/autoapply/board");
@@ -340,7 +347,7 @@ check("nothing submitted on the captcha run", !log3.includes("submitted"), JSON.
 // The engine runs a fake mailbox (RESUME_AGENT_FAKE_MAILBOX=1); the test plays the site's mail
 // server, delivering the message while the agent is waiting on /api/inbox/await.
 const deliver = (msg) => fetch(ENGINE + "/api/inbox/dev/deliver", { method: "POST",
-  headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" }, body: JSON.stringify(msg) }).then((r) => r.ok).catch(() => false);
+  headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1", ...SH }, body: JSON.stringify(msg) }).then((r) => r.ok).catch(() => false);
 await win.waitForSelector(`.aa-row[data-id="${RID_CODE}"]`, { timeout: 30_000 });
 await clickRow(RID_CODE);
 const waiting = await waitBar(/waiting for the site|ready to send|stopped|have a look|connect your email/i, 120_000);
@@ -484,7 +491,7 @@ check("nothing was submitted on the address run", !log8.includes("submitted"), J
 // "What base pay are you targeting for this position?" (required) matches no rule. The label
 // mapper makes ONE model call for it (the test model counts calls in /api/brain/status), the
 // saved salary fills it, and the next application with the same wording makes no call at all.
-const mapperCalls = async () => ((await fetch(ENGINE + "/api/brain/status").then((r) => r.json()).catch(() => null)) || {}).mapper || {};
+const mapperCalls = async () => ((await fetch(ENGINE + "/api/brain/status", { headers: SH }).then((r) => r.json()).catch(() => null)) || {}).mapper || {};
 const salCard = await win.evaluate(() => fetch("/api/answers/basics", { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ fields: { salary: "95000" } }) }).then((r) => r.json()));
 check("the salary is saved on the form answers card", String((salCard.values || {}).salary || "") === "95000", JSON.stringify(salCard.values || salCard));
@@ -515,7 +522,7 @@ check("nothing was submitted on the base pay runs", !log9.includes("submitted") 
 // Forget, then the in-row confirm), and the next application with the base pay question asks.
 const zipCheck = spawnSync(PY, ["-c", `
 import io, json, sys, urllib.request, zipfile
-z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("${ENGINE}/api/memory/export.zip").read()))
+z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(urllib.request.Request("${ENGINE}/api/memory/export.zip", headers={"X-Tailor-Session": "${SESSION}"})).read()))
 names = z.namelist()
 mem = z.read("memory.json").decode()
 diary = "".join(z.read(n).decode() for n in names if n.startswith("diary/"))

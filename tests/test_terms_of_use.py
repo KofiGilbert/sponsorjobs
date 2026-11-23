@@ -93,7 +93,8 @@ def test_google_sign_in_records_it_too(A, monkeypatch):
         status_code = 200
     import requests
     monkeypatch.setattr(requests, "get", lambda *a, **k: R())
-    assert c.post("/api/account/adopt", json={"token": "tok-g"}, headers=H).get_json()["ok"] is True
+    assert c.post("/api/account/adopt", json={"token": "tok-g", "nonce": mod._new_signin_nonce()},
+                  headers=H).get_json()["ok"] is True
     assert _status(c)["via"] == "signin" and _consent(c)["terms"]["on"] is True
 
 
