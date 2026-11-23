@@ -1232,6 +1232,7 @@ button { font-family: inherit; cursor: pointer; }
   font-size: 13px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
 .jf-dd-panel label:hover { background: var(--surface-2); }
 .jf-dd-panel input { accent-color: var(--accent); cursor: pointer; }
+.jf-dd-panel.is-right { left: auto; right: 0; }   /* set by app.js when left-aligned would overflow */
 /* Entry-level toggle button (pill; pressed = filled). */
 .jf-toggle-btn { flex: 0 0 auto; font-size: 13px; padding: 0 14px; height: 38px; border-radius: var(--r);
   border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); cursor: pointer;

@@ -3007,6 +3007,17 @@
     const dd = $("#jfVisaDD");
     if (dd && dd.open && !dd.contains(e.target)) dd.open = false;
   });
+  // Keep its panel on screen: it opens under the button's left edge, and when that would run past
+  // the right edge of the content area (the button is last in the bar at 1440 wide) it lines up
+  // with the button's right edge instead.
+  $("#jfVisaDD")?.addEventListener("toggle", (e) => {
+    const dd = e.currentTarget, panel = dd.querySelector(".jf-dd-panel");
+    if (!dd.open || !panel) return;
+    panel.classList.remove("is-right");
+    const area = dd.closest(".main") || document.documentElement;
+    const edge = Math.min(window.innerWidth, area.getBoundingClientRect().right) - 8;
+    if (panel.getBoundingClientRect().right > edge) panel.classList.add("is-right");
+  });
   $("#jfEntry")?.addEventListener("click", (e) => {
     JF_LEVEL = JF_LEVEL === "entry" ? "" : "entry";
     e.currentTarget.setAttribute("aria-pressed", JF_LEVEL === "entry" ? "true" : "false");
