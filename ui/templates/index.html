@@ -173,6 +173,21 @@
           </div>
         </header>
 
+        <!-- The sign-up question (2026-11-20), asked once: it sets whether the board starts on
+             Sponsors only or All jobs. Saved into the work-authorization profile. app.js shows it. -->
+        <div class="sponsor-ask" id="sponsorAsk" role="group" aria-labelledby="sponsorAskQ" hidden>
+          <div class="sponsor-ask-txt">
+            <div class="sponsor-ask-q" id="sponsorAskQ" data-i18n="jobs.askQ">Do you need visa sponsorship to work in the US?</div>
+            <div class="sponsor-ask-why" id="sponsorAskWhy" data-i18n="jobs.askWhy">Your answer sets which jobs you see first. Change it any time.</div>
+          </div>
+          <div class="sponsor-ask-acts">
+            <button class="btn btn-ghost btn-sm" type="button" data-sponsor-answer="yes" data-i18n="jobs.askYes">Yes</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-sponsor-answer="no" data-i18n="jobs.askNo">No</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-sponsor-answer="unsure" data-i18n="jobs.askUnsure">Not sure</button>
+            <button class="link-btn sponsor-ask-later" type="button" id="sponsorAskLater" data-i18n="jobs.askLater">Not now</button>
+          </div>
+        </div>
+
         <!-- Faceted filter bar: search + location, then dropdown facets (date, work type,
              sponsorship multi-select) and an entry-level toggle. Applied filters show as
              removable chips below, LinkedIn/Glassdoor style. -->
@@ -209,6 +224,9 @@
           <details class="jf-dd" id="jfVisaDD">
             <summary class="jf-input jf-sel" id="jfVisaSummary" data-i18n="jobs.sponsorship">Sponsorship</summary>
             <div class="jf-dd-panel" role="group" aria-label="Sponsorship filters">
+              <label title="Jobs at employers with a sponsorship record, or whose ad offers sponsorship" data-i18n-title="jobs.scopeSponsorsTip"><input type="radio" name="jfScope" data-scope="sponsors" /> <span data-i18n="jobs.scopeSponsors">Sponsors only</span></label>
+              <label title="Every job, with or without a sponsorship record" data-i18n-title="jobs.scopeAllTip"><input type="radio" name="jfScope" data-scope="all" /> <span data-i18n="jobs.scopeAll">All jobs</span></label>
+              <hr class="jf-dd-sep" />
               <label><input type="checkbox" data-visa="SPONSORED" /> <span>Sponsors a visa</span></label>
               <label><input type="checkbox" data-visa="H-1B" /> <span>H-1B</span></label>
               <label><input type="checkbox" data-visa="GREEN-CARD" /> <span>Green Card</span></label>
@@ -506,6 +524,16 @@
             <div class="ans-card-h">
               <h2 class="ans-h" id="memWorkH" data-i18n="mem.work">Work and visa</h2>
               <button class="btn btn-ghost btn-sm" id="memWaEdit" type="button" data-i18n="mem.editWa">Edit work authorization</button>
+            </div>
+            <!-- The sign-up sponsorship question, kept here to change later. The same US entry the
+                 editor below writes; it sets whether Jobs starts on Sponsors only or All jobs. -->
+            <div class="ans-field mem-spq" id="memSponsorQ">
+              <span data-i18n="jobs.askQ">Do you need visa sponsorship to work in the US?</span>
+              <div class="ans-seg" id="memSponsorSeg" role="group" aria-labelledby="memSponsorQ">
+                <button type="button" class="ans-seg-b" data-sponsor-answer="yes" aria-pressed="false" data-i18n="jobs.askYes">Yes</button>
+                <button type="button" class="ans-seg-b" data-sponsor-answer="no" aria-pressed="false" data-i18n="jobs.askNo">No</button>
+                <button type="button" class="ans-seg-b" data-sponsor-answer="unsure" aria-pressed="false" data-i18n="jobs.askUnsure">Not sure</button>
+              </div>
             </div>
             <section class="ans-card mem-sub" id="ansWaCard" hidden aria-labelledby="ansWaH">
                         <div class="ans-card-h">
@@ -2103,6 +2131,7 @@
   <script src="{{ url_for('static', filename='timekeeper.js') }}"></script>
   <!-- The Inbox screen's pure parts (labels, times, rows, the sandboxed mail page), node-tested. -->
   <script src="{{ url_for('static', filename='inbox_view.js') }}"></script>
+  <script src="{{ url_for('static', filename='jobs_scope.js') }}"></script>
   <script src="{{ url_for('static', filename='send_all.js') }}"></script>
   <!-- The Browser panel follows the shell's pane (open and close), node-tested. -->
   <script src="{{ url_for('static', filename='pane_sync.js') }}"></script>

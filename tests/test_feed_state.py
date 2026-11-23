@@ -245,6 +245,15 @@ def test_push_then_pull_full_and_slim(tmp_path):
     assert _rows(tmp_path / "slim" / "resume_agent.db")["greenhouse:acme:1"]["jd_text"] == feed_state.JD_HELD
 
 
+def test_push_records_the_sponsor_count_for_the_guard(tmp_path):
+    from scripts import feed_state
+    s3, data = _S3(), _state(tmp_path)
+    m = feed_state.push_state(s3, "b", data, "102", feed_count=1234, feed_sponsor_count=1000,
+                              workdir=tmp_path, now=_at(0), **_QUIET)
+    assert m["feed_sponsor_count"] == 1000
+    assert json.loads(s3.objects["state/latest.json"])["feed_sponsor_count"] == 1000
+
+
 def test_pull_finds_nothing_when_r2_holds_no_state_and_rejects_a_damaged_archive(tmp_path):
     from scripts import feed_state
     s3 = _S3()
@@ -354,6 +363,51 @@ def test_cli_guard_fails_on_a_shrunk_feed_unless_allowed(tmp_path, monkeypatch):
     assert feed_state.main(["guard", "--manifest", str(man), "--allow-drop"], **_QUIET) == 0
     man.write_text(json.dumps({"count": 900}))
     assert feed_state.main(["guard", "--manifest", str(man)], **_QUIET) == 0
+
+
+def test_guard_also_checks_sponsor_count_when_both_feeds_carry_it():
+    from scripts import feed_state
+    # General rows grew enough to hide a lost third of the sponsor rows in the total: caught.
+    checks = feed_state.guard_checks({"count": 300_000, "sponsor_count": 160_000}, 290_000, 240_000)
+    assert [ok for ok, _ in checks] == [True, False]
+    assert "sponsor jobs" in checks[1][1] and "refusing" in checks[1][1]
+    # Sponsor rows held: both pass.
+    assert all(ok for ok, _ in feed_state.guard_checks({"count": 300_000, "sponsor_count": 239_000},
+                                                       290_000, 240_000))
+    # A previous feed from before the field, or a built one without it: only the total is checked.
+    assert len(feed_state.guard_checks({"count": 300_000, "sponsor_count": 10}, 290_000, None)) == 1
+    assert len(feed_state.guard_checks({"count": 300_000}, 290_000, 240_000)) == 1
+
+
+def test_previous_sponsor_count_reads_the_live_manifest_then_the_saved_state(tmp_path):
+    from scripts import feed_state
+    sm = tmp_path / "restored.json"
+    sm.write_text(json.dumps({"id": "1", "feed_count": 300, "feed_sponsor_count": 200}))
+    live = b'{"count": 400, "sponsor_count": 250}'
+    assert feed_state.previous_sponsor_count("u", sm, fetch=lambda u: live) == 250
+    assert feed_state.previous_sponsor_count("u", sm, fetch=lambda u: b'{"count": 400}') == 200
+
+    def down(u):
+        raise OSError("offline")
+    assert feed_state.previous_sponsor_count("u", sm, fetch=down) == 200
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"id": "0", "feed_count": 300}))
+    assert feed_state.previous_sponsor_count("u", old, fetch=down) is None
+
+
+def test_cli_guard_fails_on_lost_sponsor_rows_unless_allowed(tmp_path, monkeypatch):
+    from scripts import feed_state
+    man = tmp_path / "manifest.json"
+    man.write_text(json.dumps({"count": 1100, "sponsor_count": 500}))
+    monkeypatch.setattr(feed_state, "previous_count", lambda url, sm=None, fetch=None: 1000)
+    monkeypatch.setattr(feed_state, "previous_sponsor_count", lambda url, sm=None, fetch=None: 1000)
+    assert feed_state.main(["guard", "--manifest", str(man)], **_QUIET) == 3
+    assert feed_state.main(["guard", "--manifest", str(man), "--allow-drop"], **_QUIET) == 0
+    man.write_text(json.dumps({"count": 1100, "sponsor_count": 900}))
+    assert feed_state.main(["guard", "--manifest", str(man)], **_QUIET) == 0
+    monkeypatch.setattr(feed_state, "previous_sponsor_count", lambda url, sm=None, fetch=None: None)
+    man.write_text(json.dumps({"count": 1100, "sponsor_count": 1}))
+    assert feed_state.main(["guard", "--manifest", str(man)], **_QUIET) == 0   # nothing to compare
 
 
 # -- the workflow -------------------------------------------------------------------------- #

@@ -45,11 +45,24 @@ manifests are kept.
 
 ## What the list contains
 
-Only sponsor-relevant rows (`sourcing/quality.is_sponsor_relevant`): every job from a board on the
-watchlist (those companies are there because they have a sponsorship record), plus aggregator rows
-only when the employer carries a sponsor badge or the posting states sponsorship. The general
-aggregator dump of all recent US postings is off (`FREEHIRE_GENERAL_BULK=1` re-enables it).
-Decided 2026-10-01 so the landing page's promise holds on every row.
+**All jobs, sponsors first (2026-11-20).** Two kinds of row, each marked `sponsor_relevant`:
+
+* **Sponsor rows** (`sponsor_relevant: true`, `sourcing/quality.is_sponsor_relevant`): every job from
+  a board on the watchlist (those companies are there because they have a sponsorship record), plus
+  aggregator rows when the employer carries a sponsor badge or the posting states sponsorship. Never
+  capped. This is exactly the whole feed as it was from 2026-10-01 to 2026-11-20.
+* **General rows** (`sponsor_relevant: false`): the other checked US rows (an aggregator role with no
+  sponsor signal, or an ad that says it will not sponsor), English titles only, newest first, at most
+  `FEED_GENERAL_MAX` of them (`backend/feed.general_max`; the workflow sets 50,000, the code default
+  0 keeps a feed sponsor-only). Shard 0 pulls them with the general freehire dump
+  (`FREEHIRE_GENERAL_BULK=1`, `FREEHIRE_BULK` rows per run, both set in the workflow).
+
+The manifest's `count` is every live job; `sponsor_count` is the sponsor rows (the website's "live
+roles at sponsoring employers"). The app's Jobs screen starts on "Sponsors only" for anyone who needs
+sponsorship (or has not said) and on "All jobs" for anyone who said they do not
+(`sourcing/filters.default_scope`). A row from a feed built before the flag counts as a sponsor row.
+To go back to a sponsor-only feed: repository variables `FEED_GENERAL_MAX=0` and
+`FREEHIRE_GENERAL_BULK=0` (the next run publishes fewer rows, so run it once with `allow_drop`).
 
 ## How it works
 
@@ -72,12 +85,12 @@ Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/m
 
 | object | contents | cache |
 |---|---|---|
-| `jobs.json.gz` | `{feed_version: 1, generated_at, count, attribution, jobs: [...]}`; each row is a board row **without** `jd_text` (~500 bytes instead of ~9 KB): `source_id, source, company, title, location, remote, url, posted_at, first_seen, salary, sponsorship_stated, us, entry_level, visa, nationality_visas, sponsor` | `max-age=600` |
+| `jobs.json.gz` | `{feed_version: 1, generated_at, count, sponsor_count, attribution, jobs: [...]}`; each row is a board row **without** `jd_text` (~500 bytes instead of ~9 KB): `source_id, source, company, title, location, remote, url, posted_at, first_seen, salary, sponsorship_stated, us, entry_level, visa, nationality_visas, sponsor, sponsor_relevant` | `max-age=600` |
 | `jd/{xx}.json.gz` | `{source_id: jd_text}` for every job whose `sha1(source_id)` starts with `xx` -- 256 fixed shards, so a crawl uploads ~257 objects, not 50,000 | `max-age=86400` |
 | `parts/jobs-{version}-{nnn}.json.gz` | the SAME list split into ~1 MB gzipped parts (~10 for 96k roles), each `{version, part, parts, jobs: [...]}`; joined in order they are exactly `jobs.json.gz`'s rows. `version` is a hash of the rows, so the names are content-addressed and a part never changes | `max-age=31536000, immutable` (R2) |
 | `parts/s-{sha}.json.gz` | the SAME list again in the **stable layout** (2026-10-23): rows grouped by the ISO week they were first seen (oldest first; inside a week by `first_seen`, then `source_id`), cut into ~1 MB parts, each `{bucket, jobs: [...]}` with rows as sorted-key JSON. The name is the hash of the part's own bytes, so a part whose rows did not change keeps its name across rebuilds | `max-age=31536000, immutable` (R2) |
 | `parts/d-{sha}.json.gz` | the stable layout's removed rows: `{removed: {part url: [row indexes]}}`, the rows of kept parts that left the list or changed since that part was written | same |
-| `manifest.json` | tiny, uncompressed: `{generated_at, count, jobs_url, jd_shard_count, jd_url_template, parts: {version, count, total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count}]}, stable: {format: 1, version, count, order: "recent", total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count, bucket}], removed: {url, sha256, raw_sha256, bytes, count}}}` (`removed` only when rows were removed) | `no-cache` |
+| `manifest.json` | tiny, uncompressed: `{generated_at, count, sponsor_count, jobs_url, jd_shard_count, jd_url_template, parts: {version, count, total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count}]}, stable: {format: 1, version, count, order: "recent", total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count, bucket}], removed: {url, sha256, raw_sha256, bytes, count}}}` (`removed` only when rows were removed) | `no-cache` |
 | `manifest-history.json` | R2 only, written by the uploader: the part lists of the last 3 manifests, `{manifests: [[url, ...], ...]}`; parts none of them name are deleted | `no-cache` |
 | `sponsors/{a..z,0..9,_}.json.gz` | the browser extension's sponsor index (`scripts/build_sponsor_index.py`, built in the same workflow run): `{index_version, version, shard, records: {norm_name: [display_name, h1b_approvals, h1b_last_fy, h1b_first_fy, perm_certs, e_verify, cap_exempt, naics2, state, h1b_5y, denial_pct, flags]}}` (the last three are the 2026-10 compact facts: approvals over the newest five fiscal years, denial rate in whole percent, bit set 1 = H-1B dependent / 2 = willful violator; trailing zeros dropped), ~8 MB in all. Lets the extension badge jobs with no app installed, without sending a company name anywhere | `max-age=86400` |
 | `sponsors/manifest.json` | `{index_version, version (content hash), generated_at, employers, stats, shards: {key: {file, bytes, records}}, total_bytes}`; the extension re-checks it at most daily | `no-cache` |

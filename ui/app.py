@@ -507,7 +507,38 @@ def _facets(a) -> dict:
     return dict(q=a.get("q", ""), loc=a.get("loc", ""), days=a.get("days", 0),
                 remote=a.get("remote", ""),
                 visa=[v for v in a.get("visa", "").split(",") if v], level=a.get("level", ""),
-                pay=a.get("pay", 0), sort=a.get("sort", ""), sponsored=a.get("sponsored", ""))
+                pay=a.get("pay", 0), sort=a.get("sort", ""), sponsored=a.get("sponsored", ""),
+                scope=_request_scope(a))
+
+
+def _request_scope(a) -> str:
+    """The board scope for one request: ?scope=sponsors|all when the page sends it, else the
+    person's own (_jobs_scope_state), so Home and anything else that asks without it follow
+    the same choice as the Jobs screen."""
+    from sourcing.filters import SCOPES
+    v = str(a.get("scope") or "").strip().lower()
+    return v if v in SCOPES else _jobs_scope_state()["scope"]
+
+
+def _jobs_scope_state() -> dict:
+    """Which jobs the board shows (2026-11-20): {scope, manual, default, answer, ask}.
+    ``answer`` is the sign-up question's answer read from the work-authorization profile
+    (autoapply/workauth.sponsor_answer: yes / no / unsure / ""); ``default`` is the scope it
+    implies (sourcing/filters.default_scope); ``manual`` is the person's own choice on the Jobs
+    screen ("" when they never made one), which wins. ``ask`` is True while the question is
+    still worth asking: nothing about US work authorization is saved and it was not skipped."""
+    from autoapply import workauth as _wa
+    from sourcing.filters import SCOPES, default_scope, effective_scope
+    try:
+        wa = _work_auth()
+    except Exception:      # noqa: BLE001 - an unreadable profile reads as unanswered
+        wa = {}
+    answer = _wa.sponsor_answer(wa)
+    p = _prefs()
+    manual = p.get("jobs_scope") if p.get("jobs_scope") in SCOPES else ""
+    return {"scope": effective_scope(manual, answer), "manual": manual,
+            "default": default_scope(answer), "answer": answer,
+            "ask": not _wa.has_us_answers(wa) and not p.get("sponsor_q_skipped")}
 
 
 def _local_benchmarks() -> dict:
@@ -2271,7 +2302,12 @@ _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   "apply_wants": {},
                   # Auto mode: "only send by itself when the match is at least X%" (0 = off).
                   # (The mode itself is _apply_mode, in its own small file.)
-                  "auto_min_match": 0}
+                  "auto_min_match": 0,
+                  # The Jobs screen's scope the person picked ("sponsors" / "all"); "" follows
+                  # their sign-up sponsorship answer (_jobs_scope_state).
+                  "jobs_scope": "",
+                  # They closed the sign-up sponsorship question without answering: not asked again.
+                  "sponsor_q_skipped": False}
 
 
 def _prefs() -> dict:
@@ -2306,6 +2342,11 @@ def _set_prefs(patch: dict) -> dict:
         cur["aa_focus"] = {"titles": _split(f.get("titles"))[:20],
                            "locations": _split(f.get("locations"))[:20],
                            "sponsor_only": bool(f.get("sponsor_only"))}
+    if "jobs_scope" in patch:                # the Jobs screen's own choice; "" follows the answer
+        v = str(patch["jobs_scope"] or "").strip().lower()
+        cur["jobs_scope"] = v if v in ("sponsors", "all") else ""
+    if "sponsor_q_skipped" in patch:
+        cur["sponsor_q_skipped"] = bool(patch["sponsor_q_skipped"])
     if "autopilot" in patch:                 # OFF by default; the person turns it on
         cur["autopilot"] = bool(patch["autopilot"])
     if "autopilot_per_day" in patch:
@@ -4460,8 +4501,9 @@ def jobs_refresh():
 
 def _local_board_rows(w) -> list[dict]:
     """The LOCAL board: every stored role, sponsor-tagged, ad-stance + role-tagged, and reduced to
-    the accessible set (US, not clearance-heavy, JD-checked, sponsor-relevant) with entry_level
-    filled. Unfiltered and unpaginated: the feed route and the saved-search digest both start here."""
+    the accessible set (US, not clearance-heavy, JD-checked) with entry_level and sponsor_relevant
+    filled, the same shape as the static feed's rows (so the "Sponsors only" scope works the same
+    on both). Unfiltered and unpaginated: the feed route and the saved-search digest start here."""
     from sourcing.adstance import UNKNOWN, ad_stance
     from sourcing.jobtags import job_tags
     from sourcing.quality import (employer_is_clearance_heavy, is_entry_level, is_jd_checked,
@@ -4476,9 +4518,10 @@ def _local_board_rows(w) -> list[dict]:
         j["tags"] = job_tags(j.get("title") or "", jd)
     jobs = [j for j in jobs
             if j.get("us") and not employer_is_clearance_heavy(j.get("company", ""))
-            and is_jd_checked(j) and is_sponsor_relevant(j)]
+            and is_jd_checked(j)]
     for j in jobs:
         j["entry_level"] = is_entry_level(j.get("title", ""))
+        j["sponsor_relevant"] = is_sponsor_relevant(j)
     return jobs
 
 
@@ -4498,6 +4541,13 @@ def _board_rows() -> list[dict]:
         return _local_board_rows(w)
     finally:
         w.close()
+
+
+def _scoped_board_rows() -> list[dict]:
+    """The board in the person's scope (Sponsors only or All jobs, _jobs_scope_state): what the
+    saved-search counts and digest count, so "new jobs" matches what the Jobs screen shows."""
+    from sourcing.filters import scope_rows
+    return scope_rows(_board_rows(), _jobs_scope_state()["scope"])
 
 
 def _newest_arrival(jobs) -> str | None:
@@ -4525,6 +4575,53 @@ def jobs_feed_retry():
         return jsonify({"configured": False})
     _static_feed().start_refresh(force=True)
     return jsonify(_feed_status())
+
+
+@app.get("/api/jobs/scope")
+@_guard
+def jobs_scope_get():
+    """Which jobs the board shows and why: {scope, manual, default, answer, ask}
+    (_jobs_scope_state). The Jobs screen reads it once to set its Sponsorship filter."""
+    return _nostore(jsonify(_jobs_scope_state()))
+
+
+@app.post("/api/jobs/scope")
+@_guard
+def jobs_scope_set():
+    """The person picked "Sponsors only" or "All jobs" on the Jobs screen: {scope}. Remembered
+    until they change it; "" goes back to following their sponsorship answer."""
+    v = str((request.json or {}).get("scope") or "").strip().lower()
+    if v not in ("", "sponsors", "all"):
+        return jsonify({"error": "scope must be sponsors, all, or blank"}), 400
+    _set_prefs({"jobs_scope": v})
+    return jsonify(_jobs_scope_state())
+
+
+@app.get("/api/workauth/sponsorship")
+@_guard
+def workauth_sponsorship_get():
+    """The sign-up question "Do you need visa sponsorship to work in the US?": {answer, ask,
+    scope...}. ``answer`` is yes / no / unsure / "" read from the work-authorization profile."""
+    return _nostore(jsonify(_jobs_scope_state()))
+
+
+@app.post("/api/workauth/sponsorship")
+@_guard
+def workauth_sponsorship_set():
+    """Save the sign-up question's answer {answer: yes|no|unsure} into the work-authorization
+    profile (autoapply/workauth.set_sponsor_answer: the same US entry the full editor writes),
+    or {skip: true} to stop asking without saving an answer. Returns the new scope state."""
+    from autoapply import workauth as _wa
+    b = request.json or {}
+    if b.get("skip"):
+        _set_prefs({"sponsor_q_skipped": True})
+        return jsonify(_jobs_scope_state())
+    try:
+        wa = _wa.set_sponsor_answer(_work_auth(), str(b.get("answer") or ""))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    _merge_prefs({"work_auth": wa})
+    return jsonify(_jobs_scope_state())
 
 
 @app.get("/api/jobs")
@@ -4576,7 +4673,7 @@ def jobs_list():
                         j["saved"] = j.get("source_id") in saved
                 refreshed = header.get("generated_at")
                 return jsonify({"jobs": page_jobs, "count": count, "total": len(jobs),
-                                "fit_ranked": fit_ranked,
+                                "scope": facets["scope"], "fit_ranked": fit_ranked,
                                 "page": page, "per_page": per_page, "refreshed_at": refreshed,
                                 "newest_at": _newest_arrival(jobs),
                                 "stale": _is_stale(refreshed, hours=12) if refreshed else False,
@@ -4625,8 +4722,10 @@ def jobs_list():
                 w.upsert_jobs(extra)
                 extra = [j for j in extra if j.get("us")
                          and not employer_is_clearance_heavy(j.get("company", ""))]
+                from sourcing.quality import is_sponsor_relevant
                 for j in extra:
                     j["entry_level"] = is_entry_level(j.get("title", ""))
+                    j["sponsor_relevant"] = is_sponsor_relevant(j)
                 seen = {j.get("source_id") for j in filtered}
                 filtered = filtered + [j for j in apply_facets(extra, **facets)
                                        if j.get("source_id") not in seen]
@@ -4654,7 +4753,7 @@ def jobs_list():
         # 168-role fallback during a network blip. When feed_url is unset (or still the placeholder)
         # this is a genuine local-only install, so it is NOT degraded.
         return jsonify({"jobs": page_jobs, "count": count, "total": len(jobs),
-                        "fit_ranked": fit_ranked,
+                        "scope": facets["scope"], "fit_ranked": fit_ranked,
                         "page": page, "per_page": per_page, "refreshed_at": refreshed,
                         "newest_at": _newest_arrival(jobs),
                         "stale": _is_stale(refreshed, hours=12),
@@ -14170,7 +14269,7 @@ def _strategy_with_counts(store, strategies: list[dict], rows: list[dict] | None
     """Attach new_count + newest_at (the digest's headline numbers) to each strategy row."""
     from sourcing.strategies import new_since
     if rows is None:
-        rows = _board_rows()
+        rows = _scoped_board_rows()
     out = []
     for st in strategies:
         fresh = new_since(rows, st)
@@ -14278,7 +14377,7 @@ def strategies_new(sid: int):
         st = store.get(sid)
         if st is None:
             return jsonify({"error": "no such strategy"}), 404
-        d = digest(_board_rows(), st, limit=30)
+        d = digest(_scoped_board_rows(), st, limit=30)
         saved = _saved_ids()
         d["jobs"] = [dict(j, saved=(j.get("source_id") in saved)) for j in d["jobs"]]
         return jsonify(d)
@@ -18163,6 +18262,9 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
     profile = _match_profile()
     from autoapply.learning import needs_sponsorship
     needs = needs_sponsorship(_load_prefs())
+    # The board in the person's scope, the same one the Jobs screen shows (2026-11-20): someone
+    # on Sponsors only is never handed a role from the general rows, chip or no chip.
+    scope = _jobs_scope_state()["scope"]
     skip = tuple(_prefs().get("aa_skip") or [])
     # The prefilter reads every row of the board (~0.7 s on 100k rows), so its order is kept
     # until something it depends on changes: the board itself, the focus, the saved search,
@@ -18170,12 +18272,13 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
     key = (id(board), len(board), str(DB_PATH), tuple(titles), tuple(locations), sponsor_only,
            json.dumps((strat or {}).get("filters") or {}, sort_keys=True, default=str),
            tuple(str(j.get("source_id") or "") for j in saved), _aa_profile_sig(profile),
-           skip, _LEARN_VER[0], needs)
+           skip, _LEARN_VER[0], needs, scope)
     hit = _AA_CAND_CACHE.get("v")
     if hit and hit[0] == key and hit[2] is board:
         rows = hit[1]
     else:
-        rows = candidates(board, saved, facets=(strat or {}).get("filters") or {},
+        from sourcing.filters import scope_rows
+        rows = candidates(scope_rows(board, scope), saved, facets=(strat or {}).get("filters") or {},
                           titles=titles, locations=locations, sponsor_only=sponsor_only,
                           targets=profile_targets(profile), learn=_learn_state(),
                           needs_sponsor=needs)
