@@ -1981,5 +1981,14 @@
   "aa.ans.panelTitle": "Antworten",
   "aa.ans.showAll": "Alle {n} anzeigen",
   "aa.ans.showFewer": "Weniger anzeigen",
-  "aa.ans.held": "Aus Datenschutzgründen ausgeblendet"
+  "aa.ans.held": "Aus Datenschutzgründen ausgeblendet",
+  "aa.ev.saved": "Ihre gespeicherte Antwort",
+  "aa.ev.job": "Ihr Berufsweg",
+  "aa.ev.edu": "Ihre Ausbildung",
+  "aa.ev.post": "die Stellenanzeige",
+  "aa.ev.loc": "Ihr Wohnort",
+  "aa.ev.skills": "Ihre Fähigkeiten",
+  "aa.ev.years": "Ihr Berufsweg",
+  "aa.ev.links": "Ihre Links",
+  "aa.ev.langs": "Ihre Sprachen"
 }

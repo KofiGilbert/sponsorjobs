@@ -1981,5 +1981,14 @@
   "aa.ans.panelTitle": "Réponses",
   "aa.ans.showAll": "Tout afficher ({n})",
   "aa.ans.showFewer": "Afficher moins",
-  "aa.ans.held": "Masqué pour votre confidentialité"
+  "aa.ans.held": "Masqué pour votre confidentialité",
+  "aa.ev.saved": "votre réponse enregistrée",
+  "aa.ev.job": "votre parcours professionnel",
+  "aa.ev.edu": "votre formation",
+  "aa.ev.post": "l'offre d'emploi",
+  "aa.ev.loc": "votre lieu de résidence",
+  "aa.ev.skills": "vos compétences",
+  "aa.ev.years": "votre parcours professionnel",
+  "aa.ev.links": "vos liens",
+  "aa.ev.langs": "vos langues"
 }
