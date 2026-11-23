@@ -71,9 +71,19 @@ _CONTACT: list[tuple[str, re.Pattern]] = [
     ("postal_code", re.compile(r"\bzip\b|postal|post code|postcode", re.I)),
     ("city", re.compile(r"^\W*(current )?city\b|\bcity\W*$|\btown\b", re.I)),
     ("state", re.compile(r"^\W*(state|province|region)\b|state\s*/\s*province", re.I)),
-    ("country", re.compile(r"^\W*(current )?country( of residence)?\W*$", re.I)),
+    # (2026-11-19) SuccessFactors' "Country/Region of Residence:*" too
+    ("country", re.compile(r"^\W*(current )?country(\s*(/|or)\s*region)?( of (current )?residence)?\W*$", re.I)),
     ("address", re.compile(r"^\W*(street |home |mailing |current )?address( line 1)?\W*$|street", re.I)),
 ]
+
+
+# (2026-11-19, Sidley and Home Depot on Workday) A candidate account's name came out "Kofi Kofi
+# Gilbert Gilbert" and the street twice: the person's names go only in the boxes that ask for
+# exactly them (never a middle, preferred, former or other name) and the street only in the first
+# address line. Mirrored in extension/autofill_core.js and shell-electron/agent.js boxRefusal.
+_NAME_PART = re.compile(r"middle|preferred|nick ?name|maiden|former|previous|prior|alias|suffix|prefix"
+                        r"|other (first |last |given )?names?|birth ?name|pronunciation|phonetic", re.I)
+_STREET_EXTRA = re.compile(r"line.?[2-9]\b|address.?[2-9]\b|\bapt\b|apartment|\bsuite\b", re.I)
 
 
 def contact_key(label: str) -> str:
@@ -88,6 +98,10 @@ def contact_key(label: str) -> str:
         return ""
     for key, rx in _CONTACT[2:]:
         if rx.search(lbl):
+            if key in ("first_name", "last_name", "full_name") and _NAME_PART.search(lbl):
+                return ""
+            if key == "address" and _STREET_EXTRA.search(lbl) and not re.search(r"street|line.?1\b", lbl, re.I):
+                return ""
             return key
     return ""
 

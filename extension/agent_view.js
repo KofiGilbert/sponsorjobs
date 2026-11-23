@@ -744,6 +744,10 @@
   const POLICY_LINK_RE = /privacy (notice|policy|statement|agreement)|data (privacy|protection) (notice|policy)|terms (and|&) conditions|terms of (use|service)|cookie (policy|notice)|e-?verify|right to work poster|notice at collection|(eea|ccpa|gdpr)\b.*(supplement|notice)/i;
   function policyLink(el) {
     const link = tagOf(el) === "A" || norm(attrOf(el, "role")) === "link";
+    // (2026-11-19) A control that opens the notice to read and ACCEPT it (SuccessFactors' "Read
+    // and accept the data privacy statement") is how the form takes the acceptance, not a link
+    // away to read: it may be pressed (the accept itself stays the person's consent's).
+    if (link && OPENER_RE.test(cleanText((attrOf(el, "aria-label") || "") + " " + ownText(el)))) return false;
     return link && POLICY_LINK_RE.test(ownText(el));
   }
   // Is the element at its centre point the element, one of its parts, its container, or the
@@ -1676,6 +1680,8 @@
   const MARKETING_RE = /newsletter|marketing|promotion|special offers?|job alerts?|talent (community|network|pool)|join our|(receive|send me|get|sign me up for) (emails?|e-?mails|texts?|sms|updates|communications|news|alerts)|text messages?|\bsms\b|recruiters? (can|may) contact|contact me (about|for|regarding)|future (job )?opportunit|similar (jobs|roles|positions)|subscribe|profile visible/i;
   const COOKIE_RE = /cookie/i;
   const JOB_RE = /appl(y|ying|ication|icant)|candida|employment|recruit|hiring|e-?verify/i;
+  // A control that opens the notice to read and accept it (never the accept itself).
+  const OPENER_RE = /\b(read and accept|read & accept|open (the )?(data )?privacy|view and accept|review and accept|accept the (data )?privacy (statement|agreement|policy|notice))\b/i;
   const ACCEPT_RE = /^(yes,? )?(i )?(acknowledge|agree|accept|consent)( (to )?(it|this|the (terms|notice|agreement|policy)))?( (and|&) (continue|proceed))?[.!]?$/i;
   function titleOf(box) {
     const ids = String(attrOf(box, "aria-labelledby") || "").split(/\s+/).filter(Boolean);
@@ -1710,7 +1716,7 @@
     const out = [];
     const seenBoxes = new Set();
     // 1. a dialog that blocks the page until the notice is accepted
-    for (const d of deepAll("[role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true']")) {
+    for (const d of deepAll("[role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true'], [id$=':container']")) {
       if (seenBoxes.has(d) || !onScreen(d)) continue;
       if (Array.from(seenBoxes).some((s) => composedContains(s, d) || composedContains(d, s))) continue;
       const title = titleOf(d);
@@ -1736,7 +1742,119 @@
       if (MARKETING_RE.test(own) || !TERMS_RE.test(own)) continue;
       out.push({ kind: "checkbox", title: termsName(own), index: refIndex(c), button: "" });
     }
+    // 3. (2026-11-19, SAP SuccessFactors at Gainwell) a REQUIRED button or link that OPENS the
+    // notice ("Terms of Use: Read and accept the data privacy statement. Required"): the form is
+    // refused until its dialog's own Accept is pressed. The shell opens it and presses that
+    // Accept under the same consent as a required box. Never a marketing one, never optional
+    // (unless loose), never one inside a dialog (that is kind 1).
+    if (!out.some((x) => x.kind === "modal")) {
+      for (const b of deepAll("button, [role='button'], a")) {
+        if (isDisabled(b) || !onScreen(b)) continue;
+        if (b.closest && b.closest("[role='dialog'], [role='alertdialog'], dialog, [aria-modal='true']")) continue;
+        const words = cleanText((attrOf(b, "aria-label") || "") + " " + (b.textContent || "")).slice(0, 300);
+        if (!OPENER_RE.test(words) || !TERMS_RE.test(words) || MARKETING_RE.test(words) || submitLike(b)) continue;
+        const required = isRequired(b) || /[*\u2731]|\(required\)|\brequired\b/i.test(words);
+        if (!required && !loose) continue;
+        if (noticeAccepted(refIndex(b)) === true) continue;       // the form already holds it
+        const named = termsName(ownText(b));
+        out.push({ kind: "opener", title: named !== "Terms" ? named : termsName(words), index: refIndex(b), button: ownText(b).slice(0, 40) });
+        break;
+      }
+    }
     return out.slice(0, 4);
+  }
+
+  // ---- a notice behind a button, the parts the shell needs (2026-11-19, SuccessFactors) -------
+  // The notice's dialog once its opener was pressed: an open dialog (role=dialog, aria-modal,
+  // dialog[open]), SAP UI's "<id>:container" box, or a large fixed or absolute box around an
+  // Accept button, about a notice, with exactly ONE accept button (and, for a box that does not
+  // call itself a dialog, a Decline beside it). {index, title, button} or null.
+  const NOTICE_DECLINE_RE = /^(i )?(decline|do not (accept|agree)|don'?t (accept|agree)|disagree|reject|no,? thanks?)[.!]?$/i;
+  function noticeDialog() {
+    const boxes = deepAll("[role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true'], [id$=':container']").filter(onScreen);
+    for (const b of deepAll("button, [role='button'], input[type='button']")) {
+      if (!onScreen(b) || !ACCEPT_RE.test(ownText(b))) continue;
+      for (let n = b.parentElement, i = 0; n && i < 12; n = n.parentElement, i++) {
+        const cs = styleOf(n);
+        const r = n.getBoundingClientRect ? n.getBoundingClientRect() : { width: 0, height: 0 };
+        if (cs && /fixed|absolute/.test(cs.position) && r.width > 200 && r.height > 80) { if (!boxes.includes(n)) boxes.push(n); break; }
+      }
+    }
+    for (const d of boxes) {
+      const text = cleanText(d.innerText != null ? d.innerText : d.textContent).slice(0, 3000);
+      if (MARKETING_RE.test(titleOf(d)) || !TERMS_RE.test(text)) continue;
+      const btns = buttonsIn(d);
+      const acc = btns.filter((x) => ACCEPT_RE.test(ownText(x)) && !submitLike(x));
+      if (acc.length !== 1) continue;
+      const named = /^(dialog|alertdialog)$/.test(norm(attrOf(d, "role"))) || attrOf(d, "aria-modal") === "true" || tagOf(d) === "DIALOG";
+      if (!named && !btns.some((x) => NOTICE_DECLINE_RE.test(ownText(x)))) continue;
+      return { index: refIndex(acc[0]), title: (titleOf(d) || termsName(text)).slice(0, 80), button: ownText(acc[0]).slice(0, 40) };
+    }
+    return null;
+  }
+  // The opener's own form: the required boxes still empty (labels), the empty required country
+  // or region list among them (its index: the shell fills it from the profile), and whether the
+  // focus sits in an empty required box (the site's own way of saying "this first").
+  function openerForm(index) {
+    const el = element(index);
+    if (!el || !el.isConnected) return null;
+    const form = (el.closest && (el.closest("form") || el.closest("[role='form'], fieldset"))) || document.body;
+    const pending = [];
+    let country = null, focused = "";
+    const empty = (f) => (tagOf(f) === "SELECT" ? !String(f.value || "").trim() : !String(f.value || "").trim());
+    for (const f of Array.from(form.querySelectorAll("input, select, textarea"))) {
+      if (f === el || f.disabled || /^(hidden|submit|button|image|reset|file|checkbox|radio)$/i.test(f.type || "")) continue;
+      if (!onScreen(f) || !isRequired(f) || !empty(f)) continue;
+      const label = cleanText(labelOf(f) || attrOf(f, "aria-label") || f.name || f.id || "").slice(0, 80);
+      if (tagOf(f) === "SELECT" && RESIDENCE_LIST_RE.test(label) && !NOT_RESIDENCE_RE.test(label) && country === null) country = refIndex(f);
+      pending.push(label || "a required field");
+      if (document.activeElement === f) focused = label || "a required field";
+    }
+    return { pending, country, focused };
+  }
+  const RESIDENCE_LIST_RE = /\bcountry\b/i;
+  const NOT_RESIDENCE_RE = /citizen|nationalit|birth|origin|passport|visa|work authori/i;
+  // Every empty required country or region list of residence on the page (a create-account form,
+  // where the fill engine stands back): their indices, for the shell to set from the profile.
+  function residenceLists() {
+    const out = [];
+    for (const f of deepAll("select")) {
+      if (f.disabled || !onScreen(f) || !isRequired(f) || String(f.value || "").trim()) continue;
+      const label = cleanText(labelOf(f) || attrOf(f, "aria-label") || "");
+      if (RESIDENCE_LIST_RE.test(label) && !NOT_RESIDENCE_RE.test(label)) out.push(refIndex(f));
+    }
+    return out.slice(0, 2);
+  }
+  // A country list set to the person's country (the list's own option by name or code), through
+  // the native setter with input and change, as a person's pick fires them. True when it holds.
+  const COUNTRY_ALIASES = { "united states": ["united states of america", "usa", "us", "u s", "u s a"], "united kingdom": ["uk", "great britain", "gb"] };
+  function setCountry(index, name) {
+    const el = element(index);
+    if (!el || tagOf(el) !== "SELECT") return false;
+    const want = norm(String(name || "").replace(/[^\p{L}\p{N} ]+/gu, " "));
+    if (!want) return false;
+    const alts = [want].concat(COUNTRY_ALIASES[want] || []);
+    const opts = Array.from(el.options || []).filter((o) => !o.disabled && o.value);
+    const hit = opts.find((o) => alts.includes(norm(String(o.textContent || "").replace(/[^\p{L}\p{N} ]+/gu, " "))))
+      || opts.find((o) => alts.includes(norm(o.value)));
+    if (!hit) return false;
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+    try { el.focus(); } catch (e) { /* fine */ }
+    set.call(el, hit.value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    try { el.blur(); } catch (e) { /* fine */ }
+    return el.value === hit.value;
+  }
+  // Did the form take the acceptance? A hidden box of the form that holds it (SuccessFactors'
+  // fbclc_dpcsId: empty until accepted) now has a value. null when the form has no such box.
+  function noticeAccepted(index) {
+    const el = element(index);
+    const form = (el && el.closest && (el.closest("form") || el.closest("[role='form'], fieldset"))) || document;
+    const keep = Array.from(form.querySelectorAll("input[type='hidden']"))
+      .filter((h) => /dpcs|privacy|consent|terms|gdpr|dataprotect/i.test((h.id || "") + " " + (h.name || "")));
+    if (!keep.length) return null;
+    return keep.some((h) => String(h.value || "").trim() !== "");
   }
 
   // {options, partial}: every choice of a native <select> (the view prints only four), from the
@@ -1758,7 +1876,7 @@
 
   window.TailorAgent = {
     view, element, act, submitButton, rect, markPopups, popupOptions, popupOpen, closePopup, selectOptions, listOptions,
-    closeOthers, optionIndex, chosenIs, termsItems,
+    closeOthers, optionIndex, chosenIs, termsItems, noticeDialog, openerForm, setCountry, noticeAccepted, residenceLists,
     readPage, find, inspect, readErrors, pageCheck, has, pageShape, honeypotField, announcement,
     refs: () => window.__tailorAgentRefs || [],
     SUBMIT_RE,

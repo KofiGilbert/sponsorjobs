@@ -9693,6 +9693,9 @@
   // (Kofi, 2026-10-14): it runs on a pass or a pack, on the company key held by the broker. Nobody
   // adds their own Tavus key.
   let R2 = null, LIVE_STREAM = null, R2_CTX = null, CVI_CLOCK = null, CVI_PREV_W = "", CVI_UNBILLED = 0;
+  // The old side-pane call put the interview in the Browser pane; only then does its teardown
+  // close the pane (it runs on every sidebar click, and closed an application's page, 2026-11-19).
+  let CVI_IN_PANE = false;
   async function round2Status() {
     try { return await api("/api/interview/round2/status"); } catch { return null; }
   }
@@ -9958,6 +9961,7 @@
       CVI_CALL.join({ url, token }).catch((e) => cviDropped((e && e.message) || "join"));
     } else if (window.tailorShell) {
       window.tailorShell.openBrowser(s.join_url);          // fallback: the old side-pane call, no timekeeper
+      CVI_IN_PANE = true;
     } else {
       window.open(s.join_url, "_blank");
     }
@@ -10028,7 +10032,8 @@
     clearTimeout(CVI_WAIT);
     CVI_TK = null;
     if (CVI_CALL) { const c = CVI_CALL; CVI_CALL = null; c.leave().catch(() => {}).finally(() => { try { c.destroy(); } catch (e) {} }); }
-    if (window.tailorShell) window.tailorShell.closeBrowser();
+    if (CVI_IN_PANE && window.tailorShell) window.tailorShell.closeBrowser();
+    CVI_IN_PANE = false;
     if (CVI_PREV_W) {                                      // restore the panel width an old-style call widened
       document.documentElement.style.setProperty("--panel-w", CVI_PREV_W);
       CVI_PREV_W = "";
@@ -11663,7 +11668,7 @@
   // Apply, signs in or creates the account, fills every page and stops at Submit.
   const AA_HAS_AGENT = () => !!(window.tailorShell && window.tailorShell.agentRun);
   const AA_ACT = { review: ["aa.act.review", "Review"], fill: ["aa.act.fill", "Fill application"],
-    signin: ["aa.act.signin", "Sign in and fill"], finish: ["aa.act.finish", "Open and finish"], view: ["aa.act.view", "View"],
+    signin: ["aa.act.signin", "Sign in and fill"], finish: ["aa.act.finish", "Open and finish"], open_self: ["aa.act.finish", "Open and finish"], view: ["aa.act.view", "View"],
     // a job the apply agent parked: its question, or Continue after a step on the page
     answer: ["aa.act.answer", "Answer and continue"], continue: ["aa.act.continue", "Continue"],
     // left on its review page by the agent (also once the page is gone: Send fills it again)
@@ -11808,6 +11813,8 @@
     }
     // The AI itself was unavailable on the last run (out of credits, no key): said plainly, never "needs you".
     if (it.tile === "waiting" && it.agent_note) return ["flag", T("aa.st.ai", "The AI was unavailable, nothing changed. Try again.")];
+    // (2026-11-19) The job is on a board that forbids automated applications: said plainly.
+    if (it.board_stop && it.board_stop.board) return ["flag", T("aa.st.board", "This job is on {board}, which does not allow automated applications. Open it and apply yourself.").replace("{board}", it.board_stop.board)];
     // (2026-11-19) The last run stopped because the site sent it to another site: which one.
     if (it.tile === "waiting" && it.left_site && it.left_site.host) return ["flag", T("aa.st.left", "Stopped: the site sent me to {host}").replace("{host}", it.left_site.host)];
     if (it.tile === "waiting") return ["ready", it.queued ? T("aa.st.queued", "Queued to send for you") : T("aa.st.waiting", "Approved, ready to fill")];
@@ -11843,7 +11850,7 @@
     const q = it.paused && it.paused.state === "waiting" ? String(it.paused.message || "").trim() : "";
     const loc = usLocation(it.location);
     const act = it.action;
-    const primaryish = act === "fill" || act === "signin" || act === "finish" || act === "answer" || act === "continue" || act === "send";
+    const primaryish = act === "fill" || act === "signin" || act === "finish" || act === "open_self" || act === "answer" || act === "continue" || act === "send";
     return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(it.role)}, ${esc(coName(it))}">
       ${companyAvatar(it)}
       <div class="aa-row-main"><div class="aa-t">${esc(it.role || T("aa.role", "Role"))}</div>
@@ -13250,6 +13257,12 @@
     if (!row) return;
     const id = Number(row.dataset.id);
     const btn = e.target.closest("[data-act]");
+    if (btn && btn.dataset.act === "open_self") {
+      // (2026-11-19) a board that forbids automated applications: the person opens it and applies
+      const it = aaFind(id);
+      if (it && /^https?:\/\//i.test(it.apply_url || "")) { if (window.tailorShell) window.tailorShell.openBrowser(it.apply_url); else window.open(it.apply_url, "_blank", "noopener"); }
+      return;
+    }
     if (btn && /^(fill|signin|finish)$/.test(btn.dataset.act)) { aaFill(id, { btn }); return; }
     if (btn && btn.dataset.act === "answer") { aaAnswerParked(id); return; }
     if (btn && btn.dataset.act === "continue") { aaContinueParked(id); return; }
@@ -14970,8 +14983,16 @@
     slot.style.display = "none";
     document.querySelector("#spBodyBrowser .browser-bar").style.display = "none";
   } else {
+    // The panel follows the shell's pane both ways (pane_sync.js): a pane the shell closed is
+    // never left on screen as a black slot.
+    let shellOpen = false;
     shell.onState((st) => {
-      if (st.open) open("browser");
+      const onBrowser = body.classList.contains("panel-open") && tab === "browser";
+      const act = window.SJPaneSync ? window.SJPaneSync.panelOnState(shellOpen, st, onBrowser)
+                                    : (st.open ? "open" : "");
+      shellOpen = !!st.open;
+      if (act === "open") open("browser");
+      else if (act === "close") close();
       if (document.activeElement !== urlBox) urlBox.value = st.url || "";
       back.disabled = !st.canGoBack;
       fwd.disabled = !st.canGoForward;
