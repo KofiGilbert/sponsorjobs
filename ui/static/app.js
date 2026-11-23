@@ -4,8 +4,16 @@
   "use strict";
   const $ = (s, r = document) => r.querySelector(s);
   const el = (t, c) => { const n = document.createElement(t); if (c) n.className = c; return n; };
-  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, m =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, m =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+  // (2026-11-23) A link built from outside data (the job feed, a contact, a posting) is a link
+  // only when it is http(s); anything else (javascript:, data:, a relative oddity) becomes "#".
+  const safeHref = (u) => (/^https?:\/\//i.test(String(u == null ? "" : u).trim()) ? esc(String(u).trim()) : "#");
+  // (2026-11-23) image load / error handling without inline handlers (the page's security policy
+  // allows no inline script): [data-img-gone] images remove themselves when they fail,
+  // [data-img-fade] ones fade in once loaded.
+  document.addEventListener("error", (e) => { const t = e.target; if (t && t.tagName === "IMG" && t.hasAttribute("data-img-gone")) t.remove(); }, true);
+  document.addEventListener("load", (e) => { const t = e.target; if (t && t.tagName === "IMG" && t.hasAttribute("data-img-fade")) t.style.opacity = 1; }, true);
 
   /* SponsorJobs is an ONLINE, real-model tool. When it can't reach the model we don't want a
      generic error toast: "you're offline", "add your key" and "your credit ran out" are
@@ -236,7 +244,7 @@
 
   const cvsTplCard = (t) => `<button class="cvs-tpl" data-use="${esc(t.name)}" type="button" title="${esc(t.best_for || t.display_name)}">
       <div class="cvs-tpl-prev"><img class="cvs-tpl-img" loading="lazy" alt="" draggable="false"
-        src="/api/templates/${esc(t.name)}/thumb.png" onerror="this.remove()"></div>
+        src="/api/templates/${esc(t.name)}/thumb.png" data-img-gone></div>
       <div class="cvs-tpl-name">${esc(t.display_name)}</div>
     </button>`;
 
@@ -1614,7 +1622,7 @@
     let host = "";
     try { host = new URL((j && (j.url || j.posting_url || j.apply_url || j.job_url)) || "").hostname; } catch (e) { host = ""; }
     const img = `<img class="av-img" src="/api/logo?v=2&company=${encodeURIComponent(co)}${host ? `&host=${encodeURIComponent(host)}` : ""}" alt=""`
-      + ` loading="lazy" onload="this.style.opacity=1" onerror="this.remove()" />`;
+      + ` loading="lazy" data-img-fade data-img-gone />`;
     return `<div class="fr-logo">${mono}${img}</div>`;
   }
 
@@ -1648,7 +1656,7 @@
   function viaLink(j) {
     const a = viaSource(j);
     if (!a) return "";
-    return `<div class="fd-via"><a href="${esc(j.url || a.url)}" target="_blank" rel="noopener">${esc(viaText(a))}</a></div>`;
+    return `<div class="fd-via"><a href="${safeHref(j.url || a.url)}" target="_blank" rel="noopener">${esc(viaText(a))}</a></div>`;
   }
 
   // Category chips like the competitor's ("Data Engineering", "Healthcare"), derived from the
@@ -2099,7 +2107,7 @@
       <div class="fd-match" id="fdMatch"></div>
       <div class="fd-actions">
         ${fdMainBtn(j)}
-        <a class="btn btn-ghost" href="${esc(j.url)}" target="_blank" rel="noopener">View posting ↗</a>
+        <a class="btn btn-ghost" href="${safeHref(j.url)}" target="_blank" rel="noopener">View posting ↗</a>
         <button class="btn btn-ghost fd-save ${j.saved ? "is-saved" : ""}" data-fd-save="${esc(j.source_id)}" type="button" aria-pressed="${j.saved ? "true" : "false"}">${j.saved ? "★ Saved" : "☆ Save"}</button>
         <button class="btn btn-ghost" data-fd-dismiss="${esc(j.source_id)}" type="button">Dismiss</button>
       </div>
@@ -2175,7 +2183,7 @@
       const j = LAST_JOBS.find(x => x.source_id === SELECTED_SID) || {};
       if (el) el.insertAdjacentHTML("beforeend",
         `<div class="jd-preview-note">This source shares only a preview of this posting. `
-        + `${j.url ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">Open the full description ↗</a>` : "Open the posting for the full description."}</div>`);
+        + `${j.url ? `<a href="${safeHref(j.url)}" target="_blank" rel="noopener">Open the full description ↗</a>` : "Open the posting for the full description."}</div>`);
     }
     renderCompany(data.job);
     // The list row often has no pay (feeds rarely publish it); the detail fetch can recover a
@@ -2224,8 +2232,8 @@
     if (s.perm_certs > 0) track.push(`<b>${s.perm_certs.toLocaleString()}</b> certified green-card (PERM) case${s.perm_certs === 1 ? "" : "s"}`);
     if (s.e_verify) track.push("enrolled in <b>E-Verify</b> (required for a STEM-OPT hire)");
     const line = track.length
-      ? `Public U.S. filings show ${name} with ${listJoin(track)}. A track record from government data, not a promise this role sponsors.`
-      : `We have no public sponsorship record for ${name} yet. They still might sponsor, it's worth asking.`;
+      ? `Public U.S. filings show ${esc(name)} with ${listJoin(track)}. A track record from government data, not a promise this role sponsors.`
+      : `We have no public sponsorship record for ${esc(name)} yet. They still might sponsor, it's worth asking.`;
     el.innerHTML = `
       <div class="fd-company-h">About ${esc(name)}</div>
       ${facts.length ? `<div class="fd-company-meta">${facts.join(" · ")}</div>` : ""}
@@ -3512,7 +3520,7 @@
         box.checked = added || (!f.on_resume && picked.has(f.key));
         if (!box.disabled) boxes.push(box);
         const name = f.url
-          ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(unDash(f.name))}</a>`
+          ? `<a href="${safeHref(f.url)}" target="_blank" rel="noopener">${esc(unDash(f.name))}</a>`
           : esc(unDash(f.name));
         const body = el("div", "rf-body");
         body.innerHTML = `<div class="rf-head"><span class="rf-name">${name}</span>`
@@ -6086,7 +6094,7 @@
     $("#liRingFg").style.strokeDashoffset = String(LI_RING_C * (1 - score / 100));
     const who = $("#liWho");
     who.innerHTML = d.url
-      ? `<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || d.url)}</a>`
+      ? `<a href="${safeHref(d.url)}" target="_blank" rel="noopener">${esc(d.name || d.url)}</a>`
       : esc(d.name || "");
     const role = (d.review && d.review.target_role) || "";
     $("#liTarget").textContent = role
@@ -6553,7 +6561,7 @@
     if (!panel) return;
     const contacts = (j.contacts || []).map(c => `<div class="trk-contact">
         <div class="trk-contact-who"><b>${esc(c.name)}</b>${c.role ? ` <span class="prof-dim">${esc(c.role)}</span>` : ""}
-          <div class="trk-contact-links">${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}${c.linkedin ? `<a href="${esc(c.linkedin)}" target="_blank" rel="noopener">LinkedIn</a>` : ""}</div>
+          <div class="trk-contact-links">${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}${c.linkedin ? `<a href="${safeHref(c.linkedin)}" target="_blank" rel="noopener">LinkedIn</a>` : ""}</div>
         </div>
         <button class="btn btn-danger-ghost btn-sm" data-rm-contact="${c.id}" type="button" aria-label="${esc(trkT("tracker.removeContact", "Remove contact"))}">&times;</button>
       </div>`).join("") || `<p class="prof-dim">${esc(trkT("tracker.noContacts", "No contacts yet."))}</p>`;
@@ -6578,7 +6586,7 @@
       </div>
       <div class="trk-p-row">
         ${trkStageSelect(j, 'id="trkPanelStage"')}
-        ${j.url ? `<a class="btn btn-ghost btn-sm" href="${esc(j.url)}" target="_blank" rel="noopener">${esc(trkT("tracker.posting", "Job posting"))}</a>` : ""}
+        ${j.url ? `<a class="btn btn-ghost btn-sm" href="${safeHref(j.url)}" target="_blank" rel="noopener">${esc(trkT("tracker.posting", "Job posting"))}</a>` : ""}
       </div>
       <div class="trk-p-msgs" id="trkPanelMsgs" hidden></div>
       <div class="trk-p-sec">
@@ -7585,7 +7593,7 @@
       : "";
     // A repo shows as a small GitHub mark beside the title; a private one carries a lock.
     const repo = p.repo_url
-      ? `<a class="proj-gh ${p.repo_private ? "is-private" : ""}" href="${esc(p.repo_url)}" target="_blank" rel="noopener"
+      ? `<a class="proj-gh ${p.repo_private ? "is-private" : ""}" href="${safeHref(p.repo_url)}" target="_blank" rel="noopener"
            title="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}"
            aria-label="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}">${GH_MARK}${p.repo_private ? ICO_LOCK : ""}</a>`
       : "";
@@ -7669,7 +7677,7 @@
     const verified = p.stage === "verified";
     const part = aiCardParts(p);
     const repo = p.repo_url
-      ? `<a class="proj-gh ${p.repo_private ? "is-private" : ""}" href="${esc(p.repo_url)}" target="_blank" rel="noopener"
+      ? `<a class="proj-gh ${p.repo_private ? "is-private" : ""}" href="${safeHref(p.repo_url)}" target="_blank" rel="noopener"
            title="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}"
            aria-label="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}">${GH_MARK}${p.repo_private ? ICO_LOCK : ""}</a>`
       : "";
@@ -8672,7 +8680,7 @@
     const exHTML = ex.length ? `<div class="proj-idea-ex"><span class="proj-idea-ex-k">${esc(PT("projects.examples", "Examples"))}</span>
         ${ex.map(e => {
           const [own, name] = String(e.full_name || "").split("/");
-          return `<a class="proj-ex" href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.description || e.full_name)}">${ICO_REPO}<span class="proj-ex-n"><span class="proj-ex-o">${esc(own || "")}/</span>${esc(name || "")}</span><span class="proj-ex-s">${ICO_STAR}${kStars(e.stars)}</span></a>`;
+          return `<a class="proj-ex" href="${safeHref(e.url)}" target="_blank" rel="noopener" title="${esc(e.description || e.full_name)}">${ICO_REPO}<span class="proj-ex-n"><span class="proj-ex-o">${esc(own || "")}/</span>${esc(name || "")}</span><span class="proj-ex-s">${ICO_STAR}${kStars(e.stars)}</span></a>`;
         }).join("")}
       </div>` : "";
     const n = (s.skills || []).length;
@@ -15139,7 +15147,7 @@
     if (box) {
       box.hidden = false;
       box.innerHTML = `<span>${esc(ST("strat.openHint", "Each search opens in your own browser. If only one tab opened, your browser blocked the rest: click them here."))}</span>` +
-        urls.map(u => `<a href="${esc(u.url)}" target="_blank" rel="noopener noreferrer">${esc(u.label)}</a>` +
+        urls.map(u => `<a href="${safeHref(u.url)}" target="_blank" rel="noopener noreferrer">${esc(u.label)}</a>` +
           (u.note === "login" ? ` <span class="strat-link-note">(${esc(ST("strat.handshakeNote", "needs your Handshake login"))})</span>` : "")).join("");
     }
     const plain = urls.map(u => u.url);
