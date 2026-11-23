@@ -1917,3 +1917,21 @@ dice.com".
   query) once a run has recorded that ad landing on such a board. Only from what a run recorded;
   nothing is fetched to find out.
 - Tests: tests/test_consent_dialog_and_dice.py, tests/js/test_prohibited_board.js.
+
+## A work-authorization question takes only the saved answer (2026-11-23, measured at Uline)
+
+"Will you now or in the future require employer visa sponsorship to work in the U.S.?" held the
+person's saved Yes (they will need sponsorship later). The brain, which never sees the work
+authorization profile, judged the value "likely a wrong guess" and selected No as a best guess in
+Auto. That would have misstated the person's legal status to an employer.
+
+- `protocol.work_auth_verdict` runs before every other check, in every mode, on a question
+  `workauth.classify` reads as work authorization (sponsorship now / later / either, authorized,
+  citizen, status) and whose words name it (sponsor, visa, authorized, citizen, status...): only
+  the answer `workauth.answer` gives from the saved profile passes (source saved_answer); any other
+  is refused (hard limit 5) and the brain is told the right answer. With nothing saved for that
+  question it is left, never guessed.
+- When the profile answers it but the form's choices cannot be matched to that answer, the old path
+  stays: a best guess flagged "your work authorization is saved but this form words it differently".
+- The engine attaches the saved work authorization to the material (`Material.work_auth`).
+- Tests: tests/test_work_auth_never_guessed.py.
