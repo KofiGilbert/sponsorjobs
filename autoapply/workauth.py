@@ -100,6 +100,13 @@ def clean(raw) -> dict:
                "auth_end": end if _DATE.match(end) else ""}
         if any(ent.values()):
             out["countries"][cc] = ent
+    # The sign-up question's "Not sure" (see set_sponsor_answer): kept only while the US entry
+    # says nothing about sponsorship, so answering the full questions later clears it. It is never
+    # a legal answer: entry(), fact() and answer() read the countries only and never see it.
+    if str(raw.get(SIGNUP_KEY) or "").strip().lower() == "unsure":
+        us = entry(out, "US")
+        if not us["sponsor_now"] and not us["sponsor_future"]:
+            out[SIGNUP_KEY] = "unsure"
     return out
 
 
@@ -119,7 +126,8 @@ def load(prefs: dict | None) -> dict:
     """The person's work-authorization profile from the app's prefs store: the structured
     ``work_auth`` when saved, else built from the older flat answers."""
     p = prefs or {}
-    if isinstance(p.get("work_auth"), dict) and (p["work_auth"].get("countries") or p["work_auth"].get("relocate")):
+    if isinstance(p.get("work_auth"), dict) and (p["work_auth"].get("countries") or p["work_auth"].get("relocate")
+                                                 or p["work_auth"].get(SIGNUP_KEY)):
         return clean(p["work_auth"])
     return from_legacy(p)
 
@@ -219,56 +227,68 @@ def is_citizen_or_pr(wa: dict | None, country: str = "US"):
 
 # --------------------------------------------------------------------------- the sign-up question
 # "Do you need visa sponsorship to work in the US?" Yes / No / Not sure, asked once at first run
-# and kept on My profile. It is stored in the same US entry as the full editor, never in a store
-# of its own:
-#   yes    -> sponsor_now Yes, sponsor_future Yes
-#   no     -> sponsor_now No,  sponsor_future No
-#   unsure -> sponsor_now left blank, sponsor_future Yes (a form asking "now or in the future"
-#             gets the safe Yes, and "now" stays open for the person to answer)
+# and kept on My profile. It sets which jobs the board shows first. It must never make a form
+# assert something the person did not say, so it writes only what the answer itself states:
+#   yes    -> sponsor_future Yes. sponsor_now is left as it is: an F-1 student on OPT needs
+#             sponsorship LATER, not now, and "Do you currently require sponsorship?" is answered
+#             from sponsor_now alone.
+#   no     -> sponsor_now No, sponsor_future No.
+#   unsure -> no legal field at all; only ``signup_sponsor: "unsure"`` at the top of the profile,
+#             for the job filter. clean() drops it once the full questions are answered.
 SPONSOR_ANSWERS = ("yes", "no", "unsure")
+SIGNUP_KEY = "signup_sponsor"
 
 
 def sponsor_answer(wa: dict | None, country: str = "US") -> str:
-    """The question's answer read back from the profile: "yes", "no", "unsure", or "" when the
-    profile does not say. A citizen or permanent resident reads "no"; needing it now, or not now
-    but later (the older "Future" answer), reads "yes"."""
+    """The question's answer read back from the profile: "yes" when sponsorship is needed now or
+    later, "no" when neither (a citizen or permanent resident reads "no"), "unsure" when only the
+    sign-up's Not sure is recorded, else ""."""
     e = entry(wa, country)
     now, fut = e["sponsor_now"], e["sponsor_future"]
-    if now == "Yes" or (now == "No" and fut == "Yes"):
+    if now == "Yes" or fut == "Yes":
         return "yes"
     if now == "No" and fut == "No":
         return "no"
-    if not now and fut == "Yes":
+    if not now and not fut and str(country or "US").upper() == "US" \
+            and str((wa or {}).get(SIGNUP_KEY) or "") == "unsure":
         return "unsure"
     return ""
 
 
 def has_us_answers(wa: dict | None) -> bool:
     """True when the person already told us anything about their US work authorization (a
-    status, or any yes/no): they are not asked the sign-up question again."""
+    status, any yes/no, or the sign-up answer): they are not asked the sign-up question again."""
+    if str((wa or {}).get(SIGNUP_KEY) or ""):
+        return True
     e = ((wa or {}).get("countries") or {}).get("US") or {}
     return any(str(v or "").strip() for v in e.values())
 
 
 def set_sponsor_answer(wa: dict | None, answer: str, country: str = "US") -> dict:
-    """The profile with the question's answer written into the country's entry; everything else
-    in the profile is kept. An answer that matches what the profile already says changes nothing
-    (so an older "Future" answer is not flattened by saving Yes again). A status that contradicts
-    the answer (a citizen who now says they need sponsorship) is cleared: the answer is newer."""
+    """The profile with the sign-up answer written as above; everything else is kept. An answer
+    the profile already gives changes nothing (an older "Future" answer is not touched by Yes).
+    A citizen or permanent-resident status that contradicts Yes is cleared (a removal, never a
+    new assertion). Not sure over a profile that already answers sponsorship changes nothing."""
     answer = str(answer or "").strip().lower()
     if answer not in SPONSOR_ANSWERS:
         raise ValueError("answer must be yes, no, or unsure")
     out = clean(wa or {})
     if sponsor_answer(out, country) == answer:
         return out
+    if answer == "unsure":
+        out[SIGNUP_KEY] = "unsure"
+        return clean(out)
     cc = str(country or "US").upper()
     e = dict(out["countries"].get(cc) or {"status": "", "authorized": "", "sponsor_now": "",
                                           "sponsor_future": "", "auth_end": ""})
-    e["sponsor_now"], e["sponsor_future"] = {"yes": ("Yes", "Yes"), "no": ("No", "No"),
-                                             "unsure": ("", "Yes")}[answer]
-    if answer != "no" and (e.get("status") in CITIZEN or e.get("status") in PERMANENT):
-        e["status"] = ""
+    if answer == "yes":
+        e["sponsor_future"] = "Yes"
+        if e.get("status") in CITIZEN or e.get("status") in PERMANENT:
+            e["status"] = ""
+    else:
+        e["sponsor_now"], e["sponsor_future"] = "No", "No"
     out["countries"][cc] = e
+    out.pop(SIGNUP_KEY, None)
     return clean(out)
 
 

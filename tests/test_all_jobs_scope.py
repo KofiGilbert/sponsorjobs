@@ -154,13 +154,69 @@ def test_scope_filters_and_old_rows_count_as_sponsor_rows():
 
 
 # --------------------------------------------------------------------------- the question's store
-def test_answers_round_trip_through_the_work_auth_profile():
-    for ans, now, fut in (("yes", "Yes", "Yes"), ("no", "No", "No"), ("unsure", "", "Yes")):
-        wa = W.set_sponsor_answer({}, ans)
-        us = wa["countries"]["US"]
-        assert (us["sponsor_now"], us["sponsor_future"]) == (now, fut), ans
-        assert W.sponsor_answer(wa) == ans
-        assert W.has_us_answers(wa)
+NOW = "Do you currently require sponsorship?"
+SPONSOR_QS = (NOW, "Will you now or in the future require visa sponsorship?",
+              "Will you in the future require sponsorship for employment visa status?",
+              "Do you require H-1B sponsorship to work in the United States?")
+
+
+def test_yes_states_only_a_future_need_and_never_the_current_one():
+    wa = W.set_sponsor_answer({}, "yes")
+    us = wa["countries"]["US"]
+    assert (us["sponsor_now"], us["sponsor_future"]) == ("", "Yes")
+    assert W.sponsor_answer(wa) == "yes" and W.has_us_answers(wa)
+    assert W.answer(NOW, wa) is None                 # an F-1 on OPT may not need it now
+    assert W.answer(SPONSOR_QS[1], wa) == "Yes"
+    # A current answer the person gave themselves is kept as it is.
+    opt = W.clean({"countries": {"US": {"status": "f1_opt", "authorized": "Yes", "sponsor_now": "No"}}})
+    us = W.set_sponsor_answer(opt, "yes")["countries"]["US"]
+    assert (us["status"], us["authorized"], us["sponsor_now"], us["sponsor_future"]) == ("f1_opt", "Yes", "No", "Yes")
+
+
+def test_no_states_no_now_and_later():
+    wa = W.set_sponsor_answer({}, "no")
+    us = wa["countries"]["US"]
+    assert (us["sponsor_now"], us["sponsor_future"]) == ("No", "No")
+    assert W.sponsor_answer(wa) == "no" and W.answer(NOW, wa) == "No"
+
+
+def test_unsure_fills_no_legal_field_and_answers_no_form_question():
+    wa = W.set_sponsor_answer({}, "unsure")
+    assert wa["countries"] == {} and wa[W.SIGNUP_KEY] == "unsure"
+    assert W.sponsor_answer(wa) == "unsure" and W.has_us_answers(wa)
+    for q in SPONSOR_QS:
+        assert W.answer(q, wa) is None, q
+    for kind in ("sponsor_now", "sponsor_future", "sponsor_any", "authorized", "authorized_unrestricted",
+                 "authorized_no_sponsor", "citizen", "status"):
+        assert W.fact(kind, wa, "US") is None, kind
+    assert W.needs_sponsorship(wa, "US", "any") is None
+    # clean() keeps it while nothing else answers; answering the full questions clears it.
+    assert W.clean(wa)[W.SIGNUP_KEY] == "unsure"
+    assert W.load({"work_auth": wa})[W.SIGNUP_KEY] == "unsure"
+    full = W.clean({**wa, "countries": {"US": {"sponsor_now": "No", "sponsor_future": "Yes"}}})
+    assert W.SIGNUP_KEY not in full and W.sponsor_answer(full) == "yes"
+    assert W.SIGNUP_KEY not in W.set_sponsor_answer(wa, "no")
+    assert W.clean({W.SIGNUP_KEY: "yes"}).get(W.SIGNUP_KEY) is None   # only Not sure is recorded
+    # Not sure over a profile that already answers changes nothing.
+    assert W.set_sponsor_answer(W.set_sponsor_answer({}, "no"), "unsure") == W.set_sponsor_answer({}, "no")
+
+
+def test_not_sure_survives_the_applicant_brain(tmp_path):
+    from applicant.library import catch_up_prefs, prefs_view
+    from applicant.store import open_store
+    st = open_store(tmp_path / "applicant.db")
+    catch_up_prefs(st, {"work_auth": W.set_sponsor_answer({}, "unsure")})
+    view = prefs_view(st)
+    assert view["work_auth"][W.SIGNUP_KEY] == "unsure" and view["work_auth"]["countries"] == {}
+    assert W.sponsor_answer(W.load(view)) == "unsure" and view["needs_sponsorship"] == ""
+    catch_up_prefs(st, {"work_auth": W.set_sponsor_answer(view["work_auth"], "yes")})
+    view = prefs_view(st)
+    assert W.SIGNUP_KEY not in view["work_auth"] and W.sponsor_answer(W.load(view)) == "yes"
+
+
+def test_answers_round_trip():
+    for ans in ("yes", "no", "unsure"):
+        assert W.sponsor_answer(W.set_sponsor_answer({}, ans)) == ans
     assert W.sponsor_answer({}) == "" and not W.has_us_answers({})
     with pytest.raises(ValueError):
         W.set_sponsor_answer({}, "maybe")
@@ -171,7 +227,7 @@ def test_saving_yes_keeps_an_older_future_answer_and_other_fields():
     wa["countries"]["US"]["status"] = "f1_opt"
     assert W.sponsor_answer(wa) == "yes"
     same = W.set_sponsor_answer(wa, "yes")
-    assert same["countries"]["US"]["sponsor_now"] == "No"          # not flattened to Yes/Yes
+    assert same["countries"]["US"]["sponsor_now"] == "No"          # never rewritten
     no = W.set_sponsor_answer(wa, "no")["countries"]["US"]
     assert no["status"] == "f1_opt" and no["authorized"] == "Yes"
 
@@ -215,6 +271,17 @@ def test_question_is_asked_once_and_saved_into_the_work_auth_profile(A, monkeypa
     c = _board(A, monkeypatch)
     st = c.get("/api/workauth/sponsorship").get_json()
     assert st["ask"] is True and st["answer"] == "" and st["scope"] == "sponsors"
+    # Not sure: recorded for the filter (Sponsors only), and no legal field is written.
+    st = c.post("/api/workauth/sponsorship", json={"answer": "unsure"}).get_json()
+    assert st["ask"] is False and st["answer"] == "unsure" and st["scope"] == "sponsors"
+    assert (A._load_prefs()["work_auth"].get("countries") or {}).get("US") is None
+    assert A._load_prefs()["needs_sponsorship"] == ""
+    # Yes: only the future need.
+    st = c.post("/api/workauth/sponsorship", json={"answer": "yes"}).get_json()
+    assert st["answer"] == "yes" and st["scope"] == "sponsors"
+    us = A._load_prefs()["work_auth"]["countries"]["US"]
+    assert (us["sponsor_now"], us["sponsor_future"]) == ("", "Yes")
+    assert "signup_sponsor" not in A._load_prefs()["work_auth"]
     st = c.post("/api/workauth/sponsorship", json={"answer": "no"}).get_json()
     assert st["ask"] is False and st["answer"] == "no" and st["scope"] == "all"
     us = A._load_prefs()["work_auth"]["countries"]["US"]
