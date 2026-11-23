@@ -68,3 +68,16 @@ def test_shell_switches_the_chat_agent_on():
     from agent import resume_chat
     main = (SHELL / "main.js").read_text(encoding="utf-8")
     assert f'env.{resume_chat.FLAG} = env.{resume_chat.FLAG} || "1"' in main
+
+
+def test_every_resources_file_the_shell_reads_is_shipped():
+    """(2026-11-23) main.js reads agent_view.js from process.resourcesPath in a packaged build, but
+    only autofill_core.js was listed in extraResources: the installed app could not start the apply
+    agent. Every path.join(process.resourcesPath, "<name>") must have an extraResources entry."""
+    build = json.loads((SHELL / "package.json").read_text(encoding="utf-8"))["build"]
+    shipped = {str(e.get("to") or "").strip("/") for e in build.get("extraResources") or [] if isinstance(e, dict)}
+    read = set()
+    for js in SHELL.glob("*.js"):
+        read |= set(re.findall(r"""path\.join\(\s*process\.resourcesPath\s*,\s*["']([^"']+)["']""", js.read_text(encoding="utf-8")))
+    assert read, "expected the shell to read files from process.resourcesPath"
+    assert read <= shipped, f"read from resources but not shipped: {sorted(read - shipped)}"
