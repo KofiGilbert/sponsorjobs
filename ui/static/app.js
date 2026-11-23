@@ -11867,7 +11867,10 @@
         if (!LOCK_BOOTED) { LOCK_BOOTED = true; boot(); }
         else { loadDashboard(); api("/api/profile").then(paintAccount).catch(() => {}); }
       } else {
-        if (err) { err.textContent = helpT("lock.wrong", "That passcode is not correct."); err.hidden = false; }
+        // 429: too many wrong tries; the engine says how long to wait.
+        const d = r.status === 429 ? await r.json().catch(() => ({})) : null;
+        const msg = (d && d.error) || helpT("lock.wrong", "That passcode is not correct.");
+        if (err) { err.textContent = msg; err.hidden = false; }
         if (inp) { inp.value = ""; inp.focus(); }
       }
     } catch {
@@ -11913,7 +11916,7 @@
   $("#setLockForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const newV = $("#lockNew")?.value || "", conf = $("#lockConfirm")?.value || "", cur = $("#lockCurrent")?.value || "";
-    if (newV.length < 4) return lockMsg("Passcode must be at least 4 characters.", "err");
+    if (newV.length < 6) return lockMsg("Passcode must be at least 6 characters.", "err");
     if (newV !== conf) return lockMsg("The two passcodes don't match.", "err");
     const enabling = !LOCK_ENABLED;
     const url = enabling ? "/api/lock/set" : "/api/lock/change";

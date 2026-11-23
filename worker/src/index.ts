@@ -15,7 +15,7 @@
 // portal mailed to a student's alias, plus the Telegram bot's chat bindings and queued button taps
 // (migrations/0008_telegram.sql).
 
-import { allowRegistration, emailOf, identify, register } from "./accounts";
+import { allowRegistration, emailOf, identify, register, revokeToken } from "./accounts";
 import { handleAdmin, isAdminHost } from "./admin";
 import { classifyUpstream, complete } from "./anthropic";
 import { BadRequest, type ToolArgs, toolArgs } from "./tools";
@@ -97,6 +97,15 @@ const accountMe: Handler = async ({ req, env }) => {
   const user = await identify(req, env);
   if (!user) return noUser();
   return json({ account_id: user, email: await emailOf(env.DB, user) });
+};
+
+/** Sign-out: revoke the bearer token the call carries. The app calls it before it forgets the
+ * token locally. Always 200 (an unknown or already revoked token is simply not there any more),
+ * so a retry or a second device's sign-out never shows an error. */
+const accountRevoke: Handler = async ({ req, env }) => {
+  const auth = req.headers.get("Authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
+  return json({ ok: true, revoked: await revokeToken(env.DB, token) });
 };
 
 const meUsage: Handler = async ({ req, env, now, nowMs }) => {
@@ -520,6 +529,7 @@ const ROUTES: Route[] = [
   ["GET", /^\/health$/, health],
   ["POST", /^\/account\/register$/, accountRegister],
   ["GET", /^\/account\/me$/, accountMe],
+  ["POST", /^\/account\/revoke$/, accountRevoke],
   ["POST", /^\/llm\/complete$/, llmComplete],
   ["POST", /^\/llm\/package$/, llmPackage],
   ["GET", /^\/me\/usage$/, meUsage],

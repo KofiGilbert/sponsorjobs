@@ -12,7 +12,7 @@
 // person's own app has downloaded it (GET /mail/messages?after=<cursor> acknowledges and
 // deletes) and never longer than 30 days. After the download the mailbox lives on the person's
 // machine. What goes to the person's real e-mail is set per alias (notify_mode): the whole
-// message as before ("forward", the default), a short notice ("notice"), or nothing ("off").
+// message as plain text ("forward", the default), a short notice ("notice"), or nothing ("off").
 // No body, code or link is ever logged.
 //
 // The detection rules are a port of inbox/detect.py (otp_code, verification_link,
@@ -594,6 +594,25 @@ export function noticeFor(m: { senderName: string; senderAddress: string; subjec
   return { subject: subject.replace(/[\r\n]+/g, " ").slice(0, 200), text: lines.join("\n") };
 }
 
+/** The whole-message forward ("forward" mode), as plain text only. The sender's HTML is never
+ * re-sent from our domain: it is whatever a stranger wrote (tracking pixels, look-alike buttons,
+ * forms), and there is no HTML sanitizer in the Worker to make it safe to send under our name.
+ * The readable text (the plain part, or the HTML read as text with its link targets listed) goes
+ * out instead, under a first line saying who it is really from. The formatted original is in
+ * the app's Inbox when the message was stored; a message that could not be stored is forwarded
+ * the same way, without the pointer to the app. */
+export function forwardBody(m: { sender: string; alias: string; text: string; stored: boolean }): string {
+  const from = m.sender.replace(/[\r\n]+/g, " ").trim().slice(0, FIELD_CAP) || "an unknown sender";
+  const lines = [
+    `Forwarded by SponsorJobs from ${from}`,
+    `It was sent to ${m.alias}. Attachments and formatting are not forwarded.`,
+    ...(m.stored ? ["Open SponsorJobs and go to Inbox to see the original: sponsorjobs://inbox"] : []),
+    "",
+    m.text,
+  ];
+  return lines.join("\n");
+}
+
 /** Cloudflare Email Routing hands every message for the domain here. Unknown alias: a permanent
  * reject, so the sender learns the address does not exist. Known alias: record the code or link
  * (if any) for the apply agent, keep the message for the app's Inbox to download, then tell the
@@ -654,18 +673,14 @@ export async function receiveMail(message: ForwardableEmailMessage, env: Env, no
         text: n.text,
       });
     } else {
-      const notice = `Forwarded by SponsorJobs from ${alias}; attachments are not forwarded`;
-      const text = `${notice}\n\n${readable}`.slice(0, BODY_CAP);
-      const html = parsed.html
-        ? `<p style="font:13px system-ui;color:#555">${notice.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>\n${parsed.html}`.slice(0, BODY_CAP)
-        : undefined;
+      const f = forwardBody({ sender, alias, text: textForRules(parsed.text, parsed.html), stored });
+      const text = f.slice(0, BODY_CAP);
       await mailer.send({
         to: row.forward_to,
         from: `"${displayName(fromName || fromAddress || "Unknown sender")} via SponsorJobs" <${senderAddress(env)}>`,
         reply_to: fromAddress || undefined,
         subject: subject || "(no subject)",
         text,
-        html,
       });
     }
     await countSend(env.DB, now);

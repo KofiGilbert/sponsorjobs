@@ -34,13 +34,13 @@ def test_lock_crypto_roundtrip_and_no_plaintext(tmp_path):
 
 def test_lock_change_and_update(tmp_path):
     lk = Lock(tmp_path / "lock.json")
-    lk.set_passcode("aaaa", {"ANTHROPIC_API_KEY": "k1"})
+    lk.set_passcode("aaaaaa", {"ANTHROPIC_API_KEY": "k1"})
     lk.update_cred("ANTHROPIC_API_KEY", "k2")          # change key while unlocked
     assert lk.cred("ANTHROPIC_API_KEY") == "k2"
-    assert lk.change("aaaa", "bbbb") is True
+    assert lk.change("aaaaaa", "bbbbbb") is True
     lk.lock()
-    assert lk.unlock("aaaa") is False
-    assert lk.unlock("bbbb") is True and lk.cred("ANTHROPIC_API_KEY") == "k2"
+    assert lk.unlock("aaaaaa") is False
+    assert lk.unlock("bbbbbb") is True and lk.cred("ANTHROPIC_API_KEY") == "k2"
 
 
 def test_short_passcode_rejected(tmp_path):
@@ -69,7 +69,7 @@ def test_engine_gate_and_key_custody(client):
     assert c.get("/api/records").status_code != 423
 
     # turn on: plaintext key removed, sealed, still works (unlocked)
-    assert c.post("/api/lock/set", json={"passcode": "1234"}).status_code == 200
+    assert c.post("/api/lock/set", json={"passcode": "123456"}).status_code == 200
     assert "sk-ant-PLAIN" not in os.environ["RESUME_AGENT_CRED_FILE"] or \
         "sk-ant-PLAIN" not in open(os.environ["RESUME_AGENT_CRED_FILE"]).read()
     assert app_module._cred("ANTHROPIC_API_KEY") == "sk-ant-PLAIN"
@@ -83,11 +83,11 @@ def test_engine_gate_and_key_custody(client):
 
     # wrong then right passcode
     assert c.post("/api/lock/unlock", json={"passcode": "0000"}).status_code == 401
-    assert c.post("/api/lock/unlock", json={"passcode": "1234"}).status_code == 200
+    assert c.post("/api/lock/unlock", json={"passcode": "123456"}).status_code == 200
     assert c.get("/api/records").status_code != 423
 
     # remove -> key restored to plaintext, lock disabled
-    assert c.post("/api/lock/remove", json={"passcode": "1234"}).status_code == 200
+    assert c.post("/api/lock/remove", json={"passcode": "123456"}).status_code == 200
     assert not c.get("/api/lock/status").get_json()["enabled"]
     assert "sk-ant-PLAIN" in open(os.environ["RESUME_AGENT_CRED_FILE"]).read()
 
@@ -112,7 +112,7 @@ def test_enabling_lock_seals_and_scrubs_all_secrets(client):
     cred_path = os.environ["RESUME_AGENT_CRED_FILE"]
     assert "tg-secret-123" in open(cred_path).read()
 
-    assert c.post("/api/lock/set", json={"passcode": "1234"}).status_code == 200
+    assert c.post("/api/lock/set", json={"passcode": "123456"}).status_code == 200
     disk = open(cred_path).read()
     for secret in ("tg-secret-123", "ghp_write_abc", "sk-ant-PLAIN"):
         assert secret not in disk, f"{secret} left in plaintext after lock"
@@ -130,13 +130,13 @@ def test_unlock_migrates_legacy_plaintext_secret(client):
     app_module, c = client
     cred_path = os.environ["RESUME_AGENT_CRED_FILE"]
     # Simulate the legacy state: only the API key was sealed; a Telegram token sits plaintext.
-    app_module._LOCK.set_passcode("1234", {"ANTHROPIC_API_KEY": "sk-ant-PLAIN"})
+    app_module._LOCK.set_passcode("123456", {"ANTHROPIC_API_KEY": "sk-ant-PLAIN"})
     with open(cred_path, "a") as f:
         f.write("TELEGRAM_BOT_TOKEN=tg-legacy-xyz\n")
     app_module._LOCK.lock()
     assert "tg-legacy-xyz" in open(cred_path).read()
 
-    assert c.post("/api/lock/unlock", json={"passcode": "1234"}).status_code == 200
+    assert c.post("/api/lock/unlock", json={"passcode": "123456"}).status_code == 200
     assert "tg-legacy-xyz" not in open(cred_path).read()               # plaintext scrubbed
     assert app_module._cred("TELEGRAM_BOT_TOKEN") == "tg-legacy-xyz"   # now sealed + readable
     app_module._LOCK.lock()
@@ -148,8 +148,8 @@ def test_removing_lock_restores_all_secrets_to_plaintext(client):
     not just the API key, so nothing is lost."""
     app_module, c = client
     app_module._save_cred("TELEGRAM_BOT_TOKEN", "tg-restore-me")
-    c.post("/api/lock/set", json={"passcode": "1234"})
-    assert c.post("/api/lock/remove", json={"passcode": "1234"}).status_code == 200
+    c.post("/api/lock/set", json={"passcode": "123456"})
+    assert c.post("/api/lock/remove", json={"passcode": "123456"}).status_code == 200
     disk = open(os.environ["RESUME_AGENT_CRED_FILE"]).read()
     assert "tg-restore-me" in disk and "sk-ant-PLAIN" in disk
 
@@ -168,7 +168,7 @@ def test_gmail_token_sealed_and_file_scrubbed_on_enable(client, monkeypatch, tmp
     app_module, c = client
     p = _patch_gmail_token(monkeypatch, tmp_path)
     p.write_text('{"token": "gmail-abc"}')
-    assert c.post("/api/lock/set", json={"passcode": "1234"}).status_code == 200
+    assert c.post("/api/lock/set", json={"passcode": "123456"}).status_code == 200
     assert not p.exists()                                           # plaintext file gone
     assert app_module._gmail_load_token() == '{"token": "gmail-abc"}'   # sealed, readable
     c.post("/api/lock/lock")
@@ -178,10 +178,10 @@ def test_gmail_token_sealed_and_file_scrubbed_on_enable(client, monkeypatch, tmp
 def test_unlock_migrates_a_legacy_plaintext_gmail_token(client, monkeypatch, tmp_path):
     app_module, c = client
     p = _patch_gmail_token(monkeypatch, tmp_path)
-    app_module._LOCK.set_passcode("1234", {"ANTHROPIC_API_KEY": "sk-ant-PLAIN"})  # pre-gmail
+    app_module._LOCK.set_passcode("123456", {"ANTHROPIC_API_KEY": "sk-ant-PLAIN"})  # pre-gmail
     p.write_text('{"token": "legacy-gmail"}')
     app_module._LOCK.lock()
-    assert c.post("/api/lock/unlock", json={"passcode": "1234"}).status_code == 200
+    assert c.post("/api/lock/unlock", json={"passcode": "123456"}).status_code == 200
     assert not p.exists()
     assert app_module._gmail_load_token() == '{"token": "legacy-gmail"}'
 
@@ -191,9 +191,9 @@ def test_removing_lock_restores_gmail_token_to_its_own_file(client, monkeypatch,
     app_module, c = client
     p = _patch_gmail_token(monkeypatch, tmp_path)
     p.write_text('{"token": "restore-gmail"}')
-    c.post("/api/lock/set", json={"passcode": "1234"})
+    c.post("/api/lock/set", json={"passcode": "123456"})
     assert not p.exists()
-    assert c.post("/api/lock/remove", json={"passcode": "1234"}).status_code == 200
+    assert c.post("/api/lock/remove", json={"passcode": "123456"}).status_code == 200
     assert p.exists() and p.read_text() == '{"token": "restore-gmail"}'
     assert "restore-gmail" not in open(os.environ["RESUME_AGENT_CRED_FILE"]).read()
 
@@ -203,7 +203,7 @@ def test_revoke_cred_drops_the_secret_from_the_lock(client):
     sealed copy live (which _cred would still return)."""
     app_module, c = client
     app_module._save_cred("TELEGRAM_BOT_TOKEN", "tg-123")
-    c.post("/api/lock/set", json={"passcode": "1234"})          # seal it, scrub plaintext
+    c.post("/api/lock/set", json={"passcode": "123456"})          # seal it, scrub plaintext
     assert app_module._cred("TELEGRAM_BOT_TOKEN") == "tg-123"   # sealed and readable
     app_module._revoke_cred("TELEGRAM_BOT_TOKEN")               # the Disconnect action
     assert app_module._cred("TELEGRAM_BOT_TOKEN") == ""         # actually gone, not still usable

@@ -32,6 +32,14 @@ export function tokenUrlsafe(nbytes: number): string {
 /** Unix seconds, for the created_at / email_at columns the admin dashboard reads. */
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
+// Token lifetime (migrations/0015_token_expiry.sql). A token is good for 180 days from its last
+// use, rolling: every authenticated call inside the window extends it, so an app in regular use
+// never signs out, and a token left on a lost or sold machine stops working by itself. The
+// extension is written at most once a day per token, not on every call. A row with
+// last_used_at = 0 (a token imported from the Python broker) counts as used now.
+export const TOKEN_TTL_SECONDS = 180 * 24 * 60 * 60;
+export const TOKEN_TOUCH_SECONDS = 24 * 60 * 60;
+
 export function newAccountId(): string {
   return "acct_" + hex(randomBytes(8).buffer as ArrayBuffer);
 }
@@ -43,7 +51,8 @@ export async function register(db: D1Database): Promise<{ account_id: string; to
   const token = tokenUrlsafe(32);
   await db.batch([
     db.prepare("INSERT INTO accounts(account_id, created_at) VALUES(?, ?)").bind(account_id, nowSeconds()),
-    db.prepare("INSERT INTO tokens(token_hash, account_id) VALUES(?, ?)").bind(await sha256Hex(token), account_id),
+    db.prepare("INSERT INTO tokens(token_hash, account_id, last_used_at) VALUES(?, ?, ?)")
+      .bind(await sha256Hex(token), account_id, nowSeconds()),
   ]);
   return { account_id, token };
 }
@@ -51,17 +60,36 @@ export async function register(db: D1Database): Promise<{ account_id: string; to
 /** Bearer token -> account id, or null. The lookup is by hash; the stored hash is then compared
  * in constant time as well, so nothing about a near-miss token can be learned from timing. A
  * suspended account (admin dashboard) resolves to null, so every route treats it as signed out. */
-export async function resolve(db: D1Database, token: string): Promise<string | null> {
+export async function resolve(db: D1Database, token: string, now: number = nowSeconds()): Promise<string | null> {
   if (!token) return null;
   const h = await sha256Hex(token);
   const row = await db.prepare(
-    "SELECT t.token_hash, t.account_id, a.suspended_at FROM tokens t " +
+    "SELECT t.token_hash, t.account_id, t.last_used_at, a.suspended_at FROM tokens t " +
     "LEFT JOIN accounts a ON a.account_id = t.account_id WHERE t.token_hash = ?")
-    .bind(h).first<{ token_hash: string; account_id: string; suspended_at: number | null }>();
+    .bind(h).first<{ token_hash: string; account_id: string; last_used_at: number | null; suspended_at: number | null }>();
   if (!row || row.suspended_at) return null;
   const a = enc.encode(row.token_hash);
   const b = enc.encode(h);
-  return a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b) ? row.account_id : null;
+  if (!(a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b))) return null;
+  const last = row.last_used_at || 0;
+  if (last && now - last > TOKEN_TTL_SECONDS) {
+    // Expired: gone for good (the app sees 401 and shows signed out).
+    await db.prepare("DELETE FROM tokens WHERE token_hash = ?").bind(h).run();
+    return null;
+  }
+  if (!last || now - last >= TOKEN_TOUCH_SECONDS) {
+    await db.prepare("UPDATE tokens SET last_used_at = ? WHERE token_hash = ?").bind(now, h).run();
+  }
+  return row.account_id;
+}
+
+/** Revoke one bearer token (sign-out): its row is deleted, so it never resolves again, on this
+ * broker or after a data move. True when a token was removed. The account and its other devices'
+ * tokens are untouched. */
+export async function revokeToken(db: D1Database, token: string): Promise<boolean> {
+  if (!token) return false;
+  const r = await db.prepare("DELETE FROM tokens WHERE token_hash = ?").bind(await sha256Hex(token)).run();
+  return (r.meta.changes ?? 0) > 0;
 }
 
 export async function emailOf(db: D1Database, accountId: string): Promise<string | null> {
@@ -101,8 +129,8 @@ export async function allowRegistration(db: D1Database, ip: string, day: string,
 /** A new bearer token for an existing account (the raw value is returned once, never stored). */
 export async function issueToken(db: D1Database, accountId: string): Promise<string> {
   const token = tokenUrlsafe(32);
-  await db.prepare("INSERT INTO tokens(token_hash, account_id) VALUES(?, ?)")
-    .bind(await sha256Hex(token), accountId).run();
+  await db.prepare("INSERT INTO tokens(token_hash, account_id, last_used_at) VALUES(?, ?, ?)")
+    .bind(await sha256Hex(token), accountId, nowSeconds()).run();
   return token;
 }
 
@@ -141,7 +169,8 @@ export async function signInWithEmail(db: D1Database, email: string, callerId: s
     await db.batch([
       db.prepare("INSERT INTO accounts(account_id, email, created_at, email_at) VALUES(?, ?, ?, ?)")
         .bind(account_id, email, nowSeconds(), nowSeconds()),
-      db.prepare("INSERT INTO tokens(token_hash, account_id) VALUES(?, ?)").bind(await sha256Hex(token), account_id),
+      db.prepare("INSERT INTO tokens(token_hash, account_id, last_used_at) VALUES(?, ?, ?)")
+        .bind(await sha256Hex(token), account_id, nowSeconds()),
     ]);
   } catch {
     return loginExisting(db, email);

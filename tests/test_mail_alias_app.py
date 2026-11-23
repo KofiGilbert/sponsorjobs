@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import time
 
 import pytest
 
@@ -117,11 +118,43 @@ def test_sign_proxy_returns_the_three_headers_or_fails_open(A, monkeypatch):
     import inbox.relay as relay
     monkeypatch.setattr(relay, "urllib_fetch", lambda url, tok, timeout=15.0: broker)
     c = A.app.test_client()
+    A._AGENT_RUNS.clear()
+    # A run starts: the shell asks for its fence (the apply URL), and only then are its pages signed.
+    c.get("/api/autoapply/agent/allowed-hosts?url=https://acme.wd5.myworkdayjobs.com/en-US/x/job/1",
+          headers={"X-Tailor-Extension": "1"})
+    c.get("/api/autoapply/agent/allowed-hosts?url=https://careers.acme.com/jobs/1", headers={"X-Tailor-Extension": "1"})
     r = c.post("/api/autoapply/agent/sign", json={"method": "GET", "authority": "Acme.MyWorkdayJobs.com", "path": "/en-US/x?y=1"},
                headers={"X-Tailor-Extension": "1"}).get_json()
     assert r["ok"] and r["signature"] == "sig2=:AAAA:" and "web-bot-auth" in r["signature_input"]
-    assert seen["req"] == ("POST", "/agent/sign", {"method": "GET", "authority": "acme.myworkdayjobs.com", "path": "/en-US/x?y=1"})
+    assert seen["req"] == ("POST", "/agent/sign", {"method": "GET", "authority": "acme.myworkdayjobs.com",
+                                                   "site": "careers.acme.com", "path": "/en-US/x?y=1"})
     monkeypatch.setattr(relay, "urllib_fetch", lambda url, tok, timeout=15.0: (lambda m, p, b=None: {"error": "not_configured", "status": 503}))
     r = c.post("/api/autoapply/agent/sign", json={"method": "GET", "authority": "acme.com", "path": "/"},
                headers={"X-Tailor-Extension": "1"}).get_json()
     assert r["ok"] is False and r["reason"] == "not_configured"     # unsigned, never blocked
+    A._AGENT_RUNS.clear()
+
+
+def test_sign_proxy_signs_only_inside_a_live_apply_run(A, monkeypatch):
+    calls = []
+    import inbox.relay as relay
+    monkeypatch.setattr(relay, "urllib_fetch", lambda url, tok, timeout=15.0: (
+        lambda m, p, b=None: calls.append(b) or {"signature_input": "sig2=()", "signature": "sig2=:AA:"}))
+    c = A.app.test_client()
+    h = {"X-Tailor-Extension": "1"}
+    A._AGENT_RUNS.clear()
+    sign = lambda auth: c.post("/api/autoapply/agent/sign", json={"authority": auth}, headers=h).get_json()   # noqa: E731
+    # No run yet: nothing is signed, not even a hiring system's host, and the broker is not asked.
+    assert sign("boards.greenhouse.io") == {"ok": False, "reason": "not-in-run"}
+    assert calls == []
+    c.get("/api/autoapply/agent/allowed-hosts?url=https://www.jobs.acme.co.uk/apply/9", headers=h)
+    assert sign("jobs.acme.co.uk")["ok"] and calls[-1]["site"] == "jobs.acme.co.uk"
+    assert sign("login.acme.co.uk:443")["ok"] and calls[-1]["site"] == "jobs.acme.co.uk"   # the site's own domain
+    assert sign("boards.greenhouse.io")["ok"] and calls[-1]["site"] == "jobs.acme.co.uk"   # a hiring system
+    assert sign("example.org") == {"ok": False, "reason": "not-in-run"}                   # anywhere else
+    # A prohibited board has no fence, so it never becomes a run.
+    c.get("/api/autoapply/agent/allowed-hosts?url=https://www.linkedin.com/jobs/view/1", headers=h)
+    assert sign("www.linkedin.com")["reason"] == "not-in-run"
+    # A run is forgotten after a few hours.
+    assert A._agent_run_site("jobs.acme.co.uk", now=time.time() + A._AGENT_RUN_TTL + 1) is None
+    A._AGENT_RUNS.clear()
