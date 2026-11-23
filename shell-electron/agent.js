@@ -1089,6 +1089,22 @@ function createAgent(deps) {
       if (e && e.navigated) return { ok: true, note: "page changed", changed: true };
       out = { ok: false, note: String(e && e.message || e).slice(0, 120) };
     }
+    // (2026-11-23, Gainwell) a link or menu item whose click "worked" but changed nothing: its own
+    // click alone, once (the page's Submit and policy-link guards still apply in that click).
+    if (!ctx && a.op === "click" && out && out.ok && out.changed !== true && /^\*?\[\d+\]<a\b|role="?menuitem|<menuitem/i.test(line)) {
+      const urlNow = wc.getURL() || "";
+      await delay(800);
+      if ((wc.getURL() || "") === urlNow) {
+        try {
+          const plain = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify(Object.assign({}, a, { plain: true }))})`, true),
+                                    ACTION_MS, "click", { nav: true });
+          if (plain && plain.ok && (plain.changed || (wc.getURL() || "") !== urlNow)) return Object.assign({}, plain, { changed: true });
+        } catch (e) {
+          if (e && e.stopped) throw e;
+          if (e && e.navigated) return { ok: true, note: "page changed", changed: true };
+        }
+      }
+    }
     if (!ctx && a.op === "click" && out && /covered/.test(out.note || "")) {
       const fp = () => wc.executeJavaScript("(document.body && document.body.textContent || '').length + '|' + document.querySelectorAll('input,select,textarea,button,a,[role]').length", true).catch(() => "");
       const urlBefore = wc.getURL() || "", fpBefore = await fp();
