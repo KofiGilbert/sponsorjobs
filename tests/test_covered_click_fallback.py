@@ -19,4 +19,4 @@ def test_force_only_skips_the_cover_check_never_the_guards():
     body = VIEW[VIEW.index("async function doClick(el, opts)"):VIEW.index("function pickResult(")]
     assert body.index('note: "submit-guard"') < body.index("opts && opts.force ? null : covered(target)")
     assert body.index("policyLink(el)") < body.index("opts && opts.force")
-    assert 'if (op === "click") return await doClick(el, { force: !!action.force });' in VIEW
+    assert 'if (op === "click") return await doClick(el, { force: !!action.force, plain: !!action.plain });' in VIEW
