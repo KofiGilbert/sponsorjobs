@@ -179,7 +179,8 @@ competencies, weakest, role, company, is_practice}`.
 
 Decision of 2026-10-02 (owner). Round 2 is one 15-minute interview (900 s,
 `backend.metering.INTERVIEW_SECONDS`), so allowances are counted in whole interviews. Full
-pricing: docs/bundled-api-backend.md, section 5 "Pricing". No subscription, nothing auto-renews.
+pricing: docs/bundled-api-backend.md, section 5 "Pricing". Since 2026-11-20 live interviews come
+with a plan that renews (Student or Standard); the passes described below are retired.
 
 1. **A pass first.** Live interviews come with a one-time pass and run on the COMPANY's Tavus
    key, which lives only on the broker and never leaves it (the app gets a join URL, never a

@@ -15,7 +15,7 @@ Pick a job and it opens a workspace for it. The app rewrites your resume toward 
 
 The AI is included. There is no API key to set up: you sign in and it works. Your resumes, your profile and your applications stay on your machine, and the only thing our service sees is how much you have used. If you would rather own the whole stack, the community edition runs from source with your own key and no limits.
 
-Free covers every job and 3 tailored applications a month. If you are in a heavy week there is a pass: $29 once for 30 days, or $69 once for 90. Nothing auto-renews, and a pass ending just puts you back on Free with everything you made still on your computer.
+Free covers every job and 3 tailored applications a month. If you are in a heavy stretch there is a plan: $29 a month for students and recent graduates, $49 a month for everyone else, cancel anytime. Cancelling just puts you back on Free with everything you made still on your computer.
 
 AGPL-3.0. Downloads for macOS and Windows: https://sponsorjobs.ai
 Source: https://github.com/KofiGilbert/sponsorjobs

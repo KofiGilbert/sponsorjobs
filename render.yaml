@@ -48,9 +48,9 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET      # from the Stripe webhook endpoint you create (see the doc)
         sync: false
-      - key: STRIPE_PRICE_PASS30        # Job Hunt Pass, $29 one-time, 30 days (no auto-renew)
+      - key: STRIPE_PRICE_PASS30        # retired Job Hunt Pass, $29 one-time, 30 days
         sync: false
-      - key: STRIPE_PRICE_PASS90        # Season Pass, $69 one-time, 90 days (no auto-renew)
+      - key: STRIPE_PRICE_PASS90        # retired Season Pass, $69 one-time, 90 days
         sync: false
       - key: STRIPE_PRICE_PACK_1        # 1 extra live interview, $9 one-time, never expires
         sync: false

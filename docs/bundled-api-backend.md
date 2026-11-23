@@ -14,8 +14,8 @@ Both paid AI features are **bundled and company-paid**, not bring-your-own-key:
 - **Avatar (Tavus)** for the Round-2 mock interview.
 
 Users never obtain, paste, or see an API key. Free gets a small monthly allowance; for more
-they buy a one-time pass (no subscription, nothing auto-renews, see section 5) and everything
-"just works." Their own AI key still works for unlimited tailoring. This removes the biggest friction wall for the
+they subscribe to a plan that renews until cancelled (Student or Standard, see section 5) and
+everything "just works." Their own AI key still works for unlimited tailoring. This removes the biggest friction wall for the
 non-technical international-student audience.
 
 ## 2. What this does NOT change (the privacy promise holds)
@@ -83,7 +83,36 @@ Haiku 4.5 $1/$5. Avatar (Tavus) ~ $0.32-0.37 per minute; a 15-minute live interv
   - hard stop at zero balance -> "buy credits" prompt (never silent overage)
 - **Cost-per-user tracking from day one** so real prices are set on real data.
 
-### Pricing (decided by the owner 2026-10-02)
+### Pricing (decided by the owner 2026-11-20): plans that renew
+
+Plans renew automatically (the industry standard), as Stripe subscriptions sold by the Worker
+broker (`worker/src/billing.ts`, `worker/src/subscriptions.ts`):
+
+| Plan | Price | Renews | Live interviews a period | Tailored packages a period |
+|---|---|---|---|---|
+| `student_monthly` | $29 | every month | 3 | 60 |
+| `student_quarterly` | $69 | every 3 months | 9 | 150 |
+| `standard_monthly` | $49 | every month | 3 | 60 |
+| `standard_quarterly` | $119 | every 3 months | 9 | 150 |
+
+- **Who pays the student price:** students, and graduates up to 24 months after their graduation
+  month, verified ONCE while still a student with a 6-digit code to a school email
+  (`worker/src/student.ts`, free and self-built; the list of academic domains lives there).
+  The broker picks the price at checkout from that stored check; the app only sends the interval.
+- **Entitlement:** each paid invoice (`invoice.paid`) starts a period with fresh allowances until
+  that invoice's period end, once per invoice id. A failed renewal marks the plan; access ends with
+  the paid period unless a retry succeeds. A deleted subscription ends access at once.
+- **Cancel** in one click from the app (cancel at period end; undo while the period lasts), plus
+  Stripe's billing portal for the card and invoices. **Renewal reminder:** our own e-mail through
+  the mailer when Stripe sends `invoice.upcoming` (days ahead set in the Stripe dashboard).
+- **Disclosure and consent** (auto-renewal laws such as California's): the price, the interval,
+  that it renews until cancelled and how to cancel sit next to the button with a checkbox; the
+  broker refuses a checkout without `consent: true` and records the consent time.
+- Extra interview packs are unchanged (one-time, sold while a plan is active). The one-time passes
+  below are retired: holders keep them until they end, and a plan bought on top carries what is
+  left into its first period.
+
+### Pricing before plans (decided by the owner 2026-10-02, retired 2026-11-20)
 
 Research behind it: comparable tools sit at $29 to $40 a month; a 15-minute Tavus interview
 costs about $4.6 to $5; a tailored package on Claude Sonnet about $0.15 (about $0.05 on Haiku);
@@ -124,8 +153,8 @@ auto_renew: false}], packs: [...], current: {tier, pass_until, interviews_left, 
 `POST /billing/packs/<id>/checkout` -> `{url}`; `POST /billing/webhook`. A pass checkout is a
 Stripe Checkout Session in `mode="payment"` with `metadata={kind: "pass", pass, days, seconds,
 packages}`; the `checkout.session.completed` webhook (paid) grants it once per session id (the
-processed-events table). `customer.subscription.*` events are ignored (legacy, nothing is sold
-as a subscription). Old accounts on `trial`/`student`/`pro`/`browse` are read as free.
+processed-events table). Subscription events are handled by the Worker for the renewing plans
+(above). Old accounts on the 2026 tiers `trial`/`student`/`pro`/`browse` are read as free.
 
 ### Margins sanity check (cost at Tavus $4.6 per interview, Sonnet $0.15 and Haiku $0.05 per package)
 

@@ -17,7 +17,7 @@
 import { verifyAccess } from "./access";
 import { type Env, intVar } from "./env";
 import { type AiState, aiStatus, describeAi } from "./outage";
-import { dayOf, FREE_MODEL, INTERVIEW_SECONDS, PASS_MODEL, PASSES, periodOf } from "./metering";
+import { dayOf, FREE_MODEL, INTERVIEW_SECONDS, PASS_MODEL, PASSES, periodOf, PLANS, priceCents, SUBSCRIPTION_PLANS } from "./metering";
 import { FREE_POOL_CAP_KEY, FREE_POOL_USER, poolCapOverride } from "./store";
 import { ActionError, accountAction, formOf, logReveal, sameOrigin, setFreePool, testAlert } from "./admin_actions";
 import {
@@ -52,7 +52,37 @@ export interface RecentSignIn {
   account_id: string;
   created_at: number | null;   // unix seconds; null = before created_at was recorded
   email_at: number | null;     // unix seconds the e-mail was attached; null = before it was recorded
-  plan: string;                // "free" or the active pass name
+  plan: string;                // "free" or the active pass or plan name
+}
+
+/** The renewing plans (src/subscriptions.ts), from our own table: how many are running and the
+ * monthly recurring revenue they stand for (a 3-month plan counts a third of its price a month). */
+export interface SubscriptionStats {
+  active: number;                          // running: paid up, or in a failed-payment retry
+  renewing: number;                        // will renew at the period end
+  canceling: number;                       // set to end at the period end
+  past_due: number;                        // a renewal payment failed, Stripe is retrying
+  mrr_usd: number;                         // paid-up plans only (past_due excluded)
+  by_plan: Record<string, { active: number; renewing: number; canceling: number; past_due: number; mrr_usd: number }>;
+}
+
+/** Fold the per-plan subscription counts into SubscriptionStats. */
+export function subscriptionStats(rows: Array<{ plan: string; status: string; canceling: number; n: number }>): SubscriptionStats {
+  const out: SubscriptionStats = { active: 0, renewing: 0, canceling: 0, past_due: 0, mrr_usd: 0, by_plan: {} };
+  for (const id of SUBSCRIPTION_PLANS) out.by_plan[id] = { active: 0, renewing: 0, canceling: 0, past_due: 0, mrr_usd: 0 };
+  for (const r of rows) {
+    const b = out.by_plan[r.plan];
+    const plan = PLANS[r.plan];
+    if (!b || !plan) continue;
+    const n = Number(r.n) || 0;
+    b.active += n; out.active += n;
+    if (r.canceling) { b.canceling += n; out.canceling += n; } else { b.renewing += n; out.renewing += n; }
+    if (r.status === "past_due") { b.past_due += n; out.past_due += n; continue; }
+    const monthly = priceCents(plan) / 100 / (plan.months ?? 1);
+    b.mrr_usd = Math.round((b.mrr_usd + n * monthly) * 100) / 100;
+  }
+  out.mrr_usd = Math.round(Object.values(out.by_plan).reduce((a, b) => a + b.mrr_usd, 0) * 100) / 100;
+  return out;
 }
 
 export interface Stats {
@@ -78,8 +108,10 @@ export interface Stats {
     active_pass30: number;
     active_pass90: number;
     accounts_ever_on_pass: Record<string, number>;
-    checkout_purchases: number;            // Stripe checkouts granted: passes + interview packs together
+    checkout_purchases: number;            // Stripe payments granted: plan periods, passes and packs together
     extra_interview_credits: { seconds: number; interviews: number };
+    active_by_plan: Record<string, number>; // every paid plan with access right now, by name
+    subscriptions: SubscriptionStats;
   };
   usage_month: {
     period: string;
@@ -128,7 +160,7 @@ export async function collectStats(env: Env, nowMs: number): Promise<Stats> {
                        "AND pass_until > ? GROUP BY plan").bind(FREE_POOL_USER, ...PASSES, now),
     /* 6 */ db.prepare(`SELECT plan, COUNT(*) AS n FROM users WHERE user != ? AND plan IN (${passList}) ` +
                        "AND pass_until > 0 GROUP BY plan").bind(FREE_POOL_USER, ...PASSES),
-    /* 7 */ db.prepare("SELECT COUNT(*) AS n FROM processed_events WHERE key LIKE 'checkout:%'"),
+    /* 7 */ db.prepare("SELECT COUNT(*) AS n FROM processed_events WHERE key LIKE 'checkout:%' OR key LIKE 'invoice:%'"),
     /* 8 */ db.prepare("SELECT COALESCE(SUM(MAX(credit_seconds, 0)), 0) AS n FROM users WHERE user != ?")
                 .bind(FREE_POOL_USER),
     /* 9 */ db.prepare("SELECT COUNT(*) AS n FROM (SELECT user FROM usage WHERE period = ? AND user != ? " +
@@ -151,6 +183,9 @@ export async function collectStats(env: Env, nowMs: number): Promise<Stats> {
     /* 15 */ db.prepare("SELECT COALESCE(SUM(n), 0) AS n FROM email_sends WHERE day = ?").bind(today),
     /* 16 */ db.prepare("SELECT COALESCE(SUM(n), 0) AS n FROM email_sends WHERE day LIKE ?").bind(`${period}-%`),
     /* 17 */ db.prepare("SELECT value FROM admin_settings WHERE key = ?").bind(FREE_POOL_CAP_KEY),
+    /* 18 */ db.prepare("SELECT plan, status, cancel_at_period_end AS canceling, COUNT(*) AS n FROM subscriptions " +
+                        "WHERE status IN ('active', 'trialing', 'past_due') AND current_period_end > ? " +
+                        "GROUP BY plan, status, cancel_at_period_end").bind(now),
   ]);
   const one = (i: number) => Number((res[i]!.results[0] as N | undefined)?.n ?? 0);
   const rows = <T>(i: number) => res[i]!.results as T[];
@@ -207,6 +242,8 @@ export async function collectStats(env: Env, nowMs: number): Promise<Stats> {
       accounts_ever_on_pass: ever,
       checkout_purchases: one(7),
       extra_interview_credits: { seconds: creditSeconds, interviews: round2(creditSeconds / INTERVIEW_SECONDS) },
+      active_by_plan: Object.fromEntries(PASSES.map((p) => [p, active[p] ?? 0])),
+      subscriptions: subscriptionStats(rows<{ plan: string; status: string; canceling: number; n: number }>(18)),
     },
     usage_month: {
       period,
@@ -430,7 +467,7 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   if (um && !um[2]) return userResponse(env, idOf(um[1]!), nowMs, admin, prefs, here, { flash: flashOf(url), act: url.searchParams.get("act") });
   if (path === "/revenue") {
     const [rd, granted30] = await Promise.all([railData(env, nowMs), grantedSince(env.DB, now - 30 * 86_400)]);
-    return page("revenue", "Revenue", revenuePage({ revenue: rd.revenue, granted30, now }), { rd });
+    return page("revenue", "Revenue", revenuePage({ revenue: rd.revenue, granted30, now, subs: rd.stats.plans.subscriptions }), { rd });
   }
   if (path === "/usage") {
     const today = dayOf(nowMs);
@@ -483,7 +520,7 @@ async function userResponse(env: Env, id: string, nowMs: number, admin: string, 
 const suspendedCount = async (db: D1Database) =>
   Number((await db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE suspended_at IS NOT NULL").first<{ n: number }>())?.n ?? 0);
 const grantedSince = async (db: D1Database, since: number) =>
-  Number((await db.prepare("SELECT COUNT(*) AS n FROM processed_events WHERE key LIKE 'checkout:%' AND at >= ?").bind(since)
+  Number((await db.prepare("SELECT COUNT(*) AS n FROM processed_events WHERE (key LIKE 'checkout:%' OR key LIKE 'invoice:%') AND at >= ?").bind(since)
     .first<{ n: number }>())?.n ?? 0);
 const badgesFor = (att: Attention[]): Shell["badges"] => {
   const bad = att.filter((a) => a.level === "bad").length;

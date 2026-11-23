@@ -87,7 +87,7 @@ describe("/me/usage", () => {
     const { id, token } = await newAccount();
     expect((await call("/me/usage", { token })).data).toEqual({
       plan: "free", tier: "free", pass_until: null, interviews_left: 0, packages_left: 3,
-      avatar_seconds_left: 0, llm_model: "claude-haiku-4-5" });
+      avatar_seconds_left: 0, llm_model: "claude-haiku-4-5", subscription: null });
     await givePass(id, "pass90");
     const b = (await call("/me/usage", { token })).data;
     expect(b.plan).toBe("pass90");
@@ -438,9 +438,11 @@ describe("routing", () => {
 
   it("billing reads mirror Python with billing off; the free-pass dev stubs are closed", async () => {
     const { token } = await newAccount();
-    expect((await call("/billing/offers", { token })).data).toEqual({
-      passes: [], packs: [], current: { tier: "free", pass_until: null, interviews_left: 0, packages_left: 3 } });
-    expect((await call("/billing/offers")).data).toEqual({ passes: [], packs: [], current: null });
+    expect((await call("/billing/offers", { token })).data).toMatchObject({
+      plans: [], passes: [], packs: [], subscription: null,
+      current: { tier: "free", pass_until: null, interviews_left: 0, packages_left: 3 } });
+    expect((await call("/billing/offers")).data).toEqual({
+      plans: [], price_tier: "standard", student: null, subscription: null, passes: [], packs: [], current: null });
     expect((await call("/billing/packs")).data).toEqual({ packs: [] });
     expect((await call("/billing/plan", { token, body: { plan: "pass90" } })).status).toBe(403);
     expect((await call("/billing/credits", { token, body: { seconds: 900 } })).status).toBe(403);

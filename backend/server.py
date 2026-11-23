@@ -75,8 +75,9 @@ def build_billing(meter):
     """Real Stripe billing when the secret key and at least one pass price are present; otherwise
     None (the broker still runs, and the checkout/webhook routes return 503). The key lives ONLY
     here, server-side. Passes: STRIPE_PRICE_PASS30 / STRIPE_PRICE_PASS90; extra-interview packs:
-    STRIPE_PRICE_PACK_1 / _3 / _5. Any unset price is just not offered. All are one-time prices;
-    nothing auto-renews. STRIPE_SECRET_KEY (live) wins over STRIPE_TEST_SECRET_KEY (sandbox)."""
+    STRIPE_PRICE_PACK_1 / _3 / _5. Any unset price is just not offered. All are one-time prices
+    here; the plans that renew are sold by the Worker broker (worker/src/subscriptions.ts).
+    STRIPE_SECRET_KEY (live) wins over STRIPE_TEST_SECRET_KEY (sandbox)."""
     key = _cred("STRIPE_SECRET_KEY") or _cred("STRIPE_TEST_SECRET_KEY")
     from backend.billing import PACK_PRICE_ENV, PASS_PRICE_ENV, Billing, StripeClient
     pass_prices = {pid: _cred(env) for pid, env in PASS_PRICE_ENV.items()}

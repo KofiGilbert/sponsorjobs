@@ -68,10 +68,10 @@ def test_used_up_with_no_key_shows_the_passes(A, monkeypatch):
         A._count_package(_broker_llm())
     assert e.value.reason == "upgrade_required" and "3 free" in str(e.value)
     assert A._classify_outage(e.value) == "upgrade_required"
-    _calls(monkeypatch, A, 402, {"reason": "package_limit", "tier": "pass30"})
+    _calls(monkeypatch, A, 402, {"reason": "package_limit", "tier": "standard_monthly"})
     with pytest.raises(BrokerUnavailable) as e:
         A._count_package(_broker_llm())
-    assert "pass" in str(e.value).lower()
+    assert "plan renews" in str(e.value).lower()
 
 
 def test_used_up_with_an_own_anthropic_key_runs_on_that_key(A, monkeypatch):

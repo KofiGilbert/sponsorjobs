@@ -65,7 +65,11 @@ export function when(s: number | null | undefined, now: number): string {
   return new Date(s * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-export const PASS_LABEL: Record<string, string> = { free: "Free", pass30: "Job Hunt Pass", pass90: "Season Pass" };
+export const PASS_LABEL: Record<string, string> = {
+  free: "Free", pass30: "Job Hunt Pass", pass90: "Season Pass",
+  student_monthly: "Student, monthly", student_quarterly: "Student, 3 months",
+  standard_monthly: "Standard, monthly", standard_quarterly: "Standard, 3 months", plan_other: "Plan, other amount",
+};
 
 // ---- icons -------------------------------------------------------------------------------------- //
 

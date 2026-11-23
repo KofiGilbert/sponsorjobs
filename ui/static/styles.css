@@ -2965,7 +2965,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .upg-cta.is-get:hover { opacity: 0.88; }
 
 .upg-feats-lead { margin: 14px 0 8px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.upg-feats { list-style: none; display: flex; flex-direction: column; gap: 9px; margin-top: 14px; }
+.upg-feats { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 9px; margin-top: 14px; }
 .upg-feats-lead + .upg-feats { margin-top: 0; }
 .upg-feats li { position: relative; padding-left: 20px; font-size: 12px; color: var(--ink-2); line-height: 1.35; }
 .upg-feats li::before { content: ""; position: absolute; left: 2px; top: 3px; width: 9px; height: 6px;
@@ -2978,6 +2978,41 @@ body.cv-dragging * { cursor: grabbing !important; }
 .upg-usage-p { margin-top: 4px; font-size: 12px; color: var(--muted); }
 .upg-usage-acts { display: flex; gap: 8px; margin-top: 11px; flex-wrap: wrap; }
 .upg-usage-hint { margin-top: 9px; font-size: 11px; color: var(--faint); line-height: 1.5; }
+/* Plans (2026-11-20): the interval switch, the renewal terms and consent next to the button, the
+   school email check, and "your plan" with one-click cancel. */
+.upg-seg { display: inline-flex; gap: 2px; padding: 2px; margin: 0 0 14px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 999px; }
+.upg-seg-b { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+.upg-seg-b:hover { color: var(--ink-2); }
+.upg-seg-b.is-on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.upg-buy { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
+.upg-buy:empty { display: none; }
+.upg-buy .upg-cta { margin-top: 0; }
+.upg-terms { font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.upg-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.4; color: var(--ink-2); cursor: pointer; }
+.upg-consent input { margin: 2px 0 0; flex: none; accent-color: var(--ink); }
+.upg-cta:disabled { opacity: 0.45; cursor: not-allowed; }
+.upg-cta.is-ghost { background: transparent; border: 1px solid var(--border-strong); color: var(--ink); cursor: pointer; }
+.upg-cta.is-ghost:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.upg-note { font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.upg-stu { display: flex; flex-direction: column; gap: 8px; }
+.upg-stu label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); }
+.upg-stu input { height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; }
+.upg-stu input:focus { outline: none; border-color: var(--border-strong); }
+.upg-stu-row { display: flex; gap: 8px; }
+.upg-stu-row > * { flex: 1; }
+.upg-link { border: 0; background: transparent; padding: 0; font: inherit; font-size: 11.5px; color: var(--muted);
+  text-decoration: underline; cursor: pointer; align-self: flex-start; }
+.upg-err { font-size: 11.5px; line-height: 1.4; color: var(--danger); }
+.upg-mine { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.upg-mine-p { font-size: 12.5px; line-height: 1.45; color: var(--ink); }
+.upg-mine-acts { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.acct-menu-plan-renew { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px;
+  font-size: 11.5px; color: var(--muted); }
+.acct-menu-plan-act { border: 0; background: transparent; padding: 0; font: inherit; font-size: 11.5px; font-weight: 600;
+  color: var(--ink-2); text-decoration: underline; cursor: pointer; }
 
 /* ============ AI provider picker (Claude / OpenAI) ============ */
 .ai-provider { display: flex; gap: 6px; margin: 0 0 14px; }

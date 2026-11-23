@@ -231,7 +231,7 @@ def test_plan_says_when_it_is_capped(ag, monkeypatch):
     assert "Find the 10 best analyst roles" in d["text"]
     ag["left"] = 2
     d, _ = _ask("find 5 analyst roles and apply")
-    assert "Your pass has 2 packages left, so I will do 2. This uses 2 of your 2 packages." in d["text"]
+    assert "Your plan has 2 packages left, so I will do 2. This uses 2 of your 2 packages." in d["text"]
     ag["left"] = None                                            # own key: never counted
     d, _ = _ask("find 3 analyst roles and apply")
     assert d["text"].endswith("This uses 3 packages. Go ahead?")

@@ -23,8 +23,9 @@ over HTTPS. Only `backend/` is deployed — none of the résumé/OCR/PDF code.
 ## 2. Set the secret env vars
 In the service → **Environment**, set the values for every var marked "sync:false":
 `ANTHROPIC_API_KEY`, `STRIPE_SECRET_KEY`, `TAVUS_API_KEY`, `TAVUS_PERSONA_ID`, and the price
-ids below. Leave `STRIPE_WEBHOOK_SECRET` blank for now (step 4). Every price is a ONE-TIME price
-in Stripe; nothing is a subscription and nothing auto-renews.
+ids below. Leave `STRIPE_WEBHOOK_SECRET` blank for now (step 4). This Python reference broker
+sells only one-time prices (the retired passes and the packs); the plans that renew are sold by
+the Cloudflare Worker broker (docs/stripe-setup.md).
 - `STRIPE_PRICE_PASS30`: Job Hunt Pass, $29, 30 days (3 live interviews, 60 packages).
 - `STRIPE_PRICE_PASS90`: Season Pass, $69, 90 days (9 live interviews, 150 packages).
 - `STRIPE_PRICE_PACK_1`: 1 extra live interview, $9.

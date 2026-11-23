@@ -21,21 +21,23 @@ import { classifyUpstream, complete } from "./anthropic";
 import { BadRequest, type ToolArgs, toolArgs } from "./tools";
 import { aiStatus, describeAi, recordOk, recordOutage } from "./outage";
 import {
-  type Billing, billingFor, billingFrom, grantFor, offeredPacks, offeredPasses, packCheckoutUrl, packPrice, passCheckoutUrl,
-  UnknownProduct, verifySignature,
+  appUrl, type Billing, billingFor, billingFrom, grantFor, offeredPacks, offeredPasses, offeredPlans, packCheckoutUrl, packPrice,
+  passCheckoutUrl, subscriptionCheckoutUrl, UnknownProduct, verifySignature,
 } from "./billing";
 import { agentSign, directory, DIRECTORY_PATH } from "./botauth";
 import { type Env, intVar } from "./env";
 import { aliasCreate, aliasDelete, aliasGet, aliasNotify, inboxRead, messagesRead, receiveMail } from "./mail";
 import {
-  avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft, passActive, periodOf,
-  planFor, QuotaExceeded, requireLlm, status, tierFor,
+  avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, type Interval, INTERVALS, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft,
+  passActive, periodOf, planFor, QuotaExceeded, requireLlm, status, subscriptionPlan, tierFor,
 } from "./metering";
 import {
   addCreditOnce, avatarSessionOwner, chargeableSeconds, consumeAvatar, grantPassOnce, sessionUsed, loadState, markAvatarEnded,
   recordAvatarSession, recordLlm, takeFreePackage, takePassPackage,
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
+import { studentEligible, studentGet, studentRow, studentStart, studentStatus, studentVerify } from "./student";
+import { applySubscriptionEvent, customerOf, liveSub, portalUrl, setCanceling, subView } from "./subscriptions";
 import { githubAvailable, githubCallback, githubClaim, githubConnect, githubRefresh, githubRevoke } from "./github";
 import * as tg from "./telegram";
 import { createConversation, endConversation, transcript } from "./tavus";
@@ -100,9 +102,10 @@ const accountMe: Handler = async ({ req, env }) => {
 const meUsage: Handler = async ({ req, env, now, nowMs }) => {
   const user = await identify(req, env);
   if (!user) return noUser();
-  const { state } = await loadState(env.DB, user, periodOf(nowMs), dayOf(nowMs));
+  const [{ state }, sub] = await Promise.all([loadState(env.DB, user, periodOf(nowMs), dayOf(nowMs)), liveSub(env.DB, user)]);
   const st = status(state, now, env);
-  return json({ plan: st.tier, ...st });
+  // `subscription`: whether a renewing plan renews and when (null for free and for one-time passes).
+  return json({ plan: st.tier, ...st, subscription: subView(sub) });
 };
 
 const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
@@ -151,7 +154,7 @@ const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
   // and paid users are untouched. Keeps a script of anonymous accounts from running up the bill.
   // The admin dashboard can lower, raise or pause (0) it without a deploy (admin_settings).
   if (free && freePoolTokens >= (freePoolCap ?? intVar(env.FREE_POOL_DAILY_TOKENS, 5_000_000))) {
-    return json({ error: "the free AI is very busy today; try again tomorrow, or get a pass",
+    return json({ error: "the free AI is very busy today; try again tomorrow, or get a plan",
                   reason: "free_busy", tier: tierFor(state, now) }, 503);
   }
   const model = modelFor(plan, env);
@@ -235,8 +238,8 @@ const avatarStart: Handler = async ({ req, env, now, nowMs }) => {
   if (left < INTERVIEW_SECONDS) {
     const active = passActive(state, now);
     return json({
-      error: active ? "this pass's live interviews are used up; buy an extra interview pack"
-                    : "live interviews come with a Job Hunt Pass or a Season Pass",
+      error: active ? "this plan's live interviews are used up; buy an extra interview pack"
+                    : "live interviews come with a paid plan",
       reason: active ? "no_interviews" : "pass_required", remaining: left,
     }, 402);
   }
@@ -306,7 +309,7 @@ const off = (error: string, status = 503): Handler => () => json({ error }, stat
 
 // ---- Stripe billing (ported from backend/broker.py; logic in billing.ts) ---------------------- //
 //
-// Billing is ON only with a Stripe secret key and at least one pass price (backend/server.py
+// Billing is ON only with a Stripe secret key and at least one plan or pass price (backend/server.py
 // build_billing). Until then every route answers exactly as before: offers/packs list nothing on
 // sale and checkout/webhook say 503 "billing is not configured".
 
@@ -318,23 +321,30 @@ const withBilling = (h: (c: Ctx, b: Billing) => Promise<Response>): Handler => (
   return b ? h(c, b) : billingOff();
 };
 
-/** What is on sale and where the caller stands: {passes, packs, current}. Packs are listed only
- * while the caller has an active pass (they are not sold otherwise). Without a user, current is
- * null and packs are empty. With billing off nothing is on sale, but current is still filled, so
- * the app's Upgrade panel shows the current tier. */
+/** What is on sale and where the caller stands: {plans, price_tier, student, subscription,
+ * passes, packs, current}. `plans` lists both tiers of the renewing plans; `price_tier` is the one
+ * this caller would be charged ("student" only with a valid student check). Packs are listed only
+ * while the caller has an active plan or pass (they are not sold otherwise). `passes` lists the
+ * retired one-time passes for older app versions while their prices are still set. Without a user,
+ * current/student/subscription are null and packs are empty. With billing off nothing is on sale,
+ * but current is still filled, so the app's plans panel shows the current tier. */
 const billingOffers: Handler = async ({ req, env, now, nowMs }) => {
   const user = await identify(req, env);
   const b = billingFor(env, user);
-  let current = null;
+  let current = null, student = null, subscription = null;
   let packs: ReturnType<typeof offeredPacks> = [];
   if (user) {
-    const { state } = await loadState(env.DB, user, periodOf(nowMs), dayOf(nowMs));
+    const [{ state }, srow, sub] = await Promise.all([
+      loadState(env.DB, user, periodOf(nowMs), dayOf(nowMs)), studentRow(env.DB, user), liveSub(env.DB, user)]);
     const st = status(state, now, env);
     current = { tier: st.tier, pass_until: st.pass_until, interviews_left: st.interviews_left,
                 packages_left: st.packages_left };
+    student = studentStatus(srow, now);
+    subscription = subView(sub);
     if (b && passActive(state, now)) packs = offeredPacks(b);
   }
-  return json({ passes: b ? offeredPasses(b) : [], packs, current });
+  return json({ plans: b ? offeredPlans(b) : [], price_tier: student?.eligible ? "student" : "standard",
+                student, subscription, passes: b ? offeredPasses(b) : [], packs, current });
 };
 
 /** The extra-interview packs on sale (never expire). Buying one still needs an active pass. */
@@ -362,12 +372,92 @@ function productId(req: Request): string {
   try { return decodeURIComponent(seg); } catch { return seg; }
 }
 
+const alreadySubscribed = () => json({ error: "you already have a plan; cancel it or let it end first",
+                                      reason: "already_subscribed" }, 409);
+
+/** Buy a renewing plan: {interval: "monthly" | "quarterly", consent: true}. The client names only
+ * the interval; the price tier (student or standard) is picked HERE from the stored student check.
+ * `consent` must be true: the app shows the price, the interval, that it renews until cancelled and
+ * how to cancel next to an explicit checkbox, and only a ticked box sends true. One running plan
+ * per account. */
+const billingSubscribe = withBilling(async ({ req, env, now }, b) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  if (!billingFor(env, user)) return billingOff();       // test mode, not a named tester
+  const email = await buyerEmail(env, user);
+  if (email instanceof Response) return email;
+  const bd = await body(req);
+  const interval = String(bd.interval ?? "") as Interval;
+  if (!INTERVALS.includes(interval)) return json({ error: "pick monthly or every 3 months", reason: "bad_interval" }, 400);
+  if (bd.consent !== true) {
+    return json({ error: "agree to the renewal terms first", reason: "consent_required" }, 400);
+  }
+  if (await liveSub(env.DB, user)) return alreadySubscribed();
+  const tier = studentEligible(await studentRow(env.DB, user), now) ? "student" : "standard";
+  const plan = subscriptionPlan(tier, interval);
+  try {
+    return json({ url: await subscriptionCheckoutUrl(b, user, plan, email, now, await customerOf(env.DB, user)), plan });
+  } catch (err) {
+    if (err instanceof UnknownProduct) return json({ error: "that plan is not on sale", reason: "not_on_sale" }, 400);
+    return checkoutFailed("plan", err);
+  }
+});
+
+const noPlan = () => json({ error: "there is no plan to change", reason: "no_subscription" }, 404);
+
+const stripeFailed = (what: string, err: unknown) => {
+  console.error(`${what} failed:`, err instanceof Error ? err.message : err);
+  return json({ error: "billing is unavailable right now; try again in a moment" }, 502);
+};
+
+/** Cancel renewal in one call: the plan stays until the end of the paid period, then ends. */
+const billingCancel = withBilling(async ({ req, env, now }, b) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const row = await liveSub(env.DB, user);
+  if (!row) return noPlan();
+  try {
+    return json({ subscription: subView(await setCanceling(env, b, row, true, now)) });
+  } catch (err) {
+    return stripeFailed("cancel", err);
+  }
+});
+
+/** Undo a cancellation while the paid period is still running: the plan renews again. */
+const billingResume = withBilling(async ({ req, env, now }, b) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const row = await liveSub(env.DB, user);
+  if (!row) return noPlan();
+  try {
+    return json({ subscription: subView(await setCanceling(env, b, row, false, now)) });
+  } catch (err) {
+    return stripeFailed("resume", err);
+  }
+});
+
+/** Stripe's billing portal (update the card, download invoices), for an account that has paid
+ * for a plan. Its settings live in the Stripe dashboard (docs/stripe-setup.md). */
+const billingPortal = withBilling(async ({ req, env }, b) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const customer = await customerOf(env.DB, user);
+  if (!customer) return noPlan();
+  try {
+    return json({ url: await portalUrl(b, customer, `${appUrl(env)}/`, env.STRIPE_PORTAL_CONFIG) });
+  } catch (err) {
+    return stripeFailed("portal", err);
+  }
+});
+
 const billingPassCheckout = withBilling(async ({ req, env }, b) => {
   const user = await identify(req, env);
   if (!user) return noUser();
   if (!billingFor(env, user)) return billingOff();       // test mode, not a named tester
   const email = await buyerEmail(env, user);
   if (email instanceof Response) return email;
+  // A retired one-time pass on top of a renewing plan would be refilled away at the next renewal.
+  if (await liveSub(env.DB, user)) return alreadySubscribed();
   const passId = productId(req);
   try {
     return json({ url: await passCheckoutUrl(b, user, passId, email) });
@@ -400,8 +490,9 @@ const billingPackCheckout = withBilling(async ({ req, env, now, nowMs }, b) => {
   }
 });
 
-/** Stripe calls this when a pass or pack payment completes. Authenticated by the Stripe-Signature
- * header over the RAW body (not a user token), so it is verified before anything is read. */
+/** Stripe calls this when a payment completes and as a plan renews, fails or ends. Authenticated
+ * by the Stripe-Signature header over the RAW body (not a user token), so it is verified before
+ * anything is read. One-time payments are granted here; renewing plans in src/subscriptions.ts. */
 const billingWebhook = withBilling(async ({ req, env, now }, b) => {
   const raw = await req.text();
   let event: unknown;
@@ -417,6 +508,7 @@ const billingWebhook = withBilling(async ({ req, env, now }, b) => {
   if (g?.kind === "pass") await grantPassOnce(env.DB, g.key, g.user, g.pass, now);
   // Paid is paid: a pack is granted even if the pass happened to end between checkout and payment.
   else if (g?.kind === "credit") await addCreditOnce(env.DB, g.key, g.user, g.seconds, now);
+  else await applySubscriptionEvent(env, b, event, now);
   return json({ received: true });
 });
 
@@ -436,6 +528,14 @@ const ROUTES: Route[] = [
   ["GET", /^\/billing\/packs$/, billingPacks],
   ["POST", /^\/billing\/passes\/[^/]+\/checkout$/, billingPassCheckout],
   ["POST", /^\/billing\/packs\/[^/]+\/checkout$/, billingPackCheckout],
+  ["POST", /^\/billing\/subscribe$/, billingSubscribe],
+  ["POST", /^\/billing\/subscription\/cancel$/, billingCancel],
+  ["POST", /^\/billing\/subscription\/resume$/, billingResume],
+  ["POST", /^\/billing\/portal$/, billingPortal],
+  // The student price check (src/student.ts): a code to a school e-mail, confirmed once.
+  ["GET", /^\/account\/student$/, ({ req, env, now }) => studentGet(req, env, now)],
+  ["POST", /^\/account\/student\/start$/, ({ req, env, now }) => studentStart(req, env, now)],
+  ["POST", /^\/account\/student\/verify$/, ({ req, env, now }) => studentVerify(req, env, now)],
   ["POST", /^\/billing\/webhook$/, billingWebhook],
   // The free-pass dev stubs are off whenever the broker is hosted, as in Python.
   ["POST", /^\/billing\/(plan|credits)$/, off("not available", 403)],

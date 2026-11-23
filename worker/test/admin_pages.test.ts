@@ -303,6 +303,38 @@ describe("revenue (Stripe)", () => {
     expect(productFor(900)).toBe("pack_1");
     expect(productFor(3900)).toBe("pack_5");
     expect(productFor(1234)).toBe("other");
+    // A charge that paid an invoice is a renewing plan: $29 is then the Student plan, not the pass.
+    expect(productFor(2900, true)).toBe("student_monthly");
+    expect(productFor(6900, true)).toBe("student_quarterly");
+    expect(productFor(4900, true)).toBe("standard_monthly");
+    expect(productFor(11900, true)).toBe("standard_quarterly");
+    expect(productFor(1234, true)).toBe("plan_other");
+  });
+
+  it("counts renewing plans and their monthly recurring revenue", async () => {
+    stubWorld();
+    const t = Math.floor(Date.now() / 1000);
+    const add = (id: string, plan: string, status: string, canceling: number, end = t + 86_400) =>
+      env.DB.prepare("INSERT INTO subscriptions(id, user, plan, status, current_period_end, cancel_at_period_end, created_at) " +
+                     "VALUES(?, ?, ?, ?, ?, ?, ?)").bind(id, `acct_${id}`, plan, status, end, canceling, t).run();
+    await env.DB.prepare("DELETE FROM subscriptions").run();
+    await add("s1", "student_monthly", "active", 0);           // $29
+    await add("s2", "standard_quarterly", "active", 1);        // $119 / 3, canceling but paid up
+    await add("s3", "standard_monthly", "past_due", 0);        // payment failed: not in MRR
+    await add("s4", "standard_monthly", "canceled", 0);        // ended: not counted
+    await add("s5", "standard_monthly", "active", 0, t - 10);  // period over: not counted
+    const { subscriptionStats } = await import("../src/admin");
+    const rows = (await env.DB.prepare("SELECT plan, status, cancel_at_period_end AS canceling, COUNT(*) AS n FROM subscriptions " +
+      "WHERE status IN ('active', 'trialing', 'past_due') AND current_period_end > ? GROUP BY plan, status, cancel_at_period_end")
+      .bind(t).all<{ plan: string; status: string; canceling: number; n: number }>()).results;
+    const s = subscriptionStats(rows);
+    expect(s).toMatchObject({ active: 3, renewing: 2, canceling: 1, past_due: 1, mrr_usd: 68.67 });
+    expect(s.by_plan.student_monthly).toMatchObject({ active: 1, mrr_usd: 29 });
+    const r = await get("/revenue", { STRIPE_TEST_SECRET_KEY: "sk_test_x" });
+    expect(r.text).toContain("Plans");
+    expect(r.text).toContain("Student, monthly");
+    expect(r.text).toContain("$68.67");
+    await env.DB.prepare("DELETE FROM subscriptions").run();
   });
 });
 

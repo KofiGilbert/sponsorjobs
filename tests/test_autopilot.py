@@ -149,7 +149,7 @@ def test_off_no_profile_and_no_packages_never_run(ap, monkeypatch):
     ap["left"] = 5
     assert app._autopilot_tick()["why"] == "paused"
     st = app._autopilot_status()
-    assert st["on"] and st["paused"]["text"] == "Paused: no packages left on your pass."
+    assert st["on"] and st["paused"]["text"] == "Paused: no packages left on your plan."
     ap["day"] = DAY2
     assert app._autopilot_tick()["tailored"] == 2
 
@@ -301,7 +301,7 @@ def test_message_text_when_nothing_can_be_sent():
     t = app.autopilot_message(_items(), lambda it: False, 3, 5, 12)
     assert t == ("I found 3 roles you are qualified for and tailored your resume for each. "
                  "3 are ready and waiting for your click (Acme, Beta, Gamma). 3 of 5 for today. "
-                 "12 packages left on your pass.")
+                 "12 packages left on your plan.")
     assert "can be sent" not in t
 
 
@@ -314,7 +314,7 @@ def test_message_text_when_one_can_be_sent_and_packages_unknown():
     one = app.autopilot_message(_items()[:1], lambda it: False, 1, 2, 1)
     assert one == ("I found 1 role you are qualified for and tailored your resume for it. "
                    "1 is ready and waiting for your click (Acme). 1 of 2 for today. "
-                   "1 package left on your pass.")
+                   "1 package left on your plan.")
 
 
 def test_message_has_no_dashes_and_three_buttons():
@@ -337,7 +337,7 @@ def test_run_sends_one_message_only_with_a_channel(ap):
     assert m["text"].startswith("I found 2 roles you are qualified for")
     assert "2 are ready and waiting for your click (Gamma, Delta)" in m["text"]
     assert "can be sent" not in m["text"]            # Gamma is auto, but autonomous is off
-    assert m["text"].endswith("2 of 2 for today. 2 packages left on your pass.")
+    assert m["text"].endswith("2 of 2 for today. 2 packages left on your plan.")
     assert m["buttons"][0][0]["id"] == f"ap:approveall:{out['batch']}"
 
 

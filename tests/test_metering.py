@@ -40,14 +40,19 @@ def _meter(clock=None):
 
 
 # -- tiers and allowances -----------------------------------------------------------------------
-def test_the_three_tiers_as_decided():
+def test_the_tiers_as_decided():
     assert INTERVIEW_SECONDS == 1200                                 # 20 minutes (2026-10-10)
-    assert set(PLANS) == {"free", "pass30", "pass90"}               # no subscription tiers remain
-    shape = {k: (p.days, p.interviews, p.packages, p.llm_model, p.price_label) for k, p in PLANS.items()}
+    # Renewing plans (2026-11-20) plus the retired one-time passes, kept for their holders.
+    shape = {k: (p.days, p.interviews, p.packages, p.llm_model, p.price_label, p.tier, p.months)
+             for k, p in PLANS.items()}
     assert shape == {
-        "free":   (0, 0, 3, "claude-haiku-4-5", ""),
-        "pass30": (30, 3, 60, "claude-sonnet-5-5", "$29"),
-        "pass90": (90, 9, 150, "claude-sonnet-5-5", "$69"),
+        "free":   (0, 0, 3, "claude-haiku-4-5", "", "", 0),
+        "pass30": (30, 3, 60, "claude-sonnet-5-5", "$29", "", 0),
+        "pass90": (90, 9, 150, "claude-sonnet-5-5", "$69", "", 0),
+        "student_monthly": (30, 3, 60, "claude-sonnet-5-5", "$29", "student", 1),
+        "student_quarterly": (90, 9, 150, "claude-sonnet-5-5", "$69", "student", 3),
+        "standard_monthly": (30, 3, 60, "claude-sonnet-5-5", "$49", "standard", 1),
+        "standard_quarterly": (90, 9, 150, "claude-sonnet-5-5", "$119", "standard", 3),
     }
     assert PLANS["pass30"].avatar_seconds_included == 3 * INTERVIEW_SECONDS and PLANS["pass90"].avatar_seconds_included == 9 * INTERVIEW_SECONDS
 

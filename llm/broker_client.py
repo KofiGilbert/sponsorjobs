@@ -33,7 +33,7 @@ BROKER_USER_AGENT = "SponsorJobs/0.1 (+https://github.com/KofiGilbert/sponsorjob
 # What the person reads when the failure is OURS (the company key has no credit, is disabled or is
 # invalid: the broker answers {error: "ai_unavailable", reason: "company"}). Never an upgrade, never
 # a key prompt: nothing they can buy fixes it, and the owner has already been alerted by the broker.
-AI_COMPANY_TEXT = ("SponsorJobs' AI is temporarily unavailable. Your pass and packages are not "
+AI_COMPANY_TEXT = ("SponsorJobs' AI is temporarily unavailable. Your plan and packages are not "
                    "affected. We have been alerted; try again in a little while.")
 # A passing failure (rate limit, overload): worth a retry here, then a plain "busy".
 AI_TRANSIENT_TEXT = "The AI is busy right now. Try again in a moment."

@@ -7,7 +7,8 @@ It does the same job as `backend/broker.py` for the routes the app needs to use 
 
 - gives each app install an anonymous account (an id plus a secret bearer token, of which only the
   hash is stored),
-- meters AI use per plan (free, Job Hunt Pass, Season Pass) exactly as `backend/metering.py` does,
+- meters AI use per plan (free, the renewing Student and Standard plans, and the retired one-time
+  passes their holders keep) exactly as `backend/metering.py` does,
 - holds the company Anthropic key and calls Anthropic for the app.
 
 The Python broker stays as the reference for development and tests. This is a parallel
@@ -27,9 +28,12 @@ implementation; it does not replace or change anything in `backend/`.
 | `POST /llm/complete` | one metered completion (`402 token_cap`, `503 free_busy`, `502` on upstream failure) |
 | `POST /llm/package` | counts one tailoring run (`402 package_limit`) |
 | `GET /me/usage` | plan, pass end date, interviews, packages, model |
-| `GET /billing/offers`, `GET /billing/packs` | passes and packs on sale (packs only while a pass is active) and where the caller stands |
-| `POST /billing/passes/<id>/checkout`, `POST /billing/packs/<id>/checkout` | a one-time Stripe Checkout Session, `{url}` (`402 pass_required` for a pack without a pass) |
-| `POST /billing/webhook` | Stripe's `checkout.session.completed`: grants the pass or pack once per session (signature-checked) |
+| `GET /billing/offers`, `GET /billing/packs` | plans (both tiers), the tier this caller pays, the student check, the running plan, and packs (only while a plan is active) |
+| `POST /billing/subscribe` | `{interval, consent: true}`: a renewing Stripe Checkout Session at the price the server picks (student or standard), `{url, plan}` |
+| `POST /billing/subscription/cancel`, `.../resume`, `POST /billing/portal` | cancel at period end in one call, undo it, or Stripe's billing portal `{url}` |
+| `GET /account/student`, `POST /account/student/start`, `.../verify` | the student price check: a 6-digit code to a school email, stored once (`src/student.ts`) |
+| `POST /billing/packs/<id>/checkout`, `POST /billing/passes/<id>/checkout` | a one-time Stripe Checkout Session, `{url}` (`402 pass_required` for a pack without a plan; passes only while their retired prices are still set) |
+| `POST /billing/webhook` | Stripe events (signature-checked): packs on `checkout.session.completed`; plans on `invoice.paid`, `invoice.payment_failed`, `invoice.upcoming` (renewal reminder email) and `customer.subscription.*` (`src/subscriptions.ts`) |
 | `POST /mail/alias` `{name?}` | the caller's `first.last@sponsorjobs.ai` alias for the apply agent, `{alias, forward_to}` (idempotent; `409 sign_in_first` without a verified e-mail) |
 | `GET /mail/alias`, `DELETE /mail/alias` | read or release the alias (`{alias, forward_to}`, both null when there is none) |
 | `GET /mail/inbox?after=<cursor>` | codes and links mailed to the alias in the last 30 minutes, `{events: [{cursor, kind, code, link, subject, sender, at}], cursor}`; `after` acknowledges |
@@ -38,7 +42,7 @@ implementation; it does not replace or change anything in `backend/`.
 | `POST /agent/sign` `{method, authority, path}` | Web Bot Auth headers for one page request the apply agent makes: `{signature_input, signature, signature_agent, expires}` (60 s; 120 per account per minute, `429 rate_limited`; `503 not_configured` without `AGENT_SIGNING_KEY`) |
 | `GET /.well-known/http-message-signatures-directory` | the agent's public key (a signed JWKS); routed here from sponsorjobs.ai as well, the registered Signature-Agent |
 
-Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one pass price;
+Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one plan or pass price;
 see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
 with billing off: nothing on sale, and checkout/webhook say `503 billing is not configured`.
 

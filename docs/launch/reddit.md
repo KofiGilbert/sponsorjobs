@@ -21,7 +21,7 @@ The sponsor tagging is the part I want to ask about:
 - Is "cap-exempt" worth surfacing separately?
 - What would make you distrust the badge?
 
-On the boring but fair questions: it is AGPL-3.0 and runs on your own computer. Your resumes, profile and applications stay there. The AI is included through a SponsorJobs account so there is no API key to set up, and the only thing the service sees is your usage count, not your documents. Free gives you every job and 3 tailored applications a month; a pass is $29 once for 30 days if you are in a heavy stretch, and nothing auto-renews. If you want no limits and no account, the community edition runs from source with your own AI key.
+On the boring but fair questions: it is AGPL-3.0 and runs on your own computer. Your resumes, profile and applications stay there. The AI is included through a SponsorJobs account so there is no API key to set up, and the only thing the service sees is your usage count, not your documents. Free gives you every job and 3 tailored applications a month; a plan is $29 a month for students and recent graduates ($49 otherwise) if you are in a heavy stretch, and you can cancel anytime. If you want no limits and no account, the community edition runs from source with your own AI key.
 
 Source and downloads: https://sponsorjobs.ai and https://github.com/KofiGilbert/sponsorjobs
 
