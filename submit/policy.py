@@ -87,11 +87,15 @@ def _matches(host: str, suffixes) -> bool:
 
 
 # Country suffixes that take a third label (acme.co.uk, not co.uk). Enough for the career
-# sites we meet; a miss only narrows the fence to the full host, never widens it.
+# sites we meet; any two-letter country code under a registry label counts too.
 _TWO_PART_SUFFIXES = frozenset((
     "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp",
     "co.in", "com.br", "com.mx", "co.za", "com.sg", "com.hk", "co.kr", "com.tr",
 ))
+
+
+# A registry label under a country code (acme.com.pl, acme.org.mx): never the site itself.
+_REGISTRY_LABELS = frozenset(("co", "com", "org", "net", "ac", "gov", "edu", "or", "ne"))
 
 
 def registrable_domain(host: str) -> str:
@@ -99,8 +103,22 @@ def registrable_domain(host: str) -> str:
     labels = [p for p in (host or "").lower().split(".") if p]
     if len(labels) <= 2:
         return ".".join(labels)
-    n = 3 if ".".join(labels[-2:]) in _TWO_PART_SUFFIXES else 2
+    two_part = (".".join(labels[-2:]) in _TWO_PART_SUFFIXES
+                or (len(labels[-1]) == 2 and labels[-2] in _REGISTRY_LABELS))
+    n = 3 if two_part else 2
     return ".".join(labels[-n:])
+
+
+# Shared hosting: one registrable domain, many unrelated owners. On these only the very host
+# (or below it) is the site's own, never a sibling: the fence never widens to the whole domain,
+# and an emailed link there counts only on the same host (inbox/detect.py ``link_on_site``).
+SHARED_HOSTING: frozenset[str] = frozenset((
+    "oraclecloud.com", "amazonaws.com", "cloudfront.net", "azurewebsites.net", "azureedge.net",
+    "windows.net", "herokuapp.com", "github.io", "gitlab.io", "netlify.app", "vercel.app",
+    "pages.dev", "workers.dev", "web.app", "firebaseapp.com", "appspot.com",
+    "googleusercontent.com", "blogspot.com", "wordpress.com", "wixsite.com", "squarespace.com",
+    "sharepoint.com", "myshopify.com", "webflow.io", "notion.site", "onrender.com", "fly.dev",
+))
 
 
 def run_allowed_hosts(apply_url: str) -> set[str]:
@@ -110,7 +128,8 @@ def run_allowed_hosts(apply_url: str) -> set[str]:
     host = _host(apply_url)
     if not host or _matches(host, PROHIBITED_HOSTS):
         return set()
-    hosts = {host, registrable_domain(host), *ATS_HOSTS}
+    reg = registrable_domain(host)
+    hosts = {host, *ATS_HOSTS} | ({reg} if reg not in SHARED_HOSTING else set())
     return {h for h in hosts if h and not _matches(h, PROHIBITED_HOSTS)}
 
 

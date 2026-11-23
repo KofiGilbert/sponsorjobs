@@ -498,6 +498,11 @@ still nothing and the job parks with Continue ("The <company> email (a link) did
 4 minutes. Check your inbox and do the step on the page, then press Continue; I look for the
 mail once more first"), remembering what it waited on, and the resumed run asks the inbox once
 more (20 s) before reading the page: a late mail still completes the run. An emailed link is
+opened only when it is on the site the run applies on (the same registrable domain; the very
+host on shared hosting such as oraclecloud.com) or on the same hiring system (`mailLinkOk` in
+the shell, `link_on_site` in inbox/detect.py), and only from a message whose sender address is
+that site's or its hiring system's (the company name alone reads a code, never a link). Any
+other link is left alone and the wait goes on as if no mail came. A link that passes is
 opened in the pane (`afterEmailLink`); the "account activated, sign in" page is signed in by
 the brain (rule 13); a careers home or job search page right after that is not the end: the
 shell opens the job again by itself (and the brain has `reopen_job` for the same, rule 11).

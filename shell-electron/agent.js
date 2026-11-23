@@ -211,6 +211,55 @@ function notReady(viewText) {
   return "";
 }
 const hostOf = (url) => { try { return (new URL(url).hostname || "").toLowerCase().replace(/^www\./, ""); } catch (e) { return ""; } };
+// The registrable domain of a host (mirrors inbox/detect.py registrable_domain):
+// acme.wd5.myworkdayjobs.com -> myworkdayjobs.com, careers.acme.co.uk -> acme.co.uk.
+const REGISTRY_LABELS = new Set(["co", "com", "org", "net", "ac", "gov", "edu", "or", "ne"]);
+const regDomain = (host) => {
+  const l = String(host || "").toLowerCase().replace(/\.+$/, "").split(".").filter(Boolean);
+  if (l.length >= 3 && l[l.length - 1].length === 2 && REGISTRY_LABELS.has(l[l.length - 2])) return l.slice(-3).join(".");
+  return l.slice(-2).join(".");
+};
+// Shared hosting (mirrors submit/policy.py SHARED_HOSTING): one registrable domain, many
+// unrelated owners, so only the very host is the site's own, never a sibling.
+const SHARED_HOSTING = ["oraclecloud.com", "amazonaws.com", "cloudfront.net", "azurewebsites.net", "azureedge.net",
+  "windows.net", "herokuapp.com", "github.io", "gitlab.io", "netlify.app", "vercel.app",
+  "pages.dev", "workers.dev", "web.app", "firebaseapp.com", "appspot.com",
+  "googleusercontent.com", "blogspot.com", "wordpress.com", "wixsite.com", "squarespace.com",
+  "sharepoint.com", "myshopify.com", "webflow.io", "notion.site", "onrender.com", "fly.dev"];
+// Hiring systems that run under more than one domain (mirrors inbox/detect.py _ATS_LINK_GROUPS).
+const ATS_LINK_GROUPS = [["myworkdayjobs.com", "myworkday.com", "myworkdaysite.com", "workday.com"],
+  ["successfactors.com", "successfactors.eu", "sapsf.com", "sapsf.eu"], ["personio.de", "personio.com"], ["ultipro.com", "ukg.net"]];
+// The applicant tracking system a host belongs to, or "" for any other host.
+function atsFamily(host) {
+  const h = String(host || "").toLowerCase();
+  if (!h) return "";
+  if (ATS_HOST_RES.some((re) => re.test(h))) return "oracle-recruiting";
+  for (const g of ATS_LINK_GROUPS) if (hostIn(h, g)) return g[0];
+  for (const a of ATS_HOSTS) if (hostIn(h, [a])) return a;
+  return "";
+}
+// (hardening) May the run open a link that came in the person's mail? Only when the link is on
+// the site the run is applying on (the same registrable domain; the same host on shared
+// hosting) or on the same applicant tracking system as that site. ``sites``: the hosts that
+// count as the run's own here (the apply URL's and the page that asked for the mail). A link
+// that fails is never opened and never widens the run's allowed hosts.
+function mailLinkOk(link, sites) {
+  let u;
+  try { u = new URL(String(link || "")); } catch (e) { return false; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+  if (u.username || u.password) return false;
+  const lh = (u.hostname || "").toLowerCase().replace(/\.+$/, "").replace(/^www\./, "");
+  if (!lh) return false;
+  const fam = atsFamily(lh);
+  for (const raw of sites || []) {
+    const site = String(raw || "").toLowerCase().replace(/\.+$/, "").replace(/^www\./, "");
+    if (!site) continue;
+    const reg = regDomain(lh);
+    if (reg && reg === regDomain(site) && (!SHARED_HOSTING.includes(reg) || lh === site || lh.endsWith("." + site))) return true;
+    if (fam && fam === atsFamily(site)) return true;
+  }
+  return false;
+}
 const withTimeout = (p, ms, what) => {
   let t = null;
   const cap = new Promise((_r, rej) => { t = setTimeout(() => rej(new Error(what + " timed out")), ms); });
@@ -581,9 +630,9 @@ function createAgent(deps) {
   const fencePatterns = ATS_HOST_RES.slice();
   async function allowedHosts(applyUrl, fence) {
     const host = hostOf(applyUrl);
-    const parts = host.split(".");
     const prohibited = hostIn(host, PROHIBITED_HOSTS);
-    const base = new Set(prohibited ? [...ATS_HOSTS] : [host, parts.slice(-2).join("."), ...ATS_HOSTS]);
+    const reg = regDomain(host);
+    const base = new Set(prohibited ? [...ATS_HOSTS] : [host, ...(SHARED_HOSTING.includes(reg) ? [] : [reg]), ...ATS_HOSTS]);
     try {
       const r = await deps.getApp("/api/autoapply/agent/allowed-hosts?url=" + encodeURIComponent(applyUrl));
       for (const h of (r && r.hosts) || []) base.add(String(h).toLowerCase());
@@ -613,7 +662,8 @@ function createAgent(deps) {
       const r = await deps.getApp("/api/autoapply/agent/allowed-hosts?url=" + encodeURIComponent(url));
       if (r && Array.isArray(r.hosts)) return r.hosts.map((x) => String(x).toLowerCase());
     } catch (e) { /* the fallback */ }
-    return [h, h.split(".").slice(-2).join(".")];
+    const reg = regDomain(h);
+    return SHARED_HOSTING.includes(reg) ? [h] : [h, reg];
   }
   const onSite = (hosts, url) => {
     const h = hostOf(url);
@@ -2205,7 +2255,10 @@ function createAgent(deps) {
                                                                    since: startedAt, timeout_s: 20 }), 60000, "inbox").catch(() => null);
         const waitedHost = awaitInfo.host || hostOf(where());
         awaitInfo = null;
-        if (got && got.ok && got.link) {
+        if (got && got.ok && got.link && !mailLinkOk(got.link, [hostOf(applyUrl), waitedHost])) {
+          dlog("mail link refused", "resume: the link is not on " + waitedHost + " or its hiring system");
+          feed.mark("done", "the email's link points to another site, so I left it; carrying on from the page");
+        } else if (got && got.ok && got.link) {
           hosts.add(hostOf(got.link));
           afterEmailLink = 1;
           mailOpened.add(waitedHost);
@@ -3004,13 +3057,23 @@ function createAgent(deps) {
           progress(recordId, "running", "Waiting for the site's email", { step });
           const askMail = (timeout) => guard(deps.postApp("/api/inbox/await", {
             kind: "any", host: hostOf(url), company: opts.company || "", since: startedAt, timeout_s: timeout }), (timeout + 30) * 1000, "inbox").catch((e) => { if (e && e.stopped) throw e; return null; });
-          let got = await askMail(EMAIL_WAIT_S);
+          // A link is followed only on this site or its hiring system (mailLinkOk); one that
+          // points anywhere else is left alone and the wait goes on as if no mail came.
+          const mailSites = [hostOf(applyUrl), hostOf(url)];
+          const onlyOnSite = (g) => {
+            if (g && g.ok && g.link && !mailLinkOk(g.link, mailSites)) {
+              dlog("mail link refused", "step " + step + ": the link is not on " + hostOf(url) + " or its hiring system");
+              return { ok: false, reason: "timeout" };
+            }
+            return g;
+          };
+          let got = onlyOnSite(await askMail(EMAIL_WAIT_S));
           dlog("step " + step + " await ->", got && { ok: got.ok, kind: got.kind, reason: got.reason, link: !!got.link, code: !!got.code });
           if (got && got.ok === false && got.reason === "timeout") {
             feed.push("email", "Waiting", "for the site's email", { detail: "nothing yet, one more look in a minute" });
             progress(recordId, "running", "Waiting for the site's email", { step });
             await delay(Math.min(EMAIL_RECHECK_S, 60) * 1000);
-            got = await askMail(EMAIL_RECHECK_S);
+            got = onlyOnSite(await askMail(EMAIL_RECHECK_S));
             dlog("step " + step + " await again ->", got && { ok: got.ok, kind: got.kind, reason: got.reason, link: !!got.link, code: !!got.code });
           }
           if (!got || got.ok === false) {
@@ -3027,7 +3090,7 @@ function createAgent(deps) {
           if (got.code) { emailCode = String(got.code); history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["await email"], results: ["got the code"] }); continue; }
           if (got.link) {
             const before = wc.getURL() || "";
-            hosts.add(hostOf(got.link));                   // the link belongs to this site's mail
+            hosts.add(hostOf(got.link));                   // on this site or its hiring system (mailLinkOk)
             afterEmailLink = step;
             mailOpened.add(hostOf(url)); mailOpened.add(hostOf(got.link));
             for (const hh of [hostOf(url), hostOf(got.link)]) auth(hh).fails = 0;
@@ -4528,7 +4591,7 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
-                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, SURVEY_LINE, BOARD_LINE, boardName, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
+                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, mailLinkOk, regDomain, atsFamily, SURVEY_LINE, BOARD_LINE, boardName, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, reviewLines, refillChanged, reviewDiff, boxRefusal, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, engineAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,

@@ -273,7 +273,13 @@ def registrable_domain(host: str) -> str:
 
 
 def sender_domain(msg: dict) -> str:
-    m = re.search(r"[\w.+-]+@([\w.-]+)", str(msg.get("from") or ""))
+    """The domain of the From ADDRESS. The address in angle brackets wins over anything in the
+    display name, so a name that merely looks like an address never counts as the sender."""
+    frm = str(msg.get("from") or "")
+    angle = re.findall(r"<\s*([^<>\s]+)\s*>", frm)
+    if angle:
+        frm = angle[-1]
+    m = re.search(r"[\w.+-]+@([\w.-]+)", frm)
     return m.group(1).lower().rstrip(".") if m else ""
 
 
@@ -281,29 +287,100 @@ def _under(domain: str, suffixes) -> bool:
     return any(domain == s or domain.endswith("." + s) for s in suffixes)
 
 
-def about_site(msg: dict, host: str, company: str = "") -> bool:
-    """Is this message from the site (or employer) the agent is applying on? True when the
-    sender's registrable domain is the host's, when the company name appears in the From or
-    the subject, or when the sender is the ATS family that host belongs to. The gate every
-    search result passes before it is read any further."""
+def _bare_host(host: str) -> str:
     host = str(host or "").lower().strip()
     if host.startswith("http"):
         host = re.sub(r"^https?://", "", host).split("/")[0]
-    if host.startswith("www."):
-        host = host[4:]
+    host = host.split(":")[0].rstrip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def sender_on_site(msg: dict, host: str) -> bool:
+    """Does the message come from the site's own domain, or from the applicant tracking system
+    family the site runs on? Decided by the sender ADDRESS's domain only."""
+    host = _bare_host(host)
     sender = sender_domain(msg)
-    if host and sender and registrable_domain(sender) == registrable_domain(host):
+    if not host or not sender:
+        return False
+    if registrable_domain(sender) == registrable_domain(host):
+        return True
+    for hosts, senders in _ATS_FAMILIES:
+        if _under(host, hosts) and _under(sender, senders):
+            return True
+    return False
+
+
+def about_site(msg: dict, host: str, company: str = "") -> bool:
+    """Is this message from the site (or employer) the agent is applying on? True when the
+    sender's domain is the site's own or its ATS family's (``sender_on_site``), or when the
+    company name appears in the From or the subject. The name is a supporting signal: it is
+    enough to read a one-time code, never to follow a link (``_await_match`` in ui/app.py
+    also needs ``sender_on_site`` and ``link_on_site`` for that). The gate every search
+    result passes before it is read any further."""
+    if sender_on_site(msg, host):
         return True
     name = str(company or "").strip().lower()
     if len(name) >= 2:
         haystack = f"{msg.get('from') or ''}\n{msg.get('subject') or ''}".lower()
         if name in haystack:
             return True
-    if host and sender:
-        for hosts, senders in _ATS_FAMILIES:
-            if _under(host, hosts) and _under(sender, senders):
-                return True
     return False
+
+
+# Hiring systems that run under more than one domain: a link on any of them is the same system.
+_ATS_LINK_GROUPS = (
+    ("myworkdayjobs.com", "myworkday.com", "myworkdaysite.com", "workday.com"),
+    ("successfactors.com", "successfactors.eu", "sapsf.com", "sapsf.eu"),
+    ("personio.de", "personio.com"),
+    ("ultipro.com", "ukg.net"),
+)
+
+
+def ats_family(host: str) -> str:
+    """The applicant tracking system a host belongs to (a stable key), or "" for any other
+    host. Oracle's shared cloud domain counts only in its recruiting shape."""
+    from submit.policy import ATS_HOST_PATTERNS, ATS_HOSTS
+    h = _bare_host(host)
+    if not h:
+        return ""
+    if any(re.search(p, h) for p in ATS_HOST_PATTERNS):
+        return "oracle-recruiting"
+    for group in _ATS_LINK_GROUPS:
+        if _under(h, group):
+            return group[0]
+    for a in ATS_HOSTS:
+        if _under(h, (a,)):
+            return a
+    return ""
+
+
+def link_on_site(link: str, host: str) -> bool:
+    """May the agent follow this emailed link for a run on ``host``? Only an https/http link
+    whose registrable domain is the site's own (the exact host or below it on shared hosting),
+    or that sits on the same applicant tracking system as the site. A link with sign-in
+    details or a backslash in it, or any other site, is refused."""
+    from urllib.parse import urlsplit
+
+    from submit.policy import SHARED_HOSTING
+    link = str(link or "").strip()
+    site = _bare_host(host)
+    if not link or not site or "\\" in link or any(ord(ch) < 33 for ch in link):
+        return False
+    try:
+        parts = urlsplit(link)
+        lh = (parts.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    if parts.scheme not in ("https", "http") or not lh or "@" in parts.netloc:
+        return False
+    if lh.startswith("www."):
+        lh = lh[4:]
+    reg = registrable_domain(lh)
+    if reg and reg == registrable_domain(site):
+        if reg not in SHARED_HOSTING or lh == site or lh.endswith("." + site):
+            return True
+    fam = ats_family(lh)
+    return bool(fam) and fam == ats_family(site)
 
 
 def kind_of(msg: dict) -> str:

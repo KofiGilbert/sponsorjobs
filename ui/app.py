@@ -13079,10 +13079,17 @@ def _await_match(messages: list[dict], kind: str, host: str, company: str) -> di
             continue
         out = {"ok": True, "kind": found, "subject": msg.get("subject", ""),
                "message_id": msg.get("id", "")}
-        if found == "verify":
-            out["link"] = detect.verification_link(msg)
-        elif found == "reset":
-            out["link"] = detect.password_reset_link(msg)
+        if found in ("verify", "reset"):
+            # A link the agent will open: the sender's own domain must be the site's (or its
+            # hiring system's), and the link itself must point back there. The company name in
+            # the subject or From name is never enough on its own for this.
+            if not detect.sender_on_site(msg, host):
+                continue
+            link = (detect.verification_link(msg) if found == "verify"
+                    else detect.password_reset_link(msg))
+            if not detect.link_on_site(link, host):
+                continue
+            out["link"] = link
         elif found == "code":
             out["code"] = detect.otp_code(msg)
         return out
