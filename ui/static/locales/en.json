@@ -1968,5 +1968,14 @@
   "aa.ans.panelTitle": "Answers",
   "aa.ans.showAll": "Show all {n}",
   "aa.ans.showFewer": "Show fewer",
-  "aa.ans.held": "Hidden for privacy"
+  "aa.ans.held": "Hidden for privacy",
+  "aa.ev.saved": "your saved answer",
+  "aa.ev.job": "your work history",
+  "aa.ev.edu": "your education",
+  "aa.ev.post": "the job posting",
+  "aa.ev.loc": "where you live",
+  "aa.ev.skills": "your skills",
+  "aa.ev.years": "your work history",
+  "aa.ev.links": "your links",
+  "aa.ev.langs": "your languages"
 }

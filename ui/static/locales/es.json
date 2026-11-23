@@ -1968,5 +1968,14 @@
   "aa.ans.panelTitle": "Respuestas",
   "aa.ans.showAll": "Mostrar las {n}",
   "aa.ans.showFewer": "Mostrar menos",
-  "aa.ans.held": "Oculto por privacidad"
+  "aa.ans.held": "Oculto por privacidad",
+  "aa.ev.saved": "tu respuesta guardada",
+  "aa.ev.job": "tu experiencia laboral",
+  "aa.ev.edu": "tu formación",
+  "aa.ev.post": "la oferta de empleo",
+  "aa.ev.loc": "dónde vives",
+  "aa.ev.skills": "tus habilidades",
+  "aa.ev.years": "tu experiencia laboral",
+  "aa.ev.links": "tus enlaces",
+  "aa.ev.langs": "tus idiomas"
 }

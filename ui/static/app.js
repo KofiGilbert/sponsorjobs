@@ -11851,10 +11851,13 @@
     const loc = usLocation(it.location);
     const act = it.action;
     const primaryish = act === "fill" || act === "signin" || act === "finish" || act === "open_self" || act === "answer" || act === "continue" || act === "send";
-    return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(it.role)}, ${esc(coName(it))}">
+    // (2026-11-23) the company first: people look for an application by the employer ("where is
+    // the Home Depot one?"), and many rows share the same role title
+    const co = coName(it);
+    return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(co)}, ${esc(it.role)}">
       ${companyAvatar(it)}
-      <div class="aa-row-main"><div class="aa-t">${esc(it.role || T("aa.role", "Role"))}</div>
-        <div class="aa-s"><span class="co">${esc(coName(it))}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}${aaCheckMark(it)}</div>${q ? `
+      <div class="aa-row-main"><div class="aa-t">${esc(co || it.role || T("aa.role", "Role"))}</div>
+        <div class="aa-s"><span class="co">${esc(co ? (it.role || T("aa.role", "Role")) : "")}${it.location ? (co ? " · " : "") + esc(loc) : ""}</span>${aaChip(it)}${aaCheckMark(it)}</div>${q ? `
         <div class="aa-q">${esc(q)}</div>` : ""}${it.confirmation && it.tile === "submitted" ? `
         <div class="aa-q aa-conf-line" title="${esc(it.confirmation.subject || "")}">${esc(T("aa.confirmed", "Confirmation received"))}</div>` : ""}</div>
       <span class="aa-stage ${cls}"${it.stage_detail && it.stage_detail !== text ? ` title="${esc(it.stage_detail)}"` : ""}><span class="pip"></span><span class="aa-stage-x">${esc(text)}</span></span>
@@ -12720,7 +12723,24 @@
     };
     return m[fact] || T("aa.ans.flag.grounded", "Answered from your saved facts. Check it.");
   }
+  // (2026-11-23) the engine's fact ids ("ans4: ...", "req1: the posting states it") in words a
+  // person reads: where the answer came from, never an internal id.
+  const AA_FACT_WORDS = [[/^ans\d+$/, "aa.ev.saved", "your saved answer"], [/^job\d+$/, "aa.ev.job", "your work history"],
+    [/^edu\d+$/, "aa.ev.edu", "your education"], [/^(req\d+|post)$/, "aa.ev.post", "the job posting"],
+    [/^loc$/, "aa.ev.loc", "where you live"], [/^skills$/, "aa.ev.skills", "your skills"],
+    [/^years$/, "aa.ev.years", "your work history"], [/^links$/, "aa.ev.links", "your links"],
+    [/^languages$/, "aa.ev.langs", "your languages"]];
+  function aaEvidence(e) {
+    // numbered ids anywhere; the word ids (post, loc, skills...) only as "id:", never inside a sentence
+    return String(e || "").replace(/\b(ans\d+|job\d+|edu\d+|req\d+)\b\s*:?|\b(post|loc|skills|years|links|languages):/g, (m, n, w) => {
+      const id = n || w;
+      const hit = AA_FACT_WORDS.find(([rx]) => rx.test(id));
+      return hit ? T(hit[1], hit[2]) + (m.trim().endsWith(":") ? ":" : "") : m;
+    }).replace(/\s{2,}/g, " ").trim();
+  }
+
   function aaAnsFlag(code, fact, value, evidence) {
+    evidence = aaEvidence(evidence);
     if (code === "grounded") return aaAnsGrounded(fact);
     // (2026-11-18) an answer the agent chose itself, with the fact it used
     // (2026-11-19) Auto's best guess where nothing saved answers the question
