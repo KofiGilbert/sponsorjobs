@@ -54,6 +54,7 @@ def test_no_profile_means_no_fit_ranking_and_an_honest_label():
     assert fit_targets({}) is None
     assert rank(FEED, None) == FEED
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
-    assert "r.fit_ranked ? \"home.today\" : \"home.todayNew\"" in js
+    # Unranked, the label names the board's scope (2026-11-20: All jobs reads "new roles").
+    assert 'r.fit_ranked ? "home.today" : (r.scope === "all" ? "home.todayNewAll" : "home.todayNew")' in js
     en = (ROOT / "ui" / "static" / "locales" / "en.json").read_text(encoding="utf-8")
     assert '"home.todayNew": "Today · new sponsor roles"' in en

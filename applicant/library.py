@@ -370,6 +370,8 @@ def prefs_facts(prefs: dict | None) -> dict:
         out[("workauth", cc)] = (json.dumps(e, sort_keys=True), "work_auth")
     if wa.get("relocate"):
         out[("relocate", "")] = (wa["relocate"], "work_auth.relocate")
+    if wa.get(W.SIGNUP_KEY):                     # the sign-up's Not sure: the job filter's only
+        out[(W.SIGNUP_KEY, "")] = (wa[W.SIGNUP_KEY], "work_auth." + W.SIGNUP_KEY)
     if p.get("eeo_decline"):
         out[("@eeo_decline", "")] = ("Yes", "eeo_decline")
     if p.get("accept_required_terms") == "always":          # "ask" is the default, never stored
@@ -413,7 +415,8 @@ def prefs_view(store: Store) -> dict:
                 countries[subject] = json.loads(v)
             except ValueError:
                 continue
-    wa = W.clean({"countries": countries, "relocate": cur.get(("relocate", ""), "")})
+    wa = W.clean({"countries": countries, "relocate": cur.get(("relocate", ""), ""),
+                  W.SIGNUP_KEY: cur.get((W.SIGNUP_KEY, ""), "")})
     view = {"work_auth": wa, **W.legacy_prefs(wa), "eeo_decline": cur.get(("@eeo_decline", "")) == "Yes",
             "accept_required_terms": "always" if cur.get(("accept_required_terms", "")) == "always" else "ask"}
     for fld, key in K.PREFS_FIELDS:

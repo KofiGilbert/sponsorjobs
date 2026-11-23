@@ -116,15 +116,50 @@ def _parse_posted(s: str):
     return None
 
 
+# ---- the board's scope (2026-11-20): "sponsors" or "all" -------------------------------------
+# The feed carries every job; each row says whether it is on the sponsor board (`sponsor_relevant`:
+# an employer with a sponsorship record, or an ad that offers sponsorship). A person who needs
+# sponsorship (Yes or Not sure at sign-up, or no answer yet) starts on "Sponsors only"; a person
+# who said No starts on "All jobs". Their own choice on the Jobs screen wins from then on.
+SCOPES = ("sponsors", "all")
+
+
+def default_scope(answer: str) -> str:
+    """The scope a sign-up answer implies: "all" for No, else "sponsors" (Yes, Not sure, and no
+    answer yet: SponsorJobs is visa-first, so an unanswered profile keeps the sponsor board)."""
+    return "all" if str(answer or "").strip().lower() == "no" else "sponsors"
+
+
+def effective_scope(manual: str, answer: str) -> str:
+    """The person's own choice when they made one, else the default for their answer."""
+    m = str(manual or "").strip().lower()
+    return m if m in SCOPES else default_scope(answer)
+
+
+def in_sponsor_scope(job: dict) -> bool:
+    """On the sponsor board. A row from a feed built before the flag existed has no
+    `sponsor_relevant` key: that feed held sponsor rows only, so it counts."""
+    return job.get("sponsor_relevant") is not False
+
+
+def scope_rows(jobs: list[dict], scope: str) -> list[dict]:
+    """The rows a scope shows: every row for "all", the sponsor board for anything else."""
+    if str(scope or "").strip().lower() == "all":
+        return jobs
+    return [j for j in jobs if in_sponsor_scope(j)]
+
+
 def apply_facets(jobs: list[dict], *, q: str = "", loc: str = "", days=0, remote: str = "",
-                 visa=(), level: str = "", pay=0, sort: str = "", sponsored=False) -> list[dict]:
+                 visa=(), level: str = "", pay=0, sort: str = "", sponsored=False,
+                 scope: str = "all") -> list[dict]:
     """Return the subset matching EVERY active facet (AND across facets; OR within the
     multi-select visa facet, LinkedIn-style). Undated rows survive a date filter (some feeds omit
     a posting date), but a minimum-pay filter DROPS rows with no readable pay (you asked for a
     floor; an unknown can't clear it). `sponsored` keeps ONLY roles whose posting itself STATES visa
     sponsorship (the strongest signal for an international student, distinct from the visa-history
     badge). `sort="pay"` re-orders the survivors highest-pay-first (unknown-pay last); default keeps
-    the feed's recency order. Cheap in-memory pass."""
+    the feed's recency order. `scope="sponsors"` keeps only the sponsor board (see scope_rows);
+    the default "all" filters nothing, so older callers see every row. Cheap in-memory pass."""
     q = (q or "").strip().lower()
     loc = (loc or "").strip().lower()
     remote = (remote or "").strip().lower()
@@ -143,7 +178,11 @@ def apply_facets(jobs: list[dict], *, q: str = "", loc: str = "", days=0, remote
         pay = 0
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)) if days > 0 else None
 
+    sponsors_only = str(scope or "").strip().lower() == "sponsors"
+
     def keep(j: dict) -> bool:
+        if sponsors_only and not in_sponsor_scope(j):
+            return False
         if q and q not in (j.get("title") or "").lower() and q not in (j.get("company") or "").lower():
             return False
         if loc:

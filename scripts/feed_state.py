@@ -17,7 +17,8 @@ key in it, so the state must not live there):
 
   <prefix>/full/<id>.tar.zst     <prefix>/slim/<id>.tar.zst     (or .tar.gz without zstd)
   <prefix>/runs/<id>.json        that state's manifest: {format, id, created_at, rows,
-                                 feed_count, full: {key, bytes, sha256}, slim: {...}}
+                                 feed_count, feed_sponsor_count?, full: {key, bytes, sha256},
+                                 slim: {...}}
   <prefix>/latest.json           a copy of the newest good manifest: the pointer a run starts from
 
 push_state uploads the archives, then the run manifest, then latest.json LAST, so latest never
@@ -278,7 +279,7 @@ def prune_states(client, bucket: str, prefix: str = DEFAULT_PREFIX, keep: int = 
 
 def push_state(client, bucket: str, data_dir, state_id: str, *, prefix: str = DEFAULT_PREFIX,
                feed_count: int | None = None, keep: int = KEEP, workdir=None, log=log_default,
-               now: str | None = None) -> dict:
+               now: str | None = None, feed_sponsor_count: int | None = None) -> dict:
     """Save `data_dir` as state `state_id`: pack the full dir and its slim shard state, upload both,
     then the run manifest, then latest.json (last, so it never names a missing archive), then
     prune. Returns the manifest."""
@@ -296,6 +297,8 @@ def push_state(client, bucket: str, data_dir, state_id: str, *, prefix: str = DE
                       "created_at": now or datetime.datetime.now(datetime.timezone.utc)
                       .strftime("%Y-%m-%dT%H:%M:%SZ"),
                       "rows": rows, "feed_count": feed_count}
+    if feed_sponsor_count is not None:                  # the guard's fallback for sponsor_count
+        manifest["feed_sponsor_count"] = feed_sponsor_count
     with tempfile.TemporaryDirectory(dir=workdir) as tmp:
         tmp = Path(tmp)
         export_shard_state(data_dir, tmp / "slim", log=log)
@@ -366,6 +369,17 @@ def paired_state_id(pair_dir) -> str | None:
 def previous_count(url: str = "", state_manifest=None, fetch=None) -> int | None:
     """The job count of the last published feed: its live manifest.json at `url`, else the
     feed_count the last saved state recorded. None when neither is known."""
+    return _previous(url, state_manifest, fetch, "count", "feed_count")
+
+
+def previous_sponsor_count(url: str = "", state_manifest=None, fetch=None) -> int | None:
+    """The SPONSOR job count of the last published feed (2026-11-20: the feed carries general rows
+    too): the live manifest's sponsor_count, else the feed_sponsor_count the last saved state
+    recorded. None when neither has it (a feed published before the field existed)."""
+    return _previous(url, state_manifest, fetch, "sponsor_count", "feed_sponsor_count")
+
+
+def _previous(url, state_manifest, fetch, key: str, state_key: str) -> int | None:
     if url:
         try:
             if fetch is None:
@@ -376,14 +390,14 @@ def previous_count(url: str = "", state_manifest=None, fetch=None) -> int | None
                     body = r.read()
             else:
                 body = fetch(url)
-            n = json.loads(body).get("count")
+            n = json.loads(body).get(key)
             if isinstance(n, int) and n >= 0:
                 return n
         except Exception:                                # noqa: BLE001 - fall through to the state's
             pass
     if state_manifest:
         try:
-            n = json.loads(Path(state_manifest).read_text()).get("feed_count")
+            n = json.loads(Path(state_manifest).read_text()).get(state_key)
             if isinstance(n, int) and n >= 0:
                 return n
         except (OSError, ValueError):
@@ -391,15 +405,29 @@ def previous_count(url: str = "", state_manifest=None, fetch=None) -> int | None
     return None
 
 
-def check_drop(count: int, previous: int | None, min_ratio: float = MIN_RATIO) -> tuple[bool, str]:
+def check_drop(count: int, previous: int | None, min_ratio: float = MIN_RATIO,
+               what: str = "jobs") -> tuple[bool, str]:
     """(ok, message): a feed of `count` jobs may replace one of `previous` when it holds at least
-    min_ratio of it. With no previous count there is nothing to compare, so it passes."""
+    min_ratio of it. With no previous count there is nothing to compare, so it passes. `what`
+    names the count in the message ("jobs", "sponsor jobs")."""
     if previous is None:
-        return True, f"{count} jobs; no previous count to compare with"
+        return True, f"{count} {what}; no previous count to compare with"
     if previous <= 0 or count >= min_ratio * previous:
-        return True, f"{count} jobs vs {previous} last time"
-    return False, (f"{count} jobs is under {min_ratio:.0%} of the {previous} published last time: "
+        return True, f"{count} {what} vs {previous} last time"
+    return False, (f"{count} {what} is under {min_ratio:.0%} of the {previous} published last time: "
                    "refusing to publish (re-run with allow_drop to publish anyway)")
+
+
+def guard_checks(built: dict, previous: int | None, previous_sponsor: int | None,
+                 min_ratio: float = MIN_RATIO) -> list[tuple[bool, str]]:
+    """Every shrink check a built manifest must pass: the total `count`, and (when both the built
+    and the previous feed carry it) `sponsor_count`, so a run that lost sponsor rows is caught even
+    when general rows grew enough to hide it in the total."""
+    out = [check_drop(int(built["count"]), previous, min_ratio)]
+    sc = built.get("sponsor_count")
+    if isinstance(sc, int) and previous_sponsor is not None:
+        out.append(check_drop(sc, previous_sponsor, min_ratio, what="sponsor jobs"))
+    return out
 
 
 # -- CLI ----------------------------------------------------------------------------------- #
@@ -460,23 +488,35 @@ def main(argv=None, client=None, bucket=None, log=log_default) -> int:
         export_shard_state(a.data, a.out, log=log)
         return 0
     if a.cmd == "guard":
-        count = int(json.loads(Path(a.manifest).read_text())["count"])
-        ok, msg = check_drop(count, previous_count(a.previous_url, a.state_manifest or None), a.min_ratio)
-        if ok:
-            log(f"[feed_state] guard: {msg}")
+        built = json.loads(Path(a.manifest).read_text())
+        sm = a.state_manifest or None
+        prev_sponsor = (previous_sponsor_count(a.previous_url, sm)
+                        if isinstance(built.get("sponsor_count"), int) else None)
+        checks = guard_checks(built, previous_count(a.previous_url, sm), prev_sponsor, a.min_ratio)
+        failed = [msg for ok, msg in checks if not ok]
+        for ok, msg in checks:
+            if ok:
+                log(f"[feed_state] guard: {msg}")
+        if not failed:
             return 0
         if a.allow_drop:
-            log(f"::warning::[feed_state] guard overridden by allow_drop: {msg}")
+            for msg in failed:
+                log(f"::warning::[feed_state] guard overridden by allow_drop: {msg}")
             return 0
-        log(f"::error::[feed_state] guard: {msg}")
+        for msg in failed:
+            log(f"::error::[feed_state] guard: {msg}")
         return 3
     if client is None:
         client, bucket = _client_and_bucket()
     if a.cmd == "push":
-        feed_count = None
+        feed_count = feed_sponsor_count = None
         if a.feed_manifest and Path(a.feed_manifest).exists():
-            feed_count = int(json.loads(Path(a.feed_manifest).read_text()).get("count") or 0)
-        push_state(client, bucket, a.data, a.id, prefix=a.prefix, feed_count=feed_count, keep=a.keep, log=log)
+            fm = json.loads(Path(a.feed_manifest).read_text())
+            feed_count = int(fm.get("count") or 0)
+            if isinstance(fm.get("sponsor_count"), int):
+                feed_sponsor_count = fm["sponsor_count"]
+        push_state(client, bucket, a.data, a.id, prefix=a.prefix, feed_count=feed_count, keep=a.keep, log=log,
+                   feed_sponsor_count=feed_sponsor_count)
         return 0
     # pull
     state_id = a.id or paired_state_id(a.pair_dir) or None

@@ -74,6 +74,10 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     # ---- work and legal
     _k("workauth", "json", LEGAL, ask="Your work authorization", legacy=("app_prefs.json:work_auth",)),
     _k("@citizenship", "country", LEGAL, multi=True, ask="Country of citizenship"),
+    # (2026-11-20) The sign-up question's "Not sure" (autoapply/workauth.py): it only sets which
+    # jobs the board shows first and never fills a form, so it is not a legal answer and has no ask.
+    _k("signup_sponsor", "choice", choices=("unsure",),
+       legacy=("app_prefs.json:work_auth.signup_sponsor",)),
     # The answer library keeps a second citizenship under its own key; it folds into the
     # multi-valued @citizenship in Phase 3.
     _k("@citizenship2", "country", LEGAL, ask="Second country of citizenship"),

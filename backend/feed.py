@@ -43,6 +43,21 @@ FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "1000000"))         # rows PU
 # above FEED_LIMIT: the filters drop about half of what they see, and the database passed 74,000
 # rows on 2026-10-12, so a 50,000-row read was cutting live jobs before any filter saw them.
 FEED_SCAN_LIMIT = int(os.environ.get("JOBS_FEED_SCAN_LIMIT", "2000000"))
+# GENERAL rows (2026-11-20): roles at employers with no sponsorship record, for job seekers who
+# need no sponsorship. At most this many are published, newest first; 0 (the default here) keeps
+# the feed sponsor-only. The feed workflow sets it (FEED_GENERAL_MAX, docs/feed.md).
+FEED_GENERAL_MAX_DEFAULT = 0
+
+
+def general_max(env=None) -> int:
+    """How many general (non-sponsor) rows the feed may carry: FEED_GENERAL_MAX, else 0."""
+    env = os.environ if env is None else env
+    try:
+        return max(0, int(env.get("FEED_GENERAL_MAX") or FEED_GENERAL_MAX_DEFAULT))
+    except (TypeError, ValueError):
+        return FEED_GENERAL_MAX_DEFAULT
+
+
 FUNNEL: dict = {}
 FUNNEL_SAMPLES: dict = {}
 FEED_TTL = int(os.environ.get("JOBS_FEED_TTL", "120"))            # seconds a built feed is reused
@@ -101,10 +116,11 @@ def _sponsors(path: str):
 
 def feed_jobs(level: str | None = None) -> list[dict]:
     """The public feed: sponsor-tagged, US-only, accessible-to-international-students roles,
-    each flagged entry_level. Mirrors the local app's /api/jobs shaping so the desktop app
-    can drop the central list straight into its board."""
+    each flagged entry_level and sponsor_relevant, plus at most general_max() general rows.
+    Mirrors the local app's /api/jobs shaping so the desktop app can drop the central list
+    straight into its board."""
     from sourcing.quality import (employer_is_clearance_heavy, is_entry_level, is_jd_checked,
-                                  is_sponsor_relevant)
+                                  is_sponsor_relevant, looks_english)
     from sourcing.watchlist import Watchlist
     jobs_db, spon_db = _paths()
     FUNNEL.clear()
@@ -156,8 +172,28 @@ def feed_jobs(level: str | None = None) -> list[dict]:
     _closed = ("not_offered", "restricted")          # the ad says no, or citizenship / clearance
     FUNNEL["ad_says_no"] = sum(1 for j in chk if j.get("ad_stance") in _closed)
     FUNNEL["aggregator_no_signal"] = sum(1 for j in chk if j.get("ad_stance") not in _closed and not is_sponsor_relevant(j))
-    jobs = [j for j in chk if is_sponsor_relevant(j)]
+    # Every role at a sponsoring employer (or whose ad offers sponsorship) is kept, exactly as
+    # before. Since 2026-11-20 the feed also carries GENERAL rows for job seekers who need no
+    # sponsorship: the rest of the checked US rows, English titles only, newest first, at most
+    # general_max() of them. Each row says which kind it is (`sponsor_relevant`), so the app's
+    # "Sponsors only" filter shows exactly the sponsor board.
+    cap = general_max()
+    general_ids: set = set()
+    if cap > 0:
+        for j in chk:                                  # recent-sorted: the newest come first
+            if len(general_ids) >= cap:
+                break
+            if not is_sponsor_relevant(j) and looks_english(j.get("title") or ""):
+                general_ids.add(id(j))
+    jobs = []
+    for j in chk:
+        rel = is_sponsor_relevant(j)
+        if rel or id(j) in general_ids:
+            j["sponsor_relevant"] = rel
+            jobs.append(j)
     FUNNEL["kept"] = len(jobs)
+    FUNNEL["kept_sponsor"] = len(jobs) - len(general_ids)
+    FUNNEL["kept_general"] = len(general_ids)
     for j in jobs:
         j["entry_level"] = is_entry_level(j.get("title", ""))
     if (level or "").lower() == "entry":
