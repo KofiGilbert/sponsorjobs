@@ -2933,6 +2933,9 @@ function createAgent(deps) {
         const results = [];
         const names = [];
         let stepFailed = false;
+        // (2026-11-23, Gainwell) a step where some actions failed but others changed the form is
+        // progress, not a failed step: only a step where nothing worked counts toward the ladder.
+        let stepChanged = false, submitTried = false;
         const acts = reply.actions || [];
         if (acts.length) {
           const sp = splitSummary(reply.summary || "");
@@ -3029,6 +3032,7 @@ function createAgent(deps) {
             if (b) addAnswer(ans, Object.assign({ page, via: "brain" }, b));
             if (a.op === "upload") addFile(ans, { page, kind: a.file === "cover_letter" ? "cover_letter" : "resume", path: a.path || opts.resumePath || "", how: "attached" });
           }
+          if (r && r.ok && r.changed !== false && a.op !== "inspect" && a.op !== "list_options" && a.op !== "read_errors" && a.op !== "screenshot") stepChanged = true;
           results.push(r && r.ok ? (r.note ? "ok, " + r.note + (r.picked && !a.sensitive ? " " + JSON.stringify(String(r.picked).slice(0, 60)) : "") : "ok") : "failed: " + ((r && r.note) || "?"));
           if (!(r && r.ok) && !(r && r.note === "submit-guard")) actFails.push(failWords(r && r.note));
           if (!(r && r.ok)) {
@@ -3037,7 +3041,7 @@ function createAgent(deps) {
               + ". Inspect it or do it another way.");
           }
           dlog("step " + step + " act " + (a.proof ? [a.op, a.index, "(answer)"].join("|") : h) + " ->", r && r.picked ? Object.assign({}, r, { picked: "(picked)" }) : r);
-          if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") {
+          if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") { submitTried = true;
             if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
               const why = refillChanged(ans, opts.expectAnswers, recordId);
               dlog("review page differs", JSON.stringify({ why: why || "(the same answers)", diff: opts.expectLines ? reviewDiff(opts.expectLines, reviewLines(v.text)) : "(no earlier lines kept)" }));
@@ -3078,6 +3082,7 @@ function createAgent(deps) {
           feed.mark("retry", actFails[0]);
           progress(recordId, "running", lastMsg.get(fkey) || "Working", { step, filled });
         }
+        if (stepFailed && stepChanged && !submitTried) stepFailed = false;
         failed = stepFailed ? failed + 1 : 0;
         if (failed >= MAX_FAILED_STEPS) {
           const r = await recover(wc, MAX_FAILED_STEPS + " steps in a row failed (" + results.slice(-2).join("; ").slice(0, 120) + ")", { key: "failed", hash: pageHash.slice(0, 60) });
