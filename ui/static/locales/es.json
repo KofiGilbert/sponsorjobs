@@ -1424,6 +1424,7 @@
   "act.ladder": "Probando otra forma",
   "aa.st.ai": "La IA no estaba disponible, nada cambió. Inténtalo de nuevo.",
   "aa.st.left": "Detenido: el sitio me envió a {host}",
+  "aa.st.board": "Este empleo está en {board}, que no permite solicitudes automáticas. Ábrelo y postúlate tú.",
   "outage.aiCompany.h": "La IA de SponsorJobs no está disponible por ahora",
   "outage.aiCompany.p": "Tu plan y tus paquetes no se ven afectados. Ya nos han avisado; inténtalo de nuevo dentro de un rato.",
   "outage.aiTransient.h": "La IA está ocupada",

@@ -1424,6 +1424,7 @@
   "act.ladder": "Essaie autrement",
   "aa.st.ai": "L'IA était indisponible, rien n'a changé. Réessayez.",
   "aa.st.left": "Arrêté : le site m'a envoyé vers {host}",
+  "aa.st.board": "Cette offre est sur {board}, qui n'autorise pas les candidatures automatiques. Ouvrez-la et postulez vous-même.",
   "outage.aiCompany.h": "L'IA de SponsorJobs est momentanément indisponible",
   "outage.aiCompany.p": "Ta formule et tes dossiers ne sont pas concernés. Nous avons été prévenus ; réessaie dans un moment.",
   "outage.aiTransient.h": "L'IA est occupée",
