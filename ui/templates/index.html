@@ -1208,7 +1208,7 @@
                live round. The tiles below run either round on its own. -->
           <button class="prep-guided" id="prepFullMock" type="button">
             <span class="prep-guided-main">
-              <span class="prep-guided-tags"><span class="prep-guided-badge" data-i18n="prep.recommended">Recommended</span><span class="prep-pass-tag" data-pass-tag hidden data-i18n="prep.passTag" title="Round 2 comes with a pass">Pass</span></span>
+              <span class="prep-guided-tags"><span class="prep-guided-badge" data-i18n="prep.recommended">Recommended</span><span class="prep-pass-tag" data-pass-tag hidden data-i18n="prep.passTag" title="Round 2 comes with a paid plan">Plan</span></span>
               <span class="prep-guided-t" data-i18n="prep.fullMock">Full mock interview</span>
               <span class="prep-guided-d" data-i18n="prep.fullMockD">Round 1, then Round 2. Pass the recorded round to unlock the live one.</span>
             </span>
@@ -1226,7 +1226,7 @@
               <span class="prep-tile-foot"><span class="prep-tile-name" data-i18n="prep.tile1Name">Recorded interview</span><span class="prep-tile-cta">Start &rarr;</span></span>
             </button>
             <button class="prep-tile" id="tileRound2" type="button">
-              <span class="prep-tile-top"><span class="prep-tile-idx">02</span><span class="prep-tile-status is-live"><span class="prep-pass-tag" data-pass-tag hidden data-i18n="prep.passTag" title="Live interviews come with a pass">Pass</span><span class="prep-tile-dot"></span><span data-i18n="prep.tile2Status">Round 2 only</span></span></span>
+              <span class="prep-tile-top"><span class="prep-tile-idx">02</span><span class="prep-tile-status is-live"><span class="prep-pass-tag" data-pass-tag hidden data-i18n="prep.passTag" title="Live interviews come with a paid plan">Plan</span><span class="prep-tile-dot"></span><span data-i18n="prep.tile2Status">Round 2 only</span></span></span>
               <span class="prep-tile-d" data-i18n="prep.tile2D">Twenty minutes with a live interviewer.</span>
               <span class="prep-tile-art" aria-hidden="true"><svg viewBox="0 0 200 140" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="72" cy="52" r="20"/><path d="M32 120c4-30 76-30 80 0"/><circle cx="138" cy="58" r="16"/><path d="M110 120c3-24 54-24 58 0"/></svg></span>
               <span class="prep-tile-note" id="tileRound2Note" hidden></span>
@@ -1335,6 +1335,11 @@
       <div class="acct-menu-plan" id="acctMenuPlan" hidden>
         <div class="acct-menu-plan-name" id="acctMenuPlanName"></div>
         <div class="acct-menu-plan-left" id="acctMenuPlanLeft"></div>
+        <!-- A plan that renews: "Renews on <date>, cancel anytime" and the one-click Cancel. -->
+        <div class="acct-menu-plan-renew" id="acctMenuPlanRenew" hidden>
+          <span id="acctMenuPlanRenewText"></span>
+          <button class="acct-menu-plan-act" id="acctMenuCancel" type="button" data-i18n="acct.cancel">Cancel</button>
+        </div>
       </div>
     </div>
     <button class="acct-menu-item" id="menuSettings" role="menuitem" type="button">
@@ -1363,7 +1368,7 @@
     <div class="acct-menu-sep"></div>
     <button class="acct-menu-item" id="menuUpgrade" role="menuitem" type="button">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 11V5.4M5.6 7.4L8 5l2.4 2.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span id="menuUpgradeLbl" data-i18n="acct.passes">Get a pass</span>
+      <span id="menuUpgradeLbl" data-i18n="acct.passes">See plans</span>
     </button>
     <!-- Opens the connect-AI picker (Claude or OpenAI), not a hardcoded Anthropic link, so
          the choice of provider is respected and the "get your key" step links to the right console. -->
@@ -1471,58 +1476,65 @@
     </div>
   </div>
 
-  <!-- Upgrade: the passes (owner decision 2026-10-02). One payment each, NOTHING auto-renews; when
-       a pass ends the account is simply Free again. Free stays: job board, visa badges, the recorded
-       interview, 3 tailored packages a month, unlimited on your own AI key. Extra live interviews
-       are sold only while a pass is active. Prices here are display copy and must match Stripe. -->
+  <!-- Plans (owner decision 2026-11-20): Student and Standard, monthly or every 3 months, renewing
+       until cancelled. The price, the interval, that it renews and how to cancel sit next to the
+       buy button with a checkbox the person must tick (auto-renewal laws). Which tier is charged is
+       the broker's decision from the school email check, never this page's. Free stays: job board,
+       visa badges, the recorded interview, 3 tailored packages a month, unlimited on your own AI
+       key. Prices here are display copy filled from the broker and must match Stripe. -->
   <div class="upg" id="upgModal" hidden>
     <div class="upg-card" role="dialog" aria-modal="true" aria-labelledby="upgH">
       <button class="upg-x" id="upgClose" type="button" aria-label="Close">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
       </button>
       <header class="upg-head">
-        <h2 class="upg-h" id="upgH" data-i18n="upg.title">Passes</h2>
-        <p class="upg-sub" data-i18n="upg.sub">Pay once. Nothing renews.</p>
+        <h2 class="upg-h" id="upgH" data-i18n="upg.title">Plans</h2>
+        <p class="upg-sub" data-i18n="upg.sub">Plans renew automatically. Cancel anytime.</p>
         <p class="upg-sub upg-current" id="upgCurrent" hidden></p>
       </header>
+      <!-- Your plan: when it renews (or ends), one-click cancel, and Stripe's page for the card. -->
+      <div class="upg-mine" id="upgMine" hidden>
+        <p class="upg-mine-p" id="upgMineText"></p>
+        <div class="upg-mine-acts">
+          <button class="btn btn-ghost btn-sm" id="upgCancel" type="button" data-i18n="upg.cancel">Cancel renewal</button>
+          <button class="btn btn-ghost btn-sm" id="upgResume" type="button" data-i18n="upg.resume" hidden>Keep my plan</button>
+          <button class="btn btn-ghost btn-sm" id="upgCard" type="button" data-i18n="upg.updateCard">Update card</button>
+        </div>
+      </div>
+      <div class="upg-seg" role="radiogroup" aria-label="How often you pay" id="upgSeg">
+        <button class="upg-seg-b is-on" type="button" role="radio" aria-checked="true" data-interval="monthly" data-i18n="upg.monthly">Monthly</button>
+        <button class="upg-seg-b" type="button" role="radio" aria-checked="false" data-interval="quarterly" data-i18n="upg.quarterly">Every 3 months</button>
+      </div>
       <div class="upg-plans">
-        <section class="upg-plan">
+        <section class="upg-plan" data-tier="student">
           <div class="upg-plan-hd">
-            <span class="upg-plan-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M14 3v4h4M10 12h6M10 16h4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
-            <div class="upg-plan-name" data-i18n="upg.pass30Name">Job Hunt Pass</div>
-            <div class="upg-plan-price"><span class="upg-price-amt" id="upgPrice_pass30">$29</span><span class="upg-price-unit" data-i18n="upg.for30">for 30 days</span></div>
-            <div class="upg-price-note" data-i18n="upg.noRenew">One payment, no auto-renew</div>
-            <button class="upg-cta is-get" data-pass="pass30" type="button" data-i18n="upg.get">Get the pass</button>
+            <span class="upg-plan-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 9l9-4 9 4-9 4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M7 11v4.5c1.4 1.3 3.1 2 5 2s3.6-.7 5-2V11M21 9v5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+            <div class="upg-plan-name" data-i18n="upg.studentName">Student</div>
+            <div class="upg-plan-for" data-i18n="upg.studentFor">For students, and for 2 years after you graduate</div>
+            <div class="upg-plan-price"><span class="upg-price-amt" data-price="student">$29</span><span class="upg-price-unit" data-unit>a month</span></div>
+            <div class="upg-buy" data-buy="student"></div>
           </div>
-          <ul class="upg-feats">
-            <li data-i18n="upg.pass30Interviews">3 live interviews</li>
-            <li data-i18n="upg.pass30Packages">60 tailored packages</li>
-            <li data-i18n="upg.betterModel">Tailoring on our best AI model</li>
-          </ul>
+          <ul class="upg-feats" data-feats></ul>
         </section>
-        <section class="upg-plan is-pro">
+        <section class="upg-plan is-pro" data-tier="standard">
           <div class="upg-plan-hd">
             <span class="upg-plan-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.8L18.7 9l-4.8 1.9L12 15l-1.9-4.1L5.3 9l4.8-1.2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M18 14.5l.7 1.9 1.8.7-1.8.7-.7 2-.7-2-1.8-.7 1.8-.7z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span>
-            <div class="upg-plan-name" data-i18n="upg.pass90Name">Season Pass</div>
-            <div class="upg-plan-price"><span class="upg-price-amt" id="upgPrice_pass90">$69</span><span class="upg-price-unit" data-i18n="upg.for90">for 90 days</span></div>
-            <div class="upg-price-note" data-i18n="upg.noRenew">One payment, no auto-renew</div>
-            <button class="upg-cta is-get" data-pass="pass90" type="button" data-i18n="upg.get">Get the pass</button>
+            <div class="upg-plan-name" data-i18n="upg.standardName">Standard</div>
+            <div class="upg-plan-for" data-i18n="upg.standardFor">For everyone</div>
+            <div class="upg-plan-price"><span class="upg-price-amt" data-price="standard">$49</span><span class="upg-price-unit" data-unit>a month</span></div>
+            <div class="upg-buy" data-buy="standard"></div>
           </div>
-          <ul class="upg-feats">
-            <li data-i18n="upg.pass90Interviews">9 live interviews</li>
-            <li data-i18n="upg.pass90Packages">150 tailored packages</li>
-            <li data-i18n="upg.betterModel">Tailoring on our best AI model</li>
-          </ul>
+          <ul class="upg-feats" data-feats></ul>
         </section>
       </div>
-      <!-- Extra live interviews: shown only while a pass is active (they are not sold otherwise). -->
+      <!-- Extra live interviews: shown only while a plan is active (they are not sold otherwise). -->
       <div class="upg-usage" id="upgPacks" hidden>
         <p class="upg-usage-p" data-i18n="upg.packsH">Need more live interviews? They never expire.</p>
         <div class="upg-usage-acts" id="upgPackBtns"></div>
       </div>
       <p class="upg-free" data-i18n="upg.free">Free keeps the job board, visa badges, the recorded interview and 3 tailored packages a month.</p>
       <div class="upg-usage">
-        <p class="upg-usage-p" id="upgMsg" data-i18n="upg.msg">Your pass starts when the payment goes through. It ends on its own, there is nothing to cancel.</p>
+        <p class="upg-usage-p" id="upgMsg" data-i18n="upg.msg">Your plan starts when the payment goes through and renews until you cancel.</p>
         <div class="upg-usage-acts">
           <!-- Power users can still run on their own API key instead of the managed plan. -->
           <button class="btn btn-ghost btn-sm byok-only" id="upgOwnKey" type="button" data-i18n="upg.ownKey">Use your own AI key</button>
@@ -1534,7 +1546,7 @@
   <!-- After a purchase: what you now have (like "Welcome to Claude Pro"). -->
   <div class="upg welcome-overlay" id="welcomePass" hidden>
     <div class="welcome-pass" role="dialog" aria-modal="true" aria-labelledby="welcomePassH">
-      <div class="welcome-pass-badge" id="welcomePassBadge">Job Hunt Pass</div>
+      <div class="welcome-pass-badge" id="welcomePassBadge">Standard plan</div>
       <h2 class="welcome-pass-h" id="welcomePassH">You're all set</h2>
       <p class="welcome-pass-sub" id="welcomePassSub"></p>
       <ul class="welcome-pass-list" id="welcomePassList"></ul>
@@ -1863,7 +1875,7 @@
           <div class="set-row">
             <div class="set-row-t">
               <div class="set-row-n" data-i18n="set.privacyTitle">Your data stays on this machine</div>
-              <div class="set-row-d" data-i18n="set.privacyBody">Your profile, resumes and applications live in a local folder. Signing in with an email code is optional and only links your pass. Passes and the included AI run through our server, which keeps only usage counts for billing. The community edition can use your own AI key instead. Live interviews stream between you and Tavus. Mail sent to your SponsorJobs address is held on our server only until this app downloads it, 30 days at most. After that it lives on this machine.</div>
+              <div class="set-row-d" data-i18n="set.privacyBody">Your profile, resumes and applications live in a local folder. Signing in with an email code is optional and only links your plan. Plans and the included AI run through our server, which keeps only usage counts for billing. The community edition can use your own AI key instead. Live interviews stream between you and Tavus. Mail sent to your SponsorJobs address is held on our server only until this app downloads it, 30 days at most. After that it lives on this machine.</div>
             </div>
           </div>
           <div class="set-row">

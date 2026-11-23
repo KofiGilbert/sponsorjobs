@@ -15,13 +15,21 @@ export interface Env {
   TAVUS_API_KEY?: string;
   TAVUS_FACE_ID?: string;   // the interviewer's face; defaults to the stock one the app uses
   TAVUS_PAL_ID?: string;    // optional: a PAL created once on the company account
-  // Stripe billing (passes and extra-interview packs), the same names backend/server.py reads.
-  // All set with `wrangler secret put`. Without a secret key AND at least one pass price, every
-  // /billing/* route answers exactly as when billing is off ("billing is not configured").
+  // Stripe billing (renewing plans, extra-interview packs, the retired passes), the same names
+  // backend/server.py reads. All set with `wrangler secret put`. Without a secret key AND at least
+  // one plan or pass price, every /billing/* route answers "billing is not configured".
   STRIPE_SECRET_KEY?: string;       // live key (sk_live_...); wins over the test key
   STRIPE_TEST_SECRET_KEY?: string;  // sandbox key (sk_test_...), used only when no live key is set
   STRIPE_TEST_ACCOUNTS?: string;   // test mode only: account ids allowed to see billing (comma-separated)
   STRIPE_WEBHOOK_SECRET?: string;   // whsec_...: proves a /billing/webhook call came from Stripe
+  STRIPE_PORTAL_CONFIG?: string;    // bpc_...: the billing portal settings scripts/stripe_setup.py made
+  // The renewing plans (2026-11-20): recurring price ids. An unset one is simply not offered.
+  STRIPE_PRICE_STUDENT_MONTHLY?: string;     // $29 every month
+  STRIPE_PRICE_STUDENT_QUARTERLY?: string;   // $69 every 3 months
+  STRIPE_PRICE_STANDARD_MONTHLY?: string;    // $49 every month
+  STRIPE_PRICE_STANDARD_QUARTERLY?: string;  // $119 every 3 months
+  // The retired one-time passes: set only while app versions that predate the plans still sell
+  // them. Unset both and only the plans are on sale; anyone who bought a pass keeps it until it ends.
   STRIPE_PRICE_PASS30?: string;     // price_... ids; an unset one is simply not offered
   STRIPE_PRICE_PASS90?: string;
   STRIPE_PRICE_PACK_1?: string;

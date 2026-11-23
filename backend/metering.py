@@ -4,13 +4,19 @@ The heart of "protect the margin" (docs/bundled-api-backend.md, sec 5): the brok
 allowance BEFORE calling a paid provider and records usage AFTER, so no user can run the company's
 Anthropic/Tavus account past what they paid for.
 
-Pricing (decided by the owner 2026-10-02; no subscriptions, nothing auto-renews):
+Pricing (decided by the owner 2026-11-20; plans renew automatically until cancelled):
 
   * ``free``   (default, no card): 3 AI-tailored packages per CALENDAR MONTH on the cheap model,
                no live interviews. Unlimited tailoring stays available on the person's own key
                (that path never touches the broker).
-  * ``pass30`` Job Hunt Pass, one payment for 30 days: 3 live interviews + 60 packages, Sonnet.
-  * ``pass90`` Season Pass, one payment for 90 days: 9 live interviews + 150 packages, Sonnet.
+  * ``student_monthly`` / ``standard_monthly``: $29 / $49 every month, 3 live interviews + 60
+               packages a period, Sonnet. ``student_quarterly`` / ``standard_quarterly``: $69 /
+               $119 every 3 months, 9 live interviews + 150 packages a period. The student price
+               needs a verified school e-mail (worker/src/student.ts). These are Stripe
+               subscriptions, sold by the production broker (worker/src/subscriptions.ts); this
+               Python reference knows the plans so it reads an account on one correctly.
+  * ``pass30`` / ``pass90``: the retired one-time passes ($29 for 30 days, $69 for 90 days). No
+               longer sold to current app versions; anyone who bought one keeps it until it ends.
 
 A pass's allowances belong to the PASS PERIOD, not the calendar month: buying one stores
 ``pass_until`` plus a balance of interview seconds and packages on the account. When the period
@@ -55,6 +61,8 @@ class Plan:
     packages: int
     days: int = 0                 # 0 = not a pass (free)
     price_label: str = ""         # display only; the real price lives in Stripe
+    tier: str = ""                # "student" | "standard" for a plan that renews; "" otherwise
+    months: int = 0               # a renewing plan's interval in calendar months
 
     @property
     def interviews(self) -> int:
@@ -72,9 +80,25 @@ PLANS = {
                    llm_token_cap=8_000_000, packages=60, days=30, price_label="$29"),
     "pass90": Plan("pass90", avatar_seconds_included=9 * INTERVIEW_SECONDS, llm_model=PASS_MODEL,
                    llm_token_cap=8_000_000, packages=150, days=90, price_label="$69"),
+    # Plans that renew (2026-11-20). Same allowances as the pass each replaces, refilled every paid
+    # period; the period end comes from Stripe, `days` is only the nominal length.
+    "student_monthly": Plan("student_monthly", avatar_seconds_included=3 * INTERVIEW_SECONDS, llm_model=PASS_MODEL,
+                            llm_token_cap=8_000_000, packages=60, days=30, price_label="$29",
+                            tier="student", months=1),
+    "student_quarterly": Plan("student_quarterly", avatar_seconds_included=9 * INTERVIEW_SECONDS,
+                              llm_model=PASS_MODEL, llm_token_cap=8_000_000, packages=150, days=90,
+                              price_label="$69", tier="student", months=3),
+    "standard_monthly": Plan("standard_monthly", avatar_seconds_included=3 * INTERVIEW_SECONDS,
+                             llm_model=PASS_MODEL, llm_token_cap=8_000_000, packages=60, days=30,
+                             price_label="$49", tier="standard", months=1),
+    "standard_quarterly": Plan("standard_quarterly", avatar_seconds_included=9 * INTERVIEW_SECONDS,
+                               llm_model=PASS_MODEL, llm_token_cap=8_000_000, packages=150, days=90,
+                               price_label="$119", tier="standard", months=3),
 }
 DEFAULT_PLAN = "free"
-PASSES = tuple(k for k, p in PLANS.items() if p.is_pass)
+PASSES = tuple(k for k, p in PLANS.items() if p.is_pass)          # every paid plan, as stored on an account
+ONE_TIME_PASSES = tuple(k for k, p in PLANS.items() if p.is_pass and not p.tier)
+SUBSCRIPTION_PLANS = tuple(k for k, p in PLANS.items() if p.tier)
 # Old subscription tiers (trial/student/pro/browse) are no longer sold; an account still carrying
 # one of those names is read as free (store_sqlite also rewrites them on open).
 LEGACY_PLANS = ("browse", "trial", "student", "pro")
@@ -246,7 +270,7 @@ class Meter:
         if self.pass_active(user):
             raise QuotaExceeded("this pass's live interviews are used up; buy an extra interview "
                                 "pack", "no_interviews")
-        raise QuotaExceeded("live interviews come with a Job Hunt Pass or a Season Pass",
+        raise QuotaExceeded("live interviews come with a paid plan",
                             "pass_required")
 
     def consume_avatar(self, user: str, period: str, seconds: int) -> dict:
@@ -314,7 +338,7 @@ class Meter:
 
     def require_llm(self, user: str, period: str, est_tokens: int = 0) -> None:
         if not self.can_use_llm(user, period, est_tokens):
-            raise QuotaExceeded("this month's AI limit is reached; a pass or your own AI key "
+            raise QuotaExceeded("this month's AI limit is reached; a paid plan or your own AI key "
                                 "keeps you going", "token_cap")
 
     def record_llm(self, user: str, period: str, tokens: int) -> dict:

@@ -289,7 +289,7 @@ def cap_count(wanted: int | None, packages_left: int | None) -> tuple[int, str]:
         n = RUN_CAP
     if packages_left is not None and packages_left < n:
         n = max(0, packages_left)
-        note = (f"Your pass has {packages_left} {plural(packages_left, 'package')} left, so I "
+        note = (f"Your plan has {packages_left} {plural(packages_left, 'package')} left, so I "
                 f"will do {n}.")
     return n, note
 

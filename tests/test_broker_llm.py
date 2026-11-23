@@ -131,7 +131,7 @@ def test_company_outage_is_tagged_ai_company_with_the_plain_message(monkeypatch)
         BrokerLLM()._post({"prompt": "p"})
     assert exc.value.reason == "ai_company"
     assert str(exc.value) == bc.AI_COMPANY_TEXT
-    assert "pass and packages are not affected" in str(exc.value)
+    assert "plan and packages are not affected" in str(exc.value)
     assert exc.value.retry_after is None
     # Nothing the person could buy or add, and none of the provider's words.
     low = str(exc.value).lower()

@@ -1,16 +1,21 @@
-"""Stripe billing for the managed-AI broker: one-time passes and extra-interview packs.
+"""Stripe billing for the managed-AI broker (the Python reference): extra-interview packs and the
+retired one-time passes.
 
-Pricing (decided by the owner 2026-10-02): NOTHING auto-renews and no subscription is sold.
+Pricing (decided by the owner 2026-11-20): paid plans RENEW AUTOMATICALLY until cancelled, as Stripe
+subscriptions: Student $29 a month or $69 every 3 months (verified school e-mail, valid until
+graduation + 24 months), Standard $49 a month or $119 every 3 months. Those are sold, renewed,
+cancelled and reminded about by the production broker, the Cloudflare Worker
+(worker/src/billing.ts, worker/src/subscriptions.ts, worker/src/student.ts). This module keeps the
+one-time purchases the reference broker has always sold, for local development and its tests:
 
-  * Job Hunt Pass (``pass30``): $29, one payment, 30 days, 3 live interviews, 60 packages.
-  * Season Pass   (``pass90``): $69, one payment, 90 days, 9 live interviews, 150 packages.
-  * Extra live interviews (packs): 1 for $9, 3 for $24, 5 for $39. Sold ONLY while a pass is
-    active; prepaid seconds that never expire.
+  * Extra live interviews (packs): 1 for $9, 3 for $24, 5 for $39. Sold ONLY while a plan or pass
+    is active; prepaid seconds that never expire.
+  * The retired passes (``pass30`` $29 for 30 days, ``pass90`` $69 for 90 days), one payment each.
+    Holders keep a pass until it ends.
 
-Everything is a one-time Stripe Checkout Session (``mode="payment"``). The webhook grants what was
-bought on ``checkout.session.completed`` once the session is paid, exactly once per session id
-(the store's processed-events table), so Stripe redelivering an event never grants twice. When a
-pass ends the account is simply free again; there is nothing to cancel.
+Each is a one-time Stripe Checkout Session (``mode="payment"``). The webhook grants what was bought
+on ``checkout.session.completed`` once the session is paid, exactly once per session id (the store's
+processed-events table), so Stripe redelivering an event never grants twice.
 
 The Stripe SECRET key lives ONLY here on the server (never in the downloaded app), like the
 Anthropic/Tavus keys. Prices are not hard-coded: each product's Stripe price id comes from env
@@ -24,7 +29,7 @@ product.
 
 from __future__ import annotations
 
-from backend.metering import INTERVIEW_SECONDS, PASSES, PLANS
+from backend.metering import INTERVIEW_SECONDS, ONE_TIME_PASSES, PLANS
 
 # Extra-interview packs: id -> (whole interviews, display price).
 PACKS = {"pack_1": 1, "pack_3": 3, "pack_5": 5}
@@ -78,7 +83,7 @@ class Billing:
         self.client = client
         self.meter = meter
         # {"pass30": "price_...", "pass90": "price_..."}; unset/empty ones are simply not offered
-        self.pass_prices = {k: v for k, v in (pass_prices or {}).items() if v and k in PASSES}
+        self.pass_prices = {k: v for k, v in (pass_prices or {}).items() if v and k in ONE_TIME_PASSES}
         # {"pack_1": "price_...", ...}; unset/empty packs are simply not offered
         self.pack_prices = {k: v for k, v in (pack_prices or {}).items() if v and k in PACKS}
         self.success_url = success_url
@@ -86,7 +91,7 @@ class Billing:
 
     # -- what is on sale ---------------------------------------------------------------- #
     def offered_passes(self) -> list[dict]:
-        return [pass_offer(pid) for pid in PASSES if pid in self.pass_prices]
+        return [pass_offer(pid) for pid in ONE_TIME_PASSES if pid in self.pass_prices]
 
     def offered_packs(self) -> list[dict]:
         """The packs on sale (those with a configured price), smallest first."""
@@ -96,7 +101,7 @@ class Billing:
     # -- checkout ----------------------------------------------------------------------- #
     def _session(self, user: str, price: str, metadata: dict) -> str:
         session = self.client.create_checkout_session(
-            mode="payment",                       # one-time: nothing renews, nothing to cancel
+            mode="payment",                       # one-time: a pack or a retired pass
             line_items=[{"price": price, "quantity": 1}],
             client_reference_id=user,
             metadata=metadata,
@@ -139,7 +144,7 @@ class Billing:
             return
         if kind == "pass":
             pass_id = meta.get("pass")
-            if pass_id not in PASSES:
+            if pass_id not in ONE_TIME_PASSES:
                 return
             if not self.meter.store.mark_processed(f"checkout:{sid}"):
                 return                            # already granted for this session
@@ -163,8 +168,8 @@ class Billing:
         ``checkout.session.async_payment_succeeded`` for a delayed payment method) grant what was
         paid for; both carry the same session, so the session-id record keeps it to one grant.
 
-        LEGACY: ``customer.subscription.*`` events (the retired monthly plans) are deliberately
-        ignored; no subscription is sold any more, so they cannot change an account."""
+        Subscription events (the renewing plans) are handled by the production broker
+        (worker/src/subscriptions.ts); this reference ignores them."""
         if event.get("type", "") in ("checkout.session.completed",
                                      "checkout.session.async_payment_succeeded"):
             self._apply_payment((event.get("data") or {}).get("object") or {})

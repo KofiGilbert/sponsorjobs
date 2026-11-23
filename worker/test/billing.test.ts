@@ -61,8 +61,9 @@ describe("unconfigured billing answers exactly as before", () => {
     const { token } = await signedInAccount();
     const noKey = { ...STRIPE, STRIPE_SECRET_KEY: "" };
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    expect((await call("/billing/offers", { token, env: noKey })).data).toEqual({
-      passes: [], packs: [], current: { tier: "free", pass_until: null, interviews_left: 0, packages_left: 3 } });
+    expect((await call("/billing/offers", { token, env: noKey })).data).toMatchObject({
+      plans: [], passes: [], packs: [], subscription: null, price_tier: "standard",
+      current: { tier: "free", pass_until: null, interviews_left: 0, packages_left: 3 } });
     expect((await call("/billing/packs", { env: noKey })).data).toEqual({ packs: [] });
     for (const path of ["/billing/passes/pass30/checkout", "/billing/packs/pack_1/checkout", "/billing/webhook"]) {
       const r = await call(path, { method: "POST", token, env: noKey });

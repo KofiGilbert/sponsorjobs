@@ -2,14 +2,14 @@
 // loads the data, adds the right sidebar and wraps it all in the shell. The overview is the kit's
 // "Dashboard Overview" block for block; the other pages reuse its blocks.
 
-import type { Stats } from "./admin";
+import type { Stats, SubscriptionStats } from "./admin";
 import {
   ACTION_LABEL, type Activity, lastMonths, type AuditRow, type Feed, FEED_STALE_HOURS, type PoolSetting, RANGES, type RangeKey, type Revenue,
   type Runs, type Spender, type UserDetail, type UserFilter, type UserRow, type UserSort, USERS_PER_PAGE, netSince,
 } from "./admin_data";
 import { MAX_INTERVIEWS } from "./admin_actions";
 import type { Env } from "./env";
-import { INTERVIEW_SECONDS, PLANS } from "./metering";
+import { INTERVIEW_SECONDS, PLANS, SUBSCRIPTION_PLANS } from "./metering";
 import {
   ago, badge, barChart, card, day, donut, esc, kpi, lineBlock, maskEmail, menu, mini, num,
   PASS_LABEL, pageTitle, railList, shortNum, siteBars, table, usd, when,
@@ -102,6 +102,9 @@ export function overviewPage(o: {
   const C = o.counts;
   const tabs: Array<{ key: ChartKey; label: string }> = [{ key: "users", label: "Total Users" }, { key: "revenue", label: "Revenue" }, { key: "ai", label: "AI Cost" }];
   const free = s.plans.free, p30 = s.plans.active_pass30, p90 = s.plans.active_pass90;
+  const by = s.plans.active_by_plan ?? {};
+  const student = (by.student_monthly ?? 0) + (by.student_quarterly ?? 0);
+  const standard = (by.standard_monthly ?? 0) + (by.standard_quarterly ?? 0);
 
   return title("Overview", menu(rangeLabel, RANGES.map((r) => ({ label: r.label, href: link({ range: r.key }) })))) +
     kpi("Revenue", o.revenue.ok ? usd(rev) : "n/a", { tone: "a", delta: o.revenue.ok ? pct(rev, revPrev) : null }) +
@@ -122,8 +125,9 @@ export function overviewPage(o: {
       { label: "Margin", value: Math.max(0, margin), display: usd(margin) },
     ], { aria: "Revenue, costs and margin this month, in dollars", unit: "$" }), { span: 2 }) +
     card("Users by Plan", donut([
-      { label: "Free", value: Math.max(0, free - o.expired) }, { label: "Job Hunt Pass", value: p30 },
-      { label: "Season Pass", value: p90 }, { label: "Pass ended", value: o.expired }], { aria: "Accounts by plan" }), { span: 2 }) +
+      { label: "Free", value: Math.max(0, free - o.expired) }, { label: "Student plan", value: student },
+      { label: "Standard plan", value: standard }, { label: "Job Hunt Pass", value: p30 },
+      { label: "Season Pass", value: p90 }, { label: "Ended", value: o.expired }], { aria: "Accounts by plan" }), { span: 2 }) +
     card("Free AI", barChart(o.poolDays.map((d) => ({ label: d.label.slice(5), value: d.value, display: shortNum(d.value) })),
       { aria: "Free AI tokens per day, last 14 days", single: true }), { span: 4 });
 }
@@ -206,7 +210,8 @@ export function userPage(o: { u: UserDetail; history: AuditRow[]; revealed: bool
     .map(([k, l]) => `<a class="ltab${o.act === k ? " on" : ""}" href="${id}?act=${k}">${l}</a>`).join("");
 
   return head +
-    kpi("Plan", ({ free: "Free", pass30: "Job Hunt", pass90: "Season" } as Record<string, string>)[u.plan] ?? u.plan, { tone: "a" }) +
+    kpi("Plan", ({ free: "Free", pass30: "Job Hunt", pass90: "Season", student_monthly: "Student", student_quarterly: "Student",
+                   standard_monthly: "Standard", standard_quarterly: "Standard" } as Record<string, string>)[u.plan] ?? u.plan, { tone: "a" }) +
     kpi(onPass ? "Days Left" : "Free Packages", onPass ? num(daysLeftN) : `${num(freeUsed)} / ${num(PLANS.free!.packages)}`, { tone: "b" }) +
     kpi("Packages Left", onPass ? num(u.pass_packages) : num(Math.max(0, PLANS.free!.packages - freeUsed)), { tone: "a" }) +
     kpi("Interviews Left", num(interviewsLeft), { tone: "b" }) +
@@ -221,27 +226,42 @@ export function userPage(o: { u: UserDetail; history: AuditRow[]; revealed: bool
 
 // ---- Revenue ------------------------------------------------------------------------------------ //
 
-export function revenuePage(o: { revenue: Revenue; granted30: number; now: number }): string {
+/** The renewing plans: running, renewing, canceling, failed payments and MRR per plan. Read from
+ * our own subscriptions table, so it shows even when Stripe cannot be read. */
+function plansCard(subs: SubscriptionStats | undefined): string {
+  if (!subs) return "";
+  const rows = SUBSCRIPTION_PLANS.map((id) => {
+    const b = subs.by_plan[id] ?? { active: 0, renewing: 0, canceling: 0, past_due: 0, mrr_usd: 0 };
+    return [esc(PASS_LABEL[id] ?? id), num(b.active), num(b.renewing), num(b.canceling),
+            b.past_due ? badge(num(b.past_due), "warn") : `<span class="muted">0</span>`, usd(b.mrr_usd)];
+  });
+  rows.push([`<b>All plans</b>`, num(subs.active), num(subs.renewing), num(subs.canceling), num(subs.past_due), `<b>${usd(subs.mrr_usd)}</b>`]);
+  return card("Plans", table(["Plan", "Running", "Renewing", "Canceling", "Payment failed", "MRR"], rows, ""),
+    { span: 4, id: "plans", aside: `<span class="muted small">MRR counts a 3-month plan as a third of its price a month</span>` });
+}
+
+export function revenuePage(o: { revenue: Revenue; granted30: number; now: number; subs?: SubscriptionStats }): string {
   const r = o.revenue, now = o.now;
   const mode = r.mode === "live" ? badge("Live", "ok") : r.mode === "test" ? badge("Test mode", "warn") : badge("Not configured", "bad");
-  if (!r.ok) return title("Revenue", mode) + card("Stripe", `<p class="small">${esc(r.why ?? "Stripe could not be read.")} <a href="${esc(r.dashboard)}">Open Stripe</a></p>`);
+  if (!r.ok) return title("Revenue", mode) + card("Stripe", `<p class="small">${esc(r.why ?? "Stripe could not be read.")} <a href="${esc(r.dashboard)}">Open Stripe</a></p>`) + plansCard(o.subs);
   const p90 = r.payments.filter((p) => p.created >= now - 90 * 86_400);
   const refunds90 = p90.reduce((a, p) => a + p.refunded, 0) / 100;
   const paid30 = p90.filter((p) => p.created >= now - 30 * 86_400).length;
-  const byProduct = ["pass30", "pass90", "pack_1", "pack_3", "pack_5", "other"].map((k) => ({
+  const byProduct = [...SUBSCRIPTION_PLANS, "plan_other", "pass30", "pass90", "pack_1", "pack_3", "pack_5", "other"].map((k) => ({
     label: productLabel(k), value: p90.filter((p) => p.product === k).length,
   })).filter((x) => x.value > 0);
   const buyers = new Map<string, number>();
   for (const p of p90) if (p.email) buyers.set(p.email.toLowerCase(), (buyers.get(p.email.toLowerCase()) ?? 0) + 1);
   const repeat = [...buyers.values()].filter((n) => n > 1).length;
   const link = (id: string) => `${r.dashboard}/${encodeURIComponent(id)}`;
-  const n7 = netSince(r, now, 7), n30 = netSince(r, now, 30), n90 = netSince(r, now, 90);
+  const n30 = netSince(r, now, 30), n90 = netSince(r, now, 90);
   const prev30 = r.payments.filter((p) => p.created >= now - 60 * 86_400 && p.created < now - 30 * 86_400).reduce((a, p) => a + p.amount - p.refunded, 0) / 100;
   return title("Revenue", mode) +
-    kpi("Net, 7 Days", usd(n7), { tone: "a" }) +
+    kpi("MRR", usd(o.subs?.mrr_usd ?? 0), { tone: "a" }) +
     kpi("Net, 30 Days", usd(n30), { tone: "b", delta: pct(n30, prev30) }) +
     kpi("Net, 90 Days", usd(n90), { tone: "a" }) +
     kpi("Refunded, 90 Days", usd(refunds90), { tone: "b" }) +
+    plansCard(o.subs) +
     card("Payments", table(["Date", "Product", "Amount", "Refunded", "Buyer", ""],
       p90.map((p) => [esc(when(p.created, now)), esc(productLabel(p.product)),
         usd(p.amount / 100), p.refunded ? usd(p.refunded / 100) : `<span class="muted">0</span>`, esc(maskEmail(p.email)),

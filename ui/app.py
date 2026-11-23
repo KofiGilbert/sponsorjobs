@@ -896,11 +896,11 @@ def _count_package(llm):
     if _cred("ANTHROPIC_API_KEY"):
         return _make_byo_llm("anthropic")
     tier = str((data or {}).get("tier") or "free")
-    msg = ("You've used the 3 free tailored packages this month. A Job Hunt Pass or a Season Pass "
+    msg = ("You've used the 3 free tailored packages this month. A paid plan "
            "gives you many more, or add your own AI key for unlimited tailoring."
            if tier == "free" else
-           "Your pass's tailored packages are used up. Add another pass, or your own AI key for "
-           "unlimited tailoring.")
+           "This period's tailored packages are used up. They refill when your plan renews, or add "
+           "your own AI key for unlimited tailoring.")
     raise BrokerUnavailable(msg, "upgrade_required")
 
 
@@ -1587,7 +1587,7 @@ _FAILURE_TEXT = {
     "upgrade_required": "you've used the AI allowance on your plan. Open SponsorJobs to see the passes, or add your own AI key.",
     # OUR outage (the company AI key failed) and a passing one: plain words, nothing to buy,
     # nothing about the person's key or connection (llm/broker_client.py).
-    "ai_company": ("SponsorJobs' AI is temporarily unavailable. Your pass and packages are not "
+    "ai_company": ("SponsorJobs' AI is temporarily unavailable. Your plan and packages are not "
                    "affected. We have been alerted; try again in a little while."),
     "ai_transient": "the AI is busy right now. Try again in a moment.",
 }
@@ -12192,7 +12192,10 @@ def _round2_packs() -> list:
     return list(packs)
 
 
-_PASS_TIERS = ("pass30", "pass90")
+# Every paid tier the broker reports: the plans that renew (2026-11-20) and the retired one-time
+# passes their holders keep until they end.
+_PASS_TIERS = ("student_monthly", "student_quarterly", "standard_monthly", "standard_quarterly",
+               "pass30", "pass90")
 
 
 def _round2_status() -> dict:
@@ -12252,7 +12255,7 @@ def interview_round2_buy():
     if st == 401 and (data or {}).get("reason") == "sign_in_required":
         return jsonify({"error": "Sign in to buy extra interviews.", "reason": "sign_in_required"}), 401
     if st == 402:
-        return jsonify({"error": "Extra interviews are sold while a pass is active. Get a pass "
+        return jsonify({"error": "Extra interviews are sold while a plan is active. Get a plan "
                                  "first.", "offer": "passes"}), 402
     if st != 200 or not data or not data.get("url"):
         return jsonify({"error": (data or {}).get("error") or "Couldn't start checkout."}), 502
@@ -12375,7 +12378,9 @@ def account_status():
     st2, usage = _broker_get("/me/usage")
     u = usage if st2 == 200 and isinstance(usage, dict) else {}
     extra = {"plan": u.get("tier") or u.get("plan"), "pass_until": u.get("pass_until"),
-             "interviews_left": u.get("interviews_left"), "packages_left": u.get("packages_left")}
+             "interviews_left": u.get("interviews_left"), "packages_left": u.get("packages_left"),
+             # A renewing plan: whether and when it renews (or when it ends), for "Renews on ...".
+             "subscription": u.get("subscription") if isinstance(u.get("subscription"), dict) else None}
     if st != 200 or not data:
         return jsonify({"email": None, "reachable": st != 0, **extra})
     return jsonify({"email": data.get("email"), "reachable": True, **extra})
@@ -12560,23 +12565,155 @@ _PASS_IDS = ("pass30", "pass90")
 @app.get("/api/billing/offers")
 @_guard
 def billing_offers():
-    """The passes on sale, the extra-interview packs (only while a pass is active) and where this
-    account stands: {passes, packs, current:{tier, pass_until, interviews_left, packages_left},
-    reachable}. Nothing auto-renews. When the broker is unreachable the lists are empty."""
+    """What is on sale and where this account stands: {plans, price_tier, student, subscription,
+    passes, packs, current, reachable}. `plans` are the plans that renew automatically (both
+    tiers); `price_tier` is the one this account pays ("student" only after the school check);
+    `subscription` says whether the current plan renews and when. Packs show only while a plan is
+    active. When the broker is unreachable the lists are empty."""
     st, data = _broker_get("/billing/offers")
     if st != 200 or not isinstance(data, dict):
-        return jsonify({"passes": [], "packs": [], "current": None, "reachable": st != 0})
-    return jsonify({"passes": data.get("passes") or [], "packs": data.get("packs") or [],
+        return jsonify({"plans": [], "price_tier": "standard", "student": None, "subscription": None,
+                        "passes": [], "packs": [], "current": None, "reachable": st != 0})
+    return jsonify({"plans": data.get("plans") or [], "price_tier": data.get("price_tier") or "standard",
+                    "student": data.get("student"), "subscription": data.get("subscription"),
+                    "passes": data.get("passes") or [], "packs": data.get("packs") or [],
                     "current": data.get("current"), "reachable": True})
+
+
+@app.post("/api/billing/subscribe")
+@_guard
+def billing_subscribe():
+    """Start a plan that renews: {interval: "monthly" | "quarterly", consent: true}. Only the
+    interval is passed on; the broker picks the student or standard price from the account's
+    school check, never from anything this app says. `consent` must be the literal true the
+    renewal checkbox sends. The Checkout URL comes back for the app to open."""
+    b = request.json or {}
+    interval = str(b.get("interval") or "").strip()
+    if interval not in ("monthly", "quarterly"):
+        return jsonify({"error": "Pick monthly or every 3 months."}), 400
+    if b.get("consent") is not True:
+        return jsonify({"error": "Tick the box to agree to automatic renewal first.",
+                        "reason": "consent_required"}), 400
+    st, data = _broker_post("/billing/subscribe", {"interval": interval, "consent": True})
+    reason = (data or {}).get("reason")
+    if st == 0:
+        return jsonify({"error": "Billing isn't reachable right now. Try again in a moment."}), 503
+    if st == 503:
+        return jsonify({"error": "Billing isn't switched on yet."}), 503
+    if st == 401 and reason == "sign_in_required":
+        return jsonify({"error": "Sign in to get a plan.", "reason": "sign_in_required"}), 401
+    if st == 409:
+        return jsonify({"error": "You already have a plan. Cancel it or let it end first.",
+                        "reason": "already_subscribed"}), 409
+    if st == 400:
+        return jsonify({"error": "That plan isn't on sale.", "reason": reason}), 400
+    if st != 200 or not data or not data.get("url"):
+        return jsonify({"error": (data or {}).get("error") or "Couldn't start checkout."}), 502
+    _PACKS_CACHE.update(at=0.0, packs=None)
+    return jsonify({"url": data["url"], "plan": data.get("plan")})
+
+
+def _subscription_change(path: str):
+    st, data = _broker_post(path, {})
+    if st == 0:
+        return jsonify({"error": "Billing isn't reachable right now. Try again in a moment."}), 503
+    if st == 404:
+        return jsonify({"error": "There is no plan to change.", "reason": "no_subscription"}), 404
+    if st == 503:
+        return jsonify({"error": "Billing isn't switched on yet."}), 503
+    if st != 200 or not isinstance(data, dict):
+        return jsonify({"error": "Couldn't change your plan. Try again in a moment."}), 502
+    return jsonify(data)
+
+
+@app.post("/api/billing/cancel")
+@_guard
+def billing_cancel():
+    """Cancel renewal in one click: the plan stays until the end of the paid period, then ends.
+    Returns {subscription} with the end date."""
+    return _subscription_change("/billing/subscription/cancel")
+
+
+@app.post("/api/billing/resume")
+@_guard
+def billing_resume():
+    """Undo a cancellation while the paid period lasts: the plan renews again."""
+    return _subscription_change("/billing/subscription/resume")
+
+
+@app.post("/api/billing/portal")
+@_guard
+def billing_portal():
+    """Stripe's billing page for this account (update the card, see invoices): {url}."""
+    return _subscription_change("/billing/portal")
+
+
+_STUDENT_ERRORS = {
+    "not_school": "Use your school email, for example one ending in .edu or .ac.uk.",
+    "bad_month": "Pick your graduation month.",
+    "graduated": "The student price is checked while you are still a student.",
+    "already_verified": "You are already verified.",
+    "email_used": "This school email is already verified on another account.",
+    "rate_limited": "Too many codes asked for. Wait a while and try again.",
+    "bad_code": "That code isn't right. Check the email and try again.",
+    "expired": "That code has expired. Send a new one.",
+    "sign_in_required": "Sign in first.",
+}
+
+
+def _student_reply(st: int, data):
+    reason = (data or {}).get("reason")
+    if st == 200 and isinstance(data, dict):
+        return jsonify(data)
+    if st == 0:
+        return jsonify({"error": "The account service isn't reachable. Try again in a moment."}), 503
+    if st == 503:
+        return jsonify({"error": "The student check isn't available yet."}), 503
+    if reason in _STUDENT_ERRORS:
+        # `error_code`, not `reason`: the page's api() treats a `reason` such as rate_limited as an
+        # AI outage and would open the outage screen (the sign-in routes do the same).
+        return jsonify({"error": _STUDENT_ERRORS[reason], "error_code": reason}), st if st >= 400 else 400
+    return jsonify({"error": "Couldn't check that. Try again in a moment."}), 502
+
+
+@app.get("/api/account/student")
+@_guard
+def account_student():
+    """The student price check: {verified, eligible, school_domain, grad_month, eligible_through}."""
+    st, data = _broker_get("/account/student")
+    return _student_reply(st, data)
+
+
+@app.post("/api/account/student/start")
+@_guard
+def account_student_start():
+    """Send a 6-digit code to a school email: {email, grad_month: "YYYY-MM"}."""
+    b = request.json or {}
+    email = str(b.get("email") or "").strip()[:254]
+    grad = str(b.get("grad_month") or "").strip()
+    if not email:
+        return jsonify({"error": _STUDENT_ERRORS["not_school"], "error_code": "not_school"}), 400
+    if not re.fullmatch(r"\d{4}-\d{2}", grad):
+        return jsonify({"error": _STUDENT_ERRORS["bad_month"], "error_code": "bad_month"}), 400
+    return _student_reply(*_broker_post("/account/student/start", {"email": email, "grad_month": grad}))
+
+
+@app.post("/api/account/student/verify")
+@_guard
+def account_student_verify():
+    """Confirm the school email code: {code} -> the check is stored once with the account."""
+    code = re.sub(r"\D", "", str((request.json or {}).get("code") or ""))
+    if len(code) != 6:
+        return jsonify({"error": "Enter the 6-digit code from the email.", "error_code": "bad_code"}), 400
+    return _student_reply(*_broker_post("/account/student/verify", {"code": code}))
 
 
 @app.post("/api/billing/checkout")
 @_guard
 def billing_checkout():
-    """Buy a pass: {pass: "pass30" | "pass90"} -> the broker mints a ONE-TIME Stripe Checkout
-    Session and its URL comes back for the app to open. No subscription, nothing auto-renews; the
-    pass lands on the account when Stripe confirms the payment. The Stripe key stays on the
-    broker."""
+    """LEGACY: buy a retired one-time pass: {pass: "pass30" | "pass90"} -> the broker mints a
+    one-time Stripe Checkout Session while that pass's price is still configured. The current app
+    sells plans that renew (/api/billing/subscribe); this stays for anything still calling it."""
     pass_id = str((request.json or {}).get("pass", "")).strip()
     if pass_id not in _PASS_IDS:
         return jsonify({"error": "Pick a pass first."}), 400
@@ -18710,7 +18847,7 @@ def _alerts_mark_tailored(sids: list[str]) -> None:
 # approved for the person's click). Day state lives in notify_state.json under "autopilot":
 # {date, count, ids, failures, paused: {code, text} | None, batches: {id: {ids, at}}}.
 AUTOPILOT_PAUSE_TEXT = {
-    "no_packages": "Paused: no packages left on your pass.",
+    "no_packages": "Paused: no packages left on your plan.",
     "no_ai": "Paused: the AI is not reachable. Check your connection or key.",
     "failures": "Paused after 3 failed runs. It tries again tomorrow.",
 }
@@ -18924,7 +19061,7 @@ def autopilot_message(tailored: list[dict], can_send_fn, done: int, per_day: int
     parts.append(f"{done} of {per_day} for today.")
     if packages_left is not None:
         parts.append(f"{packages_left} package{'s' if packages_left != 1 else ''} left on your "
-                     "pass.")
+                     "plan.")
     return " ".join(parts)
 
 
@@ -19169,8 +19306,8 @@ def _agent_plan(intent: dict) -> dict:
     left = _autopilot_packages_left()
     n, note = cap_count(intent.get("count"), left)
     if n <= 0:
-        return {"text": "No packages left on your pass, so I cannot tailor right now. Add a "
-                        "pass, or your own AI key, under Auto-apply.", "buttons": []}
+        return {"text": "No packages left on your plan, so I cannot tailor right now. They refill "
+                        "when it renews, or add your own AI key under Auto-apply.", "buttons": []}
     min_fit = _aa_min_fit()
     score = _aa_scorer(rows, deadline=time.monotonic() + UPNEXT_BUDGET_S)
     res = rank(rows, records=_aa_records(), score_fn=score, count=n, min_fit=min_fit)

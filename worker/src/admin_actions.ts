@@ -16,7 +16,7 @@
 // Refunds and disputes stay in Stripe: the dashboard links there and never moves money.
 
 import type { Env } from "./env";
-import { INTERVIEW_SECONDS, PASSES } from "./metering";
+import { INTERVIEW_SECONDS, ONE_TIME_PASSES } from "./metering";
 import { sendTestAlert } from "./outage";
 import { addCreditOnce, FREE_POOL_CAP_KEY, grantPassOnce } from "./store";
 
@@ -64,7 +64,7 @@ export async function accountAction(env: Env, admin: string, id: string, action:
   await mustExist(db, id);
   if (action === "give-pass") {
     const pass = f.get("pass") ?? "";
-    if (!PASSES.includes(pass)) throw new ActionError("Pick a pass.");
+    if (!ONE_TIME_PASSES.includes(pass)) throw new ActionError("Pick a pass.");
     const reason = reasonOf(f);
     const ok = await grantPassOnce(db, `admin:${crypto.randomUUID()}`, id, pass, now);
     if (!ok) throw new ActionError("The pass was not applied. Try again.");

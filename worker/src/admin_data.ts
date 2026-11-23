@@ -9,7 +9,7 @@
 
 import type { Env } from "./env";
 import { intVar } from "./env";
-import { DAY_SECONDS, FREE_MODEL, INTERVIEW_SECONDS, PACK_PRICE_LABEL, PASS_MODEL, PASSES, PLANS } from "./metering";
+import { DAY_SECONDS, FREE_MODEL, INTERVIEW_SECONDS, ONE_TIME_PASSES, PACK_PRICE_LABEL, PASS_MODEL, PASSES, PLANS, SUBSCRIPTION_PLANS } from "./metering";
 import { FREE_POOL_CAP_KEY, FREE_POOL_USER, poolCapOverride } from "./store";
 
 // Anthropic list prices, $ per 1M tokens (checked 2026-10-10), blended at 80% input.
@@ -234,8 +234,8 @@ export async function rangeCounts(db: D1Database, r: { start: number; end: numbe
     q("SELECT COUNT(*) AS n FROM accounts WHERE created_at >= ? AND created_at < ?").bind(r.prevStart, r.start),
     q("SELECT COUNT(*) AS n FROM accounts WHERE email_at >= ? AND email_at < ?").bind(r.start, r.end),
     q("SELECT COUNT(*) AS n FROM accounts WHERE email_at >= ? AND email_at < ?").bind(r.prevStart, r.start),
-    q("SELECT COUNT(*) AS n FROM processed_events WHERE key LIKE 'checkout:%' AND at >= ? AND at < ?").bind(r.start, r.end),
-    q("SELECT COUNT(*) AS n FROM processed_events WHERE key LIKE 'checkout:%' AND at >= ? AND at < ?").bind(r.prevStart, r.start),
+    q("SELECT COUNT(*) AS n FROM processed_events WHERE (key LIKE 'checkout:%' OR key LIKE 'invoice:%') AND at >= ? AND at < ?").bind(r.start, r.end),
+    q("SELECT COUNT(*) AS n FROM processed_events WHERE (key LIKE 'checkout:%' OR key LIKE 'invoice:%') AND at >= ? AND at < ?").bind(r.prevStart, r.start),
   ]);
   const n = (i: number) => Number((res[i]!.results[0] as { n: number } | undefined)?.n ?? 0);
   return { signups: [n(0), n(1)] as const, signins: [n(2), n(3)] as const, checkouts: [n(4), n(5)] as const };
@@ -286,7 +286,7 @@ export function revenueSeries(r: Revenue, nowMs: number): { labels: string[]; se
   return { labels: a.map((m) => m.label), series: a.map((m) => round2(by.get(m.period) ?? 0)), compare: b.map((m) => round2(by.get(m.period) ?? 0)) };
 }
 
-/** Accounts whose pass has ended (the donut's fourth slice). */
+/** Accounts whose pass or plan has ended (the donut's last slice). */
 export async function expiredPasses(db: D1Database, now: number): Promise<number> {
   const list = PASSES.map(() => "?").join(", ");
   return Number((await db.prepare(`SELECT COUNT(*) AS n FROM users WHERE user != ? AND plan IN (${list}) AND pass_until > 0 AND pass_until <= ?`)
@@ -355,7 +355,7 @@ export async function recentActivity(db: D1Database, limit = 8): Promise<Activit
   const [signups, signins, buys, admin] = await db.batch([
     db.prepare("SELECT account_id, created_at AS at FROM accounts WHERE created_at IS NOT NULL ORDER BY created_at DESC LIMIT ?").bind(limit),
     db.prepare("SELECT account_id, email, email_at AS at FROM accounts WHERE email_at IS NOT NULL ORDER BY email_at DESC LIMIT ?").bind(limit),
-    db.prepare("SELECT at FROM processed_events WHERE key LIKE 'checkout:%' ORDER BY at DESC LIMIT ?").bind(limit),
+    db.prepare("SELECT at FROM processed_events WHERE key LIKE 'checkout:%' OR key LIKE 'invoice:%' ORDER BY at DESC LIMIT ?").bind(limit),
     db.prepare("SELECT at, action, target FROM admin_actions ORDER BY id DESC LIMIT ?").bind(limit),
   ]);
   const out: Activity[] = [
@@ -409,11 +409,17 @@ export interface Revenue {
   dashboard: string;                            // the Stripe dashboard's payments page for this mode
 }
 
-/** Which product a charge was, from its amount (the checkout's metadata stays on the session, not
- * the charge; the amounts are our own price labels). */
-export function productFor(amountCents: number): string {
+/** Which product a charge was, from its amount and whether it paid an invoice (the checkout's
+ * metadata stays on the session, not the charge; the amounts are our own price labels). A renewing
+ * plan is always paid through an invoice, a pack or a retired pass never is, so $29 and $69 tell
+ * a Student plan from the pass that had the same price. */
+export function productFor(amountCents: number, invoice = false): string {
   const label = `$${(amountCents / 100).toFixed(amountCents % 100 ? 2 : 0)}`;
-  for (const p of PASSES) if (PLANS[p]!.priceLabel === label) return p;
+  if (invoice) {
+    for (const p of SUBSCRIPTION_PLANS) if (PLANS[p]!.priceLabel === label) return p;
+    return "plan_other";
+  }
+  for (const p of ONE_TIME_PASSES) if (PLANS[p]!.priceLabel === label) return p;
   for (const [id, l] of Object.entries(PACK_PRICE_LABEL)) if (l === label) return id;
   return "other";
 }
@@ -431,7 +437,7 @@ export async function revenue(env: Env, nowMs: number): Promise<Revenue> {
       const payments = (data.data ?? []).filter((c) => c.paid || c.status === "succeeded").map((c): Payment => ({
         id: String(c.id), created: Number(c.created), amount: Number(c.amount ?? 0), refunded: Number(c.amount_refunded ?? 0),
         currency: String(c.currency ?? "usd"), disputed: Boolean(c.disputed), status: String(c.status ?? ""),
-        email: c.billing_details?.email ?? c.receipt_email ?? null, product: productFor(Number(c.amount ?? 0)),
+        email: c.billing_details?.email ?? c.receipt_email ?? null, product: productFor(Number(c.amount ?? 0), Boolean(c.invoice)),
       }));
       return { ok: true, mode, payments, dashboard };
     } catch (e) {

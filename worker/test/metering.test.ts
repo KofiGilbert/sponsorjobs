@@ -21,15 +21,21 @@ const onPass = (name: "pass30" | "pass90", at = T0): AccountState => ({
 });
 
 describe("plans", () => {
-  it("the three tiers as decided", () => {
+  it("the tiers as decided (renewing plans 2026-11-20; the one-time passes kept for their holders)", () => {
     expect(INTERVIEW_SECONDS).toBe(1200);
-    expect(Object.keys(PLANS).sort()).toEqual(["free", "pass30", "pass90"]);
+    expect(Object.keys(PLANS).sort()).toEqual(["free", "pass30", "pass90", "standard_monthly", "standard_quarterly",
+                                               "student_monthly", "student_quarterly"]);
     const shape = Object.fromEntries(Object.entries(PLANS).map(([k, p]) =>
-      [k, [p.days, Math.floor(p.avatarSecondsIncluded / INTERVIEW_SECONDS), p.packages, p.llmModel, p.priceLabel, p.llmTokenCap]]));
+      [k, [p.days, Math.floor(p.avatarSecondsIncluded / INTERVIEW_SECONDS), p.packages, p.llmModel, p.priceLabel, p.llmTokenCap,
+           p.months ?? 0]]));
     expect(shape).toEqual({
-      free: [0, 0, 3, "claude-haiku-4-5", "", 400_000],
-      pass30: [30, 3, 60, "claude-sonnet-5-5", "$29", 8_000_000],
-      pass90: [90, 9, 150, "claude-sonnet-5-5", "$69", 8_000_000],
+      free: [0, 0, 3, "claude-haiku-4-5", "", 400_000, 0],
+      pass30: [30, 3, 60, "claude-sonnet-5-5", "$29", 8_000_000, 0],
+      pass90: [90, 9, 150, "claude-sonnet-5-5", "$69", 8_000_000, 0],
+      student_monthly: [30, 3, 60, "claude-sonnet-5-5", "$29", 8_000_000, 1],
+      student_quarterly: [90, 9, 150, "claude-sonnet-5-5", "$69", 8_000_000, 3],
+      standard_monthly: [30, 3, 60, "claude-sonnet-5-5", "$49", 8_000_000, 1],
+      standard_quarterly: [90, 9, 150, "claude-sonnet-5-5", "$119", 8_000_000, 3],
     });
   });
 

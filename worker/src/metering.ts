@@ -20,8 +20,13 @@ export interface Plan {
   llmModel: string;
   llmTokenCap: number | null;
   packages: number;
-  days: number; // 0 = not a pass (free)
+  days: number; // 0 = not a pass (free); a plan's nominal period otherwise
   priceLabel: string; // display only; the real price lives in Stripe
+  // Plans that renew (2026-11-20): which price tier and how often. Absent on free and on the
+  // retired one-time passes.
+  tier?: "student" | "standard";
+  interval?: "monthly" | "quarterly";
+  months?: number; // the renewal interval in calendar months (Stripe interval=month, interval_count)
 }
 
 export const PLANS: Record<string, Plan> = {
@@ -31,11 +36,45 @@ export const PLANS: Record<string, Plan> = {
             llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$29" },
   pass90: { name: "pass90", avatarSecondsIncluded: 9 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
             llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$69" },
+  // The plans that renew automatically (owner decision 2026-11-20), Stripe subscriptions. A plan
+  // grants the same allowances as the pass it replaces, refilled at the start of every paid
+  // period; the period end comes from Stripe (current_period_end), not from `days`. Student and
+  // Standard differ only in price; who may pay the student price is decided server-side
+  // (src/student.ts).
+  student_monthly: { name: "student_monthly", avatarSecondsIncluded: 3 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
+                     llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$29",
+                     tier: "student", interval: "monthly", months: 1 },
+  student_quarterly: { name: "student_quarterly", avatarSecondsIncluded: 9 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
+                       llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$69",
+                       tier: "student", interval: "quarterly", months: 3 },
+  standard_monthly: { name: "standard_monthly", avatarSecondsIncluded: 3 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
+                      llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$49",
+                      tier: "standard", interval: "monthly", months: 1 },
+  standard_quarterly: { name: "standard_quarterly", avatarSecondsIncluded: 9 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
+                        llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$119",
+                        tier: "standard", interval: "quarterly", months: 3 },
 };
 export const DEFAULT_PLAN = "free";
 
-/** The pass names, in offer order (backend/metering.py PASSES). */
+/** Every paid plan name, one-time passes and renewing plans alike (backend/metering.py PASSES). A
+ * renewing plan is stored on the account exactly like a pass (plan, pass_until = the end of the
+ * paid period, and the period's balances), so every allowance rule reads both the same way. */
 export const PASSES: readonly string[] = Object.values(PLANS).filter((p) => p.days > 0).map((p) => p.name);
+
+/** The retired one-time passes. No longer sold to new app versions; holders keep them until they end. */
+export const ONE_TIME_PASSES: readonly string[] = Object.values(PLANS).filter((p) => p.days > 0 && !p.tier).map((p) => p.name);
+
+/** The renewing plans, in offer order. */
+export const SUBSCRIPTION_PLANS: readonly string[] = Object.values(PLANS).filter((p) => p.tier).map((p) => p.name);
+
+export type Interval = "monthly" | "quarterly";
+export const INTERVALS: readonly Interval[] = ["monthly", "quarterly"];
+
+/** The renewing plan for a tier and an interval ("student", "monthly" -> "student_monthly"). */
+export const subscriptionPlan = (tier: "student" | "standard", interval: Interval): string => `${tier}_${interval}`;
+
+/** A plan's price in whole cents, from its display label ("$119" -> 11900). */
+export const priceCents = (p: Plan): number => Math.round(Number(p.priceLabel.replace(/[^0-9.]/g, "") || 0) * 100);
 
 /** Whole live interviews a plan includes. Plans and packs are both counted in INTERVIEW_SECONDS,
  * so changing that one constant changes every allowance and every pack consistently. */
@@ -110,7 +149,7 @@ export function requireLlm(s: AccountState, now: number, estTokens: number): voi
   if (cap === null) return;
   if (s.llmTokens + Math.max(0, estTokens) > cap) {
     throw new QuotaExceeded(
-      "this month's AI limit is reached; a pass or your own AI key keeps you going", "token_cap");
+      "this month's AI limit is reached; a paid plan or your own AI key keeps you going", "token_cap");
   }
 }
 

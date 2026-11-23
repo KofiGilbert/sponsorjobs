@@ -4,7 +4,7 @@
 // read-then-write in JavaScript: two requests from the same account can run on different
 // isolates at the same moment, and a read-modify-write would lose one of the updates.
 
-import { AccountState, DAY_SECONDS, DEFAULT_PLAN, EMPTY_STATE, PASSES, PLANS } from "./metering";
+import { AccountState, DAY_SECONDS, DEFAULT_PLAN, EMPTY_STATE, ONE_TIME_PASSES, PASSES, PLANS, SUBSCRIPTION_PLANS } from "./metering";
 
 export const FREE_POOL_USER = "__free_pool__"; // the free tier's shared daily budget lives here
 
@@ -209,4 +209,50 @@ export async function addCreditOnce(db: D1Database, key: string, user: string, s
     markProcessed(db, key, now),
   ]);
   return (grant!.meta.changes ?? 0) > 0;
+}
+
+/** Start the paid period of a renewing plan, once per `key` (the Stripe invoice id); returns false
+ * when the key was already applied. The period ends at `periodEnd` (Stripe's period end for that
+ * invoice) and its allowances are the plan's, refilled: nothing rolls over from the last period.
+ * Two exceptions, both in the same single statement:
+ *   - a one-time pass still running is not lost: its remaining interviews and packages are added
+ *     to the first period, and access runs to whichever ends later;
+ *   - an invoice for a period that is not newer than the one already applied (a late delivery)
+ *     changes nothing, so an old event can never shorten or refill a newer period. */
+export async function grantSubscriptionPeriodOnce(db: D1Database, key: string, user: string, planName: string,
+                                                  periodEnd: number, now: number): Promise<boolean> {
+  const plan = PLANS[planName];
+  if (!plan || !SUBSCRIPTION_PLANS.includes(planName)) throw new Error(`unknown plan: ${planName}`);
+  const subs = SUBSCRIPTION_PLANS.map((n) => `'${n}'`).join(", ");     // our own constants, not input
+  const passes = ONE_TIME_PASSES.map((n) => `'${n}'`).join(", ");
+  const stale = `(users.plan IN (${subs}) AND users.pass_until >= ?4)`;
+  const carry = `(users.plan IN (${passes}) AND users.pass_until > ?7)`;
+  const [grant] = await db.batch([
+    db.prepare(
+      `INSERT INTO users(user, plan, pass_until, pass_seconds, pass_packages)
+       SELECT ?2, ?3, ?4, ?5, ?6 WHERE ${notProcessed}
+       ON CONFLICT(user) DO UPDATE SET
+         plan = CASE WHEN ${stale} THEN users.plan ELSE excluded.plan END,
+         pass_until = CASE WHEN ${stale} THEN users.pass_until
+                           WHEN ${carry} THEN MAX(users.pass_until, ?4) ELSE ?4 END,
+         pass_seconds = CASE WHEN ${stale} THEN users.pass_seconds
+                             WHEN ${carry} THEN MAX(0, users.pass_seconds) + ?5 ELSE ?5 END,
+         pass_packages = CASE WHEN ${stale} THEN users.pass_packages
+                              WHEN ${carry} THEN MAX(0, users.pass_packages) + ?6 ELSE ?6 END`,
+    ).bind(key, user, planName, Math.trunc(periodEnd), plan.avatarSecondsIncluded, plan.packages, now),
+    markProcessed(db, key, now),
+  ]);
+  return (grant!.meta.changes ?? 0) > 0;
+}
+
+/** End a renewing plan's access now (a subscription that was cancelled immediately, or ended
+ * unpaid), unless the account has another live subscription. A period that already ended is left
+ * as it is. */
+export async function endSubscriptionAccess(db: D1Database, user: string, subId: string, now: number): Promise<void> {
+  const subs = SUBSCRIPTION_PLANS.map((n) => `'${n}'`).join(", ");
+  await db.prepare(
+    `UPDATE users SET pass_until = MIN(pass_until, ?1) WHERE user = ?2 AND plan IN (${subs})
+     AND NOT EXISTS (SELECT 1 FROM subscriptions WHERE user = ?2 AND id != ?3
+                     AND status IN ('active', 'trialing', 'past_due'))`,
+  ).bind(now, user, subId).run();
 }

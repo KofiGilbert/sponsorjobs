@@ -1,18 +1,30 @@
-> **Fastest way (2026-10-10):** after step 1, run one command and skip steps 2 to 4:
-> `python3 scripts/stripe_setup.py --testers <your account id>` with a test key, or
-> `python3 scripts/stripe_setup.py` with a live key. It asks for the key (hidden), creates the
-> products and the webhook, and stores everything on the Worker. A test key only ever shows
-> billing to the listed testers.
-
 # Turning on payments (Stripe)
 
-The broker at `https://api.sponsorjobs.ai` already knows how to sell the two passes and the extra
-interview packs. It stays switched off ("billing is not configured") until you give it a few Stripe
+The broker at `https://api.sponsorjobs.ai` sells the plans that renew automatically and the extra
+interview packs. It stays switched off ("billing is not configured") until it has a few Stripe
 keys. This page walks you through it, one click at a time.
 
+What is on sale (decided 2026-11-20):
+
+| Plan | Price | Renews | Price id goes into |
+| --- | --- | --- | --- |
+| Student, monthly | $29 | every month | `STRIPE_PRICE_STUDENT_MONTHLY` |
+| Student, every 3 months | $69 | every 3 months | `STRIPE_PRICE_STUDENT_QUARTERLY` |
+| Standard, monthly | $49 | every month | `STRIPE_PRICE_STANDARD_MONTHLY` |
+| Standard, every 3 months | $119 | every 3 months | `STRIPE_PRICE_STANDARD_QUARTERLY` |
+| 1 extra live interview | $9 | one-time | `STRIPE_PRICE_PACK_1` |
+| 3 extra live interviews | $24 | one-time | `STRIPE_PRICE_PACK_3` |
+| 5 extra live interviews | $39 | one-time | `STRIPE_PRICE_PACK_5` |
+
+Plans renew until the person cancels. The student price is for students and graduates up to 24
+months after graduating, checked once with a code sent to a school email (free, built into the
+app; no paid verification service). Which price someone pays is decided by the broker, never by
+the app.
+
 **What Stripe costs:** no monthly fee. Each successful US card payment costs **2.9% + 30 cents**
-(for example, $0.30 + $0.84 = $1.14 on the $29 pass). Cards issued outside the US cost an extra
-1.5%. You pay nothing while nobody is buying.
+(for example, $0.30 + $0.84 = $1.14 on the $29 plan). Cards issued outside the US cost an extra
+1.5%. Stripe Billing (subscriptions) adds **0.7%** of each subscription payment on the
+pay-as-you-go plan (about $0.20 on $29). You pay nothing while nobody is buying.
 
 **Golden rule:** keys go into the terminal only. Never paste a key into a chat, an email, a file in
 the repo, or a screenshot.
@@ -27,84 +39,101 @@ the repo, or a screenshot.
 4. In **Settings** (gear icon) → **Business** → **Public details**, set the public business name to
    `SponsorJobs` and the support email. This is what buyers see on the checkout page and receipt.
 
-## 2. Create the five products
+## 2. Try it in test mode first (fake money)
 
-Do this five times, once per row in the table.
-
-1. In the left menu click **Product catalog** → **+ Add product**.
-2. **Name**: from the table.
-3. Under pricing choose **One-off** (NOT "Recurring"; nothing auto-renews).
-4. **Amount**: from the table, currency **USD**.
-5. Click **Add product**.
-6. Open the product you just made. Under **Pricing**, click the price, and copy its **price ID**
-   (it starts with `price_`). Write it down next to the row; you need it in step 4.
-
-| Name | Amount | Price ID goes into |
-| --- | --- | --- |
-| Job Hunt Pass (30 days, 3 live interviews) | $29.00 | `STRIPE_PRICE_PASS30` |
-| Season Pass (90 days, 9 live interviews) | $69.00 | `STRIPE_PRICE_PASS90` |
-| 1 extra live interview | $9.00 | `STRIPE_PRICE_PACK_1` |
-| 3 extra live interviews | $24.00 | `STRIPE_PRICE_PACK_3` |
-| 5 extra live interviews | $39.00 | `STRIPE_PRICE_PACK_5` |
-
-The amount you set in Stripe is what people pay. The app only shows labels ($29, $69, $9, $24,
-$39), so if you ever change a price in Stripe, tell me and I will change the labels to match.
-
-## 3. Create the webhook (how Stripe tells us someone paid)
-
-1. Left menu → **Developers** → **Webhooks** (Stripe may call it **Event destinations**).
-2. Click **+ Add destination** (or **Add endpoint**).
-3. Events: search for and tick **`checkout.session.completed`**. Nothing else is needed.
-4. Destination type: **Webhook endpoint**.
-5. Endpoint URL: `https://api.sponsorjobs.ai/billing/webhook`
-6. Click **Create destination**.
-7. On the page that opens, find **Signing secret** and click **Reveal**. It starts with `whsec_`.
-   Keep this page open for the next step.
-
-## 4. Give the keys to the broker
-
-Your secret API key is in **Developers** → **API keys** → **Secret key** → **Reveal** (it starts
-with `sk_live_`).
-
-Open Terminal and go to the worker folder:
+Run this from the repo folder with a **test** key (Stripe dashboard → turn on **Test mode** at the
+top → **Developers** → **API keys** → **Secret key** → **Reveal**, starts with `sk_test_`):
 
 ```sh
-cd ~/sponsorjobs/worker
+cd ~/sponsorjobs
+python3 scripts/stripe_setup.py --testers <your account id>
 ```
 
-Then run these one at a time. Each one asks "Enter a secret value:". Paste the value (it will not
-show as you paste; that is normal) and press Enter.
+It asks for the key (typing is hidden), then makes everything in the table above, the customer
+portal settings and the webhook, and stores all of it on the Worker. Running it again changes
+nothing that is already right (no duplicate prices). In test mode only the account ids you list
+see billing; pay with card `4242 4242 4242 4242`, any future date, any CVC.
 
-```sh
-npx wrangler secret put STRIPE_SECRET_KEY        # paste the sk_live_... key
-npx wrangler secret put STRIPE_WEBHOOK_SECRET    # paste the whsec_... signing secret
-npx wrangler secret put STRIPE_PRICE_PASS30      # paste the $29 pass's price_... id
-npx wrangler secret put STRIPE_PRICE_PASS90      # paste the $69 pass's price_... id
-npx wrangler secret put STRIPE_PRICE_PACK_1      # paste the $9 pack's price_... id
-npx wrangler secret put STRIPE_PRICE_PACK_3      # paste the $24 pack's price_... id
-npx wrangler secret put STRIPE_PRICE_PACK_5      # paste the $39 pack's price_... id
-```
+To try a renewal without waiting a month, use Stripe's **test clocks** (Billing → Subscriptions →
+open the test subscription → **Run simulation**) and move time past the renewal date.
 
-Each secret takes effect straight away; there is nothing to redeploy for the keys themselves.
-(The billing code must already be deployed: that is a separate step I will ask you to approve.)
+## 3. Going live (your step, by hand)
 
-## 5. Check it works
+Do this only when you are ready to take real money. I never run it.
 
-1. Open <https://api.sponsorjobs.ai/billing/offers> in your browser. You should see both passes
-   listed under `"passes"`. If you still see `"passes": []`, the key or a pass price id is missing.
-2. In the app, buy the Job Hunt Pass with your own card. After paying, the app should show the pass.
-3. Refund yourself: Stripe → **Payments** → click the payment → **Refund**. (Refunding does not
-   take the pass away automatically; that is fine for a test.)
-4. In Stripe → **Developers** → **Webhooks** → your endpoint, the delivery should show `200 OK`.
-   A `400` there means the webhook signing secret is wrong: run the `STRIPE_WEBHOOK_SECRET` command
-   again with the right `whsec_` value.
+1. Stripe dashboard → turn **Test mode** off → **Developers** → **API keys** → **Secret key** →
+   **Reveal** (starts with `sk_live_`).
+2. In Terminal:
 
-## Want to try with fake money first? (optional)
+   ```sh
+   cd ~/sponsorjobs
+   python3 scripts/stripe_setup.py
+   ```
 
-Stripe has a test mode (toggle **Test mode** / **Sandbox** at the top of the dashboard). Everything
-above works the same there: products, prices and the webhook made in test mode have their own ids
-and their own `whsec_` secret, and the key starts with `sk_test_`. Put the test key in with
-`npx wrangler secret put STRIPE_TEST_SECRET_KEY` (and the test price ids and test webhook secret in
-the same names as above), then pay with card `4242 4242 4242 4242`, any future date, any CVC. When
-you switch to live, replace every value with its live version and set `STRIPE_SECRET_KEY`; the live
-key always wins over the test key.
+   Paste the live key when asked. It creates the four plan prices and the three pack prices in
+   live mode, the customer portal settings and the live webhook, and stores the live key
+   (`STRIPE_SECRET_KEY`), the webhook secret, the portal settings id and the seven price ids on
+   the Worker. The live key always wins over the test key.
+3. **Renewal reminders.** Stripe dashboard (live) → **Settings** → **Billing** → **Subscriptions
+   and emails** → **Upcoming renewal events**: set it to **7 days**. Stripe then tells the broker
+   7 days before each renewal and the broker emails the person the date, the price and how to
+   cancel (through our own mailer, Resend). You do not need to turn on Stripe's own "upcoming
+   renewal" customer emails, but it does no harm.
+4. **Failed payments.** **Settings** → **Billing** → **Revenue recovery** (older dashboards: **Manage
+   failed payments**): keep **Smart Retries** on and set
+   "If all retries for a payment fail" to **Cancel the subscription**. The broker then ends the
+   plan when Stripe gives up. Optionally turn on **Send emails when card payments fail**.
+5. **Customer portal.** The script already made our portal settings (update card, invoices,
+   cancel at period end, no plan switching). To check them: **Settings** → **Billing** →
+   **Customer portal**. Nothing to change.
+6. **Retire the old passes.** If `STRIPE_PRICE_PASS30` or `STRIPE_PRICE_PASS90` were ever set on
+   the Worker, remove them so no app sells a one-time pass any more (people who bought one keep it
+   until it ends):
+
+   ```sh
+   cd ~/sponsorjobs/worker
+   npx wrangler secret delete STRIPE_PRICE_PASS30
+   npx wrangler secret delete STRIPE_PRICE_PASS90
+   ```
+7. If billing was tried in test mode, also remove `STRIPE_TEST_SECRET_KEY` and
+   `STRIPE_TEST_ACCOUNTS` the same way (optional: the live key already wins).
+
+The database table the plans need (`migrations/0014_subscriptions_students.sql`) must be applied
+before the broker code that uses it is deployed: `npx wrangler d1 migrations apply DB --remote`
+from `~/sponsorjobs/worker`. That is part of the deploy step I will ask you to approve.
+
+## 4. Check it works
+
+1. Open <https://api.sponsorjobs.ai/billing/offers>. You should see four entries under `"plans"`.
+   If you see `"plans": []`, the key or the plan prices are missing.
+2. In the app, open **See plans**, tick the renewal box and subscribe with your own card. After
+   paying, the app shows your plan and "Renews on ..., cancel anytime".
+3. In the account menu, click **Cancel**. The app says the plan will not renew; Stripe →
+   **Billing** → **Subscriptions** shows it "Cancels on ...". Click **Undo** in the app to put it
+   back, or leave it cancelled.
+4. Refund yourself: Stripe → **Payments** → the payment → **Refund**.
+5. Stripe → **Developers** → **Webhooks** → your endpoint: every delivery should show `200 OK`. A
+   `400` means the webhook signing secret is wrong: run the script again.
+
+## What the broker does with each Stripe event
+
+| Event | What happens |
+| --- | --- |
+| `checkout.session.completed` | A pack is granted (one-time), or a new plan is linked to the account and the consent time kept. |
+| `invoice.paid` | A plan's period is paid: its interviews and packages refill, access runs to the period end. Once per invoice. |
+| `invoice.payment_failed` | The plan shows "payment didn't go through, update your card". Access still ends with the paid period. |
+| `invoice.upcoming` | The renewal reminder email (date, price, how to cancel), once per period. |
+| `customer.subscription.updated` | Cancel at period end, resume, status changes, shown in the app. |
+| `customer.subscription.deleted` | The plan ends now. |
+
+## Doing it by hand instead of the script
+
+If you ever need to: create each product in **Product catalog** → **+ Add product**. For a plan
+choose **Recurring**, **Monthly** for the monthly ones, and **Custom** → every **3 months** for
+the 3-month ones; for a pack choose **One-off**. Copy each price id (`price_...`) and store it
+with `npx wrangler secret put <name from the table>` in `~/sponsorjobs/worker`. Create the webhook
+in **Developers** → **Webhooks** for `https://api.sponsorjobs.ai/billing/webhook` with the six
+event types in the table above plus `checkout.session.async_payment_succeeded`, and store its
+signing secret as `STRIPE_WEBHOOK_SECRET`. The prices the app shows come from the broker, which
+must match what is set in Stripe: if you change a price in Stripe, tell me and I will change the
+labels to match.

@@ -49,8 +49,8 @@
     // is a pass or their own key, so the button opens the passes panel, not the add-a-key modal.
     upgrade_required: {
       hk: "outage.upgrade.h", h: "You've used your tailored packages",
-      p: "Free includes 3 tailored packages a month. A Job Hunt Pass or a Season Pass gives you many more, paid once with no auto-renew.",
-      btnk: "outage.upgrade.btn", btn: "See passes",
+      p: "Free includes 3 tailored packages a month. A paid plan gives you many more. Plans renew until you cancel.",
+      btnk: "outage.upgrade.btn", btn: "See plans",
     },
     service_down: {
       hk: "outage.serviceDown.h", h: "SponsorJobs' AI is briefly unavailable",
@@ -63,12 +63,12 @@
     // whole modal translates; this one is kept apart only because it has no button and no link.
     ai_company: {
       hk: "outage.aiCompany.h", h: "SponsorJobs' AI is temporarily unavailable",
-      pk: "outage.aiCompany.p", p: "Your pass and packages are not affected. We have been alerted; try again in a little while.",
+      pk: "outage.aiCompany.p", p: "Your plan and packages are not affected. We have been alerted; try again in a little while.",
     },
     // A passing failure (rate limit, overload). The app already tried again a few times.
     ai_transient: {
       hk: "outage.aiTransient.h", h: "The AI is busy",
-      pk: "outage.aiTransient.p", p: "The AI is busy, trying again in a moment usually works. Your pass and packages are not affected.",
+      pk: "outage.aiTransient.p", p: "The AI is busy, trying again in a moment usually works. Your plan and packages are not affected.",
     },
   };
   const outageText = (key, fallback) => (key && window.I18N ? I18N.t(key, fallback) : fallback);
@@ -9271,7 +9271,7 @@
     const el = $("#tileRound2Note"); if (!el) return;
     el.hidden = !st || st.available || st.reason === "unreachable";
     el.textContent = st && st.reason === "no_minutes"
-      ? T("r2.tileNoMinutes", "Interviews used up") : T("r2.tileNoPass", "Included with a pass");
+      ? T("r2.tileNoMinutes", "Interviews used up") : T("r2.tileNoPass", "Included with a paid plan");
   }
   // "Start interview": validate, build a prep for the role, then start the chosen interview. The
   // full mock runs Round 1 first; a pass carries the same prep into Round 2.
@@ -9823,11 +9823,11 @@
       const packs = (st.can_buy && Array.isArray(st.packs)) ? st.packs : [];
       return `<div class="${wrap}">
       <div class="r2-gate-main">
-        <h3 class="r2-gate-h">${esc(T("r2.usedUpH", "You've used your pass's live interviews."))}</h3>
-        <p class="r2-gate-d">${esc(packs.length ? T("r2.usedUpDPaid", "Buy more, they never expire.") : T("r2.usedUpNoBuyPaid", "Add another pass for more live interviews."))}</p>
+        <h3 class="r2-gate-h">${esc(T("r2.usedUpH", "You've used this period's live interviews."))}</h3>
+        <p class="r2-gate-d">${esc(packs.length ? T("r2.usedUpDPaid", "Buy more, they never expire.") : T("r2.usedUpNoBuyPaid", "They refill when your plan renews."))}</p>
         <div class="scr-welcome-acts">
           ${packs.map((p, i) => `<button class="btn ${i === 0 ? "btn-primary" : "btn-ghost"} btn-sm r2-buy" data-pack="${esc(p.id)}" type="button">${esc(r2PackLabel(p))}</button>`).join("")}
-          ${packs.length ? "" : `<button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>`}
+          ${packs.length ? "" : `<button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See plans"))}</button>`}
           ${finish}
         </div>
         <p class="r2-gate-d" id="r2BuyMsg" hidden></p>
@@ -9847,10 +9847,10 @@
     // No pass: the passes that include live interviews, filled in from the broker's offers.
     return `<div class="${wrap}">
       <div class="r2-gate-main">
-        <h3 class="r2-gate-h">${esc(T("r2.passH", "Live interviews come with a pass"))}</h3>
-        <p class="r2-gate-d">${esc(T("r2.passD", "Twenty minutes with a live interviewer who asks, listens and follows up, then a scored report. Paid once, no auto-renew."))}</p>
+        <h3 class="r2-gate-h">${esc(T("r2.passH", "Live interviews come with a paid plan"))}</h3>
+        <p class="r2-gate-d">${esc(T("r2.passD", "Twenty minutes with a live interviewer who asks, listens and follows up, then a scored report."))}</p>
         <div class="scr-welcome-acts" id="r2PassActs">
-          <button class="btn btn-ghost btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>
+          <button class="btn btn-ghost btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See plans"))}</button>
           ${finish}
         </div>
         <p class="r2-gate-d" id="r2BuyMsg" hidden></p>
@@ -10589,28 +10589,236 @@
     if (it.id !== "menuLanguage") it.addEventListener("mouseenter", closeLangMenu);
   });
 
-  // Upgrade: the passes (Job Hunt Pass 30 days, Season Pass 90 days). One payment each, nothing
-  // auto-renews. Each "Get the pass" button asks our server for a one-time Stripe Checkout and
-  // opens it. During a pass the panel shows what is left and the extra-interview packs.
+  // Plans (owner decision 2026-11-20): Student and Standard, monthly or every 3 months, renewing
+  // until cancelled. Next to the one buy button sit the price, the interval, that it renews until
+  // cancelled and how to cancel, and a checkbox that must be ticked first (auto-renewal laws). The
+  // page sends only the interval and the tick: the broker picks the student or standard price from
+  // the school email check, never from this page. A student checks once, with a 6-digit code sent
+  // to their school email. Whoever still holds a retired one-time pass sees it until it ends.
   const upgModal = $("#upgModal");
-  const PASS_NAMES = { pass30: () => T("upg.pass30Name", "Job Hunt Pass"), pass90: () => T("upg.pass90Name", "Season Pass") };
+  const PASS_NAMES = {
+    pass30: () => T("upg.pass30Name", "Job Hunt Pass"), pass90: () => T("upg.pass90Name", "Season Pass"),
+    student_monthly: () => T("upg.studentPlan", "Student plan"), student_quarterly: () => T("upg.studentPlan", "Student plan"),
+    standard_monthly: () => T("upg.standardPlan", "Standard plan"), standard_quarterly: () => T("upg.standardPlan", "Standard plan"),
+  };
+  // Shown until the broker answers; the broker's labels replace them (they must match Stripe).
+  const PLAN_PRICE_FALLBACK = { student_monthly: "$29", student_quarterly: "$69", standard_monthly: "$49", standard_quarterly: "$119" };
+  let OFFERS = null, UPG_INTERVAL = "monthly";
+  const STU = { open: false, step: "form", email: "", grad: "", err: "", busy: false };
   function fmtDate(sec) {
     try { return new Date(Number(sec) * 1000).toLocaleDateString(I18N.getLang ? I18N.getLang() : undefined, { month: "short", day: "numeric" }); }
     catch { return ""; }
   }
+  function fmtLongDate(sec) {
+    try { return new Date(Number(sec) * 1000).toLocaleDateString(I18N.getLang ? I18N.getLang() : undefined, { month: "long", day: "numeric", year: "numeric" }); }
+    catch { return ""; }
+  }
+  function fmtMonth(ym) {               // "2028-06" -> "June 2028"
+    const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ""));
+    if (!m) return "";
+    try { return new Date(Date.UTC(+m[1], +m[2] - 1, 15)).toLocaleDateString(I18N.getLang ? I18N.getLang() : undefined, { month: "long", year: "numeric", timeZone: "UTC" }); }
+    catch { return ym; }
+  }
+  const everyText = (iv) => iv === "quarterly" ? T("upg.every3", "every 3 months") : T("upg.everyMonth", "every month");
+  const unitText = (iv) => iv === "quarterly" ? T("upg.per3", "every 3 months") : T("upg.perMonth", "a month");
+  function planPrice(id) {
+    const p = ((OFFERS && OFFERS.plans) || []).find(x => x.id === id);
+    return (p && p.price_label) || PLAN_PRICE_FALLBACK[id] || "";
+  }
+  // The renewal terms, in the same words Stripe's checkout page repeats above its button.
+  function renewalTerms(price, iv) {
+    return T("upg.terms", "{price} {every}. Renews automatically until you cancel. Cancel anytime from your account menu, under Your plan.")
+      .replace("{price}", price).replace("{every}", everyText(iv));
+  }
   async function loadOffers() {
-    let o = null;
-    try { o = await api("/api/billing/offers"); } catch { return; }
-    (o.passes || []).forEach(p => { const el = $("#upgPrice_" + p.id); if (el && p.price_label) el.textContent = p.price_label; });
-    const cur = o.current || {}, curEl = $("#upgCurrent");
-    const onPass = !!(cur.tier && PASS_NAMES[cur.tier] && cur.pass_until);
+    try { OFFERS = await api("/api/billing/offers"); } catch { return; }
+    paintPlans();
+  }
+  // What the buy area of one plan card shows: the terms, the consent and the button for the tier
+  // this person pays; the school email check on the Student card for everyone else.
+  function buyHtml(tier, id, ctx) {
+    const { sub, stu, pays, onSale, loaded } = ctx;
+    if (!loaded) return "";                       // until the broker answers: prices only
+    if (sub) {
+      if (sub.plan === id) return "";              // the card's "Current plan" badge says it
+      return tier === pays ? `<p class="upg-note">${esc(T("upg.switchNote", "To switch, cancel renewal first."))}</p>` : "";
+    }
+    if (tier === "standard" && pays === "student") {
+      return `<p class="upg-note">${esc(T("upg.youGetStudent", "You get the student price."))}</p>`;
+    }
+    if (tier === "student" && pays !== "student") {
+      if (stu && stu.verified) {
+        return `<p class="upg-note">${esc(T("upg.stuEnded", "Your student price ended after {month}.").replace("{month}", fmtMonth(stu.eligible_through)))}</p>`;
+      }
+      return studentHtml();
+    }
+    if (!onSale.has(id)) return `<p class="upg-note">${esc(T("upg.notOnSale", "Plans aren't on sale yet."))}</p>`;
+    const verified = tier === "student" && stu && stu.eligible
+      ? `<p class="upg-note">${esc(T("upg.stuVerified", "Verified with {domain}. Student price through {month}.")
+          .replace("{domain}", stu.school_domain || "").replace("{month}", fmtMonth(stu.eligible_through)))}</p>` : "";
+    return verified +
+      `<p class="upg-terms">${esc(renewalTerms(planPrice(id), UPG_INTERVAL))}</p>` +
+      `<label class="upg-consent"><input type="checkbox" data-consent> <span>${esc(T("upg.agree", "I agree to automatic renewal on these terms"))}</span></label>` +
+      `<button class="upg-cta is-get" type="button" data-subscribe disabled>${esc(T("upg.subscribe", "Subscribe"))}</button>`;
+  }
+  function studentHtml() {
+    const err = STU.err ? `<p class="upg-err" role="alert">${esc(STU.err)}</p>` : "";
+    if (!STU.open) {
+      return `<button class="upg-cta is-ghost" type="button" data-stu-open>${esc(T("upg.stuOpen", "Check student status"))}</button>` +
+        `<p class="upg-note">${esc(T("upg.stuHow", "Confirm a school email once, takes a minute."))}</p>`;
+    }
+    if (STU.step === "code") {
+      return `<div class="upg-stu">` +
+        `<p class="upg-note">${esc(T("upg.stuSent", "We sent a 6-digit code to {email}.").replace("{email}", STU.email))}</p>` +
+        `<label>${esc(T("upg.stuCode", "Code"))}<input type="text" inputmode="numeric" maxlength="7" autocomplete="one-time-code" data-stu-code></label>` +
+        `<button class="upg-cta is-get" type="button" data-stu-confirm${STU.busy ? " disabled" : ""}>${esc(T("upg.stuConfirm", "Confirm"))}</button>` +
+        err + `<button class="upg-link" type="button" data-stu-back>${esc(T("upg.stuBack", "Use another email"))}</button></div>`;
+    }
+    return `<div class="upg-stu">` +
+      `<label>${esc(T("upg.stuEmail", "School email"))}<input type="email" autocomplete="email" placeholder="you@school.edu" data-stu-email value="${esc(STU.email)}"></label>` +
+      `<label>${esc(T("upg.stuGrad", "Graduation month, expected or actual"))}<input type="month" data-stu-grad value="${esc(STU.grad)}"></label>` +
+      `<button class="upg-cta is-get" type="button" data-stu-send${STU.busy ? " disabled" : ""}>${esc(T("upg.stuSend", "Send code"))}</button>` +
+      err + `<p class="upg-note">${esc(T("upg.stuPrivacy", "We keep only your school's domain and graduation month."))}</p></div>`;
+  }
+  function paintPlans() {
+    if (!upgModal) return;
+    const o = OFFERS || {};
+    const sub = o.subscription || null;
+    const ctx = { sub, stu: o.student || null, pays: o.price_tier === "student" ? "student" : "standard",
+                  onSale: new Set((o.plans || []).map(p => p.id)), loaded: !!OFFERS };
+    // A plan that renews opens on its own interval.
+    if (sub && sub.interval) UPG_INTERVAL = sub.interval;
+    upgModal.querySelectorAll(".upg-seg-b").forEach(b => {
+      const on = b.dataset.interval === UPG_INTERVAL;
+      b.classList.toggle("is-on", on); b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+    const q = UPG_INTERVAL === "quarterly";
+    ["student", "standard"].forEach(tier => {
+      const card = upgModal.querySelector(`.upg-plan[data-tier="${tier}"]`); if (!card) return;
+      const id = `${tier}_${UPG_INTERVAL}`;
+      card.querySelector("[data-price]").textContent = planPrice(id);
+      card.querySelector("[data-unit]").textContent = unitText(UPG_INTERVAL);
+      card.querySelector("[data-feats]").innerHTML = [
+        q ? T("upg.feat9", "9 live interviews every 3 months") : T("upg.feat3", "3 live interviews a month"),
+        q ? T("upg.feat150", "150 tailored packages every 3 months") : T("upg.feat60", "60 tailored packages a month"),
+        T("upg.betterModel", "Tailoring on our best AI model"),
+      ].map(x => `<li>${esc(x)}</li>`).join("");
+      card.classList.toggle("is-current-plan", !!(sub && sub.plan === id));
+      card.querySelector("[data-buy]").innerHTML = buyHtml(tier, id, ctx);
+    });
+    wireBuy();
+    paintMine();
+  }
+  // "Your plan": renews on <date> (or ends on <date>), Cancel renewal / Keep my plan, Update card.
+  // A retired pass shows its own line instead (#upgCurrent).
+  function paintMine() {
+    const o = OFFERS || {}, sub = o.subscription || null, cur = o.current || {};
+    const mine = $("#upgMine"), curEl = $("#upgCurrent");
+    const onPass = !sub && !!(cur.tier && PASS_NAMES[cur.tier] && cur.pass_until);
     if (curEl) {
       curEl.hidden = !onPass;
-      if (onPass) curEl.textContent = T("upg.current", "{pass} until {date}: {i} live interviews and {p} tailored packages left. Buying another adds to it.")
+      if (onPass) curEl.textContent = T("upg.current", "{pass} until {date}: {i} live interviews and {p} tailored packages left. A plan adds to it.")
         .replace("{pass}", PASS_NAMES[cur.tier]()).replace("{date}", fmtDate(cur.pass_until))
         .replace("{i}", String(cur.interviews_left ?? 0)).replace("{p}", String(cur.packages_left ?? 0));
     }
-    const packs = onPass ? (o.packs || []) : [];
+    if (!mine) return;
+    mine.hidden = !sub;
+    if (!sub) return;
+    const name = PASS_NAMES[sub.plan] ? PASS_NAMES[sub.plan]() : T("upg.standardPlan", "Standard plan");
+    const left = T("acct.planLeft", "{i} live interviews and {p} tailored packages left")
+      .replace("{i}", String(cur.interviews_left ?? 0)).replace("{p}", String(cur.packages_left ?? 0));
+    const when = sub.renews
+      ? T("upg.renewsLine", "{plan}, {price} {every}. Renews on {date}, cancel anytime.")
+          .replace("{price}", sub.price_label || planPrice(sub.plan)).replace("{every}", everyText(sub.interval)).replace("{date}", fmtLongDate(sub.renews_at))
+      : T("upg.endsLine", "{plan} ends on {date}. It won't renew.").replace("{date}", fmtLongDate(sub.ends_at));
+    const failed = sub.payment_failed ? " " + T("upg.payFailed", "Your last payment didn't go through. Update your card to keep the plan.") : "";
+    $("#upgMineText").textContent = when.replace("{plan}", name) + " " + left + "." + failed;
+    $("#upgCancel").hidden = !sub.renews;
+    $("#upgResume").hidden = !!sub.renews;
+  }
+  function wireBuy() {
+    upgModal.querySelectorAll("[data-buy]").forEach(box => {
+      const consent = box.querySelector("[data-consent]"), go = box.querySelector("[data-subscribe]");
+      if (consent && go) consent.addEventListener("change", () => { go.disabled = !consent.checked; });
+      go?.addEventListener("click", () => subscribe(go, consent));
+      box.querySelector("[data-stu-open]")?.addEventListener("click", () => {
+        if (!ACCT_EMAIL) { closeUpgrade(); openSignin({ kind: "student" }); return; }
+        STU.open = true; STU.step = "form"; STU.err = "";
+        paintPlans(); upgModal.querySelector("[data-stu-email]")?.focus();
+      });
+      const em = box.querySelector("[data-stu-email]"), gr = box.querySelector("[data-stu-grad]");
+      em?.addEventListener("input", () => { STU.email = em.value.trim(); });
+      gr?.addEventListener("input", () => { STU.grad = gr.value; });
+      box.querySelector("[data-stu-send]")?.addEventListener("click", studentSend);
+      box.querySelector("[data-stu-confirm]")?.addEventListener("click", studentConfirm);
+      box.querySelector("[data-stu-code]")?.addEventListener("keydown", (e) => { if (e.key === "Enter") studentConfirm(); });
+      box.querySelector("[data-stu-back]")?.addEventListener("click", () => { STU.step = "form"; STU.err = ""; paintPlans(); });
+    });
+  }
+  async function studentSend() {
+    if (STU.busy) return;
+    if (!STU.email || !STU.grad) { STU.err = T("upg.stuFill", "Enter your school email and graduation month."); paintPlans(); return; }
+    STU.busy = true; STU.err = ""; paintPlans();
+    try {
+      await api("/api/account/student/start", { email: STU.email, grad_month: STU.grad });
+      STU.step = "code";
+    } catch (e) { STU.err = e.message || T("upg.stuFailed", "Couldn't send the code. Try again."); }
+    STU.busy = false; paintPlans();
+    upgModal.querySelector("[data-stu-code]")?.focus();
+  }
+  async function studentConfirm() {
+    if (STU.busy) return;
+    const code = (upgModal.querySelector("[data-stu-code]")?.value || "").replace(/\D/g, "");
+    if (code.length !== 6) { STU.err = T("upg.stuCodeLen", "Enter the 6-digit code from the email."); paintPlans(); return; }
+    STU.busy = true; STU.err = ""; paintPlans();
+    try {
+      await api("/api/account/student/verify", { code });
+      STU.open = false; STU.step = "form";
+      toast(T("upg.stuDone", "You're verified. The student price is yours."));
+      await loadOffers();
+    } catch (e) { STU.err = e.message || T("upg.stuFailed", "Couldn't check that. Try again."); }
+    STU.busy = false; paintPlans();
+  }
+  upgModal?.querySelectorAll(".upg-seg-b").forEach(b => b.addEventListener("click", () => {
+    UPG_INTERVAL = b.dataset.interval === "quarterly" ? "quarterly" : "monthly";
+    paintPlans();
+  }));
+  // One click: the plan stays until the end of the paid period, then ends. Undo puts it back.
+  async function cancelRenewal(btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const d = await api("/api/billing/cancel", {});
+      const end = d && d.subscription && d.subscription.ends_at;
+      toast(T("upg.canceledRenew", "Your plan won't renew. You keep it until {date}.").replace("{date}", fmtLongDate(end)),
+            { label: T("upg.undo", "Undo"), run: () => resumeRenewal() }, 8000);
+      await Promise.all([loadOffers(), loadAccount()]);
+    } catch (e) { toast(e.message || T("upg.cantChange", "Couldn't change your plan. Try again in a moment.")); }
+    if (btn) btn.disabled = false;
+  }
+  async function resumeRenewal(btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await api("/api/billing/resume", {});
+      toast(T("upg.resumed", "Your plan will renew as before."));
+      await Promise.all([loadOffers(), loadAccount()]);
+    } catch (e) { toast(e.message || T("upg.cantChange", "Couldn't change your plan. Try again in a moment.")); }
+    if (btn) btn.disabled = false;
+  }
+  $("#upgCancel")?.addEventListener("click", (e) => cancelRenewal(e.currentTarget));
+  $("#upgResume")?.addEventListener("click", (e) => resumeRenewal(e.currentTarget));
+  $("#acctMenuCancel")?.addEventListener("click", (e) => { e.stopPropagation(); closeAcctMenu(); cancelRenewal(); });
+  $("#upgCard")?.addEventListener("click", async (e) => {
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      const d = await api("/api/billing/portal", {});
+      if (d && d.url) { if (window.tailorShell) window.tailorShell.openBrowser(d.url); else window.open(d.url, "_blank", "noopener"); }
+    } catch (err) { toast(err.message || T("upg.cantChange", "Couldn't change your plan. Try again in a moment.")); }
+    b.disabled = false;
+  });
+  function loadPacks() {
+    const o = OFFERS || {}, cur = o.current || {};
+    const active = !!(cur.tier && PASS_NAMES[cur.tier] && cur.pass_until);
+    const packs = active ? (o.packs || []) : [];
     const box = $("#upgPacks"), btns = $("#upgPackBtns");
     if (box) box.hidden = !packs.length;
     if (btns) {
@@ -10634,7 +10842,8 @@
   function openUpgrade() {
     closeAcctMenu();
     if (upgModal) upgModal.hidden = false;
-    loadOffers();
+    paintPlans();
+    loadOffers().then(loadPacks);
     paintPlan();
   }
   function closeUpgrade() { if (upgModal) upgModal.hidden = true; }
@@ -10665,12 +10874,13 @@
   }
 
   // Buying, the production way (claude.ai, ChatGPT, Notion, Linear): signing in is its OWN screen,
-  // never a form inside the plans panel. "Get the pass" signed in -> straight to Stripe Checkout,
+  // never a form inside the plans panel. "Subscribe" signed in -> straight to Stripe Checkout,
   // where the broker prefills the email. Signed out -> the plans panel closes, the sign-in screen
-  // opens with "Sign in to get your Job Hunt Pass", and a successful sign-in carries on to Stripe
-  // for that same pass. A 401 sign_in_required from checkout routes to the same screen.
+  // opens with "Sign in to get your plan", and a successful sign-in reopens the plans panel so the
+  // renewal terms are agreed to again (consent is never carried across screens). A 401
+  // sign_in_required from checkout routes to the same screen.
   let subscribing = false;
-  let pendingBuy = null;                          // {kind: "pass"|"pack", id} waiting on a sign-in
+  let pendingBuy = null;                          // {kind: "plan"|"pass"|"pack"|"student", id} waiting on a sign-in
   const PENDING_KEY = "sj-pending-buy";           // survives the web build's same-tab Google trip
   function rememberBuy(b) {
     pendingBuy = b;
@@ -10707,12 +10917,12 @@
 
   function openCheckoutUrl(url) {
     // Desktop: Stripe opens in the person's own browser (the shell routes checkout.stripe.com
-    // out), so close the Passes window and say where to finish; watchCheckout() notices the pass
+    // out), so close the Plans window and say where to finish; watchCheckout() notices the plan
     // and confirms it here. Web build: the same tab; Stripe returns to ?checkout=.
     if (window.tailorShell) {
       window.tailorShell.openBrowser(url);
       closeUpgrade();
-      toast(T("upg.finishInBrowser", "Finish paying in your browser. Your pass shows up here on its own."));
+      toast(T("upg.finishInBrowser", "Finish paying in your browser. Your plan shows up here on its own."));
     } else window.location.href = url;
   }
   async function doCheckout(passId) {
@@ -10725,23 +10935,29 @@
       if (!e.reason) toast(e.message || T("upg.cantStart", "Couldn't start checkout. Please try again."));
     }
   }
-  async function subscribe(passId, btn) {
+  // Subscribe: only the interval and the ticked box go to our server; it picks the price.
+  async function subscribe(btn, consent) {
     if (subscribing) return;
-    if (!ACCT_EMAIL) {                            // signed out: sign in first, then Stripe
+    if (!consent || !consent.checked) return;      // the button stays disabled until it is ticked
+    if (!ACCT_EMAIL) {                            // signed out: sign in first, then back here
       closeUpgrade();
-      openSignin({ kind: "pass", id: passId });
+      openSignin({ kind: "plan", id: UPG_INTERVAL });
       return;
     }
     subscribing = true;
     if (btn) { btn.disabled = true; btn.textContent = T("upg.starting", "Starting..."); }
-    try { await doCheckout(passId); }
-    finally {
+    try {
+      const r = await api("/api/billing/subscribe", { interval: UPG_INTERVAL, consent: true });
+      if (r && r.url) { openCheckoutUrl(r.url); watchCheckout(); }
+      else toast(T("upg.cantStart", "Couldn't start checkout. Please try again."));
+    } catch (e) {
+      if (e.reason === "sign_in_required") { closeUpgrade(); openSignin({ kind: "plan", id: UPG_INTERVAL }); }
+      else toast(e.message || T("upg.cantStart", "Couldn't start checkout. Please try again."));
+    } finally {
       subscribing = false;
-      if (btn) { btn.disabled = false; btn.textContent = T("upg.get", "Get the pass"); }
+      if (btn) { btn.disabled = !(consent && consent.checked); btn.textContent = T("upg.subscribe", "Subscribe"); }
     }
   }
-  document.querySelectorAll(".upg-plan .upg-cta[data-pass]").forEach((b) =>
-    b.addEventListener("click", () => subscribe(b.dataset.pass, b)));
 
   // ---- The sign-in screen ----
   const signinEl = $("#signinScreen");
@@ -10755,6 +10971,8 @@
   function buyLine(b) {
     if (!b) return "";
     if (b.kind === "pack") return T("signin.whyPack", "Sign in to buy extra live interviews");
+    if (b.kind === "student") return T("signin.whyStudent", "Sign in to check your student status");
+    if (b.kind === "plan") return T("signin.whyPlan", "Sign in to get your plan");
     const name = PASS_NAMES[b.id] ? PASS_NAMES[b.id]() : T("upg.pass30Name", "Job Hunt Pass");
     return T("signin.whyPass", "Sign in to get your {pass}").replace("{pass}", name);
   }
@@ -10894,7 +11112,14 @@
     stopGooglePoll(); clearInterval(siTimer);
     rememberBuy(null);
     await loadAccount();
-    if (buy && buy.kind === "pass") { toast(T("signin.toStripe", "Signed in. Opening checkout...")); await doCheckout(buy.id); }
+    if (buy && (buy.kind === "plan" || buy.kind === "student")) {
+      // Back to the plans panel: the renewal terms are agreed to there, never carried over.
+      if (buy.kind === "plan" && (buy.id === "monthly" || buy.id === "quarterly")) UPG_INTERVAL = buy.id;
+      if (buy.kind === "student") STU.open = true;
+      toast(T("signin.done", "Signed in as {email}").replace("{email}", ACCT_EMAIL || ""));
+      openUpgrade();
+    }
+    else if (buy && buy.kind === "pass") { toast(T("signin.toStripe", "Signed in. Opening checkout...")); await doCheckout(buy.id); }
     else if (buy && buy.kind === "pack") { toast(T("signin.toStripe", "Signed in. Opening checkout...")); await buyPack(buy.id); }
     else { toast(T("signin.done", "Signed in as {email}").replace("{email}", ACCT_EMAIL || "")); suMaybeFirstRun(); }
   }
@@ -10966,21 +11191,22 @@
   function paintPlan() {
     const s = ACCT_STATUS || {};
     const onPass = !!(s.plan && PASS_NAMES[s.plan] && s.pass_until);
+    const sub = onPass && s.subscription && s.subscription.plan === s.plan ? s.subscription : null;
     const name = onPass ? PASS_NAMES[s.plan]() : T("upg.freeName", "Free");
     const until = onPass ? fmtDate(s.pass_until) : "";
     const el = $("#acctPlan"); if (el) el.textContent = name;
     const dot = $("#acctPassDot"); if (dot) dot.hidden = !onPass;
-    // The live round is paid: a quiet "Pass" on the Live tile and the Full mock (which includes
-    // it) for anyone without one, gone once they have a pass.
+    // The live round is paid: a quiet "Plan" on the Live tile and the Full mock (which includes
+    // it) for anyone without one, gone once they have a plan.
     document.querySelectorAll("[data-pass-tag]").forEach(t => { t.hidden = onPass; });
-    const btn = $("#acctBtn"); if (btn) btn.title = onPass ? `${name} until ${until}` : T("upg.freePlan", "Free plan");
+    const btn = $("#acctBtn"); if (btn) btn.title = onPass ? (sub ? name : `${name} until ${until}`) : T("upg.freePlan", "Free plan");
     const box = $("#acctMenuPlan");
     if (box) {
       box.hidden = false;
       box.classList.toggle("is-pass", onPass);
-      $("#acctMenuPlanName").textContent = onPass
-        ? T("acct.planUntil", "{plan} until {date}").replace("{plan}", name).replace("{date}", until)
-        : T("upg.freePlan", "Free plan");
+      // A plan that renews names itself; a retired pass says when it ends.
+      $("#acctMenuPlanName").textContent = !onPass ? T("upg.freePlan", "Free plan")
+        : sub ? name : T("acct.planUntil", "{plan} until {date}").replace("{plan}", name).replace("{date}", until);
       // Unknown (no account yet, or the account service can't be reached) says nothing rather
       // than "0 left", which read as used up on a brand-new install (QA 2026-10-14).
       const left = $("#acctMenuPlanLeft");
@@ -10990,14 +11216,19 @@
         : onPass
         ? T("acct.planLeft", "{i} live interviews and {p} tailored packages left").replace("{i}", String(s.interviews_left ?? 0)).replace("{p}", String(s.packages_left ?? 0))
         : T("acct.freeLeft", "{p} tailored packages left this month").replace("{p}", String(s.packages_left));
+      // "Renews on <date>, cancel anytime" with a one-click Cancel, or "Ends on <date>".
+      const renew = $("#acctMenuPlanRenew");
+      if (renew) {
+        renew.hidden = !sub;
+        if (sub) {
+          $("#acctMenuPlanRenewText").textContent = sub.renews
+            ? T("acct.renewsOn", "Renews on {date}, cancel anytime").replace("{date}", fmtDate(sub.renews_at))
+            : T("acct.endsOn", "Ends on {date}, won't renew").replace("{date}", fmtDate(sub.ends_at));
+          const c = $("#acctMenuCancel"); if (c) c.hidden = !sub.renews;
+        }
+      }
     }
-    const lbl = $("#menuUpgradeLbl"); if (lbl) lbl.textContent = onPass ? T("acct.yourPass", "Your pass") : T("acct.passes", "Get a pass");
-    document.querySelectorAll(".upg-plan").forEach(card => {
-      const b = card.querySelector(".upg-cta[data-pass]"); if (!b) return;
-      const current = onPass && b.dataset.pass === s.plan;
-      card.classList.toggle("is-current-plan", current);
-      b.textContent = current ? T("upg.addDays", "Add 30 more days").replace("30", s.plan === "pass90" ? "90" : "30") : T("upg.get", "Get the pass");
-    });
+    const lbl = $("#menuUpgradeLbl"); if (lbl) lbl.textContent = onPass ? T("acct.yourPass", "Your plan") : T("acct.passes", "See plans");
   }
   async function loadAccount() {
     try {
@@ -11013,9 +11244,12 @@
     const s = ACCT_STATUS || {};
     if (!(s.plan && PASS_NAMES[s.plan])) return;
     const m = $("#welcomePass"); if (!m) return;
+    const sub = s.subscription && s.subscription.plan === s.plan ? s.subscription : null;
     $("#welcomePassBadge").textContent = PASS_NAMES[s.plan]();
     $("#welcomePassH").textContent = T("upg.welcomeH", "You're on the {plan}").replace("{plan}", PASS_NAMES[s.plan]());
-    $("#welcomePassSub").textContent = T("upg.welcomeSub", "Active until {date}. It ends on its own, there is nothing to cancel.").replace("{date}", fmtDate(s.pass_until));
+    $("#welcomePassSub").textContent = sub && sub.renews
+      ? T("upg.welcomeSubRenew", "Renews on {date}. Cancel anytime from your account menu.").replace("{date}", fmtLongDate(sub.renews_at))
+      : T("upg.welcomeSub", "Active until {date}.").replace("{date}", fmtDate(s.pass_until));
     $("#welcomePassList").innerHTML = [
       T("upg.welcome1", "{i} live interviews with a real-time interviewer").replace("{i}", String(s.interviews_left ?? 0)),
       T("upg.welcome2", "{p} tailored packages on our best AI model").replace("{p}", String(s.packages_left ?? 0)),
