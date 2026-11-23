@@ -76,7 +76,10 @@ def test_google_url_points_the_broker_back_at_the_app_callback(A):
     u = urlparse(url)
     assert u.path.endswith("/account/google/start")
     redirect = parse_qs(u.query)["redirect"][0]
-    assert redirect.endswith("/account/google/done?via=tab")
+    assert "/account/google/done?via=tab&n=" in redirect
+    # the one-time key in the callback is one this engine is holding for the sign-in
+    nonce = parse_qs(urlparse(redirect).query)["n"][0]
+    assert nonce in A._SIGNIN_NONCES
 
 
 def test_google_done_page_reads_the_token_from_the_fragment(A):
@@ -91,11 +94,12 @@ def test_adopt_saves_a_token_that_the_broker_verifies(A, monkeypatch):
     monkeypatch.setattr(A, "_save_cred", lambda k, v: saved.__setitem__(k, v))
     import requests
     monkeypatch.setattr(requests, "get", lambda *a, **k: type("R", (), {"status_code": 200})())
-    r = _client(A).post("/api/account/adopt", json={"token": "tok_google"})
+    r = _client(A).post("/api/account/adopt", json={"token": "tok_google", "nonce": A._new_signin_nonce()})
     assert r.status_code == 200 and saved["TAILOR_ACCOUNT_TOKEN"] == "tok_google"
 
 
 def test_adopt_rejects_a_token_the_broker_does_not_accept(A, monkeypatch):
     import requests
     monkeypatch.setattr(requests, "get", lambda *a, **k: type("R", (), {"status_code": 401})())
-    assert _client(A).post("/api/account/adopt", json={"token": "bad"}).status_code == 400
+    assert _client(A).post("/api/account/adopt",
+                           json={"token": "bad", "nonce": A._new_signin_nonce()}).status_code == 400

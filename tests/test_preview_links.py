@@ -40,15 +40,26 @@ def test_preview_rewrites_external_links(tmp_path):
     assert uris and all(u.startswith("/api/open?u=https%3A%2F%2F") for u in uris)
 
 
-def test_open_endpoint_opens_default_browser_and_returns(client, monkeypatch):
+def test_open_endpoint_opens_default_browser_on_post(client, monkeypatch):
     import webbrowser
     opened = []
     monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(u) or True)
-    r = client.get("/api/open?u=https%3A%2F%2Fgithub.com%2FKofiGilbert")
-    assert r.status_code == 200
+    r = client.post("/api/open", json={"u": "https://github.com/KofiGilbert"})
+    assert r.status_code == 200 and r.get_json() == {"ok": True}
     assert opened == ["https://github.com/KofiGilbert"]
+
+
+def test_open_endpoint_opens_nothing_on_get(client, monkeypatch):
+    """A followed resume-preview link outside the shell only shows the link; nothing is opened."""
+    import webbrowser
+    monkeypatch.setattr(webbrowser, "open", lambda u: pytest.fail("GET must not open anything"))
+    r = client.get("/api/open?u=https%3A%2F%2Fgithub.com%2FKofiGilbert")
+    assert r.status_code == 405 and r.headers.get("Allow") == "POST"
     body = r.get_data(as_text=True)
-    assert "Back to SponsorJobs" in body and "history.back()" in body
+    assert "https://github.com/KofiGilbert" in body and "Back to SponsorJobs" in body
+    # a link that is not http(s) is not even shown
+    body = client.get("/api/open", query_string={"u": "javascript:alert(1)"}).get_data(as_text=True)
+    assert "javascript:" not in body
 
 
 def test_open_endpoint_rejects_non_http(client, monkeypatch):
@@ -56,5 +67,5 @@ def test_open_endpoint_rejects_non_http(client, monkeypatch):
     monkeypatch.setattr(webbrowser, "open",
                         lambda u: pytest.fail("must not open non-http"))
     for bad in ("javascript:alert(1)", "file:///etc/passwd", ""):
-        r = client.get("/api/open", query_string={"u": bad})
+        r = client.post("/api/open", json={"u": bad})
         assert r.status_code == 400
