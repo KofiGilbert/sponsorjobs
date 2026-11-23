@@ -14980,6 +14980,10 @@ def _agent_material(rec, data: dict, prof: dict, applicant: dict, questions: lis
             lib.close()
         seen = {e.lower() for e in mat.employers}
         mat.employers += [e for e in (_employers() or []) if str(e).strip() and str(e).lower() not in seen]
+        try:
+            mat.work_auth = _work_auth() or {}
+        except Exception:  # noqa: BLE001 - no saved work authorization: such questions are left
+            mat.work_auth = {}
         return mat
     except Exception:          # noqa: BLE001 - no material: nothing is answered from it
         traceback.print_exc()

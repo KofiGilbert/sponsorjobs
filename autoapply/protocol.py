@@ -253,6 +253,62 @@ def default_answer(kind: str, value: str, question: str, options, material) -> t
     return False, "", "no default for this question"
 
 
+# --------------------------------------------------------------------------- work authorization
+# (2026-11-23, measured at Uline) "Will you now or in the future require employer visa sponsorship?"
+# held the person's saved Yes; the brain judged it "likely a wrong guess" and selected No as a best
+# guess in Auto. A work-authorization question is a statement to an employer about the person's
+# legal status: it takes ONLY the answer the saved work authorization gives, in every mode, and is
+# never guessed when the profile does not say.
+WA_EVIDENCE = "your saved work authorization"
+
+
+def _same_answer(value: str, want: str) -> bool:
+    from autoapply import workauth
+    a, b = " ".join(str(value or "").split()).lower(), " ".join(str(want or "").split()).lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    pa, pb = workauth.polarity(a), workauth.polarity(b)
+    return pa is not None and pa == pb and (a in ("yes", "no", "y", "n") or b in ("yes", "no", "y", "n"))
+
+
+_WA_WORDS = re.compile(r"sponsor|visa|authori[sz]|legally|citizen|permanent resident|green card|work permit|"
+                       r"immigration|eligib|h-?1b|\bopt\b|\bead\b|right to work|status", re.I)
+
+
+def work_auth_verdict(action: dict, question: str, options=(), material=None):
+    """The verdict on an answer to a work-authorization question (autoapply/workauth.classify),
+    else None (the usual checks then apply). Only the saved work authorization's answer passes;
+    with nothing saved for it the question is left (hard limit 5). When the profile answers it but
+    the form's choices cannot be matched to that answer, None: the usual path takes a flagged best
+    guess (guess.WA_SAVED_REASON). With no material at all (none could be built) also None."""
+    from autoapply import workauth
+    q = " ".join(str(question or "").split())
+    if material is None or not _WA_WORDS.search(q):
+        return None
+    kind = workauth.classify(q)
+    if not kind or kind == "relocate":
+        return None
+    op = str(action.get("op") or "")
+    if op not in ("type", "select", "click"):
+        return None
+    value = str(action.get("text") if op == "type" else action.get("option") or action.get("value") or "")
+    wa = getattr(material, "work_auth", None) or {}
+    country = workauth.question_country(q)
+    if not wa or workauth.fact(kind, wa, country) is None:
+        return Verdict(False, HARD5 + ": a work-authorization question is answered only from the person's saved work "
+                       "authorization, which does not answer this one. Leave it; never guess it.", qclass.LEGAL, hard="5")
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    want = workauth.answer(q, wa, options=opts, field_type="text" if op == "type" else "select")
+    if want is None:
+        return None
+    if _same_answer(value, want):
+        return Verdict(True, klass=qclass.LEGAL, source="saved_answer", evidence=WA_EVIDENCE)
+    return Verdict(False, HARD5 + f': the person\'s saved work authorization answers this question "{want}". '
+                   "Put that answer, never another one.", qclass.LEGAL, hard="5")
+
+
 # --------------------------------------------------------------------------- the check
 NEVER = ("never guessed, in any mode: an ID number, a date of birth, bank or payment details, a password or a typed "
          "signature is filled only from the person's saved value. Leave it; if the form requires it, this "
@@ -266,6 +322,10 @@ def check(action: dict, question: str, options=(), material=None, *, saved: bool
     flagged BEST GUESS (autoapply/guess.py) instead of being refused, so the run goes on. Never
     for a never-guessed field, a consent, a long number or filler; where the form offers a
     neutral choice the guess is that one (always, on a self-identification question)."""
+    if not saved:
+        wa_v = work_auth_verdict(action, question, options, material)
+        if wa_v is not None:
+            return wa_v
     v = _check(action, question, options, material, saved=saved)
     if v.ok or saved or not auto:
         return v
