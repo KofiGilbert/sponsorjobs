@@ -52,9 +52,20 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024   # 32 MB
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 
+# (2026-11-23) The app page's security policy: scripts only from the app itself and from Daily's
+# call engine (live interviews load it from c.daily.co at run time); no inline script, no
+# plugins, no <base> rewrites, never framed. A missed escape somewhere then cannot run script in
+# the window that holds the shell bridge. Other pages (sign-in callbacks, the mailbox reader)
+# keep their own headers.
+APP_CSP = ("script-src 'self' https://c.daily.co blob: 'unsafe-eval' 'wasm-unsafe-eval'; "
+           "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+
+
 @app.after_request
 def _no_store(resp):
     resp.headers["Cache-Control"] = "no-store"
+    if request.path == "/" and resp.mimetype == "text/html" and "Content-Security-Policy" not in resp.headers:
+        resp.headers["Content-Security-Policy"] = APP_CSP
     return resp
 
 # Data locations (env-overridable so an isolated instance can run without
