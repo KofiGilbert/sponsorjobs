@@ -80,11 +80,15 @@ Cloudflare Email Routing hands every message for the domain to the Worker's `ema
      row (2,000,000 bytes), the HTML is dropped and the text kept. Attachment content is never
      stored.
   3. The person's verified e-mail is told, according to the alias's `notify_mode`:
-     - `forward` (the default): the whole message, as before.
+     - `forward` (the default): the message as plain text.
        From `"<sender's display name> via SponsorJobs" <no-reply@sponsorjobs.ai>`, Reply-To the
-       original sender, the original subject, text and HTML bodies (each capped at 1 MiB),
-       attachments dropped, and a first line that says
-       `Forwarded by SponsorJobs from <alias>; attachments are not forwarded`.
+       original sender, the original subject and the readable text (the plain part, or the HTML
+       read as text, plus any link the HTML carries; capped at 1 MiB). The sender's HTML is never
+       re-sent from our domain (the Worker has no HTML sanitizer, and a stranger's markup must not
+       go out under our name); attachments are dropped. The first line says
+       `Forwarded by SponsorJobs from <original sender>`, the next names the alias, and, when the
+       message was stored, a third points at the formatted original in the app's Inbox
+       (`sponsorjobs://inbox`).
      - `notice`: a short plain-text note. From `"SponsorJobs" <no-reply@sponsorjobs.ai>`,
        Reply-To the original sender. The subject is `<Company> received your application` for a
        confirmation, `An update on your application to <Company>` for a rejection, an interview

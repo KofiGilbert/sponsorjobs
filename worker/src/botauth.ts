@@ -35,14 +35,33 @@
 // Ed25519.
 //
 // Privacy and limits. The Worker never logs the authority (the site being applied to); only counts
-// are logged. /agent/sign is limited to 120 calls per account per minute, counted in D1
+// are logged. To count distinct sites a day, the site's registrable domain (never the path) is kept
+// in D1 for the current UTC day only. /agent/sign is limited to 120 calls per account per minute, counted in D1
 // (`sign_limits`, a guarded upsert as in signin.ts) rather than an in-memory map: an isolate can be
 // recycled or run in several places at once, and a per-isolate counter would reset or split with
 // it. A page with twenty frames and redirects is a handful of signatures; 120 a minute is plenty
 // for an agent and far too few for a scraper.
+//
+// Who may ask, and for what (2026-11-23). A signature vouches for the request under our name, so
+// it is not handed to anyone with a token:
+//  - The account must have a verified e-mail (a completed e-mail code or Google sign-in) or a paid
+//    plan. Anonymous device accounts are free and quick to make; they get 403 sign_in_required and
+//    their requests go out unsigned, as before signing existed.
+//  - The authority must be a job application site (src/applysites.ts, the app's own lists): a
+//    hiring system's host, or the application site of the apply run the request belongs to. The
+//    app sends that run's apply host as `site`; the authority must be that host or on its domain.
+//    The job boards that forbid automation are never signed for.
+//  - Daily caps, counted in D1 (`sign_daily`, `sign_sites`; migrations/0016_sign_daily.sql): the
+//    signatures per account and per client network a day, and the number of distinct application
+//    sites (not hiring systems) an account may be signed for a day. Each is a Worker var with a
+//    default (SIGNS_PER_ACCOUNT_PER_DAY, SIGNS_PER_IP_PER_DAY, SIGN_SITES_PER_DAY).
+//  - Volume is logged as counts only (never the authority or the site): each refusal, and an
+//    account or the whole service passing round numbers of signatures in a day.
 
 import { identify } from "./accounts";
-import type { Env } from "./env";
+import { isAtsHost, isProhibitedHost, onSite, siteKey } from "./applysites";
+import { type Env, intVar } from "./env";
+import { isPass, PLANS } from "./metering";
 
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...headers } });
@@ -60,6 +79,11 @@ export const SIGNATURE_AGENT = "https://sponsorjobs.ai";  // where the directory
 export const REQUEST_TTL_SECONDS = 60;                     // a signed request is good this long
 export const DIRECTORY_TTL_SECONDS = 3600;                 // the directory's signature and cache life
 export const SIGNS_PER_MINUTE = 120;                       // per account
+export const SIGNS_PER_ACCOUNT_PER_DAY = 3000;             // defaults; each a Worker var too
+export const SIGNS_PER_IP_PER_DAY = 10000;                 // a campus shares one network
+export const SIGN_SITES_PER_DAY = 60;                      // distinct application sites per account
+const LOG_EVERY = 1000;                                    // log an account's daily count at each multiple
+const LOG_TOTAL_EVERY = 10000;                             // and the service's
 export const DIRECTORY_PATH = "/.well-known/http-message-signatures-directory";
 export const DIRECTORY_CONTENT_TYPE = "application/http-message-signatures-directory+json";
 export const REQUEST_LABEL = "sig2";                       // the labels in Cloudflare's examples
@@ -230,18 +254,102 @@ async function allowSign(db: D1Database, user: string, now: number): Promise<boo
   return r!.results.length > 0;
 }
 
-/** POST /agent/sign {method, authority, path} -> {signature_input, signature, signature_agent, expires}. */
+/** May this account have requests signed? A verified e-mail (attached only after a proven code or
+ * Google sign-in, src/accounts.ts signInWithEmail) or a paid plan that is still running. */
+async function maySign(db: D1Database, user: string, now: number): Promise<boolean> {
+  const row = await db.prepare(
+    "SELECT a.email, u.plan, u.pass_until FROM accounts a LEFT JOIN users u ON u.user = a.account_id " +
+    "WHERE a.account_id = ?").bind(user).first<{ email: string | null; plan: string | null; pass_until: number | null }>();
+  if (!row) return false;
+  if (row.email) return true;
+  const plan = PLANS[row.plan ?? ""];
+  return Boolean(plan && isPass(plan) && (row.pass_until ?? 0) > now);
+}
+
+const dayOfSeconds = (now: number) => new Date(now * 1000).toISOString().slice(0, 10);
+
+async function sha256Hex(s: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(s)));
+  return [...d].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Count one signature today for the account, the client network and the service; null when the
+ * account or the network is at its daily cap, else the account's and the service's new counts.
+ * Guarded upserts as in allowSign; past days are swept in the same batch. */
+async function allowDaily(db: D1Database, env: Env, user: string, ip: string, now: number):
+    Promise<{ account: number; total: number } | null> {
+  const day = dayOfSeconds(now);
+  const perAccount = intVar(env.SIGNS_PER_ACCOUNT_PER_DAY, SIGNS_PER_ACCOUNT_PER_DAY);
+  const perIp = intVar(env.SIGNS_PER_IP_PER_DAY, SIGNS_PER_IP_PER_DAY);
+  const upsert = "INSERT INTO sign_daily(key, day, n) VALUES(?, ?, 1) " +
+                 "ON CONFLICT(key, day) DO UPDATE SET n = n + 1 WHERE n < ? RETURNING n";
+  const [, u, i] = await db.batch<{ n: number }>([
+    db.prepare("DELETE FROM sign_daily WHERE day < ?").bind(day),
+    db.prepare(upsert).bind(`u:${user}`, day, perAccount),
+    db.prepare(upsert).bind(`i:${await sha256Hex(ip)}`, day, perIp),
+  ]);
+  if (!u!.results.length || !i!.results.length) return null;
+  const t = await db.prepare("INSERT INTO sign_daily(key, day, n) VALUES('all', ?, 1) " +
+                             "ON CONFLICT(key, day) DO UPDATE SET n = n + 1 RETURNING n").bind(day).first<{ n: number }>();
+  return { account: u!.results[0]!.n, total: t?.n ?? 0 };
+}
+
+/** Count `site` among the account's application sites today; false when it is a new site and the
+ * account is at its daily number of sites. One guarded insert: a site already counted is free. */
+async function allowSite(db: D1Database, env: Env, user: string, site: string, now: number): Promise<boolean> {
+  const day = dayOfSeconds(now);
+  const cap = intVar(env.SIGN_SITES_PER_DAY, SIGN_SITES_PER_DAY);
+  const [, , seen] = await db.batch<{ n: number }>([
+    db.prepare("DELETE FROM sign_sites WHERE day < ?").bind(day),
+    db.prepare(
+      "INSERT INTO sign_sites(user, day, site) SELECT ?, ?, ? " +
+      "WHERE (SELECT COUNT(*) FROM sign_sites WHERE user = ? AND day = ?) < ? " +
+      "ON CONFLICT(user, day, site) DO NOTHING").bind(user, day, site, user, day, cap),
+    db.prepare("SELECT 1 AS n FROM sign_sites WHERE user = ? AND day = ? AND site = ?").bind(user, day, site),
+  ]);
+  return seen!.results.length > 0;
+}
+
+const refuse = (reason: string, status: number, error: string) => {
+  console.log(`agent/sign: refused (${reason})`);
+  return json({ error, reason }, status);
+};
+
+/** POST /agent/sign {method, authority, path, site} -> {signature_input, signature, signature_agent,
+ * expires}. `site` is the apply run's application host; it is needed unless the authority is a
+ * hiring system's own host. */
 export async function agentSign(req: Request, env: Env, now: number): Promise<Response> {
   const key = keyFrom(env);
   if (!key) return notConfigured();
   const user = await identify(req, env);
   if (!user) return json({ error: "no user" }, 401);
-  const authority = normaliseAuthority((await body(req)).authority);
+  if (!(await maySign(env.DB, user, now))) {
+    return refuse("sign_in_required", 403, "signing needs a signed-in account");
+  }
+  const b = await body(req);
+  const authority = normaliseAuthority(b.authority);
   if (!authority) return json({ error: "authority must be a bare host", reason: "bad_authority" }, 400);
+  if (isProhibitedHost(authority)) return refuse("prohibited_site", 403, "this site does not allow automated applications");
+  let site: string | null = null;
+  if (!isAtsHost(authority)) {
+    const s = normaliseAuthority(b.site);
+    if (!s || isProhibitedHost(s) || !onSite(authority, s)) {
+      return refuse("not_apply_site", 403, "only a job application site of an apply run is signed");
+    }
+    site = siteKey(s);
+  }
   if (!(await allowSign(env.DB, user, now))) {
     console.log(`agent/sign: an account hit the ${SIGNS_PER_MINUTE}/minute limit`);
     return json({ error: "too many signatures this minute", reason: "rate_limited" }, 429);
   }
+  const ip = req.headers.get("CF-Connecting-IP") || "unknown";
+  const counts = await allowDaily(env.DB, env, user, ip, now);
+  if (!counts) return refuse("daily_limit", 429, "too many signatures today");
+  if (site && !(await allowSite(env.DB, env, user, site, now))) {
+    return refuse("site_limit", 429, "too many different sites today");
+  }
+  if (counts.account % LOG_EVERY === 0) console.log(`agent/sign: an account reached ${counts.account} signatures today`);
+  if (counts.total % LOG_TOTAL_EVERY === 0) console.log(`agent/sign: ${counts.total} signatures today in all`);
   return json(await signRequest(await key, authority, now), 200, { "Cache-Control": "no-store" });
 }
 

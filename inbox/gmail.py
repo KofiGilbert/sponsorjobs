@@ -12,15 +12,18 @@ tests) runs without them installed. Install them only when wiring a live mailbox
 Scope is deliberately the narrowest that works: READ-ONLY. The wired feature only reads
 job-related mail and returns drafted reply TEXT for the person to send from Gmail
 themselves, so no write/send scope is requested — the token literally cannot send or
-modify anything. The OAuth token + client credentials are stored locally under config/ and
-git-ignored (the rules live in the repo-root .gitignore: config/gmail_token.json,
-config/gmail_credentials.json) — no cloud, like the LLM key.
+modify anything. The OAuth token lives in the person's own data folder (RESUME_AGENT_DATA_DIR,
+data/ in a checkout), written owner-only (ui/secure_files.py); the OAuth client stays under
+config/. Both are git-ignored (config/gmail_credentials.json, data/); no cloud, like the LLM key.
+A token left in config/gmail_token.json by an older version is moved on first use
+(migrate_legacy_token).
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -33,9 +36,44 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
 
-_CONFIG = Path(__file__).resolve().parents[1] / "config"
-_TOKEN_PATH = _CONFIG / "gmail_token.json"
+_ROOT = Path(__file__).resolve().parents[1]
+_CONFIG = _ROOT / "config"
 _CREDS_PATH = _CONFIG / "gmail_credentials.json"
+# Where older versions kept the token: inside the install, shared by every account on the machine.
+_LEGACY_TOKEN_PATH = _CONFIG / "gmail_token.json"
+# The token file. None = <the data folder>/gmail_token.json, worked out at each use so it follows
+# RESUME_AGENT_DATA_DIR (the packaged app sets it before the engine starts). A test may set a path.
+_TOKEN_PATH: Path | None = None
+
+
+def token_path() -> Path:
+    """Where the Gmail token file lives: the per-user data folder, never the install."""
+    if _TOKEN_PATH is not None:
+        return Path(_TOKEN_PATH)
+    data = Path(os.environ.get("RESUME_AGENT_DATA_DIR") or (_ROOT / "data")).resolve()
+    return data / "gmail_token.json"
+
+
+def migrate_legacy_token(legacy=None, dest=None) -> bool:
+    """Move a token an older version left under config/ into the data folder: copied owner-only,
+    and the old file deleted only after the copy is in place (when the data folder already has a
+    token, the old one is a stale copy and is just deleted). True when the old file was handled.
+    Never raises: a failure leaves both files as they were, and it is tried again next start."""
+    from ui.secure_files import write_private
+    legacy = Path(legacy) if legacy is not None else _LEGACY_TOKEN_PATH
+    dest = Path(dest) if dest is not None else token_path()
+    try:
+        if not legacy.is_file() or legacy.resolve() == dest.resolve():
+            return False
+        if not dest.exists():
+            raw = legacy.read_text(encoding="utf-8")
+            write_private(dest, raw)
+            if dest.read_text(encoding="utf-8") != raw:
+                return False
+        legacy.unlink()
+        return True
+    except OSError:
+        return False
 
 # Optional token-storage override. The OAuth token grants mailbox access, so when App Lock
 # is on the app installs a store that keeps it ENCRYPTED (in the lock) instead of a plaintext
@@ -51,12 +89,12 @@ def set_token_store(load, save) -> None:
     _TOKEN_LOAD, _TOKEN_SAVE = load, save
 
 
-def token_present(token_path=_TOKEN_PATH) -> bool:
+def token_present(path=None) -> bool:
     """Is a Gmail token available (via the installed store, else the plaintext file)?
     Used for the connection-status check, which must see a lock-held token, not just a file."""
     if _TOKEN_LOAD is not None:
         return bool(_TOKEN_LOAD())
-    return Path(token_path).exists()
+    return Path(path if path is not None else token_path()).exists()
 
 # Application-related mail only — we never sweep the whole mailbox. This narrows the
 # read to job-relevant senders/subjects (read-first, CLAUDE.md §5).
@@ -81,7 +119,7 @@ def _require_google():
         raise RuntimeError("Gmail isn't available in this version yet.") from e
 
 
-def build_service(token_path=_TOKEN_PATH, creds_path=_CREDS_PATH):
+def build_service(token_file=None, creds_path=_CREDS_PATH):
     """Authorize against the person's Gmail and return an API service.
 
     Uses a cached local token when valid; otherwise runs the installed-app OAuth flow
@@ -89,14 +127,15 @@ def build_service(token_path=_TOKEN_PATH, creds_path=_CREDS_PATH):
     caches the resulting token locally.
     """
     Request, Credentials, InstalledAppFlow, build = _require_google()
-    token_path, creds_path = Path(token_path), Path(creds_path)
+    tpath = Path(token_file) if token_file is not None else token_path()
+    creds_path = Path(creds_path)
     # Token storage is pluggable (App Lock installs an encrypted store); default = the file.
-    load = _TOKEN_LOAD or (lambda: token_path.read_text(encoding="utf-8")
-                           if token_path.exists() else None)
+    load = _TOKEN_LOAD or (lambda: tpath.read_text(encoding="utf-8")
+                           if tpath.exists() else None)
 
     def _default_save(s: str) -> None:
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(s, encoding="utf-8")
+        from ui.secure_files import write_private
+        write_private(tpath, s)                    # owner-only from creation, swapped in atomically
     save = _TOKEN_SAVE or _default_save
 
     creds = None

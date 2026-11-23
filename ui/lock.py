@@ -38,9 +38,14 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
+from ui.secure_files import write_private
+
 # scrypt cost. 2**16 keeps an unlock well under a second on a laptop while staying far above
 # a plain hash; OWASP lists scrypt as an acceptable memory-hard KDF when Argon2id is absent.
 _N, _R, _P = 2 ** 16, 8, 1
+# The shortest NEW passcode (2026-11-23: was 4). A passcode set before still unlocks: only
+# set_passcode (turning the lock on, or changing the passcode) checks the length.
+MIN_PASSCODE = 6
 _VERIFIER = b"tailor-lock-v1"          # a known plaintext we can round-trip to check a passcode
 # The secrets App Lock takes custody of when enabled (encrypted at rest). NOT just the
 # provider key: the Telegram token can drive runs and spend the owner's tokens, and the
@@ -119,8 +124,8 @@ class Lock:
         """Turn App Lock ON: derive a key from `passcode`, encrypt `creds` (the API key)
         under it, and write only ciphertext. Leaves the process UNLOCKED with the creds in
         memory so the owner keeps working."""
-        if not passcode or len(passcode) < 4:
-            raise ValueError("Choose a passcode of at least 4 characters.")
+        if not passcode or len(passcode) < MIN_PASSCODE:
+            raise ValueError(f"Choose a passcode of at least {MIN_PASSCODE} characters.")
         salt = os.urandom(16)
         kek = self._derive(passcode, salt, _N, _R, _P)
         clean = {k: v for k, v in (creds or {}).items() if v}
@@ -130,10 +135,7 @@ class Lock:
             "verifier": self._seal(kek, _VERIFIER),
             "creds": {k: self._seal(kek, v.encode("utf-8")) for k, v in clean.items()},
         }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        write_private(self.path, json.dumps(data, indent=2))
         global _UNLOCKED, _CREDS, _KEK
         _CREDS = dict(clean)
         _KEK = kek
@@ -180,9 +182,7 @@ class Lock:
         else:
             data["creds"].pop(name, None)
             _CREDS.pop(name, None)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        write_private(self.path, json.dumps(data, indent=2))
 
     def change(self, current: str, new: str) -> bool:
         """Re-key: verify `current`, then re-encrypt the same creds under `new`."""

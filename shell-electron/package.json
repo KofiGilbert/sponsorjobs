@@ -71,7 +71,7 @@
     "dmg": {
       "artifactName": "SponsorJobs-${version}-${arch}.${ext}"
     },
-    "afterPack": "scripts/adhoc-sign.js",
+    "afterPack": "scripts/after-pack.js",
     "protocols": [
       {
         "name": "SponsorJobs",

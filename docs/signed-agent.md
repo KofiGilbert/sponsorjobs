@@ -78,6 +78,26 @@ rewrite. At most 120 signatures per account per minute (`429 rate_limited`), cou
 an isolate can be recycled or run in several places at once. The Worker never logs the authority,
 only counts.
 
+Who may ask, and for what (2026-11-23):
+
+- The account needs a verified e-mail (a completed e-mail code or Google sign-in) or a paid plan
+  that is still running. An anonymous device account gets `403 sign_in_required`, and its requests
+  go out unsigned (signing never blocks a request).
+- `authority` must be a job application site. A hiring system's own host (the same list as the
+  app's navigation fence, `src/applysites.ts`, ported from `submit/policy.py`) is signed as is.
+  Anything else needs `site`, the apply run's application host, which the app sends: the authority
+  must be that host or on its registrable domain (on shared hosting such as `herokuapp.com`, only
+  that host or below it). Otherwise `403 not_apply_site`. The job boards that forbid automation
+  (`submit/allowlist.py` `PROHIBITED_HOSTS`) are never signed: `403 prohibited_site`.
+- Daily caps per UTC day, in D1 (`sign_daily`, `sign_sites`, migration 0016): signatures per account
+  (`SIGNS_PER_ACCOUNT_PER_DAY`, default 3000), per client network (`SIGNS_PER_IP_PER_DAY`, default
+  10000), and distinct application sites per account (`SIGN_SITES_PER_DAY`, default 60; hiring
+  systems are not counted). Past a cap: `429 daily_limit` or `429 site_limit`. Each default can be
+  changed with a Worker var, without a code change.
+- Logged: each refusal by reason, and an account or the whole service passing each 1000 or 10000
+  signatures in a day. Counts only; the site's registrable domain is kept in D1 for the current
+  day only, to count distinct sites, and is never logged.
+
 Reply, for `{"authority": "boards.greenhouse.io"}`:
 
 ```json
@@ -108,7 +128,10 @@ signature base the key signs (RFC 9421 section 2.5) is
 
 The app side: `ui/app.py` `POST /api/autoapply/agent/sign` proxies to this route with the account
 token; `shell-electron/agent.js` `armSigning` calls it for every document or frame request to a host
-in the run's allowlist and adds the three headers.
+in the run's allowlist and adds the three headers. The engine signs only inside an apply run it
+started in the last four hours (the shell asks `GET /api/autoapply/agent/allowed-hosts` as a run
+starts, and the engine remembers that run's fence) and sends that run's apply host as `site`;
+anything else is answered `{ok: false, reason: "not-in-run"}` without asking the broker.
 
 ## Registering the bot with Cloudflare
 
@@ -143,7 +166,8 @@ tracked under BotBase, Submission history). What to paste:
 5. Submit the registration form (text above) and wait for Cloudflare to accept the key.
 6. Prove it end to end from the shell: start an apply-agent run on `https://crawltest.com/` (any
    path; the allowlist must include it for the test, or sign one request by hand with the three
-   headers from `/agent/sign` for authority `crawltest.com`) and request
+   headers from `/agent/sign` for authority and site `crawltest.com`, with a signed-in account's
+   token) and request
    `https://crawltest.com/cdn-cgi/web-bot-auth`. `200` means the key is known and the signature
    verified; `401` means the signature parsed but the key is unknown (not registered yet) or did
    not verify; `400` means a malformed header. Until the registration is accepted, `401` is the
