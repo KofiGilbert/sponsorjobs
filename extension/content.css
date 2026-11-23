@@ -60,50 +60,8 @@
 
 /* --- Referral: draft-a-message action + panel (on the open posting) --- */
 
-/* --- Assisted-apply panel (floating, bottom-right of an application form) --- */
-.tailor-af-panel {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 2147483000;
-  width: 268px;
-  background: #fff;
-  color: #1d2939;
-  border: 1px solid #e4e7ec;
-  border-radius: 12px;
-  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.18);
-  padding: 12px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-.tailor-af-head { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
-.tailor-af-dot { width: 8px; height: 8px; border-radius: 50%; background: #12b76a; flex: none; }
-.tailor-af-title { font-weight: 700; font-size: 12.5px; color: #101828; }
-.tailor-af-x {
-  margin-left: auto; border: none; background: none; cursor: pointer;
-  font-size: 17px; line-height: 1; color: #98a2b3; padding: 0 2px;
-}
-.tailor-af-x:hover { color: #475467; }
-.tailor-af-fill, .tailor-af-draft {
-  width: 100%; border: none; cursor: pointer;
-  background: #4f46e5; color: #fff; font-weight: 700; font-size: 13px;
-  padding: 9px 12px; border-radius: 8px; font-family: inherit;
-}
-.tailor-af-fill:hover, .tailor-af-draft:hover { background: #4338ca; }
-.tailor-af-fill:disabled, .tailor-af-draft:disabled { background: #c7c9f2; cursor: default; }
-.tailor-af-draft {
-  margin-top: 7px; background: #fff; color: #4f46e5;
-  border: 1px solid #c7c9f2;
-}
-.tailor-af-draft:hover { background: #f4f0ff; }
-.tailor-af-draft:disabled { background: #f4f0ff; color: #a9abe0; }
-.tailor-af-note { margin-top: 9px; color: #667085; }
-.tailor-af-note.ok   { color: #027a48; }
-.tailor-af-note.warn { color: #b54708; }
-.tailor-af-note.bad  { color: #b42318; }
-.tailor-af-note b { color: inherit; }
-.tailor-af-note a { color: #4f46e5; font-weight: 600; }
+/* --- Assisted-apply panel: its styles live in autofill.js, inside the panel's closed shadow
+   root, so the page cannot restyle or reach it. --- */
 
 /* A field the extension just filled, a brief green wash so you can see what changed. */
 .tailor-filled {

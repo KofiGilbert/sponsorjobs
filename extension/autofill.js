@@ -20,7 +20,55 @@
   if (!TA) return;   // manifest loads autofill_core.js first; without it, do nothing
 
   // ------------------------------------------------------------------ the panel
-  let panel = null, cachedFields = null, cachedResumes = [], cachedAppUrl = "http://127.0.0.1:57000/";
+  // The panel lives in a CLOSED shadow root on its own host element: the page's scripts cannot
+  // find its buttons, read its text or press them, and the page's CSS does not reach it. Every
+  // button also acts only on a real press by the person (event.isTrusted), never on a click
+  // the page made up.
+  let panel = null, panelHost = null, cachedFields = null, cachedResumes = [], cachedAppUrl = "http://127.0.0.1:57000/";
+
+  function onPress(el, fn) {
+    if (!el) return;
+    el.addEventListener("click", (e) => {
+      if (!e || e.isTrusted !== true) return;       // a scripted click is not the person
+      fn(e);
+    });
+  }
+
+  const PANEL_CSS = `
+:host { all: initial; }
+.tailor-af-panel {
+  position: fixed; right: 18px; bottom: 18px; z-index: 2147483000; width: 268px;
+  background: #fff; color: #1d2939; border: 1px solid #e4e7ec; border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.18); padding: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12.5px; line-height: 1.5; text-align: left; box-sizing: border-box;
+}
+.tailor-af-head { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
+.tailor-af-dot { width: 8px; height: 8px; border-radius: 50%; background: #12b76a; flex: none; }
+.tailor-af-title { font-weight: 700; font-size: 12.5px; color: #101828; }
+.tailor-af-x {
+  margin-left: auto; border: none; background: none; cursor: pointer;
+  font-size: 17px; line-height: 1; color: #98a2b3; padding: 0 2px;
+}
+.tailor-af-x:hover { color: #475467; }
+.tailor-af-fill, .tailor-af-draft {
+  width: 100%; border: none; cursor: pointer;
+  background: #4f46e5; color: #fff; font-weight: 700; font-size: 13px;
+  padding: 9px 12px; border-radius: 8px; font-family: inherit;
+}
+.tailor-af-fill:hover, .tailor-af-draft:hover { background: #4338ca; }
+.tailor-af-fill:disabled, .tailor-af-draft:disabled { background: #c7c9f2; cursor: default; }
+.tailor-af-draft { margin-top: 7px; background: #fff; color: #4f46e5; border: 1px solid #c7c9f2; }
+.tailor-af-draft:hover { background: #f4f0ff; }
+.tailor-af-draft:disabled { background: #f4f0ff; color: #a9abe0; }
+.tailor-af-note { margin-top: 9px; color: #667085; }
+.tailor-af-note.ok   { color: #027a48; }
+.tailor-af-note.warn { color: #b54708; }
+.tailor-af-note.bad  { color: #b42318; }
+.tailor-af-note b { color: inherit; }
+.tailor-af-note a { color: #4f46e5; font-weight: 600; }
+.tailor-af-learn button { font: inherit; cursor: pointer; }
+`;
 
   function ask(msg) {
     return new Promise((resolve) => {
@@ -142,14 +190,14 @@
     if (!panel || !c || !c.key || !LEARN_LABELS[c.key]) return;
     const old = panel.querySelector(".tailor-af-learn");
     if (old) old.remove();
-    const row = document.createElement("div");
+    const row = document.createElement("div");      // appended inside the closed shadow root
     row.className = "tailor-af-note tailor-af-learn";
     row.innerHTML = `You changed your ${escq(LEARN_LABELS[c.key])} to <b>${escq(c.value)}</b>. ` +
       `<button type="button" class="tailor-af-learn-yes">Save to my profile</button> ` +
       `<button type="button" class="tailor-af-learn-no">Not now</button>`;
     panel.appendChild(row);
-    row.querySelector(".tailor-af-learn-no").addEventListener("click", () => row.remove());
-    row.querySelector(".tailor-af-learn-yes").addEventListener("click", async () => {
+    onPress(row.querySelector(".tailor-af-learn-no"), () => row.remove());
+    onPress(row.querySelector(".tailor-af-learn-yes"), async () => {
       const fields = {}; fields[c.key] = c.value;
       const res = await sendEvent({ type: "learn", fields });
       row.innerHTML = res && res.ok
@@ -212,21 +260,24 @@
 
   function buildPanel() {
     if (panel) return;
-    panel = document.createElement("div");
-    panel.className = "tailor-af-panel";
-    panel.innerHTML =
+    panelHost = document.createElement("div");
+    const root = panelHost.attachShadow({ mode: "closed" });
+    root.innerHTML = "<style>" + PANEL_CSS + "</style>" +
+      '<div class="tailor-af-panel">' +
       '<div class="tailor-af-head"><span class="tailor-af-dot"></span>' +
       '<span class="tailor-af-title">SponsorJobs · Assisted apply</span>' +
-      '<button class="tailor-af-x" title="Hide">×</button></div>' +
-      '<button class="tailor-af-fill">Fill this application</button>' +
-      '<button class="tailor-af-draft" style="display:none">Draft long answers</button>' +
+      '<button type="button" class="tailor-af-x" title="Hide">×</button></div>' +
+      '<button type="button" class="tailor-af-fill">Fill this application</button>' +
+      '<button type="button" class="tailor-af-draft" style="display:none">Draft long answers</button>' +
       '<div class="tailor-af-note">Fills your contact details, links, and saved work-auth / ' +
-      'sponsorship answers. You review and submit, SponsorJobs never submits for you.</div>';
-    document.body.appendChild(panel);
-    panel.querySelector(".tailor-af-fill").addEventListener("click", doFill);
-    panel.querySelector(".tailor-af-draft").addEventListener("click", doDraft);
-    panel.querySelector(".tailor-af-x").addEventListener("click", () => {
-      panel.remove(); panel = null; dismissed = true;
+      'sponsorship answers. You review and submit, SponsorJobs never submits for you.</div>' +
+      '</div>';
+    panel = root.querySelector(".tailor-af-panel");
+    document.body.appendChild(panelHost);
+    onPress(panel.querySelector(".tailor-af-fill"), doFill);
+    onPress(panel.querySelector(".tailor-af-draft"), doDraft);
+    onPress(panel.querySelector(".tailor-af-x"), () => {
+      panelHost.remove(); panelHost = null; panel = null; dismissed = true;
     });
     updateDraftButton();
   }

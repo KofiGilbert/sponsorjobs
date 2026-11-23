@@ -350,6 +350,22 @@ const walk = (P, a) => {
     assert(end.state === "ready", "and the run went on to Ready to send: " + end.state + " " + end.message);
   }
 
+  // ---- 8b. an emailed link that points to another site is never opened ------------------------
+  // The run follows a link from the mail only on the site it applies on or that site's hiring
+  // system; anything else is left alone, the run never goes there, and it parks as when no
+  // mail came.
+  {
+    let awaits = 0;
+    const hooks = { onAct: walk, post: (p) => { if (p === "/api/inbox/await") { awaits++; return { ok: true, kind: "verify", link: "https://jobs.example.com.other-site.example/activate/tok" }; } } };
+    const brain = (P, b) => (P.at === "mailed" ? ok([], { done: { outcome: "await_email", reason: "link" } }) : plainBrain(P, b));
+    const s = setup("job", brain, hooks);
+    s.P.afterAuth = "mailed";
+    const r = await s.agent.run(15, { url: PAGES.job.url, company: "Acme" });
+    assert(r.parked && r.kind === "person", "an off-site link parks the run like no mail " + JSON.stringify(r));
+    assert(awaits === 2, "the inbox was asked twice " + awaits);
+    assert(!s.opened.some((u) => /other-site/.test(u)), "the off-site link was never opened " + JSON.stringify(s.opened));
+  }
+
   console.log("section 9 at " + Math.round((Date.now() - T0) / 1000) + " s");
   // ---- 9. a batch moves on from a job that takes too long -----------------------------------
   {
