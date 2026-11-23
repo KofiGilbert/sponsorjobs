@@ -41,6 +41,9 @@ class Material:
     employers: list = field(default_factory=list)      # the organisations in the work history
     posting: dict = field(default_factory=dict)        # {title, location, type, requirements: [...]}
     place: dict = field(default_factory=dict)          # {city, state, code}: where the person lives
+    # (2026-11-23) the saved work authorization (applicant/workauth profile): a work-authorization
+    # question is answered only from it, never guessed (autoapply/protocol.py work_auth_verdict)
+    work_auth: dict = field(default_factory=dict)
 
     def __bool__(self) -> bool:
         return bool(self.block)
