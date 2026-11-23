@@ -12,8 +12,10 @@
   // (2026-11-23) image load / error handling without inline handlers (the page's security policy
   // allows no inline script): [data-img-gone] images remove themselves when they fail,
   // [data-img-fade] ones fade in once loaded.
-  document.addEventListener("error", (e) => { const t = e.target; if (t && t.tagName === "IMG" && t.hasAttribute("data-img-gone")) t.remove(); }, true);
-  document.addEventListener("load", (e) => { const t = e.target; if (t && t.tagName === "IMG" && t.hasAttribute("data-img-fade")) t.style.opacity = 1; }, true);
+  if (typeof document !== "undefined") {
+    document.addEventListener("error", (e) => { const t = e.target; if (t && t.tagName === "IMG" && t.hasAttribute("data-img-gone")) t.remove(); }, true);
+    document.addEventListener("load", (e) => { const t = e.target; if (t && t.tagName === "IMG" && t.hasAttribute("data-img-fade")) t.style.opacity = 1; }, true);
+  }
 
   /* SponsorJobs is an ONLINE, real-model tool. When it can't reach the model we don't want a
      generic error toast: "you're offline", "add your key" and "your credit ran out" are
