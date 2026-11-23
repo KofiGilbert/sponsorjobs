@@ -7,13 +7,13 @@
 // https://crawltest.com/cdn-cgi/web-bot-auth answers 200 once the key is registered (401 for an
 // unknown key, 400 for a malformed signature). That is a manual step in docs/signed-agent.md, not
 // a test here.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import {
   DIRECTORY_CONTENT_TYPE, DIRECTORY_PATH, DIRECTORY_TTL_SECONDS, REQUEST_TTL_SECONDS, SIGNATURE_AGENT, SIGNS_PER_MINUTE,
   normaliseAuthority, signatureBase, signatureParams,
 } from "../src/botauth";
-import { call, newAccount } from "./helpers";
+import { call, freshIp, givePass, newAccount, signedInAccount } from "./helpers";
 
 // A fixed seed (32 bytes, base64url), so the public key and the keyid are the same on every run.
 const SEED = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA";
@@ -25,10 +25,11 @@ const b64url = (bytes: Uint8Array) =>
 const fromB64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 /** Call the Worker and keep the raw headers too (helpers.call drops them). */
-async function raw(path: string, o: { method?: string; body?: unknown; token?: string; env?: Partial<Env> } = {}) {
+async function raw(path: string, o: { method?: string; body?: unknown; token?: string; env?: Partial<Env>; ip?: string } = {}) {
   const { default: worker } = await import("../src/index");
   const { env } = await import("./helpers");
   const headers: Record<string, string> = {};
+  if (o.ip) headers["CF-Connecting-IP"] = o.ip;
   if (o.token) headers.Authorization = `Bearer ${o.token}`;
   if (o.body !== undefined) headers["content-type"] = "application/json";
   const res = await worker.fetch(
@@ -76,8 +77,11 @@ async function verifies(key: CryptoKey, values: Record<string, string>, signatur
   return crypto.subtle.verify({ name: "Ed25519" }, key, p.bytes, enc.encode(base));
 }
 
-const sign = (token: string | undefined, authority: unknown, env: Partial<Env> = KEYED) =>
-  raw("/agent/sign", { body: { method: "GET", authority, path: "/jobs/1" }, token, env });
+/** Sign for `authority`; by default as part of a run on that very site (the app sends the run's
+ * apply host as `site`). */
+const sign = (token: string | undefined, authority: unknown, env: Partial<Env> = KEYED,
+              o: { site?: unknown; ip?: string } = { site: authority }) =>
+  raw("/agent/sign", { body: { method: "GET", authority, path: "/jobs/1", site: o.site }, token, env, ip: o.ip });
 
 describe("the key directory", () => {
   it("is a JWKS with one Ed25519 key whose kid is the RFC 8037 thumbprint of the key", async () => {
@@ -137,7 +141,7 @@ describe("the key directory", () => {
 describe("POST /agent/sign", () => {
   it("answers the three headers in Cloudflare's shape, and the signature verifies for that host", async () => {
     const { key, kid } = await publicKey();
-    const { token } = await newAccount();
+    const { token } = await signedInAccount();
     const r = await sign(token, "Jobs.Example.COM");
     expect(r.status).toBe(200);
     expect(r.headers.get("cache-control")).toBe("no-store");
@@ -164,7 +168,7 @@ describe("POST /agent/sign", () => {
   });
 
   it("every signature is fresh (a new nonce), and a host with a port is fine", async () => {
-    const { token } = await newAccount();
+    const { token } = await signedInAccount();
     const a = await sign(token, "jobs.example.com:8443");
     const b = await sign(token, "jobs.example.com:8443");
     expect(a.status).toBe(200);
@@ -182,7 +186,7 @@ describe("POST /agent/sign", () => {
   });
 
   it("400 bad_authority for anything that is not a bare host", async () => {
-    const { token } = await newAccount();
+    const { token } = await signedInAccount();
     for (const bad of ["", "https://jobs.example.com", "jobs.example.com/apply", "user@jobs.example.com",
                        "jobs example.com", "-jobs.example.com", "jobs.example.com:", "x".repeat(254), 42, null]) {
       const r = await sign(token, bad);
@@ -192,13 +196,117 @@ describe("POST /agent/sign", () => {
   });
 
   it(`429 rate_limited after ${SIGNS_PER_MINUTE} signatures in a minute, per account`, async () => {
-    const { token } = await newAccount();
+    const { token } = await signedInAccount();
     for (let i = 0; i < SIGNS_PER_MINUTE; i++) expect((await sign(token, "jobs.example.com")).status, `call ${i}`).toBe(200);
     const r = await sign(token, "jobs.example.com");
     expect(r.status).toBe(429);
     expect(r.data.reason).toBe("rate_limited");
-    const other = await newAccount();
+    const other = await signedInAccount();
     expect((await sign(other.token, "jobs.example.com")).status).toBe(200);   // another account is fine
+  });
+});
+
+describe("POST /agent/sign: who may ask, and for what", () => {
+  it("403 sign_in_required for an anonymous account; a verified e-mail or a paid plan may sign", async () => {
+    const anon = await newAccount();
+    const r = await sign(anon.token, "jobs.example.com");
+    expect(r.status).toBe(403);
+    expect(r.data.reason).toBe("sign_in_required");
+    const paid = await newAccount();
+    await givePass(paid.id);
+    expect((await sign(paid.token, "jobs.example.com")).status).toBe(200);
+    const s = await signedInAccount();
+    expect((await sign(s.token, "jobs.example.com")).status).toBe(200);
+  });
+
+  it("an expired paid plan without an e-mail is anonymous again", async () => {
+    const a = await newAccount();
+    const { env } = await import("./helpers");
+    await env.DB.prepare("INSERT INTO users(user, plan, pass_until) VALUES(?, 'pass30', ?)")
+      .bind(a.id, Math.floor(Date.now() / 1000) - 60).run();
+    expect((await sign(a.token, "jobs.example.com")).data.reason).toBe("sign_in_required");
+  });
+
+  it("a hiring system's host is signed without a site; anything else needs the run's site", async () => {
+    const { token } = await signedInAccount();
+    expect((await sign(token, "acme.wd5.myworkdayjobs.com", KEYED, {})).status).toBe(200);
+    expect((await sign(token, "boards.greenhouse.io", KEYED, { site: "careers.acme.com" })).status).toBe(200);
+    expect((await sign(token, "ecqa.fa.us2.oraclecloud.com", KEYED, {})).status).toBe(200);
+    const none = await sign(token, "careers.acme.com", KEYED, {});
+    expect(none.status).toBe(403);
+    expect(none.data.reason).toBe("not_apply_site");
+    expect((await sign(token, "careers.acme.com", KEYED, { site: "other.example" })).data.reason).toBe("not_apply_site");
+    // The site's own domain is fine: a sign-in host, a port, the bare domain.
+    for (const a of ["careers.acme.com", "login.acme.com", "acme.com", "careers.acme.com:443"]) {
+      expect((await sign(token, a, KEYED, { site: "careers.acme.com" })).status, a).toBe(200);
+    }
+    expect((await sign(token, "jobs.acme.co.uk", KEYED, { site: "careers.acme.co.uk" })).status).toBe(200);
+    expect((await sign(token, "jobs.other.co.uk", KEYED, { site: "careers.acme.co.uk" })).status).toBe(403);
+    // Shared hosting: a sibling tenant is another owner.
+    expect((await sign(token, "acme.herokuapp.com", KEYED, { site: "acme.herokuapp.com" })).status).toBe(200);
+    expect((await sign(token, "evil.herokuapp.com", KEYED, { site: "acme.herokuapp.com" })).status).toBe(403);
+    // An Oracle-looking host outside the recruiting shape is not a hiring system.
+    expect((await sign(token, "app.oraclecloud.com", KEYED, {})).status).toBe(403);
+  });
+
+  it("never signs for a job board that forbids automation", async () => {
+    const { token } = await signedInAccount();
+    for (const [a, site] of [["www.linkedin.com", "www.linkedin.com"], ["uk.indeed.com", "uk.indeed.com"],
+                             ["careers.acme.com", "www.linkedin.com"]]) {
+      const r = await sign(token, a, KEYED, { site });
+      expect(r.status, `${a} ${site}`).toBe(403);
+      expect(["prohibited_site", "not_apply_site"]).toContain(r.data.reason);
+    }
+    expect((await sign(token, "www.linkedin.com", KEYED, {})).data.reason).toBe("prohibited_site");
+  });
+
+  it("429 daily_limit past the per-account cap a day", async () => {
+    const { token } = await signedInAccount();
+    const env = { ...KEYED, SIGNS_PER_ACCOUNT_PER_DAY: "3" };
+    for (let i = 0; i < 3; i++) expect((await sign(token, "jobs.example.com", env)).status).toBe(200);
+    const r = await sign(token, "jobs.example.com", env);
+    expect(r.status).toBe(429);
+    expect(r.data.reason).toBe("daily_limit");
+    expect((await sign((await signedInAccount()).token, "jobs.example.com", env)).status).toBe(200);
+  });
+
+  it("429 daily_limit past the per-network cap a day, across accounts", async () => {
+    const ip = freshIp();
+    const env = { ...KEYED, SIGNS_PER_IP_PER_DAY: "2" };
+    const a = await signedInAccount();
+    const b = await signedInAccount();
+    expect((await sign(a.token, "jobs.example.com", env, { site: "jobs.example.com", ip })).status).toBe(200);
+    expect((await sign(b.token, "jobs.example.com", env, { site: "jobs.example.com", ip })).status).toBe(200);
+    expect((await sign(b.token, "jobs.example.com", env, { site: "jobs.example.com", ip })).data.reason).toBe("daily_limit");
+    expect((await sign(b.token, "jobs.example.com", env, { site: "jobs.example.com", ip: freshIp() })).status).toBe(200);
+  });
+
+  it("429 site_limit past the number of distinct application sites a day; hiring systems are not counted", async () => {
+    const { token } = await signedInAccount();
+    const env = { ...KEYED, SIGN_SITES_PER_DAY: "2" };
+    expect((await sign(token, "careers.one.example", env)).status).toBe(200);
+    expect((await sign(token, "jobs.two.example", env)).status).toBe(200);
+    expect((await sign(token, "login.one.example", env, { site: "careers.one.example" })).status).toBe(200);  // same site
+    const r = await sign(token, "careers.three.example", env);
+    expect(r.status).toBe(429);
+    expect(r.data.reason).toBe("site_limit");
+    expect((await sign(token, "acme.greenhouse.io", env, {})).status).toBe(200);
+    expect((await sign(token, "jobs.two.example", env)).status).toBe(200);
+  });
+
+  it("logs counts and reasons only, never the site", async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => { lines.push(a.join(" ")); });
+    try {
+      const { token } = await signedInAccount();
+      await sign(token, "secret-employer.example", KEYED, {});
+      await sign((await newAccount()).token, "secret-employer.example");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lines.some((l) => l.includes("not_apply_site"))).toBe(true);
+    expect(lines.some((l) => l.includes("sign_in_required"))).toBe(true);
+    expect(lines.join("\n")).not.toContain("secret-employer");
   });
 });
 

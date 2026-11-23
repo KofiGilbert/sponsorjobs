@@ -141,3 +141,38 @@ def test_verify_maps_email_off_to_not_available(A, monkeypatch):
 def test_google_done_page_handles_the_fragment_errors(A):
     body = A.app.test_client().get("/account/google/done?via=tab").get_data(as_text=True)
     assert 'h.get("error") === "cancelled"' in body and "/?signin=" in body
+
+
+def test_signout_asks_the_broker_to_revoke_the_token_before_forgetting_it(A, monkeypatch):
+    order = []
+
+    class R:
+        status_code = 200
+
+    def post(url, **kw):
+        order.append(("revoke", url.rsplit("/", 2)[-2:], kw["headers"]["Authorization"]))
+        return R()
+    import requests
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(A, "_cred", lambda k: "tok_signed_in" if k == "TAILOR_ACCOUNT_TOKEN" else "")
+    monkeypatch.setattr(A, "_revoke_cred", lambda k: order.append(("forget", k)))
+    monkeypatch.setattr(A, "_account_token", lambda: "tok_anon")
+    r = A.app.test_client().post("/api/account/signout", json={})
+    assert r.status_code == 200 and r.get_json()["email"] is None
+    assert order == [("revoke", ["account", "revoke"], "Bearer tok_signed_in"),
+                     ("forget", "TAILOR_ACCOUNT_TOKEN")]
+
+
+def test_signout_still_forgets_the_token_when_the_broker_is_unreachable(A, monkeypatch):
+    import requests
+
+    def boom(*a, **k):
+        raise requests.ConnectionError("offline")
+    monkeypatch.setattr(requests, "post", boom)
+    monkeypatch.setattr(A, "_cred", lambda k: "tok_signed_in" if k == "TAILOR_ACCOUNT_TOKEN" else "")
+    forgot = []
+    monkeypatch.setattr(A, "_revoke_cred", lambda k: forgot.append(k))
+    monkeypatch.setattr(A, "_account_token", lambda: None)
+    r = A.app.test_client().post("/api/account/signout", json={})
+    assert r.status_code == 200 and forgot == ["TAILOR_ACCOUNT_TOKEN"]
+    assert A._broker_revoke_token("") is False

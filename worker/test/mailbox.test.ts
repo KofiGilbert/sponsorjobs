@@ -298,7 +298,9 @@ describe("notify modes", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].from).toBe("\"Acme Robotics Recruiting via SponsorJobs\" <no-reply@sponsorjobs.ai>");
     expect(sent[0].subject).toBe("Thank you for applying to Acme Robotics");
-    expect(sent[0].text.startsWith(`Forwarded by SponsorJobs from ${s.alias}; attachments are not forwarded\n\n`)).toBe(true);
+    expect(sent[0].text.split("\n")[0]).toMatch(/^Forwarded by SponsorJobs from Acme Robotics Recruiting </);
+    expect(sent[0].text).toContain(`It was sent to ${s.alias}.`);
+    expect(sent[0].html).toBeUndefined();
     expect((await rows(s.id)).results).toHaveLength(1);
   });
 

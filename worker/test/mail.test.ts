@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/env";
 import {
-  aliasLocalFor, detect, EVENT_TTL_SECONDS, foldLocal, htmlToText, INBOX_LIMIT, kindOf, localOf, otpCode,
+  aliasLocalFor, detect, EVENT_TTL_SECONDS, foldLocal, forwardBody, htmlToText, INBOX_LIMIT, kindOf, localOf, otpCode,
   passwordResetLink, RESERVED_LOCALS, verificationLink,
 } from "../src/mail";
 import { RESEND_API } from "../src/mailer";
@@ -217,7 +217,8 @@ describe("receiving mail", () => {
     expect(b.reply_to).toBe("noreply@myworkday.com");
     expect(b.to).toEqual([s.email]);
     expect(b.subject).toBe("Your verification code");
-    expect(b.text.startsWith(`Forwarded by SponsorJobs from ${s.alias}; attachments are not forwarded\n\n`)).toBe(true);
+    expect(b.text.startsWith("Forwarded by SponsorJobs from Workday <noreply@myworkday.com>\n")).toBe(true);
+    expect(b.text).toContain(`It was sent to ${s.alias}.`);
     expect(b.text).toContain("Your verification code is 482913. It expires in 10 minutes.");
     expect(b.html).toBeUndefined();
     expect(b.attachments).toBeUndefined();
@@ -228,7 +229,7 @@ describe("receiving mail", () => {
     expect(inb.data.events[0].at).toBeGreaterThan(Math.floor(Date.now() / 1000) - 5);
   });
 
-  it("a verification-link mail (text + html): the link is kept, both bodies are forwarded", async () => {
+  it("a verification-link mail (text + html): the link is kept, forwarded as text only", async () => {
     const s = await student();
     const sent = stubResend();
     const link = "https://acme.greenhouse.io/verify?token=abc123&u=9";
@@ -247,9 +248,26 @@ describe("receiving mail", () => {
     expect(b.from).toBe("\"Acme Careers via SponsorJobs\" <no-reply@sponsorjobs.ai>");
     expect(b.reply_to).toBe("jobs@greenhouse-mail.io");
     expect(b.text).toContain(link);
-    expect(b.html).toContain("<a href=");
-    expect(b.html.startsWith("<p style=")).toBe(true);
-    expect(b.html).toContain(`Forwarded by SponsorJobs from ${s.alias}; attachments are not forwarded`);
+    expect(b.text.startsWith("Forwarded by SponsorJobs from Acme Careers <jobs@greenhouse-mail.io>\n")).toBe(true);
+    expect(b.html).toBeUndefined();                    // the sender's HTML is never re-sent from our domain
+  });
+
+  it("an html-only mail is forwarded as its text with the link targets, never as HTML", async () => {
+    const s = await student();
+    const sent = stubResend();
+    const raw =
+      "From: Someone <someone@example.net>\r\nSubject: Hello\r\n" +
+      "Content-Type: text/html; charset=utf-8\r\n\r\n" +
+      "<html><body><p>Please <b>sign in</b> here.</p><form action=\"https://x.example/f\"><input name=p></form>" +
+      "<img src=\"https://track.example/p.gif\"><a href=\"https://x.example/login\">Sign in</a></body></html>\r\n";
+    await deliver(raw, s.alias);
+    const b = sent[0]!.body;
+    expect(b.html).toBeUndefined();
+    expect(b.text).not.toMatch(/<form|<img|<a /);
+    expect(b.text).toContain("Please sign in here.");
+    expect(b.text).toContain("https://x.example/login");
+    expect(b.text.split("\n")[0]).toBe("Forwarded by SponsorJobs from Someone <someone@example.net>");
+    expect(b.text).toContain("sponsorjobs://inbox");   // the formatted original is in the app
   });
 
   it("an html-only verification mail: the link comes out of the href, entities decoded", async () => {
@@ -324,7 +342,7 @@ describe("receiving mail", () => {
     expect((await events(s.id)).results[0]).toMatchObject({ kind: "code", code: "7741" });
     const b = sent[0]!.body;
     expect(b.attachments).toBeUndefined();
-    expect(b.text).toContain("attachments are not forwarded");
+    expect(b.text).toContain("Attachments and formatting are not forwarded");
     expect(b.text).toContain("Your one-time code: 7741");
     expect(JSON.stringify(b)).not.toContain("JVBERi0xLjQK");
   });
@@ -428,6 +446,18 @@ describe("detection rules", () => {
     expect(t).toContain("Hi there & welcome");
     expect(t).toContain("https://a.example/x?a=1&b=2");
     expect(t).not.toContain("<");
+  });
+
+  it("forwardBody: the real sender first, one line, and the app pointer only for a stored message", () => {
+    const a = forwardBody({ sender: "Evil\r\nBcc: x@y.example <e@x.example>", alias: "a.b@sponsorjobs.ai", text: "hi", stored: true });
+    const lines = a.split("\n");
+    expect(lines[0]).toBe("Forwarded by SponsorJobs from Evil Bcc: x@y.example <e@x.example>");
+    expect(a).toContain("sponsorjobs://inbox");
+    expect(a.endsWith("\nhi")).toBe(true);
+    const b = forwardBody({ sender: "", alias: "a.b@sponsorjobs.ai", text: "hi", stored: false });
+    expect(b.split("\n")[0]).toBe("Forwarded by SponsorJobs from an unknown sender");
+    expect(b).not.toContain("sponsorjobs://inbox");
+    expect(a + b).not.toMatch(/[\u2013\u2014]/);
   });
 });
 

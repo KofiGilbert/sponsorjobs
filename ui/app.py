@@ -35,6 +35,7 @@ from sourcing.sponsors import (SponsorDB, download_h1b_rows,  # noqa: E402
 from sourcing.watchlist import Watchlist  # noqa: E402
 from intake.diary import Diary, erase_all as _erase_diary  # noqa: E402
 from ui.lock import Lock  # noqa: E402
+from ui.secure_files import make_private, write_private  # noqa: E402
 from ui.records import CVRecords  # noqa: E402
 from ui.session import WebIntake  # noqa: E402
 from submit.filenames import export_filename, upload_copy  # noqa: E402
@@ -1004,17 +1005,9 @@ def _save_cred(name: str, value: str) -> None:
                 out.append(line)
     if not found:
         out.append(new_line)
-    _CRED_FILE.write_text("\n".join(out).rstrip("\n") + "\n", encoding="utf-8")
-    _private_file(_CRED_FILE)
-
-
-def _private_file(path: Path) -> None:
-    """Only the person's own account may read the plaintext creds file (chmod 600). Best effort:
-    Windows has no POSIX modes, and a failed chmod must never lose the saved value."""
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    # Created 0o600 and swapped in atomically (ui/secure_files.py): never readable by another
+    # account, not even for the moment between writing and a chmod.
+    write_private(_CRED_FILE, "\n".join(out).rstrip("\n") + "\n")
 
 
 def _remove_cred(name: str) -> None:
@@ -1025,8 +1018,7 @@ def _remove_cred(name: str) -> None:
     out = [line for line in _CRED_FILE.read_text(encoding="utf-8").splitlines()
            if not (("=" in line) and line.split("=", 1)[0].strip() == name
                    and not line.strip().startswith("#"))]
-    _CRED_FILE.write_text(("\n".join(out).rstrip("\n") + "\n") if any(out) else "",
-                          encoding="utf-8")
+    write_private(_CRED_FILE, ("\n".join(out).rstrip("\n") + "\n") if any(out) else "")
 
 
 def _revoke_cred(name: str) -> None:
@@ -1068,7 +1060,8 @@ _GMAIL_TOKEN = "GMAIL_TOKEN"
 def _gmail_load_token() -> str | None:
     """The Gmail token JSON: from the lock when it holds it (unlocked), else the plaintext
     file (an existing setup not migrated yet). None when there is no token at all."""
-    from inbox.gmail import _TOKEN_PATH
+    from inbox.gmail import token_path
+    _TOKEN_PATH = token_path()
     if _LOCK.custodies(_GMAIL_TOKEN) and _LOCK.enabled():
         sealed = _LOCK.cred(_GMAIL_TOKEN)
         if sealed:
@@ -1080,13 +1073,13 @@ def _gmail_load_token() -> str | None:
 def _gmail_save_token(token_json: str) -> None:
     """Persist a new/refreshed Gmail token: sealed into the lock when it has custody and is
     unlocked (no plaintext copy), otherwise the plaintext file (default behavior)."""
-    from inbox.gmail import _TOKEN_PATH
+    from inbox.gmail import token_path
+    _TOKEN_PATH = token_path()
     if _LOCK.custodies(_GMAIL_TOKEN) and _LOCK.enabled() and _LOCK.unlocked():
         _LOCK.update_cred(_GMAIL_TOKEN, token_json)
         _TOKEN_PATH.unlink(missing_ok=True)      # never leave a plaintext copy
         return
-    _TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _TOKEN_PATH.write_text(token_json, encoding="utf-8")
+    write_private(_TOKEN_PATH, token_json)       # 0o600 from creation, swapped in atomically
 
 
 def _migrate_gmail_token_into_lock() -> None:
@@ -1094,7 +1087,8 @@ def _migrate_gmail_token_into_lock() -> None:
     same one-time, no-reprompt migration the creds file gets)."""
     if not (_LOCK.enabled() and _LOCK.unlocked()):
         return
-    from inbox.gmail import _TOKEN_PATH
+    from inbox.gmail import token_path
+    _TOKEN_PATH = token_path()
     if _LOCK.cred(_GMAIL_TOKEN):                  # already sealed
         _TOKEN_PATH.unlink(missing_ok=True)       # scrub any stale plaintext copy
         return
@@ -1103,10 +1097,17 @@ def _migrate_gmail_token_into_lock() -> None:
         _TOKEN_PATH.unlink(missing_ok=True)
 
 
-# Install the lock-aware token store into the Gmail module (once, at import).
+# Install the lock-aware token store into the Gmail module (once, at import), move a token an
+# older version left inside the install (config/) to the per-user data folder, and make sure the
+# secret files already on disk are owner-only (an older version wrote them with the default mode).
 try:
     from inbox import gmail as _gmail_mod
     _gmail_mod.set_token_store(_gmail_load_token, _gmail_save_token)
+    if "pytest" not in sys.modules:      # a test run must never move a developer's real token
+        _gmail_mod.migrate_legacy_token()
+    for _secret_file in (_CRED_FILE, _gmail_mod.token_path(), _LOCK.path):
+        if _secret_file.exists():
+            make_private(_secret_file)
 except Exception:   # inbox module optional at import time; never block app startup
     pass
 
@@ -1834,10 +1835,78 @@ def lock_status():
     return jsonify(_LOCK.status())
 
 
+# Wrong-passcode limit (2026-11-23). Every route that checks the passcode (unlock, change, remove)
+# shares one counter: 5 wrong tries are free, then each wrong try makes the next one wait, 30
+# seconds at first and twice as long each time (at most an hour). A right passcode resets it. The
+# counter is kept in the data folder, so restarting the app does not reset it.
+_LOCK_FREE_TRIES = 5
+_LOCK_FIRST_WAIT = 30
+_LOCK_MAX_WAIT = 3600
+_LOCK_TRIES_GUARD = threading.Lock()
+# One passcode check at a time: the wait is checked, the passcode tried and the result counted
+# under this lock, so parallel requests cannot all slip through before a wrong try is counted.
+_PASSCODE_CHECK = threading.Lock()
+
+
+def _lock_tries_file() -> Path:
+    return _DATA / "lock_attempts.json"
+
+
+def _lock_tries() -> dict:
+    try:
+        d = json.loads(_lock_tries_file().read_text(encoding="utf-8"))
+        return {"failures": max(0, int(d.get("failures") or 0)), "until": float(d.get("until") or 0)}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"failures": 0, "until": 0.0}
+
+
+def _lock_wait(now: float | None = None) -> int:
+    """Seconds until the next passcode try is allowed (0 = now)."""
+    now = time.time() if now is None else now
+    with _LOCK_TRIES_GUARD:
+        return max(0, int(-(-(_lock_tries()["until"] - now) // 1)))
+
+
+def _lock_record(ok: bool, now: float | None = None) -> None:
+    """Count a wrong passcode (and start the wait once past the free tries), or reset on a right one."""
+    now = time.time() if now is None else now
+    f = _lock_tries_file()
+    with _LOCK_TRIES_GUARD:
+        try:
+            if ok:
+                f.unlink(missing_ok=True)
+                return
+            d = _lock_tries()
+            d["failures"] += 1
+            over = d["failures"] - _LOCK_FREE_TRIES
+            if over >= 0:
+                d["until"] = now + min(_LOCK_MAX_WAIT, _LOCK_FIRST_WAIT * (2 ** min(over, 20)))
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d), encoding="utf-8")
+            tmp.replace(f)
+        except OSError:
+            pass
+
+
+def _lock_wait_reply(wait: int):
+    when = f"{wait} seconds" if wait < 120 else f"{-(-wait // 60)} minutes"
+    resp = jsonify({"error": f"Too many wrong passcodes. Try again in {when}.",
+                    "reason": "too_many_tries", "retry_after": wait})
+    resp.headers["Retry-After"] = str(wait)
+    return resp, 429
+
+
 @app.post("/api/lock/unlock")
 def lock_unlock():
     pc = (request.get_json(silent=True) or {}).get("passcode", "")
-    if _LOCK.unlock(pc):
+    with _PASSCODE_CHECK:
+        wait = _lock_wait()
+        if wait and _LOCK.enabled():
+            return _lock_wait_reply(wait)
+        ok = _LOCK.unlock(pc)
+        _lock_record(ok)
+    if ok:
         # Sweep any custodied secret still in plaintext (e.g. an older setup from before
         # custody covered Telegram/GitHub) into the encrypted lock, now that we're unlocked.
         _migrate_plaintext_creds_into_lock()
@@ -1869,12 +1938,22 @@ def lock_set():
 
 @app.post("/api/lock/change")
 def lock_change():
+    from ui.lock import MIN_PASSCODE
     b = request.get_json(silent=True) or {}
-    try:
-        if _LOCK.change(b.get("current", ""), b.get("passcode", "")):
-            return jsonify(_LOCK.status())
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    new_pc = str(b.get("passcode") or "")
+    if len(new_pc) < MIN_PASSCODE:            # checked first, so it never costs a passcode try
+        return jsonify({"error": f"Choose a passcode of at least {MIN_PASSCODE} characters."}), 400
+    with _PASSCODE_CHECK:
+        wait = _lock_wait()
+        if wait:
+            return _lock_wait_reply(wait)
+        try:
+            ok = _LOCK.change(b.get("current", ""), new_pc)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        _lock_record(ok)
+    if ok:
+        return jsonify(_LOCK.status())
     return jsonify({"error": "Current passcode is wrong."}), 400
 
 
@@ -1882,10 +1961,16 @@ def lock_change():
 def lock_remove():
     """Turn App Lock OFF: verify, then put the API key back into ordinary storage."""
     pc = (request.get_json(silent=True) or {}).get("passcode", "")
-    try:
-        creds = _LOCK.remove(pc)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 401
+    with _PASSCODE_CHECK:
+        wait = _lock_wait()
+        if wait and _LOCK.enabled():
+            return _lock_wait_reply(wait)
+        try:
+            creds = _LOCK.remove(pc)
+        except ValueError as exc:
+            _lock_record(False)
+            return jsonify({"error": str(exc)}), 401
+        _lock_record(True)
     for k, v in creds.items():
         # The Gmail token belongs in its own file, not the creds file — route it back there
         # (lock is now disabled, so _gmail_save_token writes the plaintext token file).
@@ -12737,10 +12822,29 @@ def account_email_verify():
 def account_signout():
     """Sign out on this device: forget the email account's token and start a fresh anonymous one
     (the free tier), exactly like a new install. The pass stays on the email account and comes
-    back on the next sign-in."""
+    back on the next sign-in. The broker is asked to revoke the old token first (best effort:
+    offline, the local copy is still forgotten and the token expires on its own after 180 days
+    without use)."""
+    _broker_revoke_token(_cred("TAILOR_ACCOUNT_TOKEN"))
     _revoke_cred("TAILOR_ACCOUNT_TOKEN")
     _account_token()          # registers a fresh anonymous account; None if offline (retried later)
     return jsonify({"ok": True, "email": None})
+
+
+def _broker_revoke_token(tok: str | None) -> bool:
+    """POST /account/revoke with this token, so a copy of it left on disk (a backup, a synced
+    folder) cannot be used after sign-out. Never raises; True when the broker answered 200. Not
+    through _broker_post: its 401 recovery would register a new account in the middle of this."""
+    if not tok:
+        return False
+    import requests
+    from llm.broker_client import BROKER_USER_AGENT
+    try:
+        r = requests.post(f"{BROKER_URL}/account/revoke", timeout=5,
+                          headers={"Authorization": f"Bearer {tok}", "User-Agent": BROKER_USER_AGENT})
+        return r.status_code == 200
+    except Exception:   # noqa: BLE001 - offline or any error: sign-out still happens locally
+        return False
 
 
 _PASS_IDS = ("pass30", "pass90")
@@ -18335,11 +18439,17 @@ def autoapply_agent_sign():
     authority = str(b.get("authority") or "").strip().lower()[:253]
     if not authority or "/" in authority:
         return jsonify({"ok": False, "reason": "bad-authority"})
+    # Only a page of an apply run this engine started is signed: the authority must be inside
+    # the fence of a run (its apply site, that site's domain, or a hiring system's host). The
+    # broker gets the run's apply host as `site`, and checks and counts it too.
+    site = _agent_run_site(authority)
+    if site is None:
+        return jsonify({"ok": False, "reason": "not-in-run"})
     tok = _account_token()
     if not tok:
         return jsonify({"ok": False, "reason": "no-account"})
     out = urllib_fetch(BROKER_URL, tok, timeout=3.0)("POST", "/agent/sign", {
-        "method": str(b.get("method") or "GET")[:10], "authority": authority,
+        "method": str(b.get("method") or "GET")[:10], "authority": authority, "site": site,
         "path": str(b.get("path") or "/")[:2048]}) or {}
     if out.get("error") or not out.get("signature"):
         return jsonify({"ok": False, "reason": str(out.get("error") or "unsigned")})
@@ -18465,7 +18575,52 @@ def autoapply_agent_allowed_hosts():
     """The hosts an apply-agent run may navigate to for this apply URL (submit.policy
     .run_allowed_hosts); the shell stops the run anywhere else. Empty on a prohibited site."""
     from submit.policy import run_fence
-    return jsonify(dict({"ok": True}, **run_fence(request.args.get("url") or "")))
+    url = request.args.get("url") or ""
+    fence = run_fence(url)
+    _note_agent_run(url, fence.get("hosts") or [])
+    return jsonify(dict({"ok": True}, **fence))
+
+
+# The apply runs this engine started recently (the shell asks for a run's allowed hosts as it
+# starts, and again for an adopted landing site): the apply host and the run's fence. Request
+# signing (/api/autoapply/agent/sign) only signs inside one of them. In memory: a run never
+# outlives the engine that started it.
+_AGENT_RUNS: list = []            # [(apply_host, hosts (frozenset), expires_at)], newest last
+_AGENT_RUN_TTL = 4 * 3600
+_AGENT_RUNS_MAX = 20
+_AGENT_RUNS_LOCK = threading.Lock()
+
+
+def _note_agent_run(url: str, hosts, now: float | None = None) -> None:
+    from submit.policy import _host
+    now = time.time() if now is None else now
+    host = _host(url)
+    hs = frozenset(str(h).lower() for h in hosts if h)
+    if not host or not hs:
+        return
+    with _AGENT_RUNS_LOCK:
+        _AGENT_RUNS[:] = [r for r in _AGENT_RUNS if r[2] > now and r[0] != host]
+        _AGENT_RUNS.append((host, hs, now + _AGENT_RUN_TTL))
+        del _AGENT_RUNS[:-_AGENT_RUNS_MAX]
+
+
+def _agent_run_site(authority: str, now: float | None = None) -> str | None:
+    """The apply host of the newest live run whose fence holds ``authority`` (a host, maybe with a
+    port), preferring a run whose OWN site it is over one that only allows it as a hiring system's
+    host. None when no live run allows it."""
+    from submit.policy import ATS_HOSTS, is_ats_host
+    now = time.time() if now is None else now
+    h = authority.rsplit(":", 1)[0] if re.fullmatch(r".+:\d{1,5}", authority) else authority
+    h = h[4:] if h.startswith("www.") else h
+    within = lambda hosts: any(h == a or h.endswith("." + a) for a in hosts)   # noqa: E731
+    with _AGENT_RUNS_LOCK:
+        live = [r for r in _AGENT_RUNS if r[2] > now]
+    for host, hosts, _exp in reversed(live):
+        if within(hosts - frozenset(ATS_HOSTS)):
+            return host
+    if live and is_ats_host(h):
+        return live[-1][0]
+    return None
 
 
 @app.post("/api/autoapply/agent/left-site")

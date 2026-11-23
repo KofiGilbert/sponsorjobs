@@ -1090,8 +1090,25 @@ function createAgent(deps) {
       out = { ok: false, note: String(e && e.message || e).slice(0, 120) };
     }
     if (!ctx && a.op === "click" && out && /covered/.test(out.note || "")) {
+      const fp = () => wc.executeJavaScript("(document.body && document.body.textContent || '').length + '|' + document.querySelectorAll('input,select,textarea,button,a,[role]').length", true).catch(() => "");
+      const urlBefore = wc.getURL() || "", fpBefore = await fp();
       const real = await realClick(wc, a.index);              // the pointer lands where the eye does
-      if (real) return real;
+      if (real) {
+        await delay(1200);
+        if ((wc.getURL() || "") !== urlBefore || (await fp()) !== fpBefore) return Object.assign({}, real, { changed: true });
+        // (2026-11-23, Gainwell's SAP careers "Apply Now" menu item) the pointer landed on the
+        // element drawn over it and nothing happened: press the element itself, once. The page's
+        // own Submit and policy-link guards still apply in that click.
+        try {
+          const forced = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify(Object.assign({}, a, { force: true }))})`, true),
+                                     ACTION_MS, "click", { nav: true });
+          if (forced && forced.ok) return forced;
+        } catch (e) {
+          if (e && e.stopped) throw e;
+          if (e && e.navigated) return { ok: true, note: "page changed", changed: true };
+        }
+        return real;
+      }
     }
     return out;
   }

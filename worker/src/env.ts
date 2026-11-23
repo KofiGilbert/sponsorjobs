@@ -53,6 +53,10 @@ export interface Env {
   // private key's 32-byte seed, base64url, set with `wrangler secret put`. Without it /agent/sign
   // and the key directory answer 503 not_configured and the agent's requests go out unsigned.
   AGENT_SIGNING_KEY?: string;
+  // Daily caps on /agent/sign (src/botauth.ts); plain vars, each optional with a default.
+  SIGNS_PER_ACCOUNT_PER_DAY?: string;   // default 3000
+  SIGNS_PER_IP_PER_DAY?: string;        // default 10000
+  SIGN_SITES_PER_DAY?: string;          // distinct application sites per account, default 60
   // The official SponsorJobs Telegram bot (src/telegram.ts, docs/notify.md). All three are secrets
   // set by scripts/telegram-setup.sh; until ALL are set every /notify/telegram/* route and the
   // webhook answer 503 telegram_not_configured.
