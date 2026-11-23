@@ -36,6 +36,10 @@
       {
         "from": "../extension/autofill_core.js",
         "to": "autofill_core.js"
+      },
+      {
+        "from": "../extension/agent_view.js",
+        "to": "agent_view.js"
       }
     ],
     "icon": "../ui/static/icon.ico",
