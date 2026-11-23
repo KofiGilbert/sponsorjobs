@@ -105,7 +105,7 @@ def test_the_shell_handles_terms_with_consent_and_never_on_stop():
     src = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
     body = src[src.index("async function handleTerms("):src.index("  return { run, batch, send, sendAll, stop")]
     decide = body.index('"/api/autoapply/agent/terms"')
-    click = body.index("realClick(wc, it.index)")
+    click = body.index("realClick(wc, index)")              # the accept press (a box, a button, the opener)
     record = body.index('"/api/autoapply/agent/terms/accepted"')
     assert decide < click < record
     stop_at = body.index('r.decision !== "accept"')
