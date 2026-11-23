@@ -16864,6 +16864,19 @@ def _auto_day(d: dict, today: str) -> dict:
     return cur
 
 
+def _ad_key(url: str) -> str:
+    """An ad link without its query: the same aggregator ad, whoever stored it
+    ("adzuna.com/land/ad/123")."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(str(url or "").strip())
+    except ValueError:
+        return ""
+    host = (u.hostname or "").lower()
+    host = host[4:] if host.startswith("www.") else host
+    return (host + u.path.rstrip("/")).lower() if host else ""
+
+
 @app.post("/api/autoapply/auto/plan")
 @_guard
 def autoapply_auto_plan():
@@ -16897,11 +16910,18 @@ def autoapply_auto_plan():
     except (TypeError, ValueError):
         limit = 5
     sends_left = int(_rate_limiter().status(ts, today).get("remaining") or 0)
+    # (2026-11-19) An ad link an earlier run followed to a board that forbids automated
+    # applications (agent_left, kind "prohibited"): every job with that same link is skipped
+    # before it is opened. Only what a run recorded; nothing is fetched to find out.
+    to_board = {_ad_key(it_url) for it_url in (
+        str(((_record_data(r) or {}).get("source_job") or {}).get("url") or "") for r in rows
+        if ((_record_data(r) or {}).get("agent_left") or {}).get("kind") == "prohibited") if it_url}
     items = []
     for r in rows:
         it = _aa_row(r, _record_data(r), jobs_idx)
         if (it["tile"] == "waiting" and it["action"] in ("fill", "signin") and it["id"] not in done
-                and re.match(r"https?://", it["apply_url"] or "", re.I)):
+                and re.match(r"https?://", it["apply_url"] or "", re.I)
+                and not ({_ad_key(it["posting_url"]), _ad_key(it["apply_url"])} & to_board - {""})):
             items.append(it)
     items.sort(key=lambda x: x["approved_at"] or x["when"])
     # (2026-11-19) After the rules above: the applications Auto can finish without a guess go
@@ -18038,8 +18058,13 @@ def autoapply_agent_left_site():
         step = int(b.get("step") or 0)
     except (TypeError, ValueError):
         step = 0
+    kind = b.get("kind") if b.get("kind") in ("survey", "prohibited") else "left"
     left = {"host": host, "step": step, "from_host": str(b.get("from_host") or "").strip().lower()[:200],
-            "kind": "survey" if b.get("kind") == "survey" else "left", "at": _now_iso()}
+            "kind": kind, "at": _now_iso()}
+    if kind == "prohibited":
+        # (2026-11-19) the job is on a board that forbids automated applications (Dice ...): the
+        # row says so and offers Open and finish; Auto does not pick it again
+        left["board"] = " ".join(str(b.get("board") or host).split())[:40]
     _records().merge_data(rec["id"], {"agent_left": left})
     return jsonify({"ok": True, "left": left})
 
@@ -19333,6 +19358,8 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         ready = None
     note = data.get("agent_note") if isinstance(data.get("agent_note"), dict) else None
     left = data.get("agent_left") if isinstance(data.get("agent_left"), dict) else None
+    if left and left.get("kind") == "prohibited" and tile == "waiting" and action in ("fill", "signin"):
+        action = "open_self"          # the person opens it and applies on that board by hand
     return {
         "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
         "company": company, "location": location,
@@ -19340,6 +19367,8 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         # (2026-11-19) Where the site sent the last run when it stopped as "left-site"
         "left_site": ({"host": left.get("host") or "", "step": left.get("step") or 0}
                       if left and left.get("kind") == "left" and left.get("host") else None),
+        "board_stop": ({"host": left.get("host") or "", "board": left.get("board") or left.get("host") or ""}
+                       if left and left.get("kind") == "prohibited" and left.get("host") else None),
         "visa": tagged.get("visa") or [], "sponsorship_stated": job.get("sponsorship_stated"),
         **stance,
         "match": round(match) if match is not None else None,

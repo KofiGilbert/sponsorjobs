@@ -1,0 +1,66 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Create an Account (SuccessFactors-style fixture)</title>
+<link rel="stylesheet" href="style.css">
+<style>.globalContentBackground{position:fixed;left:40px;top:40px;width:560px;min-height:220px;background:#fff;border:1px solid #999;padding:12px;z-index:9}
+.overlayShim{position:fixed;inset:0;background:rgba(0,0,0,.2);z-index:8}</style></head>
+<body>
+<!-- Modelled on SAP SuccessFactors' career site Create Account (Gainwell, measured 2026-11-19):
+     the data privacy statement is accepted through a REQUIRED link
+     (a#dataPrivacyId[role=button][aria-haspopup=dialog]) whose handler FIRST checks the required
+     "Country/Region of Residence" list: while it is empty it only moves the focus there and
+     opens nothing. With a country, the consent dialog appears about 1.5 s later as SAP UI's
+     "<id>:container" box (no dialog role) over an overlay shim, with Accept and Decline; Accept
+     fills the hidden fbclc_dpcsId. A job alerts link and the campaign mail box are marketing.
+     ?empty: the email box is still empty. ?late: the country list appears only after the first
+     press (and takes the focus). -->
+<h2>Create an Account</h2>
+<form onsubmit="return false" id="fbclc">
+  <label for="fbclc_userName">Email Address*</label><input type="email" id="fbclc_userName" required value="avery@example.com">
+  <label for="fbclc_pwd">Choose Password*</label><input type="password" id="fbclc_pwd" required value="x-placeholder-1">
+  <label for="fbclc_fName">First Name*</label><input type="text" id="fbclc_fName" required value="Avery">
+  <label for="fbclc_lName">Last Name*</label><input type="text" id="fbclc_lName" required value="Example">
+  <div id="countryBox"></div>
+  <label><input type="checkbox" id="fbclc_emailEnabled"> Send me job alerts by email</label>
+  <label><input type="checkbox" id="fbclc_campaignEmailEnabled"> Send me campaign emails</label>
+  <input type="hidden" id="fbclc_dpcsId" name="fbclc_dpcsId" value="">
+  <div class="field">Terms of Use:*
+    <a href="#" id="dataPrivacyId" role="button" aria-haspopup="dialog" aria-label="Terms of Use Read and accept the data privacy statement. Required">Read and accept the data privacy statement</a></div>
+  <div class="field"><a href="#" id="alerts" role="button">Read and accept the job alerts newsletter terms</a></div>
+  <button type="button" id="create">Create Account</button>
+</form>
+<script>
+  const q = location.search;
+  window.fx = { opened: 0, clicks: 0, accepted: false, declined: false, alerts: 0, focusCountry: 0 };
+  if (/empty/.test(q)) document.getElementById("fbclc_userName").value = "";
+  function countryList() {
+    document.getElementById("countryBox").innerHTML = '<label for="fbclc_country">Country/Region of Residence:*</label>'
+      + '<select id="fbclc_country" required><option value="">Select</option><option value="CA">Canada</option>'
+      + '<option value="GH">Ghana</option><option value="US">United States</option></select>';
+  }
+  if (!/late/.test(q)) countryList();
+  document.getElementById("alerts").addEventListener("click", (e) => { e.preventDefault(); window.fx.alerts++; });
+  document.getElementById("dataPrivacyId").addEventListener("click", (e) => {
+    e.preventDefault();
+    window.fx.clicks++;
+    let c = document.getElementById("fbclc_country");
+    if (!c) { countryList(); c = document.getElementById("fbclc_country"); }
+    if (!c.value) { c.focus(); window.fx.focusCountry++; return; }        // validateCountry(): nothing opens
+    setTimeout(() => {
+      window.fx.opened++;
+      const shim = document.createElement("div"); shim.id = "j_id7:shim"; shim.className = "overlayShim";
+      const d = document.createElement("div"); d.id = "j_id7:container"; d.className = "globalContentBackground";
+      d.innerHTML = '<p>Press the ESC key to close the dialog.</p><h3>Data Privacy Consent</h3>'
+        + '<p>We collect and process your personal data to consider your application for employment.</p>'
+        + '<button type="button" id="dlgButton_21">Accept</button> <button type="button" id="dlgButton_22">Decline</button>';
+      document.body.appendChild(shim); document.body.appendChild(d);
+      const close = () => { d.remove(); shim.remove(); };
+      d.querySelector("#dlgButton_21").addEventListener("click", () => { window.fx.accepted = true; document.getElementById("fbclc_dpcsId").value = "dpcs-1"; close(); });
+      d.querySelector("#dlgButton_22").addEventListener("click", () => { window.fx.declined = true; close(); });
+    }, 1500);
+  });
+  window.fxValues = () => Object.assign({}, window.fx, {
+    country: (document.getElementById("fbclc_country") || {}).value || "",
+    dpcs: document.getElementById("fbclc_dpcsId").value,
+    campaign: document.getElementById("fbclc_campaignEmailEnabled").checked });
+</script>
+</body></html>

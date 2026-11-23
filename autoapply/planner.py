@@ -71,7 +71,8 @@ _CONTACT: list[tuple[str, re.Pattern]] = [
     ("postal_code", re.compile(r"\bzip\b|postal|post code|postcode", re.I)),
     ("city", re.compile(r"^\W*(current )?city\b|\bcity\W*$|\btown\b", re.I)),
     ("state", re.compile(r"^\W*(state|province|region)\b|state\s*/\s*province", re.I)),
-    ("country", re.compile(r"^\W*(current )?country( of residence)?\W*$", re.I)),
+    # (2026-11-19) SuccessFactors' "Country/Region of Residence:*" too
+    ("country", re.compile(r"^\W*(current )?country(\s*(/|or)\s*region)?( of (current )?residence)?\W*$", re.I)),
     ("address", re.compile(r"^\W*(street |home |mailing |current )?address( line 1)?\W*$|street", re.I)),
 ]
 
