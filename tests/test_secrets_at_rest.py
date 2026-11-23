@@ -83,6 +83,10 @@ def A(tmp_path, monkeypatch):
     import ui.app as app_module
     importlib.reload(app_module)
     yield app_module
+    # Leave no App Lock behind: ui.app stays loaded for the next test file in this worker, and a
+    # lock file left in its data folder would answer every later engine call with 423 "locked".
+    app_module._LOCK.path.unlink(missing_ok=True)
+    app_module._lock_tries_file().unlink(missing_ok=True)
     import ui.lock as L
     L._UNLOCKED, L._CREDS, L._KEK = False, {}, None
 
