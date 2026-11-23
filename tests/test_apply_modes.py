@@ -415,8 +415,10 @@ def test_the_pane_is_kept_out_of_view_and_never_reported_open_in_auto():
     state = src[src.index("function paneState()"):src.index("function pushPaneState()")]
     assert "if (paneQuiet) return { open: false" in state                   # the page never switches to the Browser tab
     layout = src[src.index("function layoutPane()"):src.index("function ensurePane()")]
-    assert "if (paneQuiet && paneOpen) { pane.setBounds(QUIET_BOUNDS); return; }" in layout
-    m = re.search(r"const QUIET_BOUNDS = \{ x: (-?\d+), y: 0, width: (\d+), height: (\d+) \}", src)
+    assert "paneSync.layout({ open: paneOpen, quiet: paneQuiet," in layout
+    view = (ROOT / "shell-electron" / "pane_view.js").read_text(encoding="utf-8")   # the layout rules (2026-11-19)
+    assert "if (s.quiet && s.open) return { rect: QUIET_BOUNDS, visible: false };" in view
+    m = re.search(r"const QUIET_BOUNDS = Object\.freeze\(\{ x: (-?\d+), y: 0, width: (\d+), height: (\d+) \}\)", view)
     assert m and int(m.group(1)) + int(m.group(2)) < 0 and int(m.group(3)) >= 600   # past the left edge, a real size
     assert 'if (quiet && paneOpen) return { ok: false, reason: "pane-in-use" };' in src   # their own page is never taken
     assert "if (!fromAgent) takePaneBack();" in src                         # the person opening a page ends the quiet run

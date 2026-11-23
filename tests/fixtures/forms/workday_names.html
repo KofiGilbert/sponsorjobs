@@ -1,0 +1,68 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>My Information (Workday names fixture)</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<!-- A Workday "My Information" page (made-up data), the shape of *.myworkdayjobs.com/.../apply
+     in November 2026: Legal Name (First, Middle, Last), "I have a preferred name" with its own
+     First and Last boxes shown once ticked, and an address with a second line. Ids follow
+     Workday's own (name--legalName--firstName, address--addressLine2, name--preferredCheck).
+     The boxes are controlled the way the real page's are (an input event keeps the value).
+     ?filled=1: First Name and Address Line 1 already hold the person's own values (a returning
+     candidate account), to show a second fill never adds to them. ?stale=1: Middle Name holds the
+     full name and Address Line 2 the street (left by an earlier, wrong fill); ?mine=1: they hold
+     the person's own middle initial and apartment, which stay. -->
+<form onsubmit="return false">
+<h2>My Information</h2>
+<h3>Legal Name</h3>
+<div data-automation-id="formField-legalName--firstName"><label for="name--legalName--firstName">First Name*</label>
+  <div><input type="text" id="name--legalName--firstName" name="legalName--firstName" aria-required="true"></div></div>
+<div data-automation-id="formField-legalName--middleName"><label for="name--legalName--middleName">Middle Name</label>
+  <div><input type="text" id="name--legalName--middleName" name="legalName--middleName"></div></div>
+<div data-automation-id="formField-legalName--lastName"><label for="name--legalName--lastName">Last Name*</label>
+  <div><input type="text" id="name--legalName--lastName" name="legalName--lastName" aria-required="true"></div></div>
+<div data-automation-id="formField-preferredCheck"><input type="checkbox" id="name--preferredCheck" name="preferredCheck">
+  <label for="name--preferredCheck">I have a preferred name</label></div>
+<div id="preferred" hidden>
+  <div data-automation-id="formField-preferredName--firstName"><label for="name--preferredName--firstName">First Name*</label>
+    <div><input type="text" id="name--preferredName--firstName" name="preferredName--firstName"></div></div>
+  <div data-automation-id="formField-preferredName--lastName"><label for="name--preferredName--lastName">Last Name*</label>
+    <div><input type="text" id="name--preferredName--lastName" name="preferredName--lastName"></div></div>
+</div>
+<h3>Address</h3>
+<div data-automation-id="formField-addressLine1"><label for="address--addressLine1">Address Line 1*</label>
+  <div><input type="text" id="address--addressLine1" name="addressLine1"></div></div>
+<div data-automation-id="formField-addressLine2"><label for="address--addressLine2">Address Line 2</label>
+  <div><input type="text" id="address--addressLine2" name="addressLine2"></div></div>
+<div data-automation-id="formField-city"><label for="address--city">City*</label>
+  <div><input type="text" id="address--city" name="city"></div></div>
+<div data-automation-id="formField-postalCode"><label for="address--postalCode">Postal Code*</label>
+  <div><input type="text" id="address--postalCode" name="postalCode"></div></div>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+</form>
+<script>
+  const set = (el, v) => Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, v);
+  if (/[?&]filled=1/.test(location.search)) {
+    set(document.getElementById("name--legalName--firstName"), "Avery");
+    set(document.getElementById("address--addressLine1"), "12 Elm Street");
+  }
+  if (/[?&]stale=1/.test(location.search)) {
+    set(document.getElementById("name--legalName--middleName"), "Avery Quinn");
+    set(document.getElementById("address--addressLine2"), "12 Elm Street");
+  }
+  if (/[?&]mine=1/.test(location.search)) {
+    set(document.getElementById("name--legalName--middleName"), "J.");
+    set(document.getElementById("address--addressLine2"), "Apt 4");
+  }
+  const box = document.getElementById("name--preferredCheck");
+  box.addEventListener("change", () => { document.getElementById("preferred").hidden = !box.checked; });
+  box.addEventListener("click", () => { document.getElementById("preferred").hidden = !box.checked; });
+  for (const el of document.querySelectorAll("input[type=text]")) {
+    let kept = el.value;
+    el.addEventListener("input", (e) => {
+      if (el.value !== "" || e.inputType === "deleteContentBackward") kept = el.value; else set(el, kept);
+    });
+  }
+  window.fxValues = () => Object.assign(
+    Object.fromEntries([...document.querySelectorAll("input[type=text]")].map((e) => [e.name, e.value])),
+    { preferredCheck: box.checked, preferredShown: !document.getElementById("preferred").hidden });
+</script>
+</body></html>

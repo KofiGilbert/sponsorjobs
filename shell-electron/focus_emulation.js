@@ -71,8 +71,10 @@ async function apply(dbg, o) {
 }
 
 // The pane is shown to the person: the visible pane lays out to its own size again.
-async function show(dbg) {
-  if (!_sized.has(dbg)) return false;
+// ``always``: sent even when this module did not set a size on this debugger (main.js, each time
+// the pane comes into view: a visible pane never keeps a size override, whoever left it).
+async function show(dbg, o) {
+  if (!_sized.has(dbg) && !(o && o.always)) return false;
   const s = await send(dbg, "Emulation.clearDeviceMetricsOverride");
   if (!s) _sized.delete(dbg);
   return !s;
