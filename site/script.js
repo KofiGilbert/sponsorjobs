@@ -59,7 +59,10 @@ async function liveNumbers() {
   const roles = $("live-roles");
   if (roles) {
     const m = await getJSON(FEED_BASE + "/feed/manifest.json");
-    const count = m ? Number(m.count) : NaN;
+    // "live roles at sponsoring employers": the feed also carries general jobs since 2026-11-20,
+    // so this reads sponsor_count (jobs at employers with a sponsorship record) when the manifest
+    // has it, and the older count otherwise.
+    const count = m ? Number(m.sponsor_count != null ? m.sponsor_count : m.count) : NaN;
     if (Number.isFinite(count) && count > 0) {
       roles.textContent = fmt(count);
       const when = m.generated_at ? relativeTime(String(m.generated_at)) : null;

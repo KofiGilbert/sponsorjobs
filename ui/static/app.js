@@ -892,9 +892,11 @@
       // against, the strip says what it is instead of "best-fit", and reachability orders it.
       const lbl = $("#homeTodayLbl");
       if (lbl) {
-        const key = r.fit_ranked ? "home.today" : "home.todayNew";
+        // The server picks the same scope as Jobs (Sponsors only or All jobs, ?scope= unset).
+        const key = r.fit_ranked ? "home.today" : (r.scope === "all" ? "home.todayNewAll" : "home.todayNew");
         lbl.dataset.i18n = key;
-        lbl.textContent = sjT(key, r.fit_ranked ? "Today \u00b7 fresh best-fit roles" : "Today \u00b7 new sponsor roles");
+        lbl.textContent = sjT(key, r.fit_ranked ? "Today \u00b7 fresh best-fit roles"
+          : r.scope === "all" ? "Today \u00b7 new roles" : "Today \u00b7 new sponsor roles");
       }
       // The list scrolls under the fixed prompt, so it can hold more than a peek.
       const jobs = (r.fit_ranked ? (r.jobs || []) : rankForReachability(r.jobs || [])).slice(0, 12);
@@ -1508,6 +1510,11 @@
   let JF_SORT = "";            // "" (most recent) | "pay" (top paid)
   let JF_SAVED = false;        // when true, show only the user's bookmarked roles
   let JF_SPONSORED = false;    // when true, show only roles whose posting STATES visa sponsorship
+  // Which jobs the board shows (2026-11-20): "sponsors" (employers with a sponsorship record, or ads
+  // that offer sponsorship) or "all". Starts from the person's sign-up answer (ui/static/jobs_scope.js,
+  // the server's _jobs_scope_state); their own pick on the Sponsorship menu is remembered.
+  let JF_SCOPE = "sponsors";
+  let SCOPE_ST = null;         // {scope, manual, default, answer, ask} from /api/jobs/scope
 
   // The badge's own honest basis (from sourcing/sponsors.py) is the tooltip when present,
   // so hovering any badge explains it's a historical signal, not a guarantee. Falls back
@@ -1785,6 +1792,10 @@
     if (JF_REMOTE) chips.push({ k: "remote", label: REMOTE_LABELS[JF_REMOTE] || JF_REMOTE });
     if (JF_LEVEL === "entry") chips.push({ k: "level", label: "Entry-level" });
     if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Ad offers sponsorship" });
+    const narrowing = chips.length + VISA_SET.size + (JF_PAY ? 1 : 0) + (JF_LOC ? 1 : 0);
+    // The scope is a chip too, so the person always sees why the count is "N of M"; removing it
+    // shows all jobs. Clear all leaves it alone: it is a standing choice, not a passing filter.
+    if (JF_SCOPE === "sponsors") chips.unshift({ k: "scope", label: I18N.t("jobs.scopeSponsors", "Sponsors only") });
     [...VISA_SET].forEach(v => chips.push({ k: "visa:" + v, label: VISA_LABELS[v] || v }));
     if (JF_PAY) chips.push({ k: "pay", label: "$" + Math.round(JF_PAY / 1000) + "k+ pay" });
     if (JF_LOC) chips.push({ k: "loc", label: `"${JF_LOC}"` });
@@ -1792,7 +1803,7 @@
     box.hidden = false;
     box.innerHTML = chips.map(c =>
       `<button class="af-chip" data-clear="${esc(c.k)}" type="button">${esc(c.label)} <span class="af-x">×</span></button>`
-    ).join("") + `<button class="af-clear" data-clear="all" type="button">Clear all</button>`;
+    ).join("") + (narrowing ? `<button class="af-clear" data-clear="all" type="button">Clear all</button>` : "");
     box.querySelectorAll("[data-clear]").forEach(b =>
       b.addEventListener("click", () => clearFilter(b.dataset.clear)));
   }
@@ -1805,6 +1816,7 @@
     else if (key === "remote") { JF_REMOTE = ""; }
     else if (key === "level") { JF_LEVEL = ""; }
     else if (key === "sponsored") { JF_SPONSORED = false; }
+    else if (key === "scope") { setJobsScope("all"); return; }
     else if (key === "loc") { JF_LOC = ""; }
     else if (key === "pay") { JF_PAY = 0; }
     else if (key.startsWith("visa:")) { VISA_SET.delete(key.slice(5)); }
@@ -1823,16 +1835,84 @@
     const spon = $("#jfSponsored"); if (spon) spon.setAttribute("aria-pressed", JF_SPONSORED ? "true" : "false");
     const saved = $("#jfSaved"); if (saved) saved.setAttribute("aria-pressed", JF_SAVED ? "true" : "false");
     document.querySelectorAll("#jfVisaDD input[data-visa]").forEach(cb => { cb.checked = VISA_SET.has(cb.dataset.visa); });
+    document.querySelectorAll("#jfVisaDD input[data-scope]").forEach(rb => { rb.checked = rb.dataset.scope === JF_SCOPE; });
     updateVisaSummary();
   }
 
   // The sponsorship dropdown label reflects how many options are selected.
   function updateVisaSummary() {
     const s = $("#jfVisaSummary");
-    if (s) s.textContent = VISA_SET.size
-      ? I18N.t("jobs.sponsorshipN", "Sponsorship ({n})").replace("{n}", VISA_SET.size)
-      : I18N.t("jobs.sponsorship", "Sponsorship");
+    if (!s) return;
+    // Sponsors only names itself on the menu, so the narrowed board is never a mystery.
+    const base = JF_SCOPE === "sponsors" ? I18N.t("jobs.scopeSponsors", "Sponsors only") : I18N.t("jobs.sponsorship", "Sponsorship");
+    s.textContent = VISA_SET.size ? `${base} (${VISA_SET.size})` : base;
   }
+
+  /* ---- All jobs, sponsors first (2026-11-20). The board starts on Sponsors only for anyone who
+     needs sponsorship (Yes, Not sure, or no answer yet) and on All jobs for No; the person's own
+     pick wins and is remembered by the engine (POST /api/jobs/scope). The sign-up question is
+     asked once, on Jobs, and kept on My profile; its answer lives in the work-authorization
+     profile (POST /api/workauth/sponsorship). Home and Auto-apply follow the same answer. */
+  const JSCOPE = window.SJJobsScope;
+  let SCOPE_REQ = null;
+  function loadScopeState(force) {
+    if (SCOPE_REQ && !force) return SCOPE_REQ;
+    SCOPE_REQ = api("/api/jobs/scope").then(st => { takeScopeState(st); return st; })
+      .catch(() => { SCOPE_REQ = null; return SCOPE_ST; });
+    return SCOPE_REQ;
+  }
+  function takeScopeState(st) {
+    if (!st || !st.scope) return;
+    SCOPE_ST = st;
+    JF_SCOPE = st.scope;
+    paintScopeControls();
+  }
+  function paintScopeControls() {
+    document.querySelectorAll("#jfVisaDD input[data-scope]").forEach(rb => { rb.checked = rb.dataset.scope === JF_SCOPE; });
+    updateVisaSummary();
+    const ask = $("#sponsorAsk");
+    if (ask) ask.hidden = !(SCOPE_ST && SCOPE_ST.ask);
+    const answer = (SCOPE_ST && SCOPE_ST.answer) || "";
+    document.querySelectorAll("#memSponsorSeg [data-sponsor-answer]").forEach(b => {
+      const on = b.dataset.sponsorAnswer === answer;
+      b.classList.toggle("is-on", on); b.setAttribute("aria-pressed", String(on));
+    });
+  }
+  async function setJobsScope(scope) {
+    JF_SCOPE = JSCOPE.SCOPES.includes(scope) ? scope : JSCOPE.defaultScope(SCOPE_ST && SCOPE_ST.answer);
+    paintScopeControls();
+    loadPage(1);
+    try { takeScopeState(await api("/api/jobs/scope", { scope: JF_SCOPE })); } catch { /* applied for this visit */ }
+  }
+  async function saveSponsorAnswer(answer) {
+    const st = await api("/api/workauth/sponsorship", answer ? { answer } : { skip: true });
+    takeScopeState(st);
+    invalidateJobDetail();
+    if ($("#view-jobs")?.classList.contains("is-active")) loadPage(1);
+    return st;
+  }
+  document.querySelectorAll("#jfVisaDD input[data-scope]").forEach(rb =>
+    rb.addEventListener("change", () => { if (rb.checked) setJobsScope(rb.dataset.scope); }));
+  document.querySelectorAll("#sponsorAsk [data-sponsor-answer]").forEach(b => b.addEventListener("click", async () => {
+    const box = $("#sponsorAsk");
+    box.querySelectorAll("button").forEach(x => { x.disabled = true; });
+    try {
+      const st = await saveSponsorAnswer(b.dataset.sponsorAnswer);
+      toast(st.scope === "all" ? I18N.t("jobs.askSavedAll", "Saved. Showing all jobs.")
+        : I18N.t("jobs.askSavedSponsors", "Saved. Showing sponsors only; pick All jobs under Sponsorship any time."));
+    } catch (e) { toast(e.message || "Couldn't save."); }
+    finally { box.querySelectorAll("button").forEach(x => { x.disabled = false; }); }
+  }));
+  $("#sponsorAskLater")?.addEventListener("click", async () => {
+    $("#sponsorAsk").hidden = true;
+    try { await saveSponsorAnswer(""); } catch { /* asked again next time */ }
+  });
+  document.querySelectorAll("#memSponsorSeg [data-sponsor-answer]").forEach(b => b.addEventListener("click", async () => {
+    try {
+      await saveSponsorAnswer(b.dataset.sponsorAnswer);
+      memLoad();
+    } catch (e) { toast(e.message || "Couldn't save."); }
+  }));
 
 
   let JOBS_PAGE = 1;
@@ -2626,6 +2706,7 @@
     if (JF_PAY) p.set("pay", String(JF_PAY));
     if (JF_SORT) p.set("sort", JF_SORT);
     if (JF_SPONSORED) p.set("sponsored", "1");
+    p.set("scope", JF_SCOPE);
     if (JF_SAVED) p.set("saved", "1");
     p.set("page", String(page || 1));
     p.set("per_page", String(JOBS_PER_PAGE));
@@ -2735,9 +2816,8 @@
     if (!el) return;
     el.classList.remove("feed-note-quiet", "feed-note-stale");   // only the age line below sets them
     const total = FEED_ALLTOTAL, shown = FEED_TOTAL;
-    const count = shown === total
-      ? `${total.toLocaleString()} live role${total === 1 ? "" : "s"}`
-      : `${shown.toLocaleString()} of ${total.toLocaleString()} role${total === 1 ? "" : "s"}`;
+    // "N of M" where M is every live job, so Sponsors only stays honest about what it leaves out.
+    const count = JSCOPE.countText(shown, total, n => n.toLocaleString());
     // While reconnecting, say so instead of flashing a stale count or a frozen timestamp. On a cold
     // start (no good board yet) there's no count to keep, so just show "connecting to the live feed".
     // The list pane says it once (downloading, or the failure with Retry): keep the note quiet.
@@ -2794,6 +2874,7 @@
   // background (official ATS feeds only) so the list stays fresh with no Refresh button.
   async function loadJobsFeed() {
     loadVisaStatus();
+    await loadScopeState();       // Sponsors only or All jobs, before the first page is asked for
     await stratOnJobsOpen();      // saved searches: paint the rail, apply the default one once
     await loadPage(1);
     startFeedPoll();
@@ -2925,6 +3006,17 @@
   document.addEventListener("click", (e) => {
     const dd = $("#jfVisaDD");
     if (dd && dd.open && !dd.contains(e.target)) dd.open = false;
+  });
+  // Keep its panel on screen: it opens under the button's left edge, and when that would run past
+  // the right edge of the content area (the button is last in the bar at 1440 wide) it lines up
+  // with the button's right edge instead.
+  $("#jfVisaDD")?.addEventListener("toggle", (e) => {
+    const dd = e.currentTarget, panel = dd.querySelector(".jf-dd-panel");
+    if (!dd.open || !panel) return;
+    panel.classList.remove("is-right");
+    const area = dd.closest(".main") || document.documentElement;
+    const edge = Math.min(window.innerWidth, area.getBoundingClientRect().right) - 8;
+    if (panel.getBoundingClientRect().right > edge) panel.classList.add("is-right");
   });
   $("#jfEntry")?.addEventListener("click", (e) => {
     JF_LEVEL = JF_LEVEL === "entry" ? "" : "entry";
@@ -5194,7 +5286,7 @@
     showView("profile");
     document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
     if (!o.focus) window.scrollTo(0, 0);
-    await Promise.all([memLoad(), ansLoad(), loadLinkedinReview(), memLoadMay()]);
+    await Promise.all([memLoad(), ansLoad(), loadLinkedinReview(), memLoadMay(), loadScopeState(true)]);
     if (o.focus === "answers" || o.focus === "basics") $("#memAnswers")?.scrollIntoView({ block: "start" });
     if (o.focus === "may") $("#memMay")?.scrollIntoView({ block: "start" });
     if (o.focus === "basics") { memBasicsOpen(); requestAnimationFrame(() => requestAnimationFrame(basFocusFirstOpen)); }
@@ -11930,11 +12022,20 @@
     $("#aaSponsorOnly")?.setAttribute("aria-pressed", f.sponsor ? "true" : "false");
     if ($("#aaCount") && f.count) $("#aaCount").value = String(f.count);
   })();
+  // "Visa sponsors only" follows the sponsorship answer until the person clicks it themselves.
+  function aaStoredFocus() { try { return JSON.parse(localStorage.getItem(AA_PREF_KEY) || "null"); } catch { return null; } }
+  let AA_SPONSOR_SET = (() => { const f = aaStoredFocus(); return !!(f && (f.sponsorSet || f.sponsor === true)); })();
+  async function aaSponsorDefault() {
+    if (AA_SPONSOR_SET) return;
+    const st = await loadScopeState();
+    const on = JSCOPE.aaSponsorOn(null, st && st.answer);
+    $("#aaSponsorOnly")?.setAttribute("aria-pressed", on ? "true" : "false");
+  }
   let AA_FOCUS_T = null;
   function aaSaveFocus() {
     try {
       localStorage.setItem(AA_PREF_KEY, JSON.stringify({ titles: $("#aaFocus").value, locations: $("#aaLocation").value,
-        sponsor: aaSponsor(), count: aaCount() }));
+        sponsor: aaSponsor(), sponsorSet: AA_SPONSOR_SET, count: aaCount() }));
     } catch { /* private window */ }
     // The engine keeps the same focus too, so the Autopilot tailors the list this page shows.
     clearTimeout(AA_FOCUS_T);
@@ -11967,6 +12068,7 @@
   }
 
   async function loadAutoApply() {
+    await aaSponsorDefault();
     aaPaintAnswers();
     aaPaintMay();
     aaTouNotice();
@@ -14375,6 +14477,7 @@
   ["#aaFocus", "#aaLocation"].forEach(id => $(id)?.addEventListener("input", aaNextSoon));
   $("#aaSponsorOnly")?.addEventListener("click", e => {
     const b = e.currentTarget; b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"));
+    AA_SPONSOR_SET = true;      // the person's own choice from now on
     aaSaveFocus(); aaLoadNext();
   });
   $("#aaCount")?.addEventListener("change", () => { aaSaveFocus(); aaRunLabel(); aaLoadNext(); });

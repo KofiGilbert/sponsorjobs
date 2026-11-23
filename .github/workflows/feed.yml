@@ -172,6 +172,13 @@ jobs:
           # freehire search-by-sponsor pass (sourcing/freehire_sponsors.py, shard 0 only): requests
           # per run against freehire's keyless API, company look-ups included. 0 switches it off.
           FREEHIRE_SPONSOR_PASS_REQUESTS: ${{ vars.FREEHIRE_SPONSOR_PASS_REQUESTS || 200 }}
+          # GENERAL jobs (2026-11-20, all jobs with a sponsors-first filter in the app): shard 0
+          # also pulls freehire's newest US roles in every field, sponsor or not
+          # (sourcing/service.py step 3), FREEHIRE_BULK rows per run (about 60 requests for 6,000).
+          # FREEHIRE_GENERAL_BULK=0 switches the pull off; the merge's FEED_GENERAL_MAX caps what
+          # is published.
+          FREEHIRE_GENERAL_BULK: ${{ vars.FREEHIRE_GENERAL_BULK || 1 }}
+          FREEHIRE_BULK: ${{ vars.FREEHIRE_BULK || 6000 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" \
             --export-delta "${{ github.workspace }}/.shard/shard-${{ matrix.shard }}.db"
@@ -236,6 +243,9 @@ jobs:
         env:
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
           JOBS_FEED_LIMIT: ${{ vars.JOBS_FEED_LIMIT || 1000000 }}
+          # General (non-sponsor) rows published, newest first, English titles, US only
+          # (backend/feed.py general_max). Sponsor rows are never capped. 0 = sponsor-only feed.
+          FEED_GENERAL_MAX: ${{ vars.FEED_GENERAL_MAX || 50000 }}
           # Pruning (docs/feed.md, "When a row leaves"): a row unseen JOBS_FAST_PRUNE_DAYS days on a
           # board that was read in full since goes; every row goes at JOBS_PRUNE_DAYS days unseen.
           JOBS_FAST_PRUNE_DAYS: ${{ vars.JOBS_FAST_PRUNE_DAYS || 7 }}

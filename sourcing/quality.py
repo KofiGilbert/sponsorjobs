@@ -158,7 +158,10 @@ def is_entry_level(title: str, jd_text: str = "") -> bool:
 # because the company has a sponsorship record, so its rows always fit the product's promise;
 # an aggregator row fits only when the employer carries a sponsor badge or the posting itself
 # states sponsorship (decided 2026-10-01: sponsor-relevant only, like niche boards such as
-# H1BGrader, rather than an Indeed-style "everything, ranked" list).
+# H1BGrader, rather than an Indeed-style "everything, ranked" list). Since 2026-11-20 the feed
+# also carries a capped slice of general rows for job seekers who need no sponsorship; every row
+# is marked `sponsor_relevant` (this check) so the app's "Sponsors only" filter shows exactly the
+# board it showed before.
 AGGREGATOR_SOURCES = frozenset({"remotive", "adzuna", "arbeitnow", "remoteok", "jsearch", "freehire",
                                 "hackernews"})
 
@@ -174,3 +177,23 @@ def is_sponsor_relevant(job: dict) -> bool:
     if job.get("visa"):
         return True
     return job.get("sponsorship_stated") is True or job.get("ad_stance") == "offered"
+
+
+# Words that mark a title as written in another language (Spanish, French, German, Portuguese),
+# whole words only. "Cafe" or "Senior" alone never trip it.
+_NON_ENGLISH_TITLE = re.compile(
+    r"\b(de|del|y|para|con|und|f(?:ü|ue)r|mit|et|pour|avec|der|die|das|em|com|vaga)\b|\(m/w/d\)|\(h/f\)",
+    re.I)
+
+
+def looks_english(text: str, min_ratio: float = 0.9) -> bool:
+    """A cheap language check for the general (non-sponsor) feed rows, read from the title: at
+    least ``min_ratio`` of its letters are plain ASCII, and it has none of the common Spanish,
+    French, German or Portuguese function words. Empty text is not English."""
+    t = text or ""
+    letters = [c for c in t if c.isalpha()]
+    if not letters:
+        return False
+    if sum(1 for c in letters if c.isascii()) / len(letters) < min_ratio:
+        return False
+    return not _NON_ENGLISH_TITLE.search(t)
