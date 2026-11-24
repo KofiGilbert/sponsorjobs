@@ -6501,8 +6501,9 @@
     return `<button class="btn ${cls}" type="button" data-trk-apply title="${esc(trkApplyTip())}">${esc(trkT("tracker.apply", "Apply"))}</button>`;
   }
 
-  // One compact card, the same shape in every column (Jira's card): the job title, at most one
-  // chip, then a footer with the company on the left and one date (or "Apply") on the right.
+  // One compact card, the same shape in every column (Jira's card): the company (small, muted, its
+  // full name on one line), the job title, then one footer row: the New tag and at most one chip on
+  // the left, one date (or "Apply") on the right.
   // Resume, cover letter, chat and notes live in the side panel a click opens.
   function trkCardHtml(c) {
     const co = coName(c);
@@ -6512,12 +6513,12 @@
     const apply = trkApplyBtn(c, "btn-ghost btn-xs trk-apply");
     return `<div class="trk-card${c.stage === "approved" && c.new ? " is-new" : ""}" draggable="true" data-sid="${esc(c.source_id)}" role="button" tabindex="0"
         aria-label="${esc(co ? `${co}, ${c.title || ""}` : c.title || "")}">
+      ${co ? `<div class="trk-card-co">${trkAvatar(c)}<span class="trk-card-co-n" title="${esc(co)}">${esc(co)}</span></div>` : ""}
       <div class="trk-card-t">${esc(c.title || co)}</div>
-      ${chip || tag ? `<div class="trk-card-tags">${chip}${tag}</div>` : ""}
-      <div class="trk-card-foot">
-        <span class="trk-card-co">${trkAvatar(c)}<span class="trk-card-co-n">${esc(co)}</span></span>
+      ${chip || tag || meta.text || apply ? `<div class="trk-card-foot">
+        <span class="trk-card-tags">${tag}${chip}</span>
         ${meta.text || apply ? `<span class="trk-card-end">${meta.text ? trkMetaHtml(meta) : ""}${apply}</span>` : ""}
-      </div>
+      </div>` : ""}
       ${trkAskHtml(c)}
     </div>`;
   }
@@ -6541,7 +6542,7 @@
     { key: "approved", stages: ["approved"], hint: ["tracker.hintApproved", "Tailored, ready for you to apply"] },
     { key: "applied", stages: ["applied"], hint: ["tracker.hintApplied", "Moves here when you apply"] },
     { key: "interviewing", stages: ["interviewing"], hint: ["tracker.hintInterview", "Drag a card here when they call"] },
-    { key: "offer", stages: ["offer"], hint: ["tracker.hintOffer", "The goal"] },
+    { key: "offer", stages: ["offer"], hint: ["tracker.hintOffer", "Drag a card here when you get an offer"] },
     { key: "rejected", stages: ["rejected", "archived"], name: ["tracker.closed", "Closed"], hint: ["tracker.hintClosed", "Rejections and jobs you pass on"] },
   ];
   // The board fills the rest of the window and each column scrolls on its own (CSS: the view is a
@@ -6782,7 +6783,7 @@
       </div>`).join("") || `<p class="prof-dim">${esc(trkT("tracker.noFiles", "No tailored resume for this job yet."))}</p>`;
     const timeline = (j.activity || []).map(a => `<div class="trk-tl-row">
         <span class="trk-tl-dot" aria-hidden="true"></span>
-        <span class="trk-tl-what">${a.to_stage ? esc(trkStageName(a.to_stage)) : esc(trkT("tracker.removed", "Taken off the board"))}${a.note ? ` <span class="prof-dim">${esc(a.note)}</span>` : ""}</span>
+        <span class="trk-tl-what">${a.to_stage ? esc(trkStageName(a.to_stage)) : esc(trkT("tracker.removed", "Taken off the board"))}${a.note && String(a.note).trim().toLowerCase() !== String(a.to_stage ? trkStageName(a.to_stage) : "").toLowerCase() ? ` <span class="prof-dim">${esc(a.note)}</span>` : ""}</span>
         <span class="trk-tl-when">${esc(trkDay(a.at))}</span>
       </div>`).join("");
     const chips = trkChips(j);
