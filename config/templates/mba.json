@@ -58,5 +58,127 @@
         "And one or two real interests for the bottom line? Interviewers often open with these."
       ]
     }
+  },
+  "preview": {
+    "education": [
+      {
+        "school": "State University School of Business",
+        "degree": "Master of Business Administration, Strategy and Finance",
+        "date": "Expected May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Corporate Finance, Competitive Strategy, Marketing Management, Operations Management, Negotiations, Data-Driven Decisions"
+      },
+      {
+        "school": "State College",
+        "degree": "Bachelor of Arts in Economics, magna cum laude",
+        "date": "May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Econometrics, Microeconomic Theory, Financial Accounting, Statistics, Public Policy"
+      }
+    ],
+    "experience": [
+      {
+        "org": "Fabrikam Partners",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "MBA Summer Associate, Corporate Strategy",
+            "dates": "Jun 20XX - Aug 20XX",
+            "bullets": [
+              "Built the market-entry case for a new mid-market product line, sizing a $1.2 billion opportunity and winning executive approval for a pilot.",
+              "Interviewed 30 customers and five channel partners to shape pricing, lifting the pilot's projected first-year margin by 6 points.",
+              "Led a cross-functional working team of finance, sales and product leads through a six-week go-to-market plan.",
+              "Presented the final recommendation to the chief strategy officer and received a full-time return offer.",
+              "Built the pilot's KPI dashboard and handover plan so the product team could track adoption weekly.",
+              "Benchmarked four competitors' channel strategies and flagged two partnership options the team added to the plan."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Contoso Consulting Group",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Senior Analyst",
+            "dates": "Aug 20XX - Jul 20XX",
+            "bullets": [
+              "Managed workstreams on eight engagements for retail and consumer clients, owning analysis, client meetings and final deliverables.",
+              "Redesigned a regional grocer's store-labor model, saving $14 million a year while holding customer satisfaction scores flat.",
+              "Ran the due-diligence model for a private equity client's $300 million acquisition, delivered in a three-week sprint.",
+              "Coached and reviewed the work of six new analysts and led the office's analyst training program for two years, rewriting its modeling module and lifting new-hire ratings by a full point.",
+              "Wrote the firm's pricing-analytics playbook, reused on nine later engagements.",
+              "Built a store-clustering model in Python that guided the rollout order for a 200-store remodel program."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Northwind Traders",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Business Analyst",
+            "dates": "Jul 20XX - Jun 20XX",
+            "bullets": [
+              "Built the monthly sales forecast for a $500 million product portfolio, cutting forecast error from 15 to 7 percent.",
+              "Automated weekly reporting in SQL and Tableau, freeing about ten analyst hours each week and giving sales leaders same-day views of regional performance.",
+              "Supported the annual budgeting cycle with scenario models for four business units.",
+              "Partnered with supply chain on an inventory review that released $3 million of working capital.",
+              "Presented monthly performance reviews to the regional sales directors."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Anytown Economic Development Office",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Policy Intern",
+            "dates": "Jun 20XX - Aug 20XX",
+            "bullets": [
+              "Analyzed small-business survey data from 1,200 firms and wrote the summary chapter of the annual report, which shaped two new grant programs for first-time owners.",
+              "Built a grant-tracking spreadsheet that the office used to report outcomes to the city council.",
+              "Organized two community listening sessions with local business owners."
+            ]
+          }
+        ]
+      }
+    ],
+    "extracurricular": [
+      {
+        "title": "President, Business School Strategy Club",
+        "date": "20XX - Present",
+        "bullets": [
+          "Lead a 12-person board and a 300-member club; launched a speaker series and a case prep program with 85 percent of members placed in internships.",
+          "Built relationships with 15 partner firms that hosted club treks and recruiting events."
+        ]
+      },
+      {
+        "title": "Winner, Regional MBA Case Competition",
+        "date": "20XX",
+        "bullets": [
+          "Led a team of four to first place among 24 schools with a turnaround plan for a struggling consumer brand.",
+          "Built the financial model and delivered the pricing section to a panel of executive judges."
+        ]
+      },
+      {
+        "title": "Admissions Fellow, State University School of Business",
+        "date": "20XX - Present",
+        "bullets": [
+          "Interview prospective students and host weekly information sessions for about 40 visitors."
+        ]
+      },
+      {
+        "title": "Volunteer Consultant, Anytown Community Food Bank",
+        "date": "20XX - Present",
+        "bullets": [
+          "Redesigned volunteer scheduling for a food bank serving 4,000 families, cutting unfilled shifts by half.",
+          "Trained food bank staff to run the new scheduling tool on their own."
+        ]
+      }
+    ],
+    "interests": "Spanish (fluent), French (conversational); marathon running, community theater, chess, cooking"
   }
 }

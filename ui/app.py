@@ -20256,10 +20256,10 @@ def autoapply_board():
     tiles: dict[str, list[dict]] = {t: [] for t in TILES}
     ready_by_job: dict[str, dict] = {}
     p = _prefs()
-    seen = float(p.get("aa_closed_seen") or 0)
-    closed_new, closed_last = 0, 0.0
+    datas = []
     for r in rows:
         data = _record_data(r)
+        datas.append(data)
         item = _aa_row(r, data, jobs)
         if item["tile"] in tiles:
             tiles[item["tile"]].append(item)
@@ -20270,11 +20270,6 @@ def autoapply_board():
         if item["ready"] and board_stage.get(sid) in (None, "saved", "in_progress", "approved"):
             if sid not in ready_by_job or ready_by_job[sid]["id"] < item["id"]:
                 ready_by_job[sid] = item
-        if item["reason"] == "posting_closed":
-            at = float((data.get("job_closed") or {}).get("at") or 1.0)
-            if at > seen:
-                closed_new += 1
-                closed_last = max(closed_last, at)
     for t in TILES:
         tiles[t].sort(key=lambda x: x["when"], reverse=True)
     # Newest tailored first. Not by last move: opening a row approves it, and the list must not
@@ -20295,7 +20290,7 @@ def autoapply_board():
         # The Tracker's own applied count (every job with an applied date), for "N applied."
         "applied_count": applied_total,
         # Found closed since the person last saw the line: {n, at} (POST /api/autoapply/closed/seen)
-        "closed_notice": {"n": closed_new, "at": closed_last} if closed_new else None,
+        "closed_notice": _closed_notice(datas),
         "liveness_gen": gen,
         "counts": counts,
         "default": default_tile(counts),
@@ -20315,6 +20310,23 @@ def autoapply_board():
         "rechecking": rechecking,
         "apply_agent": _apply_agent_enabled(),
     })
+
+
+def _closed_notice(datas) -> dict | None:
+    """{n, at}: how many applications were found closed since the person last saw the quiet
+    "N jobs closed before you applied" line (POST /api/autoapply/closed/seen), and the newest
+    closing. None when there are none. Applications and the Tracker show the same line."""
+    from submit.stages import app_stage
+    seen = float(_prefs().get("aa_closed_seen") or 0)
+    n, last = 0, 0.0
+    for data in datas:
+        if app_stage(data)["reason"] != "posting_closed":
+            continue
+        at = float((data.get("job_closed") or {}).get("at") or 1.0)
+        if at > seen:
+            n += 1
+            last = max(last, at)
+    return {"n": n, "at": last} if n else None
 
 
 def _aa_board_view() -> tuple[dict[str, str], int]:
@@ -20929,6 +20941,18 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
                "cover_letter": (f"/api/record/{latest['id']}/cover_letter.pdf"
                                 if (data.get("cover_letter") or "").strip() else None),
                "count": len(records)}
+    # The package the card's "Apply" autofills: the newest one still ready to apply (the same
+    # rule as the Applications list), with its "New" tag and "Did you submit it?" question
+    # (_ask_submitted), so the Tracker and Applications say the same thing about it.
+    from submit.stages import app_stage as _app_stage
+    from submit.stages import is_ready_to_apply
+    ready, ready_data = None, None
+    for r in sorted(records, key=lambda r: -r["id"]):
+        d = _record_data(r)
+        if is_ready_to_apply(d):
+            ready, ready_data = r, d
+            break
+    ready_stage = _app_stage(ready_data)["stage"] if ready else ""
     fu = date_of(j.get("follow_up_at"))
     company, title = j.get("company") or "", j.get("title") or ""
     if not company and latest:
@@ -20949,6 +20973,12 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
         "record": rec,
         "has_session": sess is not None, "session": sess,
         "closed_at": j.get("closed_at") or None, "closed_reason": j.get("closed_reason") or "",
+        # Ready to apply: the record "Apply" fills, when it was tailored, whether it was never
+        # opened ("New"), and whether to ask "Did you submit it?" after an Autofill
+        "apply_id": ready["id"] if ready else None,
+        "tailored_at": _local_day(ready.get("created_at")) if ready else "",
+        "new": ready_stage == "queued",
+        "ask_submitted": _ask_submitted(ready_data, ready_stage) if ready else False,
     }
 
 
@@ -20982,8 +21012,11 @@ def tracker_board():
         sessions = {}
     for j in jobs:
         columns[j["stage"]].append(_board_card(j, by_job.get(j["source_id"], []), today, sessions))
+    closed = _closed_notice(_record_data(r) for group in by_job.values() for r in group)
     return _nostore(jsonify({"stages": list(STAGES), "columns": columns, "due_count": due,
-                             "goal": _board_goal(), "total": len(jobs)}))
+                             "goal": _board_goal(), "total": len(jobs),
+                             # "N jobs closed before you applied. Removed from your list."
+                             "closed_notice": closed}))
 
 
 @app.post("/api/tracker/move")

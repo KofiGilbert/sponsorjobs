@@ -26,12 +26,13 @@ def test_tracker_has_an_optional_in_progress_column_between_saved_and_approved()
     assert '"in_progress"' in JS.split("const TRK_STAGES", 1)[1].split(";", 1)[0]
 
 
-def test_a_tracker_card_with_a_session_shows_its_resume_and_opens_the_workspace():
-    card = _fn("trkCardHtml")
-    assert "sessScore(sess)" in card and "tracker.chatAgo" in card and "tracker.jobClosedOn" in card
-    assert "data-session" in _fn("trkCardShell")
-    board = _fn("renderTrackerBoard")
-    assert "openJobWorkspace(card.dataset.sid)" in board and "data-trk-chat" in board
+def test_a_tracker_card_in_progress_says_when_its_resume_moved_and_the_panel_opens_the_workspace():
+    # (2026-11-24, Jira-style board) The card is compact: one line, "Updated 2h ago". Its resume
+    # chat opens from the side panel's Chat, the one place for the resume, letter and chat.
+    meta = _fn("trkCardMeta")
+    assert "sessAgo(c.session.updated_at)" in meta and "tracker.updatedAgo" in meta and "tracker.jobClosedOn" in meta
+    assert "data-trk-chat" in _fn("trkPanelActions")
+    assert "openJobWorkspace(sid)" in _fn("openTrackerPanel")
 
 
 def test_jobs_detail_offers_open_your_resume_and_says_when_you_tailored():
@@ -95,15 +96,12 @@ def test_a_closed_applied_jobs_note_says_the_application_stands():
     assert "n.applied" in note and "chat.closedApplied" in note and "chat.closedAppliedTitle" in note
 
 
-def test_a_tracker_card_with_a_session_has_a_details_link_to_the_side_panel():
+def test_a_tracker_card_opens_the_side_panel_and_carries_no_links():
     card = _fn("trkCardHtml")
-    assert card.count("trkDetailsLink()") == 2          # in progress, and applied or closed
-    assert "tracker.jobClosedOn" in card              # "Posting closed Nov 10" on the meta
+    assert "trkDetailsLink" not in JS and "data-trk-details" not in JS
+    assert "<a " not in card and "sessScore" not in card
     board = _fn("renderTrackerBoard")
-    i = board.index("[data-trk-details]")
-    assert "openTrackerPanel(card.dataset.sid)" in board[i:i + 200]
-    # Card click still opens the workspace.
-    assert 'card.hasAttribute("data-session")' in board and "openJobWorkspace" in board
+    assert "openTrackerPanel(sid)" in board and "openJobWorkspace" not in board
 
 
 def test_the_new_labels_are_in_all_five_languages():
