@@ -2164,6 +2164,8 @@ class WebIntake:
         if isinstance(dec, list) and "projects" in dec:
             self.essentials["declined"] = [d for d in dec if d != "projects"]
         self._brain_projects(added, source)
+        # The person chose each of these for this resume: they show even past the project cap.
+        self._pin_projects([e["org"] for e in added])
         if self.assembled is not None:
             # A swap from the projects verdict rebuilds through the full build's fit, so the new
             # project's lines reach the edge and the roles keep their staircase.
@@ -5182,6 +5184,10 @@ class WebIntake:
         chunks = [c.strip(" \t-, .;") for c in self._PROJ_ENUM.split(body)]
         existing = self.essentials.setdefault("projects", [])
         have = {str(p.get("org") or p.get("title") or "").strip().lower() for p in existing}
+        # "Use these 4 projects: ..." is the person's own choice for THIS resume: each project
+        # named shows on it even past the project cap (assembler.project_cap).
+        chosen = bool(re.search(r"\b(use|include|put|show|keep|only)\b[^.\n]{0,50}\bprojects?\b", low))
+        named: list = []
         for chunk in chunks:
             if not chunk or len(chunk) < 3:
                 continue
@@ -5197,6 +5203,8 @@ class WebIntake:
             name = (chunk[:m.start()] if m else chunk).strip()
             name = re.sub(r"^(a set of|a|an|the)\s+", "", name, flags=re.I).strip()
             name = name.rstrip(" .,;-").strip()
+            if 2 < len(name) <= 60:
+                named.append(name)
             if not (2 < len(name) <= 60) or name.lower() in have:
                 continue
             # The whole clause is the person's own accurate description -> one bullet.
@@ -5210,6 +5218,20 @@ class WebIntake:
                 entry["link"] = url
             existing.append(entry)
             have.add(name.lower())
+        if chosen and named:
+            self._pin_projects(named)
+
+    def _pin_projects(self, names) -> None:
+        """Show these projects on this resume (a "show" switch for each), whatever the cap."""
+        from applicant.rules import project_id, project_name
+        from ui.repo_rank import same_project
+        bags = [self.essentials.get("projects") or [],
+                (self.profile or {}).get("projects") if isinstance(self.profile, dict) else []]
+        for name in names:
+            for bag in bags:
+                for p in bag or []:
+                    if isinstance(p, dict) and same_project(project_name(p), str(name)):
+                        self.session_choices[project_id(p)] = "show"
 
     # Explicit skills statement: "Skills: X, Y, Z", "my skills are …", "proficient/
     # skilled/experienced in/with …". Kept conservative so a normal sentence isn't scraped.

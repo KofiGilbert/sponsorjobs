@@ -684,10 +684,128 @@ def _terms(text: str) -> set:
             if w not in _STOP}
 
 
+# --------------------------------------------------------------------------- #
+# How many projects a page shows (Kofi, 2026-11-24): at most 3, at most 2 once the person has
+# 3 or more years of work. A long career is the evidence; projects support it, they never push
+# a job down to one bullet. The most relevant to the job stay; the rest are listed as cut to
+# fit, with Put back. A project the person chose (a "show" or "lead" choice, a Put back, a
+# project named in the chat) always stays, even past the cap: that is their call.
+# --------------------------------------------------------------------------- #
+PROJECTS_MAX = 3
+PROJECTS_MAX_EXPERIENCED = 2
+EXPERIENCED_YEARS = 3.0
+# Internships, co-ops, placements and the like do not count toward years of work: a student
+# with two summer internships is still early career, and their projects carry the page.
+_INTERNSHIP = re.compile(r"\b(?:intern|interns|internship|internships|co-?op|placement student|"
+                         r"industrial placement|apprentice|apprenticeship|trainee|working student)\b",
+                         re.I)
+
+
+def _is_internship(entry: dict, role: dict) -> bool:
+    text = " ".join(str(x or "") for x in (role.get("title"), role.get("type"), entry.get("type"),
+                                           entry.get("title") if role is not entry else ""))
+    return bool(_INTERNSHIP.search(text))
+
+
+def experience_years(profile: dict) -> float:
+    """Years of work across the profile's experience roles: each role's date range, overlapping
+    ranges merged (two jobs at once count once), "Present" up to this month. A role whose dates
+    do not parse (none, or a placeholder like "20XX") and an internship count for nothing."""
+    from applicant.rules import span
+    spans = []
+    for entry, role in _experience_roles(profile):
+        if _is_internship(entry, role):
+            continue
+        s = span(role.get("dates") or entry.get("dates"))
+        if s:
+            spans.append(s)
+    months, end = 0, None
+    for a, b in sorted(spans):
+        if end is None or a > end:
+            months += b - a + 1
+            end = b
+        elif b > end:
+            months += b - end
+            end = b
+    return months / 12.0
+
+
+def project_cap(profile: dict) -> int:
+    """How many projects this person's page shows without their own say (see above)."""
+    return PROJECTS_MAX_EXPERIENCED if experience_years(profile) >= EXPERIENCED_YEARS else PROJECTS_MAX
+
+
+def _project_text(p: dict) -> str:
+    return " ".join([str(p.get("org") or p.get("name") or ""), str(p.get("title") or ""),
+                     str(p.get("tools") or p.get("tech") or ""),
+                     " ".join(map(str, p.get("bullets") or []))])
+
+
+def project_order(projects: list, jd_terms: set) -> list[int]:
+    """Indexes of ``projects``, most relevant to the job first: the job's terms each one names
+    (``_terms`` overlap, as roles are scored), then the most recent, then the person's order."""
+    def key(n):
+        p = projects[n]
+        end = _end_ordinal(p.get("dates"))
+        return (-len(jd_terms & _terms(_project_text(p))), -(end if end is not None else 0), n)
+    return sorted(range(len(projects)), key=key)
+
+
+def _cap_projects(out: dict, source: dict, jd_terms: set, pinned=(), keep=(),
+                  report: dict | None = None) -> None:
+    """Hold ``out["projects"]`` to ``project_cap(source)``, the most relevant to the job kept,
+    in the person's order. ``pinned`` (project ids the person chose) always stay and count
+    toward the cap; a project they put back (its trim id in ``keep``) stays on top of it. Every kept project carries
+    its relevance (``_rel``, 0 the best) for the one-page fit, which cuts the least relevant
+    first. What the cap leaves out goes to ``report["projects_capped"]`` as (index, entry) for
+    the cut-to-fit list."""
+    from applicant.rules import project_id
+    projects = [p for p in out.get("projects") or [] if isinstance(p, dict)]
+    if not projects:
+        return
+    order = project_order(projects, jd_terms)
+    rel = {n: r for r, n in enumerate(order)}
+    pinned, keep = set(pinned or ()), set(keep or ())
+
+    def put_back(p) -> bool:
+        label = entry_label(p)
+        return trim_id("project", label, label) in keep
+    # A project the person chose counts toward the cap ("use these 4" shows those 4, no more);
+    # one they put back comes on top of it (the page keeps the others it already showed).
+    chosen = {n for n, p in enumerate(projects) if project_id(p) in pinned or p.get("_lead")}
+    back = {n for n, p in enumerate(projects) if put_back(p)} - chosen
+    room = max(0, project_cap(source) - len(chosen))
+    stay = chosen | back | set([n for n in order if n not in chosen | back][:room])
+    kept, capped = [], []
+    for n, p in enumerate(projects):
+        if n in stay:
+            kept.append(dict(p, _rel=rel[n]))
+        else:
+            capped.append((n, p))
+    out["projects"] = kept
+    if report is not None:
+        report["projects_capped"] = capped
+        if capped and report.get("shown"):
+            gone = {project_id(p) for _n, p in capped}
+            report["shown"] = [i for i in report["shown"] if i not in gone]
+
+
+def capped_project_trims(report: dict | None) -> list:
+    """The projects the cap left out, as cut-to-fit records (kind ``project``, Put back)."""
+    import copy
+    out: list = []
+    cuts = _Cuts(out, (), None)
+    for n, p in (report or {}).get("projects_capped") or []:
+        label = entry_label(p)
+        cuts.add("project", "projects", label, label, index=n, entry=copy.deepcopy(p), cap=True)
+    return out
+
+
 def select_roles_for_jd(profile: dict, jd_text: str, *,
                         max_roles: int = MAX_ROLES_ON_PAGE,
                         choices: dict | None = None,
-                        report: dict | None = None) -> dict:
+                        report: dict | None = None,
+                        keep=None) -> dict:
     """Keep the roles that argue for THIS job, and set how much each one says.
 
     A long career does not shrink gracefully. Rendering every role forces the fitter to
@@ -709,14 +827,23 @@ def select_roles_for_jd(profile: dict, jd_text: str, *,
     shown and lead items stay (and count toward the limit), ``prefer`` keeps the first of two,
     ``apart`` keeps the better match of two. With no choices this is exactly the scorer.
     ``report`` (a dict) is filled with what was shown and which choices changed it.
+
+    Projects are held to ``project_cap`` (at most 3, at most 2 with 3 or more years of work),
+    the most relevant to the job kept (``_cap_projects``); a project the person chose or put
+    back (its trim id in ``keep``) always stays. What the cap leaves out is in
+    ``report["projects_capped"]``.
     """
     if choices and any(choices.get(k) for k in ("hide", "show", "lead", "prefer", "apart")):
-        return _select_with_choices(profile, jd_text, choices, max_roles, report)
+        return _select_with_choices(profile, jd_text, choices, max_roles, report, keep=keep)
     experience = profile.get("experience") or []
     if report is not None:
         report.update(_report_shown(profile))
     if not experience:
-        return profile
+        if not profile.get("projects"):
+            return profile
+        out = dict(profile)
+        _cap_projects(out, profile, _terms(jd_text), keep=keep, report=report)
+        return out
 
     jd_terms = _terms(jd_text)
 
@@ -751,10 +878,12 @@ def select_roles_for_jd(profile: dict, jd_text: str, *,
         else:
             kept.append(roles[0])               # a flat entry keeps its flat shape
 
+    source = profile
     profile = dict(profile)
     profile["experience"] = kept
     if report is not None:
         report.update(_report_shown(profile))
+    _cap_projects(profile, source, jd_terms, keep=keep, report=report)
     return profile
 
 
@@ -859,7 +988,7 @@ def choice_exclusions(ids: list, scores: dict, choices: dict, base: set) -> tupl
 
 
 def _select_with_choices(profile: dict, jd_text: str, choices: dict, max_roles: int,
-                         report: dict | None) -> dict:
+                         report: dict | None, keep=None) -> dict:
     """``select_roles_for_jd`` with the person's choices (see its docstring). Chronological
     order is kept; a pinned role over the limit is reported, the most recent ones kept."""
     from applicant.rules import project_id
@@ -935,7 +1064,15 @@ def _select_with_choices(profile: dict, jd_text: str, choices: dict, max_roles: 
                    if pids[n] in lead_ids and pids[n] not in excluded]
     if lead_names and out.get("summary"):
         out["summary"] = lead_summary(str(out["summary"]), lead_names)
+    # The cap counts the projects the person chose; past it, only what they chose stays.
+    capped: dict = {}
+    if "projects" in profile:
+        _cap_projects(out, profile, jd_terms, keep=keep, report=capped,
+                      pinned={i for i, src in pins.items() if src.get("how") in ("show", "lead")})
+        gone = {project_id(p) for _n, p in capped.get("projects_capped") or []}
+        shown = [i for i in shown if i not in gone]
     if report is not None:
+        report["projects_capped"] = capped.get("projects_capped") or []
         applied = set()
         for i, why in excluded.items():
             if i in base_ids and why.get("rule"):
@@ -993,12 +1130,13 @@ def lead_summary(summary: str, names: list) -> str:
 
 
 def strip_choice_marks(profile: dict) -> dict:
-    """Remove the selection's private marks (``_lead``, ``_reserve``) before the page leaves
-    the assembler."""
+    """Remove the selection's private marks (``_lead``, ``_reserve``, a project's ``_rel``)
+    before the page leaves the assembler."""
     for e in (profile.get("projects") or []) + (profile.get("experience") or []):
         if isinstance(e, dict):
             e.pop("_lead", None)
             e.pop("_reserve", None)
+            e.pop("_rel", None)
             for r in e.get("roles") or []:
                 if isinstance(r, dict):
                     r.pop("_lead", None)
@@ -1356,7 +1494,7 @@ def _role_lists(profile: dict):
             yield it["bullets"], "extracurricular", entry_label(it), False
 
 
-def _drop_trailing_bullet(profile: dict, cuts: "_Cuts | None" = None) -> bool:
+def _drop_trailing_bullet(profile: dict, cuts: "_Cuts | None" = None, role_floor: int = 1) -> bool:
     """Drop the last bullet of one entry that still has more than one, by recency.
 
     Order (Kofi, 2026-11-06: the more recent the job, the more bullets): first the extra
@@ -1368,11 +1506,14 @@ def _drop_trailing_bullet(profile: dict, cuts: "_Cuts | None" = None) -> bool:
     Never truncates text — a dropped bullet is removed whole, so every surviving
     bullet stays a complete sentence. Returns True if something was dropped. A bullet the
     person put back is skipped: the next one up goes instead. A role the person leads with
-    keeps its bullets while any other entry can give one up.
+    keeps its bullets while any other entry can give one up. An experience role keeps
+    ``role_floor`` bullets (the one-page fit passes ``OLDEST_FLOOR``, 2, until everything else
+    that may go has gone).
     """
     cuts = cuts or _Cuts(None, (), None)
-    lists = list(_role_lists(profile))
     rank_of = {id(r.get("bullets")): rank for rank, _e, r in ranked_roles(profile)}
+    lists = [x for x in _role_lists(profile)
+             if not (x[1] == "experience" and id(x[0]) in rank_of and len(x[0]) <= role_floor)]
 
     from .filler import has_figure
 
@@ -1443,6 +1584,70 @@ def _figureless_on_page(profile: dict) -> bool:
     return any(not has_figure(str(b)) for bl, _s, _l, _lead in _role_lists(profile) for b in bl)
 
 
+def _project_cut_order(projects: list) -> list[int]:
+    """Indexes of ``projects`` in the order the fit cuts them: the least relevant to the job
+    first (``_rel``, set by ``_cap_projects``); a project without one (a page built without
+    selection) goes figureless first, then the last first. A project the person leads with
+    goes last."""
+    def key(i):
+        p = projects[i]
+        rel = p.get("_rel")
+        return (bool(p.get("_lead")), -(rel if isinstance(rel, int) else -1),
+                _figured_entry(p), -i)
+    return sorted(range(len(projects)), key=key)
+
+
+def _drop_project(profile: dict, cuts: "_Cuts", room: bool = False):
+    """Drop the least relevant project (``_project_cut_order``), one always staying; a project
+    the person put back or leads with is never the one. Returns a function that undoes it (the
+    cut is in ``cuts``, marked ``room`` when asked), or None when no project may go."""
+    import copy
+    projects = profile.get("projects") or []
+    if len(projects) <= 1:
+        return None
+    idx = next((i for i in _project_cut_order(projects) if isinstance(projects[i], dict)
+                and not projects[i].get("_lead")
+                and not cuts.kept("project", entry_label(projects[i]), entry_label(projects[i]))),
+               None)
+    if idx is None:
+        return None
+    entry = projects.pop(idx)
+    label = entry_label(entry)
+    saved = copy.deepcopy(entry)
+    saved.pop("_rel", None)
+    extra = {"room": True} if room else {}
+    cuts.add("project", "projects", label, label, index=idx, entry=saved, **extra)
+    rec = cuts.trims[-1] if cuts.trims else None
+
+    def undo():
+        projects.insert(idx, entry)
+        if cuts.trims is not None and rec in cuts.trims:
+            cuts.trims.remove(rec)
+    return undo
+
+
+def _drop_project_bullet(profile: dict, cuts: "_Cuts") -> bool:
+    """Drop one project bullet, every project keeping one: a figureless bullet anywhere in
+    Projects first, the least relevant project first, then a figured one the same way."""
+    from .filler import has_figure
+    projects = [p for p in profile.get("projects") or [] if isinstance(p, dict)]
+    order = [projects[i] for i in _project_cut_order(projects)]
+    for figured in (False, True):
+        for p in order:
+            for r in (p.get("roles") or [p]):
+                bl = r.get("bullets") if isinstance(r, dict) else None
+                if not isinstance(bl, list) or len(bl) <= 1:
+                    continue
+                label = entry_label(p, r)
+                idx = _cut_victim(bl, 1, cuts, label)
+                if idx is None or (not figured and has_figure(str(bl[idx]))):
+                    continue
+                cuts.add("bullet", "projects", label, str(bl[idx]), index=idx)
+                bl.pop(idx)
+                return True
+    return False
+
+
 def _shrink_once(profile: dict, trims: list | None = None, keep=None,
                  origins: dict | None = None) -> bool:
     """Reduce content by ONE step so the CV fits one page, keeping every bullet a
@@ -1468,8 +1673,19 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
             cuts.add("sentence", section, label, before, cut=sentences[-1], after=bl[i])
             return True
 
-    # 2. Drop a trailing bullet: the oldest role's extras first (``_drop_trailing_bullet``).
-    if _drop_trailing_bullet(profile, cuts):
+    # 2. PROJECTS BEFORE JOBS (Kofi, 2026-11-24): the projects past the cap are already out
+    # (``_cap_projects``); next the least relevant project goes (one always stays), then project
+    # bullets down to one each, and only then an experience bullet. The project is marked
+    # ``room``: when the jobs cannot use all the room it made (their material runs dry), the
+    # restore pass at the end puts it back if it fits, so the page is never left short for it.
+    if _drop_project(profile, cuts, room=True):
+        return True
+    if _drop_project_bullet(profile, cuts):
+        return True
+
+    # 3. Drop a trailing bullet: the oldest role's extras first (``_drop_trailing_bullet``),
+    # every role keeping ``OLDEST_FLOOR`` (2) while anything below can still go.
+    if _drop_trailing_bullet(profile, cuts, role_floor=OLDEST_FLOOR):
         return True
 
     # 3. One-shot: cap every "Courses:" line to at most 6 courses.
@@ -1512,27 +1728,6 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
             bl.pop(idx)
             return True
 
-    # 6. Drop a trailing project entry (keep at least one), one whose bullets carry no
-    # distinctive figure first; a figured project waits until a skills line and an education
-    # entry have gone (6b).
-    projects = profile.get("projects", [])
-
-    def drop_project(figured: bool) -> bool:
-        if len(projects) <= 1:
-            return False
-        # The last project first; a figureless one may go from anywhere in the list.
-        idx = next((i for i in range(len(projects) - 1, 0 if figured else -1, -1)
-                    if not cuts.kept("project", entry_label(projects[i]), entry_label(projects[i]))
-                    and (figured or not _figured_entry(projects[i]))), None)
-        if idx is None:
-            return False
-        label = entry_label(projects[idx])
-        cuts.add("project", "projects", label, label, index=idx, entry=copy.deepcopy(projects[idx]))
-        projects.pop(idx)
-        return True
-    if drop_project(False):
-        return True
-
     # 7. Skills keep 4 to 5 full-width lines (the owner's layout rule, linefit.py): drop a line
     # ONLY above the 4-line floor, so it can go 5 -> 4 but never below 4.
     if len(profile.get("skills", {})) > SKILL_LINES_FLOOR:
@@ -1555,8 +1750,8 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
             edu.pop(idx)
             return True
 
-    # 6b. A trailing project whose bullets carry a figure.
-    if drop_project(True):
+    # 9a. Only now does an experience role go below two bullets, the oldest role first.
+    if _drop_trailing_bullet(profile, cuts):
         return True
 
     # 9. Drop a remaining single bullet from the last role that has one: a figureless bullet
@@ -2794,7 +2989,8 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list, older_roles: bool = Tr
     the order Kofi set (2026-11-06): (1) an older role's bullets beyond two, oldest role first
     (skipped with ``older_roles`` off, for the strict staircase's own steps); (2) a project's
     bullets beyond one, last project first; (3) a skills line beyond the template's minimum
-    (``SKILL_LINES_FLOOR``). The oldest role keeps ``OLDEST_FLOOR`` bullets (Kofi, 2026-11-10:
+    (``SKILL_LINES_FLOOR``); then (4) the least relevant project, one always staying, and (5) a
+    project's figured bullets beyond one. The oldest role keeps ``OLDEST_FLOOR`` bullets (Kofi, 2026-11-10:
     it used to go down to one). Never a whole role, never the summary, never type or margins. The cut is recorded in ``cuts`` (Put
     back, marked ``room`` so ``_restore_room`` can try it again at the end) and a cut the
     person put back is skipped. Returns a function that undoes the cut, or
@@ -2850,6 +3046,17 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list, older_roles: bool = Tr
                 skills.update(before)
                 forget(rec)
             return undo
+    # (4) Projects before jobs (Kofi, 2026-11-24): the least relevant project goes (one always
+    # stays), then (5) a project's figured bullets beyond one, before a role's step is given up.
+    u = _drop_project(profile, cuts, room=True)
+    if u:
+        return u
+    projects = [p for p in profile.get("projects") or [] if isinstance(p, dict)]
+    for i in _project_cut_order(projects):
+        if isinstance(projects[i].get("bullets"), list):
+            u = pop(projects[i]["bullets"], "projects", entry_label(projects[i]), 1)
+            if u:
+                return u
     return None
 
 
@@ -3018,7 +3225,7 @@ def assemble_cv(
     # Selecting first means the roles that survive get room to argue.
     report: dict = {}
     _say("match", "Matching your experience", "to the roles this job cares about")
-    profile = select_roles_for_jd(full_profile, jd_text, choices=choices, report=report)
+    profile = select_roles_for_jd(full_profile, jd_text, choices=choices, report=report, keep=keep)
     # What the person's choices left out never comes back through the grow pass below.
     full_profile = choice_pool(full_profile, report)
     import copy as _copy
@@ -3033,7 +3240,9 @@ def assemble_cv(
     used = (_tailor_bullets(profile, jd_text, llm, material=gate_material, reverted=reverted,
                             origins=origins) if tailor else profile)
 
-    trims: list = []
+    # The projects past the cap (``project_cap``) are the first thing cut to fit, each listed
+    # with Put back like any other cut.
+    trims: list = capped_project_trims(report)
     attempts, result = _fit_to_page(preamble, used, sections, workdir, jobname, max_shrink,
                                     headings=headings, trims=trims, keep=keep, origins=origins)
 
@@ -3048,13 +3257,15 @@ def assemble_cv(
         _say("grow", "Trying again", "with more of your roles, the page came out short", state="retry")
         g_reverted: list = []
         g_origins: dict = {}
-        g_source = select_roles_for_jd(full_profile, jd_text, max_roles=10 ** 6, choices=choices)
+        g_report: dict = {}
+        g_source = select_roles_for_jd(full_profile, jd_text, max_roles=10 ** 6, choices=choices,
+                                       report=g_report, keep=keep)
         if tailor:
             _say("bullets", "Crafting bullets", "for the roles that came back")
         grown = (_tailor_bullets(g_source, jd_text, llm, material=gate_material,
                                  reverted=g_reverted, origins=g_origins)
                  if tailor else _copy.deepcopy(g_source))
-        g_trims: list = []
+        g_trims: list = capped_project_trims(g_report)
         g_attempts, g_result = _fit_to_page(preamble, grown, sections, workdir,
                                             jobname + "-full", max_shrink, headings=headings,
                                             trims=g_trims, keep=keep, origins=g_origins)
