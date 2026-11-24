@@ -1301,6 +1301,10 @@ class WebIntake:
         # (assembler.AssembleResult.written), kept while they are on the page unedited, so
         # "What changed" lists them for the person to check.
         self._written: list = []
+        # The person's own fact edits in this chat (a title, employer, date, school ... they
+        # typed, uploaded, or chose), laid over their saved profile until it is saved
+        # (tailoring/facts.py, _fact_anchor). Nothing else may change a fact on the page.
+        self._fact_edits: list = []
 
         saved = memory.load(profile_name)
         if saved:
@@ -1354,13 +1358,95 @@ class WebIntake:
     def _persist(self):
         """Autosave the structured profile/essentials to the SQLite store on every
         turn, so a returning user is recognized even if they never clicked
-        Accept & Save. (The diary holds the verbatim copy in parallel.)"""
+        Accept & Save. (The diary holds the verbatim copy in parallel.)
+
+        The facts written are the person's own (``_guard_facts``): a chat reopened days later
+        still holds the job title it started with, and saving that copy put an old title back
+        over the one the person had saved since (2026-11-24)."""
+        self._guard_facts(where="save")
         try:
             self.memory.save(self.profile_name, self.profile or {}, self.essentials,
                              self.prior_history + self.history)
+            self._fact_edits = []          # saved: the stored profile holds them now
         except Exception:
             pass
         self._brain_contact()
+
+    # ------------------------------------------------------------------ facts
+    def _fact_anchor(self) -> dict:
+        """The person's own value for every job title, employer, date, location, school, degree
+        and project name (tailoring/facts.py): their saved profile as it is in the store NOW
+        (never the copy this chat loaded, which an edit elsewhere may have overtaken), the
+        entries only this chat knows (its essentials), then their explicit edits in this chat."""
+        import copy as _copy
+        from tailoring import facts as _F
+        saved = {}
+        try:
+            saved = (self.memory.load(self.profile_name) or {}).get("profile") or {}
+        except Exception:      # noqa: BLE001 - the copy this chat holds stands in
+            saved = {}
+        if not saved:
+            saved = self.saved_profile or {}
+        try:
+            anchor = normalize_profile(_copy.deepcopy(saved)) if saved else {}
+        except Exception:      # noqa: BLE001
+            anchor = {}
+        for k in ("experience", "education", "projects"):
+            anchor.setdefault(k, [])
+        try:
+            _F.add_missing(anchor, _copy.deepcopy(self.essentials or {}))
+            _F.apply_edits(anchor, self._fact_edits)
+        except Exception:      # noqa: BLE001 - the saved facts alone still guard the page
+            pass
+        return anchor
+
+    def _guard_facts(self, where: str = "") -> list:
+        """Put the person's own facts back on this chat's profile and essentials (in place)."""
+        from tailoring.facts import restore_facts
+        try:
+            anchor = self._fact_anchor()
+            fixed = restore_facts(self.profile or {}, anchor, where=where)
+            fixed += restore_facts(self.essentials or {}, anchor, where=where)
+            return fixed
+        except Exception:      # noqa: BLE001 - a guard never breaks the chat
+            return []
+
+    def _fact_mark(self):
+        """A snapshot of the profile's facts, before an explicit edit (``_note_fact_edits``)."""
+        from tailoring.facts import snapshot
+        return snapshot(self.profile or {})
+
+    def _note_fact_edits(self, mark) -> None:
+        """The facts the person just changed on the page themselves (edit, date picker, title
+        choice) become theirs: recorded so the guard keeps them, and saved with the profile."""
+        from tailoring.facts import diff, snapshot
+        try:
+            self._fact_edits += diff(mark, snapshot(self.profile or {}))
+        except Exception:      # noqa: BLE001
+            pass
+
+    def _keep_fact_words(self, before: dict, message: str = "") -> None:
+        """After a model re-emitted the essentials (extract_intake, absorb_enrichment): a fact it
+        changed is the person's only when they typed the new value in ``message`` (their message,
+        or the text of the resume they uploaded) or an earlier turn of this chat; anything else
+        goes back to what it was. A model that writes "AI Senior Data Manager" for "Senior AI
+        Data Manager" changed a fact the person never asked to change."""
+        from tailoring import facts as _F
+        # What the person typed in this chat: the message, and their earlier turns (a model may
+        # correct its own earlier reading of a title the person gave two messages ago).
+        said = " \n ".join([str(t.get("content") or "") for t in (self.history or [])
+                            if t.get("role") == "user"] + [message or ""])
+        try:
+            for ch in _F.changes(before, self.essentials or {}):
+                if ch["new"] and _F.typed(ch["new"], said):
+                    self._fact_edits.append({"section": ch["section"], "before": ch["before"],
+                                             "field": ch["field"], "value": ch["new"]})
+                else:
+                    ch["unit"].set(ch["field"], ch["old"])
+                    _log.warning("resume fact kept: the model changed %s %r to %r unasked",
+                                 ch["field"], ch["old"], ch["new"])
+        except Exception:      # noqa: BLE001
+            pass
 
     def _brain(self):
         """(Phase 3) The applicant brain beside this session's memory file, for the person's own
@@ -3830,6 +3916,8 @@ class WebIntake:
         clean_identity_links(ident)
         ident.update({k: v for k, v in found["identity"].items() if v})
         up["identity"] = ident
+        import copy as _copy
+        facts_before = _copy.deepcopy(self.essentials)
         merged = _merge_upload(self.essentials, up)
         if merged.get("projects") and "projects" in (merged.get("declined") or []):
             merged["declined"] = [d for d in merged["declined"] if d != "projects"]
@@ -3846,6 +3934,9 @@ class WebIntake:
             ("school", "degree", "date"))
         merged.setdefault("override", self.essentials.get("override", False))
         self.essentials = merged
+        # A title, employer or school their own uploaded resume states is theirs (when the file
+        # says it in those words; a misread stays what it was).
+        self._keep_fact_words(facts_before, text or "")
         # Keep the person's REAL bullet points from the uploaded CV, never drop them
         # and re-draft over real accomplishments (CLAUDE.md §8).
         self._attach_cv_bullets(text or "")
@@ -4646,6 +4737,8 @@ class WebIntake:
         material_before = self._material_sig()
         prior_projects = [dict(p) for p in (self.essentials.get("projects") or [])]
         prior_education = [dict(d) for d in (self.essentials.get("education") or [])]
+        import copy as _copy
+        facts_before = _copy.deepcopy(self.essentials)
         out = self.llm.extract_intake(self.jd, self.essentials, self.history)
         merged = _canonicalize_essentials(out.get("essentials") or self.essentials)
         for k in ("identity", "education", "experience"):
@@ -4665,6 +4758,7 @@ class WebIntake:
                 if not _blank(v) or _blank(merged.get(k)):
                     merged[k] = v
         self.essentials = merged
+        self._keep_fact_words(facts_before, message)
         # The extractor re-emits education/projects each turn but often WITHOUT fields it
         # doesn't manage (transcript courses, chat-captured projects), so carry those
         # forward, or they'd be silently wiped on the next message.
@@ -5587,6 +5681,9 @@ class WebIntake:
         _activity.step("draft", "Drafting", "your resume from your experience")
         drafted = normalize_profile(self.llm.draft_profile(self.jd, self.essentials))
         self.profile = drafted
+        # A drafted title, employer, date or school is the person's own, never the model's
+        # "JD-aligned" variant (tailoring/facts.py).
+        self._guard_facts(where="draft")
         self.profile["identity"] = self.essentials.get("identity", {}) or self.profile.get("identity", {})
         # The person's real education, verbatim, courses come only from them or
         # their transcript, never drafted.
@@ -5915,21 +6012,28 @@ class WebIntake:
         True when the page changed."""
         from tailoring.assembler import extract_preamble, render_cv
         from tailoring.compiler import compile_tex
+        import copy as _copy
+        from tailoring.facts import restore_facts
         a = self.assembled
         if a is None or not getattr(a, "profile_used", None):
             return False
+        # A chat reopened days later shows the person's facts as they are saved now, not the
+        # job title its page was built with (tailoring/facts.py).
+        used = _copy.deepcopy(a.profile_used)
+        restore_facts(used, self._fact_anchor(), where="reopened page")
         try:
             pre = extract_preamble(self.template)
-            now = render_cv(pre, a.profile_used, self.sections, headings=self.headings)
+            now = render_cv(pre, used, self.sections, headings=self.headings)
             if now == (a.tex_source or ""):
                 return False
-            r = compile_tex(render_cv(pre, a.profile_used, self.sections, probe=True,
+            r = compile_tex(render_cv(pre, used, self.sections, probe=True,
                                       headings=self.headings), self.workdir, jobname=self.jobname)
         except Exception:      # noqa: BLE001 - the page stays as it was
             return False
         base_over = getattr(getattr(a, "compile", None), "overfull_count", 0) or 0
         if not (r and r.ok and r.pages == 1 and (r.overfull_count or 0) <= base_over):
             return False
+        a.profile_used = used
         a.tex_source, a.compile, a.pdf_path = now, r, r.pdf_path
         if r.fill_ratio is not None:
             a.fill_ratio = r.fill_ratio
@@ -6160,7 +6264,7 @@ class WebIntake:
                 keep=self.kept_trims, material=self._fit_material(),
                 fit_lines=True, skill_pool=self._skill_pool(),
                 skill_cap=self._skill_cap(), skill_keep=self._skill_keep(),
-                role_terms=self._role_terms())
+                role_terms=self._role_terms(), facts=self._fact_anchor())
             self._terms_after_build()
             self._last_reverted = list(getattr(self.assembled, "reverted", None) or [])
             self._written = list(getattr(self.assembled, "written", None) or [])
@@ -7222,10 +7326,13 @@ class WebIntake:
         required-section question that the model's absorb left out of the section it asked for
         goes into that section deterministically (_absorb_required_reply)."""
         before = self._material_sig()
+        import copy as _copy
+        facts_before = _copy.deepcopy(self.essentials)
         try:
             self.essentials = self.llm.absorb_enrichment(self.jd, self.essentials, message)
         except Exception:
             pass
+        self._keep_fact_words(facts_before, message)
         filled = self._absorb_required_reply(message, changed=self._material_sig() != before)
         if not filled and self._material_sig() == before and self._interests_like(message):
             self._merge_interests(message)
@@ -7469,6 +7576,7 @@ class WebIntake:
             fill_writes=fit_lines,
             skill_cap=self._skill_cap(), skill_keep=self._skill_keep(),
             role_terms=self._role_terms() if fit_lines else None,
+            facts=self._fact_anchor(),
         )
         if fit_lines:
             self._written = list(getattr(self.assembled, "written", None) or [])
@@ -7514,10 +7622,12 @@ class WebIntake:
     @_locked
     def set_title(self, role_id: str, decision: str, custom: str = ""):
         from intake.conversation import apply_title_decision
+        mark = self._fact_mark()
         for rid, _e, r in self._roles():
             if rid == role_id:
                 apply_title_decision(r, decision, custom)
                 break
+        self._note_fact_edits(mark)          # the title they chose is theirs
         self._assemble()
         return self._state()
 
@@ -7598,6 +7708,7 @@ class WebIntake:
             return st
         container, key = slots[ref]
         before = _copy.deepcopy(self.profile)
+        mark, edits_before = self._fact_mark(), list(self._fact_edits)
         if ref.startswith("skill-"):
             # A skills line is "Label: items". Editing the label renames the group.
             label, _, items = text.partition(":")
@@ -7615,6 +7726,7 @@ class WebIntake:
             container[key] = text
             if ref == "ent-" or ref.endswith("-title"):
                 container.pop("title_suggested", None)      # the person's own title wins
+        self._note_fact_edits(mark)          # their own title, employer or school: kept as typed
         renamed = self._rename_items(before, self.profile)   # a renamed role keeps its choices
         self.dirty = True
         self._assemble()
@@ -7622,6 +7734,7 @@ class WebIntake:
         if (a is None or not a.ok or (a.compile and a.compile.pages and a.compile.pages > 1)
                     or a.attempts > 1):   # the builder had to cut text to fit: not what was typed
             self.profile = before
+            self._fact_edits = edits_before
             if renamed:
                 self._rename_items(None, None, back=renamed)
             self._assemble()
@@ -7677,7 +7790,9 @@ class WebIntake:
             entry, field = slots[ref]
             new = format_dates(str(text or ""))
             if new:                                   # empty == invalid/impossible -> keep old
+                mark = self._fact_mark()
                 entry[field] = new
+                self._note_fact_edits(mark)           # the date they picked is theirs
                 entry.pop("dates_placeholder", None)  # a real date replaces the placeholder
                 self.dirty = True
                 self._assemble()   # recompile so the PDF preview updates
