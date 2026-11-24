@@ -118,7 +118,8 @@ def test_the_tracker_ready_to_apply_column_counts_the_same_jobs(A):
     assert b["applied_count"] == 1
     # The Tracker card of a closed job never reads "Needs you"; it says "Job closed <date>".
     assert "tracker.jobClosedOn" in APP_JS
-    assert 'rec.state === "failed" && APPLY_AGENT && rec.reason !== "posting_closed"' in APP_JS
+    card = APP_JS.split("function trkCardHtml(", 1)[1].split("\n  }\n", 1)[0]
+    assert "tracker.needsYou" not in card
 
 
 def test_an_applied_job_stays_applied_when_its_posting_closes(A):
