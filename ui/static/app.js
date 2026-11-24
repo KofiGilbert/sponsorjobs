@@ -1245,11 +1245,15 @@
       return r.confirmed ? "Submitted, and the site confirmed it."
         : "Submitted. The page showed no confirmation, so check the Browser tab once.";
     }
-    const bits = [];
-    if (r.filled) bits.push(r.filled + " field" + (r.filled === 1 ? "" : "s"));
-    if (r.resume_attached) bits.push("resume attached");
-    let msg = bits.length ? "Filled " + bits.join(", ") + "." : "Nothing to fill on this page.";
-    if (r.reason === "captcha") msg += " This form has a captcha, so the submit is yours.";
+    // (2026-11-24) A resume that went into a site's own "autofill from resume" box while the
+    // Resume field itself is still empty (Ashby) is not called attached: the Resume field is
+    // listed under "Left for you" instead, never both.
+    const resumeLeft = (r.left || []).some((l) => /\b(resume|cv)\b/i.test(String(l)));
+    const attached = !!r.resume_attached && !resumeLeft;
+    const fields = r.filled ? r.filled + " field" + (r.filled === 1 ? "" : "s") : "";
+    let msg = fields ? "Filled " + fields + (attached ? ", resume attached." : ".")
+      : attached ? "Resume attached." : "Nothing new to fill on this page.";
+    if (r.reason === "captcha") msg += " This form has a captcha. Solve it before you submit.";
     else if (r.reason === "login") msg += " The site wants a sign-in. Sign in, then click Fill this page again.";
     else if (r.reason === "submit-covered") {
       msg += " A banner" + (r.covered_by ? " (" + r.covered_by + ")" : "") + " covers the submit button. Close it first.";
@@ -1257,7 +1261,8 @@
     if (r.next_page) msg += " Click Next on the site when ready, the next page fills itself.";
     if (r.pending_upload && !r.resume_attached) msg += " Attach your resume PDF yourself.";
     if (r.left && r.left.length) {
-      msg += " Left for you: " + r.left.slice(0, 3).join(", ") + (r.left.length > 3 ? ", and " + (r.left.length - 3) + " more." : ".");
+      const list = r.left.slice(0, 3).join(", ");
+      msg += " Left for you: " + list + (r.left.length > 3 ? ", and " + (r.left.length - 3) + " more." : /[.?!]$/.test(list) ? "" : ".");
     }
     msg += r.submit_highlighted
       ? " Check it and click Submit on the site, it's outlined in orange."
