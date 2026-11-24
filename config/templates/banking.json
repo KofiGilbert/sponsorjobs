@@ -41,14 +41,123 @@
   "elicit": {
     "interests": {
       "label": "Interests",
-      "goal": "Genuine interests for the bottom line of a banking CV. Interviewers open with these, so they need to be real and specific.",
+      "goal": "Genuine interests for the bottom line of a banking resume. Interviewers open with these, so they need to be real and specific.",
       "leads": [
         "What could you happily lose a Saturday to? Interviewers almost always open with this line, so it is worth getting right.",
         "Any sports, teams, or things you have kept up for years?",
-        "What would someone find out about you over a coffee that is not on the CV?"
+        "What would someone find out about you over a coffee that is not on the resume?"
       ]
     }
   },
   "order": 100,
-  "featured": true
+  "featured": true,
+  "preview": {
+    "education": [
+      {
+        "school": "State University",
+        "degree": "Bachelor of Science in Finance, Minor in Economics; GPA 3.8/4.0",
+        "date": "May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Corporate Finance, Financial Statement Analysis, Investments, Valuation, Mergers and Acquisitions, Econometrics"
+      },
+      {
+        "school": "State University Study Abroad Program",
+        "degree": "Semester in International Finance",
+        "date": "Spring 20XX",
+        "location": "Anytown, ST",
+        "courses": "International Capital Markets, Comparative Banking Systems, Business Spanish"
+      }
+    ],
+    "experience": [
+      {
+        "org": "Fabrikam Capital Partners",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Investment Banking Analyst, Mergers and Acquisitions",
+            "dates": "Jul 20XX - Present",
+            "bullets": [
+              "Executed four sell-side and two buy-side transactions with a combined value of $2.1 billion across industrials and business services.",
+              "Built the operating, DCF and LBO models for the $450 million sale of a specialty chemicals company to a strategic buyer, including synergy cases that supported a final price 12 percent above the first-round bids.",
+              "Drafted confidential information memoranda, management presentations and board materials for senior bankers and clients.",
+              "Managed virtual data rooms and coordinated diligence across 40 buyers, legal counsel and accountants, answering more than 600 diligence requests on a six-week timeline.",
+              "Ran comparable-company and precedent-transaction analyses used in 15 pitch books.",
+              "Mentored two incoming analysts on modeling standards and pitch-book production."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Contoso Securities",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Investment Banking Summer Analyst",
+            "dates": "Jun 20XX - Aug 20XX",
+            "bullets": [
+              "Supported a $600 million debt refinancing for a healthcare services client, building the credit statistics, covenant headroom and downside sensitivity analysis used in the lender presentation.",
+              "Prepared industry overviews and trading comparables for three pitches in consumer and retail.",
+              "Screened 120 potential acquirers for a sell-side mandate and wrote buyer profiles for the top 30.",
+              "Built a sum-of-the-parts valuation for a diversified manufacturer weighing the spin-off of its aerospace segment.",
+              "Updated the group's weekly deal tracker and market update for the managing directors.",
+              "Received a full-time return offer at the end of the program."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Northwind Wealth Advisors",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Equity Research Intern",
+            "dates": "Jan 20XX - May 20XX",
+            "bullets": [
+              "Built and maintained earnings models for six mid-cap industrial companies and drafted quarterly earnings notes, publishing each note within a day of the company report.",
+              "Wrote an initiation-of-coverage section on a logistics company that the senior analyst published.",
+              "Tracked channel checks and industry data in a weekly sector dashboard used by the research team.",
+              "Joined management calls and summarized guidance changes for the morning meeting within an hour of each release."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "State University Student Investment Fund",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Portfolio Analyst",
+            "dates": "Sep 20XX - May 20XX",
+            "bullets": [
+              "Pitched three long positions to the investment committee with full valuation and risk cases, two of them added to a $1.5 million student-managed portfolio that beat its benchmark by 3 points.",
+              "Led the consumer sector team of five analysts through weekly coverage reviews.",
+              "Rebuilt the fund's performance-attribution workbook used in the annual report to trustees."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Anytown Community Credit Union",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Finance Intern",
+            "dates": "Jun 20XX - Aug 20XX",
+            "bullets": [
+              "Built a loan-pricing model for small-business lending that weighed risk grade, collateral and term, adopted by the credit committee for the following year.",
+              "Reconciled monthly loan portfolio reports and flagged $250,000 in misclassified balances for correction.",
+              "Prepared the deposit-growth section of the quarterly board package."
+            ]
+          }
+        ]
+      }
+    ],
+    "skills": {
+      "Technical": "DCF, LBO and merger modeling, trading comps, precedent transactions, Excel, PowerPoint, Capital IQ, FactSet, Bloomberg",
+      "Certifications": "SIE Exam, Series 79 and Series 63 (passed 20XX), Financial Modeling Certificate",
+      "Leadership": "Vice President, Finance and Investment Club; Peer Tutor, Corporate Finance and Accounting",
+      "Languages": "Spanish (fluent), Mandarin (conversational)"
+    },
+    "interests": "Marathon running, chess, financial-literacy volunteering, Italian cooking, college basketball"
+  }
 }

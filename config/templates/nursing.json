@@ -82,28 +82,32 @@
     "certifications": [
       "Registered Nurse (RN), State Board of Nursing, NCLEX-RN scheduled 20XX",
       "Basic Life Support (BLS), American Heart Association, 20XX",
-      "Advanced Cardiovascular Life Support (ACLS), American Heart Association, 20XX"
+      "Advanced Cardiovascular Life Support (ACLS), American Heart Association, 20XX",
+      "Pediatric Advanced Life Support (PALS), American Heart Association, 20XX"
     ],
     "extracurricular": [
       {
         "title": "Intensive Care Unit, Regional Medical Center (180 hours)",
         "date": "Spring 20XX",
         "bullets": [
-          "Managed care for two ventilated patients per shift under preceptor supervision, titrating drips and documenting hourly assessments in Epic."
+          "Managed care for two ventilated patients per shift under preceptor supervision, titrating drips and documenting hourly assessments in Epic.",
+          "Joined daily interdisciplinary rounds and presented patient updates to the care team."
         ]
       },
       {
         "title": "Medical-Surgical Unit, City Hospital (240 hours)",
         "date": "Fall 20XX",
         "bullets": [
-          "Carried a four-patient assignment, performed IV insertions and wound care, and led discharge education for post-operative patients."
+          "Carried a four-patient assignment, performed IV insertions and wound care, and led discharge education for post-operative patients.",
+          "Completed a quality project on hourly rounding that cut call-light use on the unit by 15 percent."
         ]
       },
       {
         "title": "Pediatrics, Children's Hospital (120 hours)",
         "date": "Summer 20XX",
         "bullets": [
-          "Administered weight-based medications and supported families through admissions and procedures."
+          "Administered weight-based medications and supported families through admissions and procedures.",
+          "Used age-appropriate pain scales and play-based teaching to prepare children for procedures."
         ]
       },
       {
@@ -116,7 +120,7 @@
     ],
     "experience": [
       {
-        "org": "Sunrise Senior Living",
+        "org": "Anytown Senior Living",
         "location": "Anytown, ST",
         "roles": [
           {
@@ -125,7 +129,25 @@
             "bullets": [
               "Provide daily care for 12 residents, record vitals and escalate changes in condition to the charge nurse.",
               "Trained four new aides on safe transfers and fall prevention.",
-              "Recognised by the director of nursing for a resident-safety audit that cut fall incidents on the unit by a quarter."
+              "Recognized by the director of nursing for a resident-safety audit that cut fall incidents on the unit by a quarter.",
+              "Support residents with dementia using consistent routines and redirection, documenting behaviors for the care plan.",
+              "Coordinate with physical therapy to keep residents on their mobility goals between sessions."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Anytown Community Hospital",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Patient Care Technician, Emergency Department",
+            "dates": "Jan 20XX - May 20XX",
+            "bullets": [
+              "Performed EKGs, phlebotomy and point-of-care glucose testing for up to 20 patients a shift.",
+              "Stocked trauma rooms and supported nurses during codes and rapid responses.",
+              "Transported patients to imaging and handed off status updates to receiving staff.",
+              "Helped triage nurses keep the waiting room updated on wait times during peak hours."
             ]
           }
         ]
@@ -133,6 +155,7 @@
     ],
     "skills": {
       "Clinical": "Medication administration, IV therapy, wound care, patient assessment, telemetry",
+      "Patient care": "Patient and family education, care planning, infection control, fall prevention",
       "Systems": "Epic, Cerner, Pyxis, Glucometer, infusion pumps",
       "Languages": "Spanish (professional working proficiency)"
     },
@@ -144,6 +167,7 @@
         "location": "Anytown, ST",
         "courses": "Adult Health, Pharmacology, Pathophysiology, Pediatric Nursing, Mental Health Nursing, Community Health"
       }
-    ]
+    ],
+    "interests": "Volunteering at a free community clinic, half-marathons, baking, hiking"
   }
 }

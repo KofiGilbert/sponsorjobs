@@ -48,5 +48,39 @@
     }
   },
   "order": 10,
-  "featured": true
+  "featured": true,
+  "preview": {
+    "projects": [
+      {
+        "org": "Open-Source Reconciliation Library",
+        "location": "Anytown, ST",
+        "title": "Maintainer",
+        "dates": "20XX - Present",
+        "link": "https://github.com/johndoe/reconcile",
+        "bullets": [
+          "Built an open-source library that matches millions of daily transactions and cut manual review time by roughly 80 percent.",
+          "Reviewed pull requests from 25 outside contributors and kept a monthly release schedule."
+        ]
+      },
+      {
+        "org": "Self-Serve Deployment Platform",
+        "location": "Anytown, ST",
+        "title": "Lead",
+        "dates": "20XX - 20XX",
+        "bullets": [
+          "Designed an internal deployment tool adopted by 12 teams, reducing release lead time from days to under an hour.",
+          "Added one-click rollbacks and audit logs that the security team now relies on for change reviews."
+        ]
+      },
+      {
+        "org": "Personal Finance Dashboard",
+        "location": "Anytown, ST",
+        "title": "Creator",
+        "dates": "20XX - 20XX",
+        "bullets": [
+          "Built a full-stack dashboard with a Python backend and a React frontend to track spending and forecast monthly cash flow."
+        ]
+      }
+    ]
+  }
 }

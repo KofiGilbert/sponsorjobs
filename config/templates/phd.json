@@ -75,6 +75,22 @@
     }
   },
   "preview": {
+    "education": [
+      {
+        "school": "State University",
+        "degree": "Doctor of Philosophy in Computer Science, thesis on anomaly detection in streaming data",
+        "date": "Expected May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Machine Learning, Statistical Inference, Optimization, Time Series Analysis, Distributed Systems"
+      },
+      {
+        "school": "State College",
+        "degree": "Bachelor of Science in Mathematics, summa cum laude",
+        "date": "May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Real Analysis, Linear Algebra, Probability, Numerical Methods, Data Structures"
+      }
+    ],
     "experience": [
       {
         "org": "State University, Department of Computer Science",
@@ -86,7 +102,10 @@
             "bullets": [
               "Designed a streaming anomaly-detection method that cut false alarms by a third on three public benchmarks and one industry dataset.",
               "Led a four-person collaboration with an industry lab, shipping the method into a monitoring pipeline processing two million events a day.",
-              "Built the open-source evaluation suite the group now uses, adopted by two other labs."
+              "Built the open-source evaluation suite the group now uses, adopted by two other labs.",
+              "Wrote two successful compute-grant proposals that funded 50,000 GPU hours for the group.",
+              "Mentored three master's students through their theses, two of them now co-authors on lab papers.",
+              "Ran the lab's weekly reading group and its onboarding for new students."
             ]
           }
         ]
@@ -100,7 +119,24 @@
             "dates": "Jun 20XX - Aug 20XX",
             "bullets": [
               "Prototyped a forecasting model that reduced capacity over-provisioning by 18 percent in a production trial.",
-              "Presented results to the platform team and wrote the handover that moved it into their roadmap."
+              "Presented results to the platform team and wrote the handover that moved it into their roadmap.",
+              "Built a backtesting harness in Python and Spark that replayed a year of traffic in under an hour.",
+              "Filed one patent application on the forecasting approach with two staff engineers."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Contoso Research Lab",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Visiting Researcher",
+            "dates": "Jun 20XX - Aug 20XX",
+            "bullets": [
+              "Studied concept drift in fraud-detection data and proposed a retraining trigger used in the lab's follow-up work.",
+              "Co-wrote a workshop paper on the results with two staff scientists.",
+              "Released a cleaned benchmark dataset that other teams have since used in five studies."
             ]
           }
         ]
@@ -115,13 +151,32 @@
         ]
       },
       {
+        "title": "Drift-Aware Retraining for Fraud Detection (first author), Journal of Applied Machine Learning",
+        "date": "20XX",
+        "bullets": [
+          "Journal article; cited in two industry benchmark reports."
+        ]
+      },
+      {
         "title": "Forecasting Under Drift (second author), Workshop on Time Series",
         "date": "20XX",
         "bullets": [
           "Poster."
         ]
+      },
+      {
+        "title": "Invited talk: Reliable Alerts for Streaming Systems, Regional Data Science Meetup",
+        "date": "20XX",
+        "bullets": [
+          "Talk to about 150 practitioners."
+        ]
       }
     ],
+    "skills": {
+      "Methods": "Anomaly detection, time series forecasting, causal inference, experimental design, statistical testing",
+      "Languages & Tools": "Python, PyTorch, scikit-learn, R, SQL, Spark, Kafka, Git, Docker, LaTeX",
+      "Communication": "Conference talks, grant writing, technical writing, peer review for two journals"
+    },
     "projects": [
       {
         "org": "Introduction to Machine Learning",
@@ -129,24 +184,20 @@
         "title": "Teaching Assistant",
         "dates": "20XX - 20XX",
         "bullets": [
-          "Led two weekly sections of 40 students and redesigned the project rubric now used across the course."
+          "Led two weekly sections of 40 students and redesigned the project rubric now used across the course.",
+          "Wrote six new programming assignments and the autograder tests behind them."
+        ]
+      },
+      {
+        "org": "Undergraduate Research Program",
+        "location": "Anytown, ST",
+        "title": "Research Mentor",
+        "dates": "20XX - Present",
+        "bullets": [
+          "Mentor two undergraduates a year on summer research projects, each ending in a poster at the campus symposium."
         ]
       }
     ],
-    "interests": "Graduate Research Fellowship (20XX); Best Paper Runner-up (20XX); Departmental Teaching Award (20XX)",
-    "education": [
-      {
-        "school": "State University",
-        "degree": "Doctor of Philosophy in Computer Science, thesis on anomaly detection in streaming data",
-        "date": "Expected May 20XX",
-        "location": "Anytown, ST"
-      },
-      {
-        "school": "State College",
-        "degree": "Bachelor of Science in Mathematics",
-        "date": "May 20XX",
-        "location": "Anytown, ST"
-      }
-    ]
+    "interests": "Graduate Research Fellowship (20XX); Best Paper Runner-up (20XX); Departmental Teaching Award (20XX)"
   }
 }
