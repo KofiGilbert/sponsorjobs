@@ -148,7 +148,10 @@ def test_auto_submit_failure_comes_back_as_needs_you_with_a_reason(A, monkeypatc
     q = c.get("/api/review/queue").get_json()["pending"]
     assert q[0]["stage"] == "failed"
     board = c.get("/api/tracker/board").get_json()
-    assert board["columns"]["approved"][0]["record"]["state"] == "failed"
+    # A closed posting leaves Ready to apply: its card is in Closed (Archived), "Job closed".
+    card = board["columns"]["archived"][0]
+    assert card["record"]["state"] == "failed" and card["record"]["reason"] == "posting_closed"
+    assert card["closed_at"] and not board["columns"]["approved"]
     assert not _data(A, rid).get("queued")                          # drain() won't re-POST
 
 
@@ -169,15 +172,21 @@ def test_tracker_has_an_approved_column_and_board_moves_follow(A):
     assert STAGES.index("saved") < STAGES.index("approved") < STAGES.index("applied")
     c = A.app.test_client()
     rid = _add(A)
+    # (2026-11-24) A tailored package is Ready to apply (the approved column) from the start, the
+    # same list Applications shows; there is no approve step in between.
     b = c.get("/api/tracker/board").get_json()
-    assert b["stages"] == list(STAGES) and len(b["columns"]["saved"]) == 1
+    assert b["stages"] == list(STAGES) and len(b["columns"]["approved"]) == 1 and not b["columns"]["saved"]
     c.post("/api/review/approve", json={"approve": [rid]})
     b = c.get("/api/tracker/board").get_json()
     assert len(b["columns"]["approved"]) == 1 and not b["columns"]["saved"]
     sid = b["columns"]["approved"][0]["source_id"]
-    # Dragging back to Saved puts the record back to review, with a clean slate.
+    # Dragging back to Saved puts the record back to review, with a clean slate, and it stays
+    # there (it leaves Applications' list too).
     c.post("/api/tracker/move", json={"source_id": sid, "stage": "saved"})
     assert app_stage(_data(A, rid))["stage"] == "queued"
+    b = c.get("/api/tracker/board").get_json()
+    assert len(b["columns"]["saved"]) == 1 and not b["columns"]["approved"]
+    assert c.get("/api/autoapply/board").get_json()["ready"] == []
     # Dragging to Approved approves it (no submit).
     c.post("/api/tracker/move", json={"source_id": sid, "stage": "approved"})
     assert app_stage(_data(A, rid))["stage"] == "approved"

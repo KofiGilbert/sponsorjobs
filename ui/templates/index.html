@@ -384,9 +384,9 @@
               <input class="fld" id="pkgAssistUrl" type="text" spellcheck="false" hidden
                      placeholder="Paste the application link" aria-label="Application link" />
               <div class="pkg-cl-foot">
-                <button class="btn btn-primary btn-sm" id="pkgFillBtn" type="button" hidden data-i18n="pkg.fill">Fill application</button>
+                <button class="btn btn-primary btn-sm" id="pkgFillBtn" type="button" hidden data-i18n="pkg.fill" data-i18n-title="aa.act.fillTip" title="Fills the form from your profile. You check it and submit.">Autofill application</button>
                 <button class="btn btn-ghost btn-sm" id="pkgFillHereBtn" type="button" hidden data-i18n="pkg.fillAgain"
-                        title="After you click Next on the site, fill the new page">Fill this page again</button>
+                        title="After you click Next on the site, fill the new page">Autofill this page again</button>
                 <button class="btn btn-primary btn-sm" id="pkgSubmitBtn" type="button">Submit</button>
               </div>
               <p class="pkg-hint" id="pkgAssistNote"></p>
@@ -885,7 +885,7 @@
         <header class="page-head">
           <div>
             <h1 class="page-title" data-i18n="nav.autoapply">Applications</h1>
-            <p class="page-sub" data-i18n="aa.sub">Your best-fit roles, tailored and ready to send.</p>
+            <p class="page-sub" data-i18n="aa.sub">Jobs with a tailored resume, ready for you to apply.</p>
           </div>
           <div class="aa-head-actions">
             <details class="aa-how" id="aaHow">
@@ -894,7 +894,7 @@
                 <p data-i18n="aa.how1" data-agent-only>We send it for you only on sites verified to allow it, once you approve it.</p>
                 <p data-i18n="aa.how2" data-agent-only>Everywhere else we open the form here and fill it. You check it and click Submit.</p>
                 <p data-i18n="aa.howA1" data-assisted-only>Open an application and sign in if the site asks.</p>
-                <p data-i18n="aa.howA2" data-assisted-only>Press Fill this page. I fill what I can and flag what I guessed.</p>
+                <p data-i18n="aa.howA2" data-assisted-only>Press Autofill this page. I fill what I can and flag what I guessed.</p>
                 <p data-i18n="aa.howA3" data-assisted-only>You check it and click Next or Submit yourself. I never submit for you.</p>
                 <p data-i18n="aa.how3">Never on LinkedIn or on boards that forbid it.</p>
               </div>
@@ -926,8 +926,9 @@
           <p class="aa-tou" id="aaTou" hidden data-agent-only><span data-i18n="tou.notice">Our Terms now cover accepting site notices for you.</span>
             <button class="link-btn" id="aaTouOff" type="button" data-i18n="tou.off">Turn off</button></p>
 
-          <!-- Four stage tiles. The selected one fills the list below. -->
-          <div class="aa-pipe" role="group" aria-label="Application stages">
+          <!-- Four stage tiles (the apply agent only). The selected one fills the list below.
+               With assisted apply the page is ONE list, Ready to apply (aaRenderReady). -->
+          <div class="aa-pipe" role="group" aria-label="Application stages" data-agent-only>
             <button class="aa-tile" type="button" data-aa-tile="review" aria-pressed="false"><span class="aa-tile-top"><span data-i18n="aa.tile.review">To review</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="aa-num" data-aa-num="review">0</span><span class="aa-tile-sub" data-aa-sub="review"></span></button>
             <button class="aa-tile" type="button" data-aa-tile="waiting" aria-pressed="false"><span class="aa-tile-top"><span data-i18n="aa.tile.waiting">Waiting on you</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="aa-num" data-aa-num="waiting">0</span><span class="aa-tile-sub" data-aa-sub="waiting"></span></button>
             <button class="aa-tile" type="button" data-aa-tile="submitted" aria-pressed="false"><span class="aa-tile-top"><span data-i18n="aa.tile.submitted">Submitted</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="aa-num" data-aa-num="submitted">0</span><span class="aa-tile-sub" data-aa-sub="submitted"></span></button>
@@ -959,7 +960,12 @@
                     <button class="link-btn" id="aaApplyAll" type="button" hidden data-agent-only></button>
                   </div>
                 </div>
+                <!-- Jobs the background check found closed: one quiet line, once per batch. -->
+                <p class="feed-note feed-notice aa-closed" id="aaClosed" role="status" hidden data-assisted-only></p>
                 <div class="aa-list" id="aaList"></div>
+                <!-- "22 applied. See them in Tracker." The Tracker's own applied count. -->
+                <p class="aa-applied" id="aaApplied" hidden data-assisted-only><span id="aaAppliedText"></span>
+                  <button class="link-btn" id="aaAppliedGo" type="button" data-i18n="aa.seeTracker">See them in Tracker</button></p>
               </section>
 
               <section class="aa-sec" id="aaNextSec">
@@ -2122,7 +2128,7 @@
         <!-- Assisted apply (the apply agent switched off): fill the page open here, again after
              each Next on the site. The person checks it and clicks Submit on the site. -->
         <button class="bb-btn bb-out bb-fillhere" id="bbFillHere" type="button" hidden
-                data-i18n="bb.fillHere" title="Fill the form on this page">Fill this page</button>
+                data-i18n="bb.fillHere" data-i18n-title="aa.act.fillTip" title="Fills the form from your profile. You check it and submit.">Autofill this page</button>
         <button class="bb-btn bb-out" id="bbExternal" title="Open this page in your own browser"
                 aria-label="Open in your browser">Open in browser &#8599;</button>
       </div>

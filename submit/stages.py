@@ -90,6 +90,29 @@ def is_waiting_to_submit(data: dict | None) -> bool:
     return app_stage(data)["stage"] in ("approved", "failed")
 
 
+def is_closed(data: dict | None) -> bool:
+    """The job's posting was found closed before it was sent (the background check, the apply
+    agent's first look, or the tailor guard)."""
+    st = app_stage(data)
+    return st["stage"] == "failed" and st["reason"] == "posting_closed"
+
+
+def is_ready_to_apply(data: dict | None) -> bool:
+    """The Applications page's one list (2026-11-24, assisted apply): a tailored resume for an
+    open job, not sent and not skipped. That is a new package (``queued``), an opened one
+    (``approved``), and one an old apply-agent run handed back for any reason but a closed
+    posting (it is just an application to fill now). A package the person moved back to Saved
+    on the Tracker (``stage`` "saved" on the record) is not in the list, so the Tracker's
+    "Ready to apply" column and this list always count the same jobs."""
+    data = data or {}
+    st = app_stage(data)
+    if st["stage"] == "queued":
+        return data.get("stage") != "saved"
+    if st["stage"] == "approved":
+        return True
+    return st["stage"] == "failed" and st["reason"] != "posting_closed"
+
+
 def approved_patch() -> dict:
     """An assisted-lane approval. Nothing was filled or sent: the person submits on the site."""
     return {"status": "approved", "queued": False,

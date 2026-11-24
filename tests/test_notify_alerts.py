@@ -246,6 +246,13 @@ def test_cap_quiet_hours_and_no_repeats(tmp_path):
     assert eng.pick([_row("a"), _row("b", company="Citi")], TARGETS, tomorrow) == []
 
 
+def test_a_thin_ad_is_never_alerted_on_its_title_alone(tmp_path):
+    # The ad names too few skills to score (match_fn answers UNSCORABLE): no title-only number.
+    from notify.alerts import UNSCORABLE
+    st, eng = _engine(tmp_path, scores={"a": UNSCORABLE, "b": 82})
+    assert [p["sid"] for p in eng.pick([_row("a"), _row("b", company="Citi")], TARGETS, NOON)] == ["b"]
+
+
 def test_dismissed_excluded(tmp_path):
     st, eng = _engine(tmp_path)
     st.set("dismissed", ["a"])
@@ -260,7 +267,9 @@ def test_quiet_hours_wrap():
 
 def test_match_percent_weights_must_haves():
     assert match_percent(None) is None
-    assert match_percent({"ratio": 0.5, "required_total": 4, "required_covered": 4}) == 80
+    m = {"ratio": 0.5, "required_total": 4, "required_covered": 4, "total": 8}
+    assert match_percent(m) == 80                    # no title fit: the skill score as it is
+    assert match_percent({"ratio": 0.5, "required_total": 4, "required_covered": 4}) is None   # names no skills
 
 
 # ------------------------------------------------------------------ honest buttons + text
@@ -378,8 +387,8 @@ def test_away_digest_text_and_timing():
                                    sub={"status": "auto_submitted", "at": t.isoformat()})]
     act = away_activity(recs, since, lambda u: "Recruitee" if "recruitee" in u else "")
     assert digest_text(act) == ("While you were away: tailored 3, submitted 1 (Recruitee), "
-                                "2 waiting for your click. Open SponsorJobs and go to "
-                                "Auto-apply to finish them.")
+                                "2 ready for you to apply. Open SponsorJobs and go to "
+                                "Applications to finish them.")
     assert digest_due(act, None, t + timedelta(minutes=2)) == "wait"
     assert digest_due(act, None, t + timedelta(minutes=20)) == "send"
     assert digest_due(act, t + timedelta(minutes=5), t + timedelta(minutes=20)) == "reset"

@@ -72,18 +72,19 @@ def test_extension_style_essentials_only_profile_matches():
 
 # --- 15. thin ads and mismatched titles ----------------------------------------------------------
 
-def test_thin_jd_with_mismatched_title_drops_well_below_60():
+def test_thin_jd_with_mismatched_title_is_not_scored():
+    # (2026-11-24, supersedes the title blend for very thin ads) An ad naming fewer than 5 skills
+    # gets no percent at all, matching title or not: "Not enough in the ad to score".
     m = _match(THIN_JD, "Cybersecurity Architect", {"profile": PROFILE, "essentials": ESS})
-    assert m["total"] < 8 and m["covered"] == m["total"]      # every named skill "matches"
-    assert m["title_fit"] is not None and m["title_fit"] < 0.2
-    assert match_percent(m) < 45
-    assert m["verdict"] == "weak"
+    assert m["total"] < 5 and m["covered"] == m["total"]      # every named skill "matches"
+    assert match_percent(m) is None and m["score"] is None
+    assert m["verdict"] == "thin" and m["thin"] is True
 
 
-def test_thin_jd_with_matching_title_stays_high():
+def test_thin_jd_with_matching_title_is_not_scored_either():
     jd = "Product Manager. Python and SQL required."
     m = _match(jd, "Product Manager", {"profile": PROFILE, "essentials": ESS})
-    assert match_percent(m) >= 85
+    assert match_percent(m) is None and m["verdict"] == "thin"
 
 
 def test_rich_jd_good_fit_stays_high():
@@ -100,17 +101,19 @@ def test_senior_title_lowers_title_fit_for_a_non_senior_profile():
 
 
 def test_match_percent_thin_without_titles_is_capped():
-    # No titles to compare: a 2-skill ad that is fully covered still can't read as 100%.
-    assert match_percent({"ratio": 1.0, "required_total": 2, "required_covered": 2, "total": 2}) == 70
-    # Unchanged behaviour for a dict without a total (older callers).
-    assert match_percent({"ratio": 0.5, "required_total": 4, "required_covered": 4}) == 80
+    # A 2-skill ad is not scored; a 6-skill ad with no titles to compare is capped below 100%.
+    assert match_percent({"ratio": 1.0, "required_total": 2, "required_covered": 2, "total": 2}) is None
+    assert match_percent({"ratio": 1.0, "required_total": 6, "required_covered": 6, "total": 6}) == 90
+    # A dict without a total (older callers) names no skills: not scored.
+    assert match_percent({"ratio": 0.5, "required_total": 4, "required_covered": 4}) is None
 
 
 def test_autoapply_fit_floor_still_filters_the_mismatch():
     from autoapply.picker import DEFAULT_MIN_FIT
     m = _match(THIN_JD, "Cybersecurity Architect", {"profile": PROFILE, "essentials": ESS})
     good = _match(PM_JD, "Product Manager, AI", {"profile": PROFILE, "essentials": ESS})
-    assert match_percent(m) < DEFAULT_MIN_FIT <= match_percent(good)
+    assert match_percent(m) is None                  # the picker counts it unscored, never picks it
+    assert DEFAULT_MIN_FIT <= match_percent(good)
 
 
 # --- 14. dismiss leaves the Tracker too ----------------------------------------------------------

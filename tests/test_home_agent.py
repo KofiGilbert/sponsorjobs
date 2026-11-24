@@ -191,7 +191,7 @@ def test_plan_when_nothing_can_be_sent(ag):
         "Here is the plan.\n"
         "1. Find the 4 best data analytics roles that fit you at 60% or better, visa sponsors first.\n"
         "2. Tailor a resume and a cover letter for each, from your saved profile.\n"
-        "3. Queue them in To review. 0 can be sent for you (sending for you is off in Auto-apply); "
+        "3. Queue them in To review. 0 can be sent for you (sending for you is off in Applications); "
         "4 will be filled in and ready for your click.\n"
         "Only 4 match right now, so I will do 4. This uses 4 of your 20 packages. Go ahead?")
     assert [b["id"] for b in d["buttons"]] == ["go", "change"]
@@ -230,7 +230,7 @@ def test_plan_says_when_it_is_capped(ag, monkeypatch):
             "board": 12, "saved": 0}
     monkeypatch.setattr(app, "_aa_candidates", lambda focus: ([dict(j) for j in many], meta))
     d, _ = _ask("tailor 25 analyst roles for me")              # the route's cap per run
-    assert "Auto-apply does up to 10 a run, so I will do 10. This uses 10 of your 20 packages." in d["text"]
+    assert "Tailor & queue does up to 10 a run, so I will do 10. This uses 10 of your 20 packages." in d["text"]
     assert "Find the 10 best analyst roles" in d["text"]
     ag["left"] = 2
     d, _ = _ask("find 5 analyst roles and apply")
@@ -268,7 +268,7 @@ def test_go_ahead_runs_once_with_the_parsed_focus_and_count(ag):
                            "focus": {"titles": ["analyst"], "locations": ["Austin"],
                                      "sponsor_only": True}}]
     assert len(ag["tailored"]) == 2
-    assert d["text"] == "Done. Tailored 2. 0 sent for you. 2 ready for your click in Auto-apply."
+    assert d["text"] == "Done. Tailored 2. 0 sent for you. 2 ready for your click in Applications."
     assert d["buttons"] == [{"id": "open_autoapply", "label": "Open Applications"}]
     assert d["telegram"] is False
     # The plan was consumed: a second Go ahead has nothing to run.
@@ -299,7 +299,7 @@ def test_go_ahead_sends_only_the_verified_site_and_only_when_autonomous_on(ag, m
     _ask("find 4 analyst roles and apply for me")
     d = c.post("/api/agent/go", json={}).get_json()
     assert posted == [RT] and d["sent"] == 1
-    assert d["text"] == "Done. Tailored 4. 1 sent for you. 3 ready for your click in Auto-apply."
+    assert d["text"] == "Done. Tailored 4. 1 sent for you. 3 ready for your click in Applications."
 
 
 def test_go_ahead_messages_telegram_with_the_batch_buttons(ag):

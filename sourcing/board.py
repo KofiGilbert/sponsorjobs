@@ -371,6 +371,13 @@ class BoardMixin:
         self._conn.commit()
         return cur.rowcount > 0
 
+    def clear_posting_closed(self, source_id: str) -> None:
+        """The person put a closed job back in the running (dragged it out of Closed): drop the
+        stamp so its card no longer reads "Job closed"."""
+        self._conn.execute("UPDATE sourced_job SET closed_at=NULL, closed_reason=NULL WHERE source_id=?",
+                           (source_id,))
+        self._conn.commit()
+
     # -- reads ----------------------------------------------------------- #
     def board_job(self, source_id: str) -> dict | None:
         row = self._conn.execute(

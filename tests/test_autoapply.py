@@ -12,7 +12,8 @@ JOB = {
     "source_id": "greenhouse:northwind:1", "source": "greenhouse", "company": "Northwind",
     "title": "Senior Software Engineer", "location": "Remote", "remote": "remote",
     "url": "https://boards.greenhouse.io/northwind/jobs/1",
-    "jd_text": "Senior Software Engineer. Build REST APIs in Python on AWS with SQL.",
+    # five skills or more: an ad naming fewer is not scored (notify.alerts.MIN_SCORED_SKILLS)
+    "jd_text": "Senior Software Engineer. Build REST APIs in Python on AWS with SQL, Docker and PostgreSQL.",
     "posted_at": "2026-07-13",
 }
 

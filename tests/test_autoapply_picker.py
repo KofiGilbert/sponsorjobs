@@ -100,8 +100,9 @@ PROFILE = {"identity": {"name": "Sam Rivera", "email": "sam@example.com"},
            "experience": [{"org": "Acme", "location": "Austin, TX",
                            "roles": [{"title": "Backend Engineer", "dates": "2021 - 2024",
                                       "bullets": ["Built Python APIs on AWS with SQL"]}]}],
-           "skills": {"Languages": ["Python", "SQL"], "Cloud": ["AWS"]}}
-GOOD_JD = "Backend Engineer. Requirements: Python, SQL and AWS. You build REST APIs."
+           "skills": {"Languages": ["Python", "SQL"], "Cloud": ["AWS", "Docker"], "Data": ["PostgreSQL"]}}
+# (2026-11-24) An ad must name at least 5 skills to be scored at all (notify.alerts.MIN_SCORED_SKILLS).
+GOOD_JD = "Backend Engineer. Requirements: Python, SQL, AWS, Docker and PostgreSQL. You build REST APIs."
 POOR_JD = "Requirements: Java, Kubernetes, Go, Rust, Scala, Terraform and C++."
 
 

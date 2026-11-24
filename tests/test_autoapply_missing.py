@@ -93,7 +93,7 @@ def test_run_stops_with_the_missing_details_before_counting_a_package(tmp_path, 
     r = client.post("/api/autoapply/run", json={"count": 3, "min_fit": 0})
     assert r.status_code == 400
     d = r.get_json()
-    assert d["error"] == "Auto-apply needs 2 details first."
+    assert d["error"] == "Tailor & queue needs 2 details first."
     assert d["action"] == "complete_profile"
     assert d["missing"] == HARD_QS
     assert "queued" not in d                     # never "Queued 0" with the cause buried
@@ -104,7 +104,7 @@ def test_one_missing_detail_is_singular(tmp_path, monkeypatch):
     one = {**COMPLETE, "identity": {"name": "Sam Rivera"}}
     app._memory().save("default", one, {}, [])
     d = client.post("/api/autoapply/run", json={"count": 1}).get_json()
-    assert d["error"] == "Auto-apply needs 1 detail first." and len(d["missing"]) == 1
+    assert d["error"] == "Tailor & queue needs 1 detail first." and len(d["missing"]) == 1
 
 
 def test_preview_carries_the_missing_details(tmp_path, monkeypatch):
@@ -147,4 +147,5 @@ def test_the_page_shows_the_cause(needle):
 
 def test_the_page_never_says_to_review_for_zero():
     src = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
-    assert 'r.queued ? T("aa.queued", "Queued {n}. They are in To review.")' in src
+    assert 'r.queued ? (APPLY_AGENT ? T("aa.queued", "Queued {n}. They are in To review.")' in src
+    assert 'T("aa.queuedReady", "Tailored {n}. They are in Ready to apply.")' in src

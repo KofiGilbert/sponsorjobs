@@ -339,7 +339,11 @@ _NOT_SKILLS = {
     "OK", "NO", "YES", "NEW", "TOP", "ALL", "AND", "THE", "FOR", "YOU", "WE", "OUR",
     # money and legal boilerplate that is not a skill
     "401K", "401", "PLC", "LLC", "INC", "LTD", "IPO", "NDA", "SLA", "ROI", "KPI",
+    # words an ad shouts ("candidates who do NOT meet") and a diploma, not skills
+    "NOT", "OR", "BUT", "MUST", "GED", "G.E.D", "G.E.D.",
 }
+# LinkedIn's job-post tracking tags ("#LI-AF1", "LI-Hybrid") read as acronyms; never a skill.
+_LI_TAG = re.compile(r"LI-[A-Z0-9]+")
 
 
 def _is_acronym_or_symbol(tok: str) -> bool:
@@ -349,7 +353,7 @@ def _is_acronym_or_symbol(tok: str) -> bool:
     and calling it a skill the person lacks is worse than missing a real one.
     """
     up = tok.upper().strip()
-    if up in _NOT_SKILLS:
+    if up in _NOT_SKILLS or _LI_TAG.fullmatch(up):
         return False
     # "UTC+2", "10AM+" and friends: a symbol only counts when it hangs off a real token
     # (C++, C#, .NET), never off digits.

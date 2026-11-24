@@ -60,9 +60,9 @@ def summary_text(sent: int, ready: int, need: int, telegram: bool = False, check
         return line
     tail = []
     if ready:
-        tail.append("Open SponsorJobs, Auto-apply, and press Send all. Nothing more is sent until you do.")
+        tail.append("Open SponsorJobs, Applications, and press Send all. Nothing more is sent until you do.")
     if need:
-        tail.append("Answer the open questions in Auto-apply, Needs you.")
+        tail.append("Answer the open questions in Applications, Needs you.")
     return line + ("\n" + " ".join(tail) if tail else "")
 
 
