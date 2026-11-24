@@ -776,7 +776,7 @@
   "aa.tg": "Telegram updates",
   "aa.inbox": "Email inbox",
   "aa.scan": "Scan",
-  "aa.recent": "Recently sent",
+  "aa.recent": "Recently applied",
   "aa.tile.review": "To review",
   "aa.tile.waiting": "Waiting on you",
   "aa.tile.submitted": "Submitted",
@@ -2058,8 +2058,8 @@
   "aa.act.fillTip": "Fills the form from your profile. You check it and submit.",
   "aa.ready": "Ready to apply",
   "aa.new": "New",
-  "aa.matchThin": "Not enough in the ad to score",
-  "aa.matchThinTip": "The ad names too few skills to score your match.",
+  "aa.matchThin": "Ad too short to score",
+  "aa.matchThinTip": "The ad names fewer than 5 skills, so a match number would be a guess.",
   "aa.appliedOne": "1 applied.",
   "aa.appliedN": "{n} applied.",
   "aa.seeTracker": "See them in Tracker",
@@ -2076,5 +2076,7 @@
   "fill.againJob": "This is the job page, not the application. Press {btn} on the page first, then press Autofill this page again.",
   "fill.againNoForm": "No form on this page yet. Open the application form, then press Autofill this page again.",
   "fill.againLogin": "The site wants a sign-in. Sign in, then press Autofill this page again.",
-  "aa.queuedReady": "Tailored {n}. They are in Ready to apply."
+  "aa.queuedReady": "Tailored {n}. They are in Ready to apply.",
+  "aa.seeAllTracker": "See all in Tracker",
+  "tracker.notSelected": "Not selected"
 }

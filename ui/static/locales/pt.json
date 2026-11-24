@@ -776,7 +776,7 @@
   "aa.tg": "Atualizações no Telegram",
   "aa.inbox": "Caixa de e-mail",
   "aa.scan": "Verificar",
-  "aa.recent": "Enviadas recentemente",
+  "aa.recent": "Candidaturas recentes",
   "aa.tile.review": "Para revisar",
   "aa.tile.waiting": "Esperando você",
   "aa.tile.submitted": "Enviadas",
@@ -2058,8 +2058,8 @@
   "aa.act.fillTip": "Preenche o formulário com o seu perfil. Você confere e envia.",
   "aa.ready": "Prontas para candidatura",
   "aa.new": "Nova",
-  "aa.matchThin": "O anúncio não dá para pontuar",
-  "aa.matchThinTip": "O anúncio cita poucas habilidades para pontuar sua compatibilidade.",
+  "aa.matchThin": "Anúncio curto demais para pontuar",
+  "aa.matchThinTip": "O anúncio cita menos de 5 habilidades, então uma pontuação seria um palpite.",
   "aa.appliedOne": "1 candidatura enviada.",
   "aa.appliedN": "{n} candidaturas enviadas.",
   "aa.seeTracker": "Ver em Acompanhamento",
@@ -2076,5 +2076,7 @@
   "fill.againJob": "Esta é a página da vaga, não a candidatura. Clique primeiro em {btn} na página e depois de novo em Preencher esta página automaticamente.",
   "fill.againNoForm": "Ainda não há formulário nesta página. Abra o formulário de candidatura e clique de novo em Preencher esta página automaticamente.",
   "fill.againLogin": "O site pede login. Entre e clique de novo em Preencher esta página automaticamente.",
-  "aa.queuedReady": "{n} adaptadas. Estão em Prontas para candidatura."
+  "aa.queuedReady": "{n} adaptadas. Estão em Prontas para candidatura.",
+  "aa.seeAllTracker": "Ver tudo no Tracker",
+  "tracker.notSelected": "Não selecionado"
 }

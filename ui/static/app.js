@@ -2463,7 +2463,7 @@
     if (!m.total) { el.innerHTML = `<div class="fd-match-none">No specific skills called out in this posting, tailoring will still align your resume to it.</div>`; return; }
     const pct = Math.round((m.ratio || 0) * 100);
     // (2026-11-24) An ad naming fewer than 5 skills is not scored anywhere: no fit word either.
-    const v = m.verdict === "thin" ? [I18N.t("aa.matchThin", "Not enough in the ad to score"), "mid"] : VERDICT[m.verdict];
+    const v = m.verdict === "thin" ? [I18N.t("aa.matchThin", "Ad too short to score"), "mid"] : VERDICT[m.verdict];
     const label = v ? v[0] : `${pct}% match`;
     const cls = v ? v[1] : (pct >= 60 ? "good" : pct >= 35 ? "mid" : "low");
     const reqMiss = (m.required_missing || []).slice(0, 8);
@@ -6406,7 +6406,10 @@
     const meta = [];
     const sess = c.has_session ? c.session : null;
     // A job whose posting closed before it was sent: "Job closed Nov 9" (Closed column).
-    const closed = c.closed_at ? `<span class="trk-closed">${esc(trkT("tracker.jobClosedOn", "Job closed {d}").replace("{d}", trkDay(c.closed_at)))}</span>` : "";
+    // The Closed column holds two endings: the employer said no ("Not selected"), or the job
+    // closed before it was sent ("Job closed Nov 9"). Each card says which.
+    const closed = c.closed_at ? `<span class="trk-closed">${esc(trkT("tracker.jobClosedOn", "Job closed {d}").replace("{d}", trkDay(c.closed_at)))}</span>`
+      : c.stage === "rejected" ? `<span class="trk-closed">${esc(trkT("tracker.notSelected", "Not selected"))}</span>` : "";
     // A job with a resume session (the job workspace): how the resume stands and when its chat
     // last moved, then its links. In progress: "Resume 96% · page 95%" and "Chat · 2h ago".
     if (sess && !c.applied_at && !c.closed_at) {
@@ -12339,7 +12342,7 @@
      to lives on the Tracker ("22 applied. See them in Tracker."). */
   function aaMatchCell(it) {
     if (it.match != null) return `${it.match}%<small>${esc(T("aa.match", "match"))}</small>`;
-    if (it.match_thin) return `<span class="aa-thin" title="${esc(T("aa.matchThinTip", "The ad names too few skills to score your match."))}">${esc(T("aa.matchThin", "Not enough in the ad to score"))}</span>`;
+    if (it.match_thin) return `<span class="aa-thin" title="${esc(T("aa.matchThinTip", "The ad names fewer than 5 skills, so a match number would be a guess."))}">${esc(T("aa.matchThin", "Ad too short to score"))}</span>`;
     return "";
   }
   function aaReadyRow(it) {
@@ -12436,8 +12439,15 @@
         <span class="aa-rec-w">${esc(aaAgo(it.submitted_at))}</span></button>`).join("")
       : `<div class="aa-rec-none">${esc(T("aa.recentNone", "Nothing sent yet."))}</div>`;
     const all = $("#aaSeeAll");
-    all.hidden = !b.counts.submitted || AA.tile === "submitted";
-    all.innerHTML = esc(T("aa.seeAll", "See all {n} submitted").replace("{n}", fmtN(b.counts.submitted))) + " &rarr;";
+    if (!APPLY_AGENT) {
+      // (2026-11-24) Assisted: everything applied lives on the Tracker, with the same count the
+      // line under the list gives ("22 applied"), never a second, smaller number.
+      all.hidden = !rec.length;
+      all.innerHTML = esc(T("aa.seeAllTracker", "See all in Tracker")) + " &rarr;";
+    } else {
+      all.hidden = !b.counts.submitted || AA.tile === "submitted";
+      all.innerHTML = esc(T("aa.seeAll", "See all {n} submitted").replace("{n}", fmtN(b.counts.submitted))) + " &rarr;";
+    }
   }
 
   // The Autopilot row: the switch, the per-day number typed in place (like the Tracker's weekly
@@ -12484,7 +12494,10 @@
     aaRender();
   }
   document.querySelectorAll("[data-aa-tile]").forEach(el => el.addEventListener("click", () => aaSelectTile(el.dataset.aaTile)));
-  $("#aaSeeAll")?.addEventListener("click", () => { aaSelectTile("submitted"); $("#aaList")?.scrollIntoView({ block: "nearest" }); });
+  $("#aaSeeAll")?.addEventListener("click", () => {
+    if (!APPLY_AGENT) { navTo("tracker"); return; }
+    aaSelectTile("submitted"); $("#aaList")?.scrollIntoView({ block: "nearest" });
+  });
   $("#aaTgBtn")?.addEventListener("click", async () => { await openSettings(); document.querySelector('[data-set="notify"]')?.click(); });
   // ---- How to apply: Auto / Assisted / Hybrid (the ONE saved choice; also Apply setup step 6)
   function aaRenderMode(d) {
@@ -13990,7 +14003,7 @@
             <h2 class="fd-title" id="aaDrTitle">${esc(it.role || T("aa.role", "Role"))}</h2>
             <div class="fd-co">${facts.map(esc).join(" <span>&middot;</span> ")}</div>
             <div class="fd-meta">${it.match != null ? `<span class="aa-dr-match">${it.match}% <span>${esc(T("aa.match", "match"))}</span></span>`
-              : it.match_thin ? `<span class="aa-thin" title="${esc(T("aa.matchThinTip", "The ad names too few skills to score your match."))}">${esc(T("aa.matchThin", "Not enough in the ad to score"))}</span>` : ""}
+              : it.match_thin ? `<span class="aa-thin" title="${esc(T("aa.matchThinTip", "The ad names fewer than 5 skills, so a match number would be a guess."))}">${esc(T("aa.matchThin", "Ad too short to score"))}</span>` : ""}
               ${visaBadges(it)}<span class="aa-pill${it.tile === "needs" && !ready ? " flag" : ""}">${esc(pill)}</span></div>
           </div>
         </div>

@@ -7,7 +7,7 @@
   Tracker card moves to Closed (Archived) with "Job closed", existing records included;
 * the list and the Tracker's "Ready to apply" column count the same jobs, and "N applied" is the
   Tracker's own applied count;
-* an ad that names too few skills shows no percent ("Not enough in the ad to score"), a fit
+* an ad that names too few skills shows no percent ("Ad too short to score"), a fit
   stored under the old rule is worked out again, and the picker never takes a job on such a
   score;
 * "Did you submit it?" after an Autofill, until Yes or Not yet;
@@ -215,7 +215,7 @@ def test_junk_tokens_are_not_skills():
 
 
 def test_the_page_shows_the_thin_note_not_a_number():
-    assert '"aa.matchThin", "Not enough in the ad to score"' in APP_JS
+    assert '"aa.matchThin", "Ad too short to score"' in APP_JS
     assert 'm.verdict === "thin"' in APP_JS          # the Jobs detail says it too
 
 
@@ -300,3 +300,11 @@ def test_telegram_names_the_page_applications():
     assert WHERE_ANSWERS == "Applications, Your answers"
     src = (ROOT / "ui" / "app.py").read_text(encoding="utf-8")
     assert not re.findall(r'"[^"\n]*SponsorJobs, Auto-apply[^"\n]*"', src)
+
+
+def test_closed_column_says_which_ending_and_see_all_goes_to_tracker():
+    # A rejected card in the Tracker's Closed column says "Not selected"; a closed job says
+    # "Job closed". The Today panel's link goes to the Tracker (one applied count, not two).
+    assert '"tracker.notSelected", "Not selected"' in APP_JS
+    assert '"aa.seeAllTracker", "See all in Tracker"' in APP_JS
+    assert 'if (!APPLY_AGENT) { navTo("tracker"); return; }' in APP_JS

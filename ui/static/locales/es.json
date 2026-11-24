@@ -776,7 +776,7 @@
   "aa.tg": "Novedades por Telegram",
   "aa.inbox": "Bandeja de correo",
   "aa.scan": "Revisar",
-  "aa.recent": "Enviadas recientemente",
+  "aa.recent": "Postulaciones recientes",
   "aa.tile.review": "Por revisar",
   "aa.tile.waiting": "Esperando por ti",
   "aa.tile.submitted": "Enviadas",
@@ -2058,8 +2058,8 @@
   "aa.act.fillTip": "Rellena el formulario con tu perfil. Tú lo revisas y lo envías.",
   "aa.ready": "Listas para postular",
   "aa.new": "Nueva",
-  "aa.matchThin": "El anuncio no da para puntuar",
-  "aa.matchThinTip": "El anuncio nombra muy pocas habilidades para puntuar tu encaje.",
+  "aa.matchThin": "Anuncio muy corto para puntuar",
+  "aa.matchThinTip": "El anuncio nombra menos de 5 habilidades, así que una puntuación sería una suposición.",
   "aa.appliedOne": "1 postulación enviada.",
   "aa.appliedN": "{n} postulaciones enviadas.",
   "aa.seeTracker": "Verlas en Seguimiento",
@@ -2076,5 +2076,7 @@
   "fill.againJob": "Esta es la página del empleo, no la postulación. Pulsa primero {btn} en la página y luego de nuevo Autorrellenar esta página.",
   "fill.againNoForm": "Aún no hay formulario en esta página. Abre el formulario de postulación y pulsa de nuevo Autorrellenar esta página.",
   "fill.againLogin": "El sitio pide iniciar sesión. Inicia sesión y pulsa de nuevo Autorrellenar esta página.",
-  "aa.queuedReady": "{n} adaptadas. Están en Listas para postular."
+  "aa.queuedReady": "{n} adaptadas. Están en Listas para postular.",
+  "aa.seeAllTracker": "Ver todo en Tracker",
+  "tracker.notSelected": "No seleccionado"
 }

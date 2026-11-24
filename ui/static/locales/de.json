@@ -776,7 +776,7 @@
   "aa.tg": "Telegram-Updates",
   "aa.inbox": "E-Mail-Posteingang",
   "aa.scan": "Prüfen",
-  "aa.recent": "Zuletzt gesendet",
+  "aa.recent": "Zuletzt beworben",
   "aa.tile.review": "Zu prüfen",
   "aa.tile.waiting": "Wartet auf dich",
   "aa.tile.submitted": "Gesendet",
@@ -2058,8 +2058,8 @@
   "aa.act.fillTip": "Füllt das Formular aus deinem Profil aus. Du prüfst es und sendest es ab.",
   "aa.ready": "Bereit zum Bewerben",
   "aa.new": "Neu",
-  "aa.matchThin": "Zu wenig in der Anzeige für eine Wertung",
-  "aa.matchThinTip": "Die Anzeige nennt zu wenige Fähigkeiten, um deine Passung zu werten.",
+  "aa.matchThin": "Anzeige zu kurz für eine Wertung",
+  "aa.matchThinTip": "Die Anzeige nennt weniger als 5 Fähigkeiten, eine Wertung wäre geraten.",
   "aa.appliedOne": "1 Bewerbung gesendet.",
   "aa.appliedN": "{n} Bewerbungen gesendet.",
   "aa.seeTracker": "In der Übersicht ansehen",
@@ -2076,5 +2076,7 @@
   "fill.againJob": "Das ist die Stellenseite, nicht die Bewerbung. Drücke zuerst {btn} auf der Seite und dann erneut Diese Seite automatisch ausfüllen.",
   "fill.againNoForm": "Auf dieser Seite ist noch kein Formular. Öffne das Bewerbungsformular und drücke dann erneut Diese Seite automatisch ausfüllen.",
   "fill.againLogin": "Die Seite möchte eine Anmeldung. Melde dich an und drücke dann erneut Diese Seite automatisch ausfüllen.",
-  "aa.queuedReady": "{n} zugeschnitten. Sie stehen unter Bereit zum Bewerben."
+  "aa.queuedReady": "{n} zugeschnitten. Sie stehen unter Bereit zum Bewerben.",
+  "aa.seeAllTracker": "Alle im Tracker ansehen",
+  "tracker.notSelected": "Nicht ausgewählt"
 }

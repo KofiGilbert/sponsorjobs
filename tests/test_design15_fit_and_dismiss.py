@@ -74,7 +74,7 @@ def test_extension_style_essentials_only_profile_matches():
 
 def test_thin_jd_with_mismatched_title_is_not_scored():
     # (2026-11-24, supersedes the title blend for very thin ads) An ad naming fewer than 5 skills
-    # gets no percent at all, matching title or not: "Not enough in the ad to score".
+    # gets no percent at all, matching title or not: "Ad too short to score".
     m = _match(THIN_JD, "Cybersecurity Architect", {"profile": PROFILE, "essentials": ESS})
     assert m["total"] < 5 and m["covered"] == m["total"]      # every named skill "matches"
     assert match_percent(m) is None and m["score"] is None

@@ -776,7 +776,7 @@
   "aa.tg": "Mises à jour Telegram",
   "aa.inbox": "Boîte mail",
   "aa.scan": "Analyser",
-  "aa.recent": "Envoyées récemment",
+  "aa.recent": "Candidatures récentes",
   "aa.tile.review": "À vérifier",
   "aa.tile.waiting": "En attente de vous",
   "aa.tile.submitted": "Envoyées",
@@ -2058,8 +2058,8 @@
   "aa.act.fillTip": "Remplit le formulaire à partir de votre profil. Vous le vérifiez et l'envoyez.",
   "aa.ready": "Prêtes à postuler",
   "aa.new": "Nouveau",
-  "aa.matchThin": "Trop peu dans l'annonce pour noter",
-  "aa.matchThinTip": "L'annonce cite trop peu de compétences pour noter votre adéquation.",
+  "aa.matchThin": "Annonce trop courte pour noter",
+  "aa.matchThinTip": "L'annonce cite moins de 5 compétences, une note serait une supposition.",
   "aa.appliedOne": "1 candidature envoyée.",
   "aa.appliedN": "{n} candidatures envoyées.",
   "aa.seeTracker": "Les voir dans Suivi",
@@ -2076,5 +2076,7 @@
   "fill.againJob": "C'est la page de l'offre, pas la candidature. Appuyez d'abord sur {btn} sur la page, puis à nouveau sur Remplir cette page automatiquement.",
   "fill.againNoForm": "Pas encore de formulaire sur cette page. Ouvrez le formulaire de candidature, puis appuyez à nouveau sur Remplir cette page automatiquement.",
   "fill.againLogin": "Le site demande une connexion. Connectez-vous, puis appuyez à nouveau sur Remplir cette page automatiquement.",
-  "aa.queuedReady": "{n} adaptées. Elles sont dans Prêtes à postuler."
+  "aa.queuedReady": "{n} adaptées. Elles sont dans Prêtes à postuler.",
+  "aa.seeAllTracker": "Tout voir dans Tracker",
+  "tracker.notSelected": "Non retenu"
 }
