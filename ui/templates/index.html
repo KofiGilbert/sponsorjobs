@@ -804,29 +804,40 @@
 
       <!-- ============ REVIEW & SUBMIT ============ -->
       <!-- ============ TRACKER (the job board) ============
-           One stage per job you saved, tailored or applied to: Saved, Applied, Interviewing,
-           Offer, Rejected, Archived. Same rows as the Jobs page (sourcing/board.py), local only.
-           Drag a card between columns, or use the table. A card opens a side panel with notes
-           (saved on blur), contacts, a follow-up date, the timeline, and the files. -->
+           One stage per job you saved, tailored or applied to. Same rows as the Jobs page
+           (sourcing/board.py), local only. Laid out like a Jira board (2026-11-24): the title
+           and one quiet numbers line, one toolbar (search, the Follow-ups due filter, Board /
+           Table, Export), then columns that fill the window and scroll on their own. Cards are
+           compact (title, one chip, company and one date); a click opens the side panel, which
+           holds everything else. Ready to apply cards carry one "Apply" (autofill). -->
       <section class="view view-tracker" id="view-tracker">
-        <header class="page-head">
+        <header class="page-head trk-head">
           <div>
             <h1 class="page-title" data-i18n="tracker.title">Tracker</h1>
+            <p class="trk-stats" id="trkMetrics"><!-- one line of numbers, injected --></p>
           </div>
-          <div class="trk-head-actions">
+        </header>
+
+        <!-- From your inbox: shown only when there is something, one row per message. Move /
+             Not this; nothing moves without a click. Then the quiet closed-jobs line. -->
+        <div class="trk-inbox" id="trkInbox" hidden><!-- injected --></div>
+        <p class="feed-notice trk-notice" id="trkClosed" role="status" hidden></p>
+
+        <div class="trk-toolbar">
+          <label class="jf-search trk-search">
+            <svg class="jf-ic" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14 14l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <input class="jf-input" id="trkSearch" type="search" placeholder="Search company or job title" data-i18n-ph="tracker.searchPh" aria-label="Search company or job title" data-i18n-aria="tracker.searchPh" autocomplete="off" />
+          </label>
+          <button class="trk-chip" id="trkDueChip" type="button" aria-pressed="false" hidden><span data-i18n="tracker.dueChip">Follow-ups due</span> <span class="trk-chip-n" id="trkDueN"></span></button>
+          <div class="trk-toolbar-end">
             <div class="trk-seg" role="group" aria-label="View">
               <button class="trk-seg-btn is-on" id="trkViewBoard" type="button" data-i18n="tracker.board">Board</button>
               <button class="trk-seg-btn" id="trkViewTable" type="button" data-i18n="tracker.table">Table</button>
             </div>
             <a class="btn btn-ghost btn-sm" id="trkExport" href="/api/tracker/export.csv" download title="A CSV of every job you applied to, with dates, for a work-search log" data-i18n="tracker.export">Export for unemployment claims</a>
           </div>
-        </header>
+        </div>
 
-        <!-- From your inbox: mail that reads like an interview invite, rejection, offer,
-             assessment or confirmation for a job on the board. Move / Not this; nothing
-             moves without a click. -->
-        <div class="trk-inbox" id="trkInbox" hidden><!-- injected --></div>
-        <div class="trk-metrics" id="trkMetrics"><!-- funnel tiles injected --></div>
         <div class="trk-board" id="trkBoard"><!-- columns injected --></div>
         <div class="trk-table-wrap" id="trkTable" hidden><!-- table injected --></div>
         <div class="empty" id="trkEmpty" hidden data-i18n="tracker.empty">Nothing tracked yet. Save a job or tailor a resume and it lands here.</div>
