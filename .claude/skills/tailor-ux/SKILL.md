@@ -597,3 +597,13 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   Autofill (aaSilentApprove, then aaFill); after an Autofill the card asks "Did you submit it?"
   Yes / Not yet on its own line. Verified with a throwaway engine on made-up cards at 1440x900 and at
   the owner's 76% window (2491x1557 CSS px), light and dark.
+- 2026-11-24: **At most 3 projects, jobs keep their bullets.** A resume shows at most 3 projects,
+  at most 2 once the person has 3 or more years of work (roles' date ranges merged, "Present" is
+  today; internships and placeholder dates like "20XX" count for nothing, so the gallery's John Doe
+  keeps 3). The most relevant to the job stay (the job's terms each names, then recency); the rest
+  are in the build's "cut to fit" list with Put back. When the page overflows, the least relevant
+  project goes first, then project bullets down to one each, and only then job bullets; every job
+  keeps 2 while a course, a skills line or a school can still go, and room on the page goes to the
+  jobs' staircase (5, 4, 3, 2) first. A project the person names in the chat ("use these 4
+  projects"), adds from GitHub, switches on, or puts back stays past the cap
+  (tailoring/assembler.py `project_cap`, `_cap_projects`, `_shrink_once`).

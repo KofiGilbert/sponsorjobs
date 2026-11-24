@@ -65,8 +65,16 @@ LONG = {
 }
 
 
-def test_a_cut_is_recorded_with_where_it_came_from():
+def _one_project() -> dict:
+    """LONG with one one-bullet project: projects go before jobs (Kofi, 2026-11-24), so with
+    nothing left to take from Projects the next cut is a job's bullet."""
     p = normalize_profile(copy.deepcopy(LONG))
+    p["projects"] = p["projects"][-1:]
+    return p
+
+
+def test_a_cut_is_recorded_with_where_it_came_from():
+    p = _one_project()
     trims: list = []
     assert _shrink_once(p, trims)
     t = trims[0]
@@ -80,11 +88,11 @@ def test_a_cut_is_recorded_with_where_it_came_from():
 
 
 def test_a_kept_cut_is_never_cut_again_the_next_one_goes():
-    first = normalize_profile(copy.deepcopy(LONG))
+    first = _one_project()
     trims: list = []
     _shrink_once(first, trims)
     kept = trims[0]
-    again = normalize_profile(copy.deepcopy(LONG))
+    again = _one_project()
     trims2: list = []
     assert _shrink_once(again, trims2, keep={kept["id"]})
     assert trims2[0]["id"] != kept["id"]
@@ -146,14 +154,19 @@ def test_put_back_reruns_the_fit_and_lists_what_went_instead(template_source, wo
     st = s._state()
     assert st["trims"] and all({"id", "what", "label", "text"} <= set(t) for t in st["trims"])
     assert any("cut to fit" in p for p in st["changes"]["points"])
-    target = next(t for t in s.assembled.trims if t["kind"] == "bullet")
+    # The cut here may be a project (projects go before jobs, Kofi 2026-11-24) or a bullet.
+    target = next((t for t in s.assembled.trims if t["kind"] == "bullet"), s.assembled.trims[0])
     out = s.put_back(target["id"])
     assert out["put_back_ok"] is True, out.get("put_back_error")
     a = s.assembled
     assert a.ok and a.compile.pages == 1 and a.compile.overfull_count == 0
     page = [b for sec in ("experience", "projects") for e in a.profile_used[sec]
             for r in (e.get("roles") or [e]) for b in r["bullets"]]
-    assert target["text"] in page                                  # it is back on the page
+    if target["kind"] == "project":
+        from tailoring.assembler import entry_label
+        assert target["label"] in [entry_label(e) for e in a.profile_used["projects"]]
+    else:
+        assert target["text"] in page                              # it is back on the page
     assert all(t["id"] != target["id"] for t in a.trims)           # and not cut again
     assert out["messages"] and out["messages"][0].startswith("Put back:")
     # Whatever had to go instead is listed, with its own Put back.
