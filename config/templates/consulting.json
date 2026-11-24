@@ -53,5 +53,113 @@
     }
   },
   "order": 110,
-  "featured": true
+  "featured": true,
+  "preview": {
+    "education": [
+      {
+        "school": "State University",
+        "degree": "Bachelor of Arts in Economics and Mathematics; GPA 3.8/4.0",
+        "date": "May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Industrial Organization, Econometrics, Game Theory, Operations Research, Corporate Strategy, Statistics"
+      },
+      {
+        "school": "Anytown Community College",
+        "degree": "Associate of Arts in Business Administration",
+        "date": "May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Microeconomics, Financial Accounting, Business Statistics, Calculus, Business Writing"
+      }
+    ],
+    "experience": [
+      {
+        "org": "Contoso Consulting Group",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Business Analyst",
+            "dates": "Aug 20XX - Present",
+            "bullets": [
+              "Built the market-sizing and pricing model for a $2 billion medical-device client entering two new regions, adopted in its five-year plan.",
+              "Led the cost workstream on a procurement redesign for a national retailer, identifying $40 million in annual savings across 14 spend categories and building the supplier negotiation plan.",
+              "Interviewed 45 customers and executives and synthesized the findings into the steering-committee recommendation that set the client's three-year growth priorities.",
+              "Built the operating-model diagnostic later reused across four engagements in the consumer practice.",
+              "Presented weekly progress to client vice presidents and managed a two-person client analyst team, setting their workplans and reviewing every model before it reached the client.",
+              "Trained six new analysts on Excel modeling and slide structure as part of the office onboarding program."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Fabrikam Advisory",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Summer Business Analyst",
+            "dates": "Jun 20XX - Aug 20XX",
+            "bullets": [
+              "Mapped the customer journey for a regional bank's lending process and cut approval time by 30 percent in the pilot branch.",
+              "Built a churn model in Python that flagged at-risk accounts with 82 percent precision and designed the retention offers the client tested in two regions.",
+              "Drafted the final presentation section on implementation risks for the client's chief operating officer, including a 90-day rollout plan and the metrics to track it.",
+              "Sized the small-business lending market in four states to support the bank's expansion case.",
+              "Received a full-time return offer."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Northwind Health",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Strategy and Operations Intern",
+            "dates": "Jun 20XX - Aug 20XX",
+            "bullets": [
+              "Analyzed patient-flow data across three clinics and proposed a scheduling change that raised daily capacity by 12 percent without adding staff or extending clinic hours.",
+              "Built a staffing dashboard in Tableau used by clinic managers in weekly planning meetings.",
+              "Benchmarked five competitors' telehealth offerings for the strategy team's annual review.",
+              "Wrote the standard operating procedure for the new scheduling process used across all three clinics."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Anytown Nonprofit Consulting Group",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Project Leader",
+            "dates": "Sep 20XX - May 20XX",
+            "bullets": [
+              "Led a team of five students on a pro bono project that grew a local literacy nonprofit's recurring donors by 25 percent.",
+              "Ran case-interview training for 60 club members each semester, writing six practice cases and pairing members with alumni coaches for mock interviews.",
+              "Built the club's project-scoping template used by every later team."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "State University Office of Institutional Research",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Research Assistant",
+            "dates": "Sep 20XX - May 20XX",
+            "bullets": [
+              "Cleaned and analyzed five years of enrollment data in R to model first-year retention for the provost's office.",
+              "Built survey dashboards that the student affairs team used to plan advising outreach.",
+              "Presented findings on transfer-student retention at the university's annual research day."
+            ]
+          }
+        ]
+      }
+    ],
+    "skills": {
+      "Analytics": "Financial modeling, market sizing, pricing analysis, survey design, regression analysis",
+      "Tools": "Excel, PowerPoint, SQL, Python, R, Tableau, Alteryx",
+      "Leadership": "President, Undergraduate Consulting Club; Orientation Leader; Peer Mentor, Economics Department",
+      "Languages": "Spanish (fluent), Portuguese (conversational)"
+    },
+    "interests": "Half-marathons, chess, community theater, travel photography, volunteering with a youth mentoring program"
+  }
 }

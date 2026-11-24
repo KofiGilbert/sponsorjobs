@@ -60,7 +60,8 @@ def test_the_view_has_its_controls_and_nothing_that_composes():
     for el in ('id="ibAddr"', 'id="ibCopy"', 'id="ibSearch"', 'id="ibUnread"', 'id="ibReadAll"', 'id="ibRefresh"',
                'id="ibTabs"', 'id="ibNote"', 'id="ibSplit"', 'id="ibList"', 'id="ibMoreBtn"', 'id="ibReader"', 'id="ibEmpty"'):
         assert el in VIEW, el
-    assert VIEW.count("<button") == 5 and '<a ' not in VIEW                      # every control is a button
+    # every control is a button; the sixth is the back link to Settings, shown with the agent off
+    assert VIEW.count("<button") == 6 and '<a ' not in VIEW and 'id="ibPageBack"' in VIEW
     for word in ("reply", "compose", "forward"):                                 # read only in this version
         assert word not in VIEW.lower()
         assert not re.search(r'ibT\("[^"]*",\s*"[^"]*\b%s' % word, INBOX_JS, re.I), word
@@ -118,7 +119,8 @@ def test_the_privacy_text_says_how_long_mail_is_held_on_the_server():
 def test_settings_offers_the_three_choices_for_copies_to_the_persons_own_email():
     row = HTML[HTML.index('id="mailNotifyRow"'):HTML.index("<!-- GitHub:")]
     assert re.findall(r'<option value="([a-z]+)"', row) == ["forward", "notice", "off"]
-    assert 'for="mailNotify"' in row and 'data-i18n="mbox.notify.help"' in row and " hidden>" in row.split("\n")[0]
+    assert 'for="mailNotify"' in row and 'data-i18n="mbox.notify.help"' in row and " hidden" in row.split("\n")[0]
+    assert "data-agent-only>" in row.split("\n")[0]     # the SponsorJobs address is the agent's (six tabs)
     en = _locale("en")
     assert [en[f"mbox.notify.{k}"] for k in ("title", "forward", "notice", "off")] == \
         ["Copies to my own e-mail", "Forward every message", "Send a short notice", "Do not send"]

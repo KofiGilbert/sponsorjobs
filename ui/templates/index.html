@@ -35,7 +35,10 @@
           <span class="nav-label" data-i18n="nav.tracker">Tracker</span>
           <span class="nav-due-dot" id="trackerNavDot" hidden title="A follow-up is due"></span>
         </button>
-        <button class="nav-item" data-nav="inbox" title="Inbox" data-i18n-title="nav.inbox">
+        <!-- Six items with the apply agent off (2026-11-24): Inbox, Applications and the live
+             Building item are the agent's. Old mail opens from Settings, Applying; ready to
+             apply and applied live on the Tracker; an unfinished resume on Home's Continue tailoring. -->
+        <button class="nav-item" data-nav="inbox" title="Inbox" data-i18n-title="nav.inbox" data-agent-only>
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M3.8 7.6l8.2 6 8.2-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span class="nav-label" data-i18n="nav.inbox">Inbox</span>
           <span class="nav-badge" id="navInboxBadge" hidden></span>
@@ -48,7 +51,7 @@
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 9h8M8 12.5h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <span class="nav-label" data-i18n="nav.prep" data-rail="Interview">Interview prep</span>
         </button>
-        <button class="nav-item" data-nav="autoapply" title="Applications">
+        <button class="nav-item" data-nav="autoapply" title="Applications" data-agent-only>
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 13.5h6L10 21l9-11h-6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
           <span class="nav-label" data-i18n="nav.autoapply" data-rail="Applications">Applications</span>
         </button>
@@ -96,7 +99,7 @@
             <div class="home-promptbox">
               <textarea id="homePrompt" rows="4" spellcheck="false" aria-label="Job description or request"
                 role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="homeSuggest"
-                placeholder="Paste a job description, or tell me what to do..." data-i18n-ph="home.placeholder"></textarea>
+                placeholder="{{ 'Paste a job description, or tell me what to do...' if apply_agent else 'Paste a job description or a link...' }}" data-i18n-ph="{{ 'home.placeholder' if apply_agent else 'home.placeholderA' }}"></textarea>
               <div class="home-prompt-foot">
                 <span class="home-foot-links">
                   <button class="home-examples" id="homeExamples" type="button" data-i18n="home.seeExamples">See examples</button>
@@ -110,9 +113,15 @@
             <div class="home-suggest home-continue" id="homeContinueList" role="listbox" aria-label="Continue tailoring" hidden></div>
             <div class="home-suggest" id="homeSuggest" role="listbox" aria-labelledby="homeSuggestL" hidden>
               <div class="home-suggest-l" id="homeSuggestL" data-i18n="home.askMeTo">Ask me to</div>
-              <div class="home-suggest-row" id="homeSug1" role="option" aria-selected="false" data-i18n="{{ 'home.try1' if apply_agent else 'home.try1A' }}">{{ "Find 5 data analytics roles and apply for me" if apply_agent else "Find 5 data analytics roles and tailor my resume for each" }}</div>
+              {% if apply_agent %}
+              <div class="home-suggest-row" id="homeSug1" role="option" aria-selected="false" data-i18n="home.try1">Find 5 data analytics roles and apply for me</div>
               <div class="home-suggest-row" id="homeSug2" role="option" aria-selected="false" data-i18n="home.try2">I am away for 3 hours: tailor 10 business analyst roles and message me on Telegram</div>
               <div class="home-suggest-row" id="homeSug3" role="option" aria-selected="false" data-i18n="home.try3">What is waiting on me?</div>
+              {% else %}
+              <!-- Agent off: one job at a time, no batch ideas (2026-11-24). The row readies the
+                   box for a paste instead of sending its own words. -->
+              <div class="home-suggest-row" id="homeSug1" role="option" aria-selected="false" data-sug-paste data-i18n="home.tryPaste">Tailor my resume for a job I paste</div>
+              {% endif %}
             </div>
           </div>
 
@@ -779,7 +788,8 @@
               <span id="suBackLbl"></span>
             </button>
             <h1 class="page-title" data-i18n="setup.title">Apply setup</h1>
-            <p class="page-sub" data-i18n="setup.sub">Answer once, and the agent stops less to ask.</p>
+            <p class="page-sub" data-i18n="setup.sub" data-agent-only>Answer once, and the agent stops less to ask.</p>
+            <p class="page-sub" data-i18n="setup.subA" data-assisted-only>Answer once, and autofill fills more of every form.</p>
           </div>
           <div class="su-prog" id="suProg" aria-live="polite">
             <span class="su-prog-t" id="suProgT"></span>
@@ -804,29 +814,40 @@
 
       <!-- ============ REVIEW & SUBMIT ============ -->
       <!-- ============ TRACKER (the job board) ============
-           One stage per job you saved, tailored or applied to: Saved, Applied, Interviewing,
-           Offer, Rejected, Archived. Same rows as the Jobs page (sourcing/board.py), local only.
-           Drag a card between columns, or use the table. A card opens a side panel with notes
-           (saved on blur), contacts, a follow-up date, the timeline, and the files. -->
+           One stage per job you saved, tailored or applied to. Same rows as the Jobs page
+           (sourcing/board.py), local only. Laid out like a Jira board (2026-11-24): the title
+           and one quiet numbers line, one toolbar (search, the Follow-ups due filter, Board /
+           Table, Export), then columns that fill the window and scroll on their own. Cards are
+           compact (title, one chip, company and one date); a click opens the side panel, which
+           holds everything else. Ready to apply cards carry one "Apply" (autofill). -->
       <section class="view view-tracker" id="view-tracker">
-        <header class="page-head">
+        <header class="page-head trk-head">
           <div>
             <h1 class="page-title" data-i18n="tracker.title">Tracker</h1>
+            <p class="trk-stats" id="trkMetrics"><!-- one line of numbers, injected --></p>
           </div>
-          <div class="trk-head-actions">
+        </header>
+
+        <!-- From your inbox: shown only when there is something, one row per message. Move /
+             Not this; nothing moves without a click. Then the quiet closed-jobs line. -->
+        <div class="trk-inbox" id="trkInbox" hidden><!-- injected --></div>
+        <p class="feed-notice trk-notice" id="trkClosed" role="status" hidden></p>
+
+        <div class="trk-toolbar">
+          <label class="jf-search trk-search">
+            <svg class="jf-ic" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14 14l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <input class="jf-input" id="trkSearch" type="search" placeholder="Search company or job title" data-i18n-ph="tracker.searchPh" aria-label="Search company or job title" data-i18n-aria="tracker.searchPh" autocomplete="off" />
+          </label>
+          <button class="trk-chip" id="trkDueChip" type="button" aria-pressed="false" hidden><span data-i18n="tracker.dueChip">Follow-ups due</span> <span class="trk-chip-n" id="trkDueN"></span></button>
+          <div class="trk-toolbar-end">
             <div class="trk-seg" role="group" aria-label="View">
               <button class="trk-seg-btn is-on" id="trkViewBoard" type="button" data-i18n="tracker.board">Board</button>
               <button class="trk-seg-btn" id="trkViewTable" type="button" data-i18n="tracker.table">Table</button>
             </div>
             <a class="btn btn-ghost btn-sm" id="trkExport" href="/api/tracker/export.csv" download title="A CSV of every job you applied to, with dates, for a work-search log" data-i18n="tracker.export">Export for unemployment claims</a>
           </div>
-        </header>
+        </div>
 
-        <!-- From your inbox: mail that reads like an interview invite, rejection, offer,
-             assessment or confirmation for a job on the board. Move / Not this; nothing
-             moves without a click. -->
-        <div class="trk-inbox" id="trkInbox" hidden><!-- injected --></div>
-        <div class="trk-metrics" id="trkMetrics"><!-- funnel tiles injected --></div>
         <div class="trk-board" id="trkBoard"><!-- columns injected --></div>
         <div class="trk-table-wrap" id="trkTable" hidden><!-- table injected --></div>
         <div class="empty" id="trkEmpty" hidden data-i18n="tracker.empty">Nothing tracked yet. Save a job or tailor a resume and it lands here.</div>
@@ -843,8 +864,14 @@
       <section class="view view-inbox" id="view-inbox">
         <header class="page-head">
           <div>
+            <!-- Agent off, the Inbox has no sidebar item: it opens from Settings (or a Tracker
+                 card's "N messages"), read only, and this link goes back there. -->
+            <button class="btn btn-ghost btn-back tpl-back" id="ibPageBack" type="button" data-assisted-only>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span id="ibPageBackLbl" data-i18n="mem.backSettings">Settings</span>
+            </button>
             <h1 class="page-title" data-i18n="nav.inbox">Inbox</h1>
-            <p class="page-sub ib-addr" id="ibAddr" hidden><span id="ibAddrText"></span>
+            <p class="page-sub ib-addr" id="ibAddr" hidden data-agent-only><span id="ibAddrText"></span>
               <button class="link-btn ib-copy" id="ibCopy" type="button" data-i18n="mbox.copy">Copy address</button></p>
           </div>
         </header>
@@ -1603,7 +1630,7 @@
         <button class="set-tab" data-set="lock" type="button" data-i18n="settings.appLock">App lock</button>
         <button class="set-tab" data-set="connections" type="button" data-i18n="settings.connections">Connections</button>
         <button class="set-tab" data-set="notify" type="button" data-i18n="notify.title">Notifications</button>
-        <button class="set-tab" data-set="applying" type="button" data-i18n="settings.applying" data-agent-only>Applying</button>
+        <button class="set-tab" data-set="applying" type="button" data-i18n="settings.applying">Applying</button>
         <button class="set-tab" data-set="data" type="button" data-i18n="settings.dataPrivacy">Data &amp; privacy</button>
       </nav>
       <div class="set-body">
@@ -1687,17 +1714,19 @@
           <!-- Email: the apply agent reads ONLY this site's verification codes, links and
                recruiter replies from the person's own mailbox (CLAUDE.md section 5). Gmail app
                password over IMAP today; Google sign-in once the app is verified. -->
-          <div class="conn-row">
+          <!-- The whole Email block is the agent's (2026-11-24): with it off, forms use the
+               person's own email and old mail opens from Settings, Applying. -->
+          <div class="conn-row" data-agent-only>
             <div class="conn-hd">
               <div class="conn-name">Email <span class="conn-status" id="gmStatus"></span></div>
               <div class="conn-desc">Your SponsorJobs address for applications. Sites send their codes and links there, so applying finishes on its own; everything is forwarded to your real inbox.</div>
             </div>
             <button class="btn btn-ghost" id="gmAlias" type="button">Get an address</button>
           </div>
-          <p class="conn-detail" id="gmDetail" hidden></p>
+          <p class="conn-detail" id="gmDetail" hidden data-agent-only></p>
           <!-- What the person's own e-mail gets for each message to the address (/api/inbox/notify).
                Shown once there is an address. -->
-          <div class="conn-row ib-notify" id="mailNotifyRow" hidden>
+          <div class="conn-row ib-notify" id="mailNotifyRow" hidden data-agent-only>
             <div class="conn-hd">
               <label class="conn-name" for="mailNotify" data-i18n="mbox.notify.title">Copies to my own e-mail</label>
               <div class="conn-desc" data-i18n="mbox.notify.help">What your own e-mail gets for each message. Your Inbox here keeps every message either way.</div>
@@ -1708,8 +1737,8 @@
               <option value="off" data-i18n="mbox.notify.off">Do not send</option>
             </select>
           </div>
-          <p class="conn-detail"><a href="#" id="gmHelp">Advanced: use your own inbox instead</a></p>
-          <form class="conn-form" id="gmForm" hidden autocomplete="off">
+          <p class="conn-detail" data-agent-only><a href="#" id="gmHelp">Advanced: use your own inbox instead</a></p>
+          <form class="conn-form" id="gmForm" hidden autocomplete="off" data-agent-only>
             <ol class="nt-steps">
               <li>Turn on 2-Step Verification in your Google account.</li>
               <li>Open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App passwords</a>, name it SponsorJobs, and copy the 16-character password.</li>
@@ -1860,9 +1889,34 @@
           <button class="btn btn-danger-ghost btn-sm nt-disc" id="ntDisconnect" type="button" hidden data-i18n="notify.disconnect">Disconnect</button>
         </section>
 
-        <section class="set-pane" data-pane="applying" data-agent-only>
-          <h2 class="set-h">Applying</h2>
+        <!-- Applying: in both modes the doors to Your answers (what autofill puts in forms) and
+             Apply setup, which lived on the Applications page, plus old mail to the SponsorJobs
+             address when there is any (agent off, 2026-11-24). The agent's send switches stay
+             agent-only. -->
+        <section class="set-pane" data-pane="applying">
+          <h2 class="set-h" data-i18n="settings.applying">Applying</h2>
           <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="ans.title">Your answers</div>
+              <div class="set-row-d" data-i18n="set.answersDesc">What autofill puts in application forms.</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="setAnswersOpen" type="button" data-i18n="aa.open">Open</button>
+          </div>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="setup.title">Apply setup</div>
+              <div class="set-row-d" data-i18n="set.setupDesc">Your details and the questions forms ask, step by step.</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="setSetupOpen" type="button" data-i18n="aa.open">Open</button>
+          </div>
+          <div class="set-row" id="setMailRow" hidden data-assisted-only>
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="set.mailTitle">Mail to your SponsorJobs address</div>
+              <div class="set-row-d" id="setMailDesc"></div>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="setMailOpen" type="button" data-i18n="aa.open">Open</button>
+          </div>
+          <div class="set-row" data-agent-only>
             <div class="set-row-t">
               <div class="set-row-n">Autonomous submission</div>
               <div class="set-row-d">Let SponsorJobs submit finished applications on verified sites,
@@ -1870,14 +1924,14 @@
             </div>
             <label class="sw"><input type="checkbox" id="setAuto"><span></span></label>
           </div>
-          <div class="set-row">
+          <div class="set-row" data-agent-only>
             <div class="set-row-t">
               <div class="set-row-n">Daily cap</div>
               <div class="set-row-d">The most applications SponsorJobs will submit in a day.</div>
             </div>
             <input class="set-num" id="setCap" type="number" min="1" max="200" step="1">
           </div>
-          <p class="set-note">SponsorJobs only ever auto-submits on sites whose terms permit it. Everywhere
+          <p class="set-note" data-agent-only>SponsorJobs only ever auto-submits on sites whose terms permit it. Everywhere
             else it fills the form and you click submit.</p>
         </section>
 

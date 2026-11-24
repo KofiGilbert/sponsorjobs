@@ -573,3 +573,56 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   fewer than 5 skills shows a muted "Not enough in the ad to score", never a percent (Jobs detail
   too). The Browser bar button is "Autofill this page". The tiles stay for the agent only
   (`data-agent-only`). The Tracker's approved column reads "Ready to apply" and counts the same jobs.
+- 2026-11-24 (six tabs, the apply agent off): the side menu is six items, Home, Resumes, Jobs,
+  Tracker, Projects, Interview. Applications, Inbox and the live Building item are the agent's
+  (`data-agent-only`, `paintLiveNav` paints nothing while it is off) and come back with
+  SJ_APPLY_AGENT=1. No door may land on a hidden page: `navTo` maps Applications to the Tracker
+  (`navDest`), a click on the hidden nav item does the same, and every back link and chat button
+  goes through `navTo` ("Open Tracker" in the Home chat). The flow is one job at a time: on Home,
+  paste a job or pick a suggested one, tailor in the chat, press Apply at the end (the Browser tab
+  opens and autofills). Home's "Ask me to" list is ONE row, "Tailor my resume for a job I paste",
+  which readies the box for the paste instead of sending its words; a batch request typed anyway
+  gets "Paste a job here, or pick one on Home, and I will tailor your resume for it." in the
+  assistant chat and runs nothing; a posting pasted in that chat starts its tailoring.
+  "Continue tailoring" is the only way back to an unfinished resume chat, so it lists every one
+  (no cap). Resumes is templates and resumes only: the follow-up banner left (follow-up dates
+  live on Tracker cards; the per-row "Follow up due" stays). Forms get the person's own email;
+  the Settings Email block (the SponsorJobs address) is the agent's. Settings, Applying shows in
+  both modes: Your answers and Apply setup rows (ghost Open, the Data & privacy row grammar), and,
+  only when that mailbox has mail, "Mail to your SponsorJobs address" (the message count) which
+  opens the old Inbox read only, without the address line or Get an address, under a `.tpl-back`
+  named for where it came from (Settings, or Tracker from a card's "N messages").
+- 2026-11-24 (Tracker, "just learn from Jira"; the owner's Jira board screenshot is the reference):
+  the Tracker is a Jira-style board. Top to bottom: the title with ONE quiet numbers line under it
+  ("5 applied · 1 interview · 0 offers · 5 of [10] this week", the goal editable in place; no tiles,
+  no sparkline), the inbox strip only when it has items (one compact row per message, why and the
+  questions on hover), the closed-jobs `.feed-notice` line, then ONE toolbar row: search box (company
+  or job title, client side) and a "Follow-ups due N" quick-filter chip (only while some are due) on
+  the left, Board/Table and Export on the right. The board takes the rest of the window (the view is
+  a flex column; no JS sizing), spans the full width (no 1680px reading cap), and scrolls sideways
+  inside its own box only. Columns are soft tinted panels (`--trk-col-bg`, a shade off the page, 8px
+  radius, no border) with an uppercase muted name and a count; an empty column stays narrow
+  (flex 0.6) with a one-line hint. Cards are white on the tint (dark: `--surface-2` with a hairline),
+  8px radius, a light shadow, 12px 14px padding, 8px apart, the SAME shape everywhere: the title
+  (500 weight, two lines max), at most one chip (one visa, or "Sponsorship available") plus "New" on
+  a never-opened package, then a footer with the logo and company on the left and ONE date chosen by
+  stage on the right ("Tailored / Applied / Follow up (flag, dot) / Since / Job closed / Not
+  selected / Archived"). In a column under 250px the date drops its label (on hover) and Ready to
+  apply keeps only Apply, so company and date stay on one row. No links on a card: the whole card
+  opens the side panel (Enter opens, Escape closes), which holds Apply (primary), Resume, Cover
+  letter, Chat (the resume session), Job posting, Move to, follow-up, notes, contacts, email, files
+  and the timeline. Ready to apply cards (and table rows) have one small "Apply" (hover: "Opens the
+  application and fills it from your profile. You check it and submit."), the Applications row's
+  Autofill (aaSilentApprove, then aaFill); after an Autofill the card asks "Did you submit it?"
+  Yes / Not yet on its own line. Verified with a throwaway engine on made-up cards at 1440x900 and at
+  the owner's 76% window (2491x1557 CSS px), light and dark.
+- 2026-11-24: **At most 3 projects, jobs keep their bullets.** A resume shows at most 3 projects,
+  at most 2 once the person has 3 or more years of work (roles' date ranges merged, "Present" is
+  today; internships and placeholder dates like "20XX" count for nothing, so the gallery's John Doe
+  keeps 3). The most relevant to the job stay (the job's terms each names, then recency); the rest
+  are in the build's "cut to fit" list with Put back. When the page overflows, the least relevant
+  project goes first, then project bullets down to one each, and only then job bullets; every job
+  keeps 2 while a course, a skills line or a school can still go, and room on the page goes to the
+  jobs' staircase (5, 4, 3, 2) first. A project the person names in the chat ("use these 4
+  projects"), adds from GitHub, switches on, or puts back stays past the cap
+  (tailoring/assembler.py `project_cap`, `_cap_projects`, `_shrink_once`).
