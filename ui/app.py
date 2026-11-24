@@ -6779,9 +6779,11 @@ def autoapply_fill_report():
         pages = sorted(pages + [entry], key=lambda p: p.get("page") or 0)[-12:]
         report = {"pages": pages, "updated": entry["at"]}
         patch = {"fill_report": report}
-        if page == 1 or not _record_data(rec).get("filled_at"):
-            # A fill ran for it (the first page of a new fill): Applications asks "Did you submit
-            # it?" later if it is still not marked applied. A later page keeps the same fill.
+        if filled and (page == 1 or not _record_data(rec).get("filled_at")):
+            # A fill put something on the form (the first page of a new fill): Applications asks
+            # "Did you submit it?" later if it is still not marked applied. A later page keeps the
+            # same fill; a run that found no form (a job page, a sign-in) fills nothing and asks
+            # nothing.
             patch["filled_at"] = entry["at"]
         recs.merge_data(rid, patch)
     finally:
@@ -20071,6 +20073,27 @@ def _record_label(rec: dict, data: dict) -> tuple[str, str]:
     return role, company
 
 
+# The shell watches the Browser tab for the site's "application received" page for 30 minutes
+# after a fill (shell-electron/main.js armSuccessWatch) and marks it applied by itself. Only after
+# that window does the row ask "Did you submit it?", so the person is never asked while they are
+# still on the form.
+ASK_SUBMITTED_AFTER_S = 30 * 60
+
+
+def _ask_submitted(data: dict, stage: str, now: float | None = None) -> bool:
+    """True when a fill ran for this record more than ASK_SUBMITTED_AFTER_S ago, it is still not
+    sent or skipped, and the person has not answered Not yet for that fill."""
+    from datetime import datetime
+    at = str(data.get("filled_at") or "")
+    if not at or stage in ("submitted", "skipped") or data.get("submit_q_hidden") == at:
+        return False
+    try:
+        t = datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return False
+    return (time.time() if now is None else now) - t >= ASK_SUBMITTED_AFTER_S
+
+
 def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
     """One application as the Auto-apply page lists it. Only facts the record or its stored
     job hold; anything unknown is left empty, never guessed."""
@@ -20141,8 +20164,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         # The person pressed Autofill (the shell's fill report stamps it) and it is not marked
         # applied yet: the row asks "Did you submit it?" until Yes or Not yet (for that fill)
         "filled_at": data.get("filled_at") or "",
-        "ask_submitted": bool(data.get("filled_at")) and st["stage"] not in ("submitted", "skipped")
-                         and data.get("submit_q_hidden") != data.get("filled_at"),
+        "ask_submitted": _ask_submitted(data, st["stage"]),
         "tile": tile, "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
         "reason": st["reason"], "how": st["how"], "queued": bool(data.get("queued")) and agent_on,
         "action": action,

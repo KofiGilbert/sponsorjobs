@@ -12358,9 +12358,10 @@
     return `<div class="aa-row aa-ready-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(co)}, ${esc(role)}">
       ${companyAvatar(it)}
       <div class="aa-row-main"><div class="aa-t"><span class="aa-t-x">${esc(co || role)}</span>${tag}</div>
-        <div class="aa-s"><span class="co">${esc(co ? role : "")}${it.location ? (co ? " · " : "") + esc(loc) : ""}</span>${aaChip(it)}</div>${ask}</div>
+        <div class="aa-s"><span class="co">${esc(co ? role : "")}${it.location ? (co ? " · " : "") + esc(loc) : ""}</span>${aaChip(it)}</div></div>
       <span class="aa-match">${aaMatchCell(it)}</span>
       <div class="aa-act"><button class="btn btn-ghost btn-sm aa-fillbtn" type="button" data-act="fill" title="${esc(aaFillTip())}">${esc(T("aa.act.fill", "Autofill application"))}</button></div>
+      ${ask}
     </div>`;
   }
   function aaRenderReady() {

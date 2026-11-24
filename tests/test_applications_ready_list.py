@@ -246,7 +246,25 @@ def test_an_old_swapped_record_shows_role_and_company(A):
 
 # --------------------------------------------------------------------------- did you submit it?
 
-def test_after_an_autofill_the_row_asks_until_yes_or_not_yet(A):
+def test_the_question_waits_for_the_success_watch_and_a_real_fill(A):
+    # Right after a fill the person is still on the form (the shell's 30-minute watch may yet mark
+    # it applied), so nothing is asked; a run that filled nothing (a job page) asks nothing later.
+    rid = _add(A, "Analyst", status="approved")
+    c = A.app.test_client()
+    row = lambda: next(x for x in c.get("/api/autoapply/board").get_json()["ready"] if x["id"] == rid)  # noqa: E731
+    c.post("/api/autoapply/fill-report", headers=H, json={"record_id": rid, "page": 1, "filled": 0, "left": []})
+    assert not _data(A, rid).get("filled_at") and row()["ask_submitted"] is False
+    c.post("/api/autoapply/fill-report", headers=H, json={"record_id": rid, "page": 1, "filled": 6, "left": []})
+    assert _data(A, rid)["filled_at"] and row()["ask_submitted"] is False
+    at = _data(A, rid)["filled_at"]
+    from datetime import datetime
+    t = datetime.fromisoformat(at).timestamp()
+    assert A._ask_submitted({"filled_at": at}, "approved", now=t + A.ASK_SUBMITTED_AFTER_S) is True
+    assert A._ask_submitted({"filled_at": at}, "approved", now=t + 60) is False
+
+
+def test_after_an_autofill_the_row_asks_until_yes_or_not_yet(A, monkeypatch):
+    monkeypatch.setattr(A, "ASK_SUBMITTED_AFTER_S", 0)
     rid = _add(A, "Analyst", status="approved")
     c = A.app.test_client()
     row = lambda: next(x for x in c.get("/api/autoapply/board").get_json()["ready"] if x["id"] == rid)  # noqa: E731
