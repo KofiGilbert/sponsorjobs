@@ -33,6 +33,9 @@ from autoapply.eeo import choose
 from autoapply.fields import FormField
 from autoapply.planner import KnownContext, plan_known
 
+# The apply agent is off by default (assisted apply only); these tests use its routes, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 LAM_SALARY = "Error: The field What is your annual salary requirement? is required and must have a value."
 LAM_REPLY = "Yes, I will need H1B\n\nMale\n\nDon't you have this information on my profile already ?"

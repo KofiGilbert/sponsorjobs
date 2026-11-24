@@ -30,6 +30,9 @@ from notify import channel as CH
 from notify.channel import ChannelError, OfficialBotChannel, OwnBotChannel, parse_update
 from notify.hub import NotifyHub
 
+# The apply agent is off by default (assisted apply only); these tests use its routes, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 H = {"X-Tailor-Extension": "1"}
 GENDER = ["Male", "Female", "I don't wish to answer"]
 ETHNICITY = ["Asian", "Black or African American", "White", "Hispanic or Latino", "I don't wish to answer"]

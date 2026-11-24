@@ -136,7 +136,7 @@ def test_telegram_tailor_button_says_what_is_missing(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("needle", [
     'complete_profile: [() => T("aa.addDetails", "Add the details")',   # the action button
-    'T("aa.missing", "Auto-apply needs {n} details first.")',           # the one-line head
+    'T("aa.missing", "I need {n} details first.")',           # the one-line head
     'T("aa.nothingQueued", "Nothing queued.")',                          # zero told as zero
     'T("aa.notTailored", "Not tailored: {s}.")',                         # tailoring skips shown
 ])

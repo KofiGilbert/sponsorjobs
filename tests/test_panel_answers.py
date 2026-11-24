@@ -25,6 +25,9 @@ from pathlib import Path
 
 import pytest
 
+# The apply agent is off by default (assisted apply only); these tests use its routes, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 H = {"X-Tailor-Extension": "1"}
 GH_URL = "https://boards.greenhouse.io/brightwater/jobs/1"

@@ -30,6 +30,9 @@ from autoapply import asks as AK
 from autoapply import brain
 from autoapply.brain import SYSTEM_PROMPT, parse_reply
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 H = {"X-Tailor-Extension": "1"}
 LAM_URL = "https://careers.lamresearch.com/careers/apply?pid=1099556233587&domain=lamresearch.com"

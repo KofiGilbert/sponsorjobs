@@ -24,6 +24,9 @@ from notify.alerts import NotifyState
 from notify.channel import ChannelError
 from ui.records import CVRecords
 
+# The apply agent is off by default (assisted apply only); these tests use its routes, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 H = {"X-Tailor-Extension": "1"}
 SELF = "Zyxwv Selfid Value"
 NOTICE = {"run": "1763300000.5", "filled": 14, "files": 1, "flagged": 2, "more": 0,

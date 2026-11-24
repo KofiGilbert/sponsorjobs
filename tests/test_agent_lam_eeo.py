@@ -29,6 +29,9 @@ from autoapply import asks as AK
 from autoapply import basics
 from autoapply.answers import AnswerLibrary
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 H = {"X-Tailor-Extension": "1"}
 # careers.lamresearch.com/careers/apply, read 2026-10-30 (the page's own order)

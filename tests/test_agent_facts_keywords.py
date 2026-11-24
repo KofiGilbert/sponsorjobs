@@ -20,6 +20,9 @@ from tailoring import inferred_support as IS
 from ui.records import CVRecords
 from ui.session import WebIntake, page_roles
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 # His page's experience, exactly as the session holds it: titles and dates under ``roles``.
 KOFI_EXPERIENCE = [
     {"org": "BlackOrigin Inc.", "location": "Chicago, IL", "roles": [

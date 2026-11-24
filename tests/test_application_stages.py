@@ -118,6 +118,7 @@ def test_assisted_approve_keeps_the_card_and_moves_it_to_ready(A):
     assert c.get("/api/review/queue").get_json()["count"] == 0
 
 
+@pytest.mark.usefixtures("apply_agent_on")   # the auto lane submits only with the agent on
 def test_auto_submit_success_is_submitted_by_the_auto_lane(A, monkeypatch):
     import submit
     rid = _add(A, url=RECRUITEE)
@@ -132,6 +133,7 @@ def test_auto_submit_success_is_submitted_by_the_auto_lane(A, monkeypatch):
     assert card["record"]["state"] == "submitted" and card["record"]["how"] == "auto"
 
 
+@pytest.mark.usefixtures("apply_agent_on")   # the auto lane submits only with the agent on
 def test_auto_submit_failure_comes_back_as_needs_you_with_a_reason(A, monkeypatch):
     import submit
     rid = _add(A, url=RECRUITEE)
@@ -150,6 +152,7 @@ def test_auto_submit_failure_comes_back_as_needs_you_with_a_reason(A, monkeypatc
     assert not _data(A, rid).get("queued")                          # drain() won't re-POST
 
 
+@pytest.mark.usefixtures("apply_agent_on")   # the auto lane submits only with the agent on
 def test_captcha_drop_is_a_sign_in_reason(A, monkeypatch):
     import submit
     rid = _add(A, url=RECRUITEE)

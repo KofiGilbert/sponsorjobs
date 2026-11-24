@@ -179,3 +179,14 @@ def _no_first_open_crawl(monkeypatch):
     monkeypatch.setattr(feedclient, "RETRY_PAUSE", 0)
     monkeypatch.setattr(feedclient, "DOWNLOAD_TRIES", 1)
     monkeypatch.setattr(feedclient, "REQUEST_WAIT", 5.0)
+
+
+@pytest.fixture
+def apply_agent_on(monkeypatch):
+    """The multi-step apply agent is OFF by default (assisted apply only, 2026-11-24;
+    ui/app.py ``_apply_agent_enabled``). A test of the agent itself, Auto or Hybrid mode, the
+    Autopilot, or auto-submit on the verified allowlist turns it on here, the same way an
+    engineer does (``SJ_APPLY_AGENT=1``). Use it per file with
+    ``pytestmark = pytest.mark.usefixtures("apply_agent_on")``; never by changing the default."""
+    monkeypatch.setenv("SJ_APPLY_AGENT", "1")
+    yield

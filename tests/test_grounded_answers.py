@@ -15,6 +15,9 @@ import pytest
 
 from autoapply import grounded as G
 
+# The apply agent is off by default (assisted apply only); these tests use its routes, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 H = {"X-Tailor-Extension": "1"}
 ME = {"city": "Chicago", "state": "IL", "postal_code": "60601", "country": "United States"}
 PROFILE = {

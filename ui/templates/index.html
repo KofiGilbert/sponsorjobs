@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-apply-agent="{{ '1' if apply_agent else '0' }}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -48,9 +48,9 @@
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 9h8M8 12.5h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <span class="nav-label" data-i18n="nav.prep" data-rail="Interview">Interview prep</span>
         </button>
-        <button class="nav-item" data-nav="autoapply" title="Auto-apply">
+        <button class="nav-item" data-nav="autoapply" title="Applications">
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 13.5h6L10 21l9-11h-6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-          <span class="nav-label" data-i18n="nav.autoapply" data-rail="Auto-apply">Auto-apply</span>
+          <span class="nav-label" data-i18n="nav.autoapply" data-rail="Applications">Applications</span>
         </button>
         <!-- The CV currently open. A destination like any other, so getting back to work
              you were doing seconds ago is one click from anywhere, not a card to find. -->
@@ -110,7 +110,7 @@
             <div class="home-suggest home-continue" id="homeContinueList" role="listbox" aria-label="Continue tailoring" hidden></div>
             <div class="home-suggest" id="homeSuggest" role="listbox" aria-labelledby="homeSuggestL" hidden>
               <div class="home-suggest-l" id="homeSuggestL" data-i18n="home.askMeTo">Ask me to</div>
-              <div class="home-suggest-row" id="homeSug1" role="option" aria-selected="false" data-i18n="home.try1">Find 5 data analytics roles and apply for me</div>
+              <div class="home-suggest-row" id="homeSug1" role="option" aria-selected="false" data-i18n="{{ 'home.try1' if apply_agent else 'home.try1A' }}">{{ "Find 5 data analytics roles and apply for me" if apply_agent else "Find 5 data analytics roles and tailor my resume for each" }}</div>
               <div class="home-suggest-row" id="homeSug2" role="option" aria-selected="false" data-i18n="home.try2">I am away for 3 hours: tailor 10 business analyst roles and message me on Telegram</div>
               <div class="home-suggest-row" id="homeSug3" role="option" aria-selected="false" data-i18n="home.try3">What is waiting on me?</div>
             </div>
@@ -468,7 +468,7 @@
           <div>
             <button class="btn btn-ghost btn-back tpl-back" id="memBack" type="button" hidden>
               <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span id="memBackLbl" data-i18n="nav.autoapply">Auto-apply</span>
+              <span id="memBackLbl" data-i18n="nav.autoapply">Applications</span>
             </button>
             <h1 class="page-title" data-i18n="mem.title">What SponsorJobs knows about you</h1>
             <p class="page-sub" data-i18n="mem.sub">It all stays on this computer. Edit or forget any of it.</p>
@@ -628,7 +628,7 @@
           <!-- What I may do for you: what the Terms of Use cover when Auto-apply applies (accepting
                the notices a site requires, creating a site account), a switch each, changeable any
                time. Each saves the moment it changes (/api/autoapply/consent). -->
-          <section class="ans-card mem-card mem-may" id="memMay" data-jump="may" aria-labelledby="memMayH">
+          <section class="ans-card mem-card mem-may" id="memMay" data-jump="may" aria-labelledby="memMayH" data-agent-only>
             <div class="ans-card-h">
               <h2 class="ans-h" id="memMayH" data-i18n="consent.mayH">What I may do for you</h2>
             </div>
@@ -884,15 +884,18 @@
       <section class="view view-autoapply" id="view-autoapply">
         <header class="page-head">
           <div>
-            <h1 class="page-title" data-i18n="nav.autoapply">Auto-apply</h1>
+            <h1 class="page-title" data-i18n="nav.autoapply">Applications</h1>
             <p class="page-sub" data-i18n="aa.sub">Your best-fit roles, tailored and ready to send.</p>
           </div>
           <div class="aa-head-actions">
             <details class="aa-how" id="aaHow">
               <summary><svg class="aa-how-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7.2v3.6M8 5.2v.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span data-i18n="aa.how">How it applies</span></summary>
               <div class="aa-pop">
-                <p data-i18n="aa.how1">We send it for you only on sites verified to allow it, once you approve it.</p>
-                <p data-i18n="aa.how2">Everywhere else we open the form here and fill it. You check it and click Submit.</p>
+                <p data-i18n="aa.how1" data-agent-only>We send it for you only on sites verified to allow it, once you approve it.</p>
+                <p data-i18n="aa.how2" data-agent-only>Everywhere else we open the form here and fill it. You check it and click Submit.</p>
+                <p data-i18n="aa.howA1" data-assisted-only>Open an application and sign in if the site asks.</p>
+                <p data-i18n="aa.howA2" data-assisted-only>Press Fill this page. I fill what I can and flag what I guessed.</p>
+                <p data-i18n="aa.howA3" data-assisted-only>You check it and click Next or Submit yourself. I never submit for you.</p>
                 <p data-i18n="aa.how3">Never on LinkedIn or on boards that forbid it.</p>
               </div>
             </details>
@@ -920,7 +923,7 @@
           <div class="aa-msg" id="aaMsg" hidden></div>
           <!-- The Terms of Use notice (Kofi, 2026-11-01): one quiet line for a person who agreed to an
                older version, never a modal, never in the way of a run. "Turn off" opens the switch. -->
-          <p class="aa-tou" id="aaTou" hidden><span data-i18n="tou.notice">Our Terms now cover accepting site notices for you.</span>
+          <p class="aa-tou" id="aaTou" hidden data-agent-only><span data-i18n="tou.notice">Our Terms now cover accepting site notices for you.</span>
             <button class="link-btn" id="aaTouOff" type="button" data-i18n="tou.off">Turn off</button></p>
 
           <!-- Four stage tiles. The selected one fills the list below. -->
@@ -941,7 +944,7 @@
               </section>
 
               <!-- Auto mode's daily summary: one line, and Send all for what waits at Ready to send. -->
-              <div class="feed-note aa-autosum" id="aaAutoSum" hidden>
+              <div class="feed-note aa-autosum" id="aaAutoSum" hidden data-agent-only>
                 <span id="aaAutoSumText"></span>
                 <button class="btn btn-ghost btn-sm" id="aaSendAll" type="button" hidden></button>
                 <button class="link-btn" id="aaAutoSumHide" type="button" data-i18n="aa.inbox.hide">Hide</button>
@@ -953,7 +956,7 @@
                   <div class="aa-sec-acts">
                     <button class="link-btn" id="aaTelegramSend" type="button" hidden data-i18n="aa.sendTelegram">Send to Telegram</button>
                     <button class="link-btn" id="aaApproveAll" type="button" hidden></button>
-                    <button class="link-btn" id="aaApplyAll" type="button" hidden></button>
+                    <button class="link-btn" id="aaApplyAll" type="button" hidden data-agent-only></button>
                   </div>
                 </div>
                 <div class="aa-list" id="aaList"></div>
@@ -970,12 +973,12 @@
             <div class="aa-sidecol">
             <aside class="aa-side" aria-label="Today">
               <h2 class="aa-side-h" data-i18n="aa.today">Today</h2>
-              <div class="aa-cap">
+              <div class="aa-cap" data-agent-only>
                 <div class="aa-cap-row"><span id="aaCapSent"></span><span id="aaCapLeft"></span></div>
                 <div class="aa-meter"><i id="aaMeter"></i></div>
               </div>
               <!-- How to apply: Auto / Assisted / Hybrid, the ONE saved choice (also Apply setup). -->
-              <div class="aa-set aa-mode" id="aaAutonomous">
+              <div class="aa-set aa-mode" id="aaAutonomous" data-agent-only>
                 <div>
                   <div class="aa-set-t" data-i18n="mode.title">How to apply</div>
                   <div class="ans-seg aa-mode-seg" id="aaModeSeg" role="group" aria-label="How to apply"></div>
@@ -984,7 +987,7 @@
                   <div class="aa-set-s aa-mode-live" id="aaModeLive" hidden></div>
                 </div>
               </div>
-              <div class="aa-set" id="aaApRow">
+              <div class="aa-set" id="aaApRow" data-agent-only>
                 <div><div class="aa-set-t" data-i18n="aa.ap">Autopilot</div><div class="aa-set-s" id="aaApSub"></div></div>
                 <button class="aa-switch" id="aaAutopilot" type="button" role="switch" aria-checked="false" aria-label="Autopilot"></button>
               </div>
@@ -996,7 +999,7 @@
                 <div><div class="aa-set-t" data-i18n="ans.title">Your answers</div><div class="aa-set-s" id="aaAnsSub"></div></div>
                 <button class="btn btn-ghost btn-sm" id="aaAnsBtn" type="button" data-i18n="aa.open">Open</button>
               </div>
-              <div class="aa-set" id="aaMayRow">
+              <div class="aa-set" id="aaMayRow" data-agent-only>
                 <div><div class="aa-set-t" data-i18n="consent.mayShort">What I may do</div><div class="aa-set-s" id="aaMaySub"></div></div>
                 <button class="btn btn-ghost btn-sm" id="aaMayBtn" type="button" data-i18n="aa.pf.change">Change</button>
               </div>
@@ -1443,7 +1446,7 @@
         <!-- Assent where the person already clicks: continuing (Google or email) agrees to the Terms
              of Use, recorded with its version when sign-in finishes (/api/account/*). -->
         <p class="signin-terms" id="signinTerms"><span data-i18n="signin.terms1">By continuing, you agree to the</span>
-          <a href="https://sponsorjobs.ai/terms.html#applying" target="_blank" rel="noopener" id="signinTermsLink" data-i18n="signin.termsLink">Terms of Use</a><span data-i18n="signin.terms2">, including letting SponsorJobs accept the notices job sites require when it applies for you.</span></p>
+          <a href="https://sponsorjobs.ai/terms.html#applying" target="_blank" rel="noopener" id="signinTermsLink" data-i18n="signin.termsLink">Terms of Use</a><span data-i18n="signin.terms2" data-agent-only>, including letting SponsorJobs accept the notices job sites require when it applies for you.</span><span data-i18n="signin.terms2A" data-assisted-only>.</span></p>
       </div>
       <!-- Step 2: the code -->
       <div class="signin-step" id="signinCode" hidden>
@@ -1594,7 +1597,7 @@
         <button class="set-tab" data-set="lock" type="button" data-i18n="settings.appLock">App lock</button>
         <button class="set-tab" data-set="connections" type="button" data-i18n="settings.connections">Connections</button>
         <button class="set-tab" data-set="notify" type="button" data-i18n="notify.title">Notifications</button>
-        <button class="set-tab" data-set="applying" type="button" data-i18n="settings.applying">Applying</button>
+        <button class="set-tab" data-set="applying" type="button" data-i18n="settings.applying" data-agent-only>Applying</button>
         <button class="set-tab" data-set="data" type="button" data-i18n="settings.dataPrivacy">Data &amp; privacy</button>
       </nav>
       <div class="set-body">
@@ -1767,7 +1770,8 @@
           <div class="conn-row nt-first">
             <div class="conn-hd">
               <div class="conn-name">Telegram <span class="conn-status" id="ntStatus"></span></div>
-              <div class="conn-desc" data-i18n="notify.tgDesc">New job matches and what I did while you were away, with buttons to answer.</div>
+              <div class="conn-desc" data-i18n="notify.tgDesc" data-agent-only>New job matches and what I did while you were away, with buttons to answer.</div>
+              <div class="conn-desc" data-i18n="notify.tgDescA" data-assisted-only>New job matches and updates on your applications, with buttons to answer.</div>
               <div class="conn-desc" id="ntPaused" hidden data-i18n="notify.paused">Paused, send /resume in Telegram</div>
             </div>
             <button class="btn btn-ghost" id="ntConnect" type="button" data-i18n="notify.connect">Connect Telegram</button>
@@ -1805,7 +1809,8 @@
           <div class="set-row">
             <div class="set-row-t">
               <div class="set-row-n" data-i18n="notify.updates">Application updates</div>
-              <div class="set-row-d" data-i18n="notify.updatesDesc">A summary of what I tailored and submitted while you were away.</div>
+              <div class="set-row-d" data-i18n="notify.updatesDesc" data-agent-only>A summary of what I tailored and submitted while you were away.</div>
+              <div class="set-row-d" data-i18n="notify.updatesDescA" data-assisted-only>A note when an application is ready for you to fill and submit.</div>
             </div>
             <label class="sw"><input type="checkbox" id="ntUpdates"><span></span></label>
           </div>
@@ -1849,7 +1854,7 @@
           <button class="btn btn-danger-ghost btn-sm nt-disc" id="ntDisconnect" type="button" hidden data-i18n="notify.disconnect">Disconnect</button>
         </section>
 
-        <section class="set-pane" data-pane="applying">
+        <section class="set-pane" data-pane="applying" data-agent-only>
           <h2 class="set-h">Applying</h2>
           <div class="set-row">
             <div class="set-row-t">
@@ -1927,7 +1932,7 @@
            details" on Auto-apply opens: one place to complete the profile. -->
       <div class="wiz-panel" data-panel="details" hidden>
         <h2 class="wiz-h" data-i18n="wiz.details.h">A few details to finish your profile</h2>
-        <p class="wiz-p" data-i18n="wiz.details.p">Resumes and Auto-apply need these.</p>
+        <p class="wiz-p" data-i18n="wiz.details.p">Resumes and applications need these.</p>
         <div class="wiz-details" id="wizDetails"><!-- one input per missing detail --></div>
         <div class="ai-msg" id="wizDetMsg" hidden></div>
         <div class="wiz-foot">
@@ -1942,7 +1947,7 @@
            prompt is the safety net. -->
       <div class="wiz-panel" data-panel="basics" hidden>
         <h2 class="wiz-h" data-i18n="wiz.basics.h">Questions every form asks</h2>
-        <p class="wiz-p" data-i18n="wiz.basics.p">Answer once. Auto-apply fills them on every form.</p>
+        <p class="wiz-p" data-i18n="wiz.basics.p">Answer once. I fill them on every form.</p>
         <div class="wiz-basics" id="wizBasics"><!-- #ansBasicsCard while this step shows --></div>
         <div class="ai-msg" id="wizBasMsg" hidden></div>
         <div class="wiz-foot">
@@ -2114,6 +2119,10 @@
         <button class="bb-btn" id="bbReload" title="Reload" aria-label="Reload">&#8635;</button>
         <input class="bb-url" id="bbUrl" type="text" spellcheck="false"
                aria-label="Address" placeholder="Enter a URL and press Enter" />
+        <!-- Assisted apply (the apply agent switched off): fill the page open here, again after
+             each Next on the site. The person checks it and clicks Submit on the site. -->
+        <button class="bb-btn bb-out bb-fillhere" id="bbFillHere" type="button" hidden
+                data-i18n="bb.fillHere" title="Fill the form on this page">Fill this page</button>
         <button class="bb-btn bb-out" id="bbExternal" title="Open this page in your own browser"
                 aria-label="Open in your browser">Open in browser &#8599;</button>
       </div>

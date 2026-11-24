@@ -26,6 +26,9 @@ import pytest
 from autoapply import asks as AK
 from autoapply import consents as CS
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 H = {"X-Tailor-Extension": "1"}
 URL = "https://job-boards.greenhouse.io/acme/jobs/1"

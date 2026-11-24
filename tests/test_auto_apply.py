@@ -15,6 +15,10 @@ from pathlib import Path
 import ui.app as app
 from submit import allowlist, drivers
 from submit.drivers import recruitee_submit
+import pytest
+
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
 
 
 # --- allowlist: shipped, evidence-based, maintainer-only --------------------- #

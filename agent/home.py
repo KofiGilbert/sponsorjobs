@@ -296,17 +296,23 @@ def cap_count(wanted: int | None, packages_left: int | None) -> tuple[int, str]:
 
 def plan_text(*, n: int, titles: list[str], min_fit: int, auto: int, auto_companies: str,
               auto_reason: str, telegram: bool, telegram_connected: bool,
-              packages_left: int | None, note: str = "") -> str:
+              packages_left: int | None, note: str = "", assisted: bool = False) -> str:
     """The plan the person confirms, in exactly the approved shape. ``auto`` is computed by
-    the app's own gate, never assumed; ``auto_reason`` says why it is 0."""
+    the app's own gate, never assumed; ``auto_reason`` says why it is 0. ``assisted``: the
+    apply agent is switched off (assisted apply only), so nothing is sent for the person and
+    the line says what happens instead."""
     lines = ["Here is the plan."]
     lines.append(f"1. Find the {n} best {titles_phrase(titles)} roles that fit you at {min_fit}% "
                  "or better, visa sponsors first.")
     lines.append("2. Tailor a resume and a cover letter for each, from your saved profile.")
     rest = max(0, n - auto)
     why = auto_companies if auto else auto_reason
-    lines.append(f"3. Queue them in To review. {auto} can be sent for you ({why}); {rest} will be "
-                 "filled in and ready for your click.")
+    if assisted:
+        lines.append("3. Queue them in To review under Applications. Open one and I fill in the "
+                     "form for you to check and submit.")
+    else:
+        lines.append(f"3. Queue them in To review. {auto} can be sent for you ({why}); {rest} "
+                     "will be filled in and ready for your click.")
     if telegram and telegram_connected:
         lines.append("4. Message you on Telegram when they are done.")
     elif telegram:
@@ -319,7 +325,10 @@ def plan_text(*, n: int, titles: list[str], min_fit: int, auto: int, auto_compan
     return "\n".join(lines)
 
 
-def result_text(tailored: int, sent: int) -> str:
+def result_text(tailored: int, sent: int, assisted: bool = False) -> str:
+    if assisted:
+        return (f"Done. Tailored {tailored}. They are in To review under Applications. Open one "
+                "and I fill in the form for you to check and submit.")
     rest = max(0, tailored - sent)
     return (f"Done. Tailored {tailored}. {sent} sent for you. {rest} ready for your click in "
             "Auto-apply.")

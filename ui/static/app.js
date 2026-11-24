@@ -8,6 +8,13 @@
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
   // (2026-11-23) A link built from outside data (the job feed, a contact, a posting) is a link
   // only when it is http(s); anything else (javascript:, data:, a relative oddity) becomes "#".
+  // (2026-11-24) THE one switch for the multi-step apply agent (ui/app.py _apply_agent_enabled,
+  // env SJ_APPLY_AGENT=1; off by default). The engine writes it on <html data-apply-agent> at
+  // first paint. Off: assisted apply only. Fill this page fills the open page, the person
+  // reviews and clicks Next and Submit, and nothing is ever submitted by the app. Every agent
+  // control (Auto / Hybrid, Autopilot, Send all, the agent's runs) is hidden; styles.css hides
+  // the markup marked [data-agent-only].
+  const APPLY_AGENT = typeof document !== "undefined" && document.documentElement.dataset.applyAgent === "1";
   const safeHref = (u) => (/^https?:\/\//i.test(String(u == null ? "" : u).trim()) ? esc(String(u).trim()) : "#");
   // (2026-11-23) image load / error handling without inline handlers (the page's security policy
   // allows no inline script): [data-img-gone] images remove themselves when they fail,
@@ -992,7 +999,7 @@
     const lbl = $("#pkgBackLbl");
     // The back link names the page it returns to, as the sidebar names it (the rail says Home).
     if (lbl) lbl.textContent = PKG_ORIGIN === "cvs" ? T("nav.cvs", "Resumes")
-      : PKG_ORIGIN === "autoapply" ? T("nav.autoapply", "Auto-apply") : "Home";
+      : PKG_ORIGIN === "autoapply" ? T("nav.autoapply", "Applications") : "Home";
     PKG_ID = id; showView("package"); loadPackage(id);
   }
 
@@ -1270,11 +1277,37 @@
     const btn = here ? $("#pkgFillHereBtn") : $("#pkgFillBtn");
     btn.disabled = true;
     note.textContent = "Filling…";
+    fillCtx(PKG_ID, PKG_CV_PATH);
     const r = await applyInPane({ url, recordId: PKG_ID, resumePath: PKG_CV_PATH, submit: false, here });
     btn.disabled = false;
     note.textContent = applyMessage(r);
     if (r && r.ok !== false) { $("#pkgFillHereBtn").hidden = false; offerLearn(note); }
   }
+  // (2026-11-24) Assisted apply: the application being filled (its record and resume), so Fill
+  // this page on the Browser bar fills the next page of the same application after the person
+  // signs in or clicks Next on the site. Only while the apply agent is off; it runs its own bar.
+  const FILL_CTX = { id: null, cv: "" };
+  function fillCtx(id, cv) {
+    FILL_CTX.id = id == null ? null : id; FILL_CTX.cv = cv || "";
+    const b = $("#bbFillHere");
+    if (b && !APPLY_AGENT && window.tailorShell && window.tailorShell.assistApply) b.hidden = false;
+  }
+  async function bbFillHere() {
+    const b = $("#bbFillHere");
+    if (!b || b.disabled) return;
+    const label = b.textContent;
+    b.disabled = true; b.textContent = T("aa.filling", "Filling\u2026");
+    const r = await applyInPane({ url: "", recordId: FILL_CTX.id, resumePath: FILL_CTX.cv, submit: false, here: true });
+    b.disabled = false; b.textContent = label;
+    const bar = $("#bbFill");
+    if (bar) { aaFeedHide(); bar.textContent = applyMessage(r); bar.classList.remove("is-wall", "is-live"); bar.hidden = false; }
+    const note = $("#pkgAssistNote");
+    if (note && PKG_ID && String(FILL_CTX.id) === String(PKG_ID)) note.textContent = applyMessage(r);
+  }
+  $("#bbFillHere")?.addEventListener("click", () => bbFillHere());
+  // Always on the bar in assisted apply: a page the person opened themselves fills from the
+  // saved profile (no application picked yet).
+  if (!APPLY_AGENT && window.tailorShell && window.tailorShell.assistApply && $("#bbFillHere")) $("#bbFillHere").hidden = false;
   $("#pkgFillBtn")?.addEventListener("click", () => pkgFill(false));
   $("#pkgFillHereBtn")?.addEventListener("click", () => pkgFill(true));
   $("#pkgAssistUrl")?.addEventListener("input", e => { PKG_FILL_URL = e.target.value.trim(); });
@@ -2030,7 +2063,7 @@
             <span class="fr-fact">${esc(employmentType(j))}</span>
             ${j.entry_level ? `<span class="fr-fact fr-fact-entry">Entry-level</span>` : ""}
             ${viaFact(j)}
-            ${j.excluded ? `<span class="fr-fact fr-fact-never" title="${esc(I18N.t("jobs.neverTip", "On your Never apply to list. Auto-apply skips it."))}">${esc(I18N.t("jobs.never", "Never apply"))}</span>`
+            ${j.excluded ? `<span class="fr-fact fr-fact-never" title="${esc(I18N.t("jobs.neverTip", "On your Never apply to list. Tailor & queue skips it."))}">${esc(I18N.t("jobs.never", "Never apply"))}</span>`
               : j.priority ? `<span class="fr-fact">${esc(I18N.t("aa.priority", "Priority"))}</span>` : ""}
           </div>
           <div class="fr-visas">${visas}</div>
@@ -4604,7 +4637,7 @@
     if (!acts.length) return;
     const wrap = el("div", "agent-acts");
     const labels = { go: agentT("agent.go", "Go ahead"), change: agentT("agent.change", "Change"),
-                     open_autoapply: agentT("agent.open", "Open Auto-apply"),
+                     open_autoapply: agentT("agent.open", "Open Applications"),
                      find: agentT("agent.find", "Find matching roles"),
                      add_resume: agentT("agent.addResume", "Add my resume"),
                      add_details: agentT("agent.addDetails", "Add the details"),
@@ -4859,8 +4892,10 @@
     const btn = $("#applyBtn"), acc = $("#acceptBtn");
     if (!btn || !acc) return;
     const built = st.phase === "review" || (st.phase === "done" && !!st.pdf);
-    const on = !!(st.apply && built && !st.expired && st.one_page !== false
-                  && window.tailorShell && window.tailorShell.agentRun);
+    // With the agent off, Apply is the one-page fill (assistApply): it opens the application
+    // and fills the page; the person checks it and clicks Submit on the site.
+    const on = !!(st.apply && built && !st.expired && st.one_page !== false && window.tailorShell
+                  && (APPLY_AGENT ? window.tailorShell.agentRun : window.tailorShell.assistApply));
     btn.hidden = !on;
     btn.textContent = I18N.t("builder.apply", "Apply") + " \u2192";
     btn.disabled = !!st.blocked_finalize || APPLY.busy;
@@ -4907,6 +4942,12 @@
     applyChatStart(r.record_id, r.item || {});
     if (AA_AGENT) { applyChatEnd(T("aa.agentBusy", "One application at a time. Stop the current one first."), false); return; }
     const res = await aaFill(r.record_id, { item: r.item, autonomous: !!r.autonomous });
+    // Assisted apply (the agent switched off): one fill of the page, told in the chat in the
+    // same words as the bar; the person checks it and clicks Submit on the site.
+    if (!AA_HAS_AGENT() && APPLY.chat && !APPLY.chat.done) {
+      applyChatEnd(res ? applyMessage(res) : T("aa.agent.failed", "Could not run this one. Open it and apply by hand."), !!(res && res.ok !== false));
+      return;
+    }
     // The run's own progress lines told the chat how it ended; a run that never started did not.
     if (APPLY.chat && !APPLY.chat.done && res && res.gated) {
       // The answers every form asks come first (aaBasicsGate, on the bar); "Apply anyway" starts
@@ -4926,7 +4967,7 @@
   // what lets the agent create a portal account; skipping it left a fresh app stuck on the
   // mock's create-account page (e2e 2026-11-16). Turn off opens the memory page, as there.
   async function builderTermsLine() {
-    if (TOU_LINE) return;
+    if (TOU_LINE || !APPLY_AGENT) return;
     let st = null;
     try { st = await api("/api/terms/status"); } catch { st = null; }
     if (!st || st.accepted) return;
@@ -5036,13 +5077,14 @@
   const MT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   const MEM = { data: null, editing: null, forgetting: null, adding: false, show: false, eeo: null,
                 origin: "", busy: false };
-  const MEM_BACK = { autoapply: ["nav.autoapply", "Auto-apply"], package: ["ans.backApp", "Application"],
+  const MEM_BACK = { autoapply: ["nav.autoapply", "Applications"], package: ["ans.backApp", "Application"],
                      builder: ["choice.backResume", "Resume"], settings: ["mem.backSettings", "Settings"] };
   const MEM_JUMP = [["about", "mem.about", "About you"], ["work", "mem.work", "Work and visa"],
                     ["answers", "mem.answers", "Form answers"], ["may", "consent.mayShort", "What I may do"],
                     ["eeo", "mem.eeo", "Self-identification"],
                     ["career", "mem.career", "Career"], ["choices", "choice.title", "Resume choices"],
-                    ["history", "mem.history", "History"]];
+                    ["history", "mem.history", "History"]]
+    .filter(([k]) => APPLY_AGENT || k !== "may");   // "What I may do" is the agent's (hidden while it is off)
   const MEM_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
   const memMeta = r => [r.source, r.when].filter(Boolean).join(", ");
   const memBtn = (act, label, extra) => `<button class="btn btn-ghost btn-sm${extra || ""}" type="button" data-mem="${act}">${esc(label)}</button>`;
@@ -5355,17 +5397,20 @@
   const SU_STEPS = [["contact", "setup.s.contact", "Resume and contact"], ["workauth", "setup.s.workauth", "Work authorization"],
                     ["wants", "setup.s.wants", "What you want"], ["forms", "setup.s.forms", "Form questions"],
                     ["selfid", "setup.s.selfid", "Self-identification"], ["apply", "setup.s.apply", "How to apply"],
-                    ["finish", "setup.s.finish", "Finish"]];
+                    ["finish", "setup.s.finish", "Finish"]]
+    // "How to apply" (Auto / Assisted / Hybrid, the send limits, the Autopilot) is the agent's:
+    // with it switched off the setup has six steps.
+    .filter(s => APPLY_AGENT || s[0] !== "apply");
   const SU_LEDE = {
     contact: ["setup.l.contact", "From your resume. Check it once and every form gets the same details."],
     workauth: ["setup.l.workauth", "Forms ask this a hundred ways. Every one gets the same answer."],
-    wants: ["setup.l.wants", "Auto-apply picks roles by your titles and places, and skips the companies you name."],
+    wants: ["setup.l.wants", "Tailor & queue picks roles by your titles and places, and skips the companies you name."],
     forms: ["setup.l.forms", "Questions most forms ask. Leave any blank and I ask you when a form needs it."],
     selfid: ["setup.l.selfid", "Only you see these, on this computer. Forms get them; no model, server or chat ever does."],
-    apply: ["setup.l.apply", "You can change this any time on Auto-apply."],
+    apply: ["setup.l.apply", "You can change this any time on Applications."],
     finish: ["setup.l.finish", "What is still open, I ask when a form needs it."],
   };
-  const SU_BACK = { profile: ["acct.myProfile", "My profile"], autoapply: ["nav.autoapply", "Auto-apply"] };
+  const SU_BACK = { profile: ["acct.myProfile", "My profile"], autoapply: ["nav.autoapply", "Applications"] };
   const SU_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
   const SU_CC = ["US", "UK", "CA", "AU", "EU"];
 
@@ -5378,6 +5423,7 @@
     SU.d = d;
     const steps = SU_STEPS.map(s => s[0]);
     SU.step = steps.includes(o.step) ? o.step : (d.state.done ? "contact" : d.state.step) || "contact";
+    if (!steps.includes(SU.step)) SU.step = SU.step === "apply" ? "finish" : "contact";   // a step hidden now
     const back = SU_BACK[SU.origin];
     $("#suBack").hidden = !back;
     if (back) $("#suBackLbl").textContent = suT(back[0], back[1]);
@@ -5642,7 +5688,7 @@
         ${suInput("autopilot_per_day", suT("setup.perDay", "Resumes Autopilot prepares a day"), a.autopilot_per_day, { type: "number", min: 1, maxv: 10, num: true, max: 2 })}
         <span></span>
       </div>
-      ${suNote("setup.stopS", "Stop on Auto-apply ends the application in progress before its next step, and the rest of the list. A change here applies to the next list you start.")}`;
+      ${suNote("setup.stopS", "Stop on Applications ends the application in progress before its next step, and the rest of the list. A change here applies to the next list you start.")}`;
   }
 
   function suFinish() {
@@ -6403,7 +6449,7 @@
     { key: "saved", stages: ["saved"], hint: ["tracker.hintSaved", "Jobs you save from the Jobs page"] },
     // A resume is being built for these (its session is open and not sent): shown while one is.
     { key: "in_progress", stages: ["in_progress"], optional: true, hint: ["tracker.hintInProgress", "Resumes you are tailoring"] },
-    { key: "approved", stages: ["approved"], optional: true, hint: ["tracker.hintApproved", "Approved for auto-apply"] },
+    { key: "approved", stages: ["approved"], optional: true, hint: ["tracker.hintApproved", "Approved, waiting on you"] },
     { key: "applied", stages: ["applied"], hint: ["tracker.hintApplied", "Moves here when you apply"] },
     { key: "interviewing", stages: ["interviewing"], hint: ["tracker.hintInterview", "Drag a card here when they call"] },
     { key: "offer", stages: ["offer"], hint: ["tracker.hintOffer", "The goal"] },
@@ -7095,7 +7141,8 @@
     let t, d, btn = "";
     if (kind === "noaddr") {
       t = ibT("mbox.empty.noaddrT", "No SponsorJobs address yet");
-      d = ibT("mbox.empty.noaddr", "You get a SponsorJobs address when the agent first applies for you. Mail from employers will show here.");
+      d = APPLY_AGENT ? ibT("mbox.empty.noaddr", "You get a SponsorJobs address when the agent first applies for you. Mail from employers will show here.")
+        : ibT("mbox.empty.noaddrA", "Get a SponsorJobs address to use on your applications. Mail from employers will show here.");
       btn = `<button class="btn btn-primary" type="button" data-ib-getaddr>${esc(ibT("mail.get", "Get an address"))}</button>`;
     } else if (kind === "nomail") {
       t = ibT("mbox.empty.nomailT", "No mail yet");
@@ -12024,7 +12071,7 @@
   const aaTileName = t => T(...(AA_TILE_NAME[t] || AA_TILE_NAME.review));
   // With the desktop agent (docs/apply-agent.md) one button applies: it opens the job, clicks
   // Apply, signs in or creates the account, fills every page and stops at Submit.
-  const AA_HAS_AGENT = () => !!(window.tailorShell && window.tailorShell.agentRun);
+  const AA_HAS_AGENT = () => APPLY_AGENT && !!(window.tailorShell && window.tailorShell.agentRun);
   const AA_ACT = { review: ["aa.act.review", "Review"], fill: ["aa.act.fill", "Fill application"],
     signin: ["aa.act.signin", "Sign in and fill"], finish: ["aa.act.finish", "Open and finish"], open_self: ["aa.act.finish", "Open and finish"], view: ["aa.act.view", "View"],
     // a job the apply agent parked: its question, or Continue after a step on the page
@@ -12149,7 +12196,8 @@
     const sub = {
       review: c.review ? T("aa.sub.review", "Tailored, ready for a look") : T("aa.sub.reviewNone", "Nothing to review"),
       waiting: c.waiting ? T("aa.sub.waiting", "Approved, your click to send") : T("aa.sub.waitingNone", "Nothing waiting"),
-      submitted: c.submitted ? T("aa.sub.submitted", "{w} this week, {a} sent for you").replace("{w}", b.week.sent).replace("{a}", b.week.for_you)
+      submitted: c.submitted ? (APPLY_AGENT ? T("aa.sub.submitted", "{w} this week, {a} sent for you").replace("{a}", b.week.for_you)
+          : T("aa.sub.submittedA", "{w} this week")).replace("{w}", b.week.sent)
         : T("aa.sub.submittedNone", "Nothing sent yet"),
       needs: c.needs ? `<span class="aa-flag"></span>${esc(b.needs_summary)}` : esc(T("aa.sub.needsNone", "All clear")),
     };
@@ -12253,7 +12301,7 @@
     list.classList.add("is-empty");
     if (!b.has_profile) {
       list.innerHTML = `<div class="aa-empty"><div><div class="aa-empty-t">${esc(T("aa.empty.noResume", "Add your resume to start"))}</div>
-        <div class="aa-empty-s">${esc(T("aa.empty.noResumeSub", "Auto-apply tailors it to your best matches."))}</div></div>
+        <div class="aa-empty-s">${esc(T("aa.empty.noResumeSub", "I tailor it to your best matches."))}</div></div>
         <button class="btn btn-ghost btn-sm" type="button" id="aaAddResume">${esc(T("aa.addResume", "Add your resume"))}</button></div>`;
       $("#aaAddResume").addEventListener("click", () => openResumeBox());
       return;
@@ -12612,7 +12660,8 @@
       : !!(AA.board && AA.board.today && AA.board.today.autonomous);
     // The engine's own verdict for this row when it has one (Auto mode, the verified allowlist
     // and the match threshold: ``auto_send``), else the lane and the mode.
-    const auto = !(opts && "autonomous" in opts) && it.auto_send != null ? !!it.auto_send : (it.lane === "auto" && autoOn);
+    // With the agent switched off nothing is ever submitted by the app, the AUTO lane included.
+    const auto = APPLY_AGENT && (!(opts && "autonomous" in opts) && it.auto_send != null ? !!it.auto_send : (it.lane === "auto" && autoOn));
     if (AA_HAS_AGENT() && !here) {
       if (btn) btn.textContent = T("aa.applying", "Applying\u2026");
       const r = await aaAgentRun(id, it, auto);
@@ -12623,6 +12672,7 @@
       }
       return r;
     }
+    fillCtx(id, it.cv_path || "");
     const r = await applyInPane({ url: it.apply_url, recordId: id, resumePath: it.cv_path || "", submit: auto, here });
     if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; }
     aaNote(id, applyMessage(r), r && r.ok !== false && !r.submitted);
@@ -12703,7 +12753,7 @@
   let TOU_LINE = false;
   async function aaTouNotice() {
     const line = $("#aaTou");
-    if (!line) return;
+    if (!line || !APPLY_AGENT) return;           // the notice is about what the agent accepts
     if (!TOU_LINE) {
       let st = null;
       try { st = await api("/api/terms/status"); } catch { st = null; }
@@ -13819,7 +13869,8 @@
           </div>
         </aside>
       </div>
-      <div class="aa-dr-foot">${AA_IC.info}<span>${esc(T("aa.foot", "Sent for you only on verified sites. Everywhere else, you click Submit."))}</span></div>
+      <div class="aa-dr-foot">${AA_IC.info}<span>${esc(APPLY_AGENT ? T("aa.foot", "Sent for you only on verified sites. Everywhere else, you click Submit.")
+        : T("aa.footA", "I fill the form. You check it and click Submit on the site."))}</span></div>
     </article>`;
   }
   async function aaOpen(id, opts) {
@@ -14644,7 +14695,7 @@
       try {
         aaPaintPrefs(await api("/api/autoapply/company", { list: "exclude", name: SW.company, from_skip: true }));
         AA.next = null; if (AA.board) aaLoadNext();
-        swSay(esc(T("aa.why.allDone", "You won't see {c} in Auto-apply again.").replace("{c}", SW.company)), 3200);
+        swSay(esc(T("aa.why.allDone", "You won't see {c} in Applications again.").replace("{c}", SW.company)), 3200);
       } catch (err) { swSay(esc(err.message || T("aa.fail", "Couldn't do that, try again."))); }
     }
   });
@@ -14710,8 +14761,8 @@
     // Missing profile details: the count, then the engine's own questions as a list (they
     // already read "the dates for your project X"), and the button that opens the editor.
     const head = missing.length
-      ? T("aa.missing", "Auto-apply needs {n} details first.").replace("{n}", missing.length)
-      : (e.message || T("aa.runFail", "Couldn't run auto-apply."));
+      ? T("aa.missing", "I need {n} details first.").replace("{n}", missing.length)
+      : (e.message || T("aa.runFail", "Couldn't start the run. Try again."));
     msg.innerHTML = `<span>${esc(head)}`
       + (d.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", d.summary))}</span>` : "")
       + (missing.length ? `<ul class="aa-msg-list">${missing.map(q => `<li>${esc(q)}</li>`).join("")}</ul>` : "") + `</span>`
