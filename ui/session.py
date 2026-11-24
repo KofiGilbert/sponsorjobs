@@ -193,10 +193,15 @@ def _jd_label(jd_text: str) -> tuple[str, str]:
         lines = _jd_lines(jd_text)
         at = next((k for k, ln in enumerate(lines[:8]) if ln.startswith(role)), None)
         nxt = lines[at + 1] if at is not None and at + 1 < len(lines) else ""
-        if (nxt and len(nxt) <= 60 and _TITLE_WORDS.search(nxt) and not _JD_META.search(nxt)
+        # The title is the line up to its first comma ("Vice President / Associate, Analytics
+        # and Business Intelligence" is a 64-character line with a 26-character title), so the
+        # length limit applies to that part; a whole line over 120 characters is prose.
+        head = re.split(r"[.,;]", nxt)[0].strip()
+        if (head and len(head) <= 60 and len(nxt) <= 120 and _TITLE_WORDS.search(head)
+                and not _JD_META.search(nxt)
                 and re.fullmatch(_CO_NAME, role) and _co_clean(role)
                 and _named_again(role, "\n".join(lines), skip=lines[at])):
-            return re.split(r"[.,;]", nxt)[0].strip(), _co_clean(role)
+            return head, _co_clean(role)
     if not company:
         company = _jd_company(jd_text, role)
     return role, company

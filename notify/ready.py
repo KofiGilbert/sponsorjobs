@@ -59,7 +59,7 @@ def ready_text(role: str, company: str, notice: dict) -> str:
             out.append(f"And {more} more in the app.")
     else:
         out.append(filled_words + " Nothing is flagged.")
-    out.append("Review it in SponsorJobs, Auto-apply (Review answers), then press Send there. "
+    out.append("Review it in SponsorJobs, Applications (Review answers), then press Send there. "
                "Nothing is sent until you do.")
     text = "\n".join(out)
     return text if len(text) <= TEXT_MAX else text[:TEXT_MAX - 1] + "…"

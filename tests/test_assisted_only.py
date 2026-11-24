@@ -120,7 +120,7 @@ def test_the_engine_refuses_what_only_a_running_agent_uses(A, path):
     r = c.post(path, json={"record_id": 1}, headers=H)
     assert r.status_code == 403
     d = r.get_json()
-    assert d["ok"] is False and d["reason"] == "apply_agent_off" and "Fill this page" in d["error"]
+    assert d["ok"] is False and d["reason"] == "apply_agent_off" and "Autofill this page" in d["error"]
 
 
 def test_the_parked_list_reads_empty_and_the_one_page_fill_routes_stay_open(A, monkeypatch):

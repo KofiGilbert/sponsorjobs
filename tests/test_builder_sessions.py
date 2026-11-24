@@ -258,11 +258,12 @@ def test_home_continue_lists_jobs_in_progress_then_recent(client):
     row = d["in_progress"][0]
     assert row["title"] and row["company"] == "Northwind" and isinstance(row["keywords"], int)
     assert [x["source_id"] for x in d["recent"]] == [jid] and d["recent"][0]["closed_at"]
-    # the card keeps In progress after Accept & Save, until it is applied
+    # (2026-11-24) After Accept & Save the job has a tailored resume: it is Ready to apply, the
+    # same job the Applications list now shows (In progress is the resume still being built).
     client.post(f"/api/sessions/{live.jobname}/open")
     client.post("/api/session/accept")
     card = client.get(f"/api/tracker/job?source_id={live.job_id}").get_json()
-    assert card["stage"] == "in_progress" and card["session"]["status"] == "saved"
+    assert card["stage"] == "approved" and card["session"]["status"] == "saved"
     recs = client.get("/api/records").get_json()["records"]
     assert recs[0]["session_id"] == str(live.jobname) and recs[0]["job_id"] == live.job_id
 

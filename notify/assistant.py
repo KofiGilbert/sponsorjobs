@@ -28,7 +28,7 @@ import re
 from autoapply import eeo as EEO
 from autoapply.answers import normalize
 
-WHERE_ANSWERS = "Auto-apply, Your answers"
+WHERE_ANSWERS = "Applications, Your answers"
 WHERE_PROFILE = "My profile"
 # What the reply says in place of a claim the chat cannot keep.
 POINTER = ("I can't keep details typed in this chat. Send your resume here as a file and SponsorJobs "

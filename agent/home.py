@@ -285,7 +285,7 @@ def cap_count(wanted: int | None, packages_left: int | None) -> tuple[int, str]:
     n = max(1, int(wanted or DEFAULT_COUNT))
     note = ""
     if n > RUN_CAP:
-        note = f"Auto-apply does up to {RUN_CAP} a run, so I will do {RUN_CAP}."
+        note = f"Tailor & queue does up to {RUN_CAP} a run, so I will do {RUN_CAP}."
         n = RUN_CAP
     if packages_left is not None and packages_left < n:
         n = max(0, packages_left)
@@ -308,8 +308,8 @@ def plan_text(*, n: int, titles: list[str], min_fit: int, auto: int, auto_compan
     rest = max(0, n - auto)
     why = auto_companies if auto else auto_reason
     if assisted:
-        lines.append("3. Queue them in To review under Applications. Open one and I fill in the "
-                     "form for you to check and submit.")
+        lines.append("3. Put them in Ready to apply under Applications. Open one and I fill in "
+                     "the form for you to check and submit.")
     else:
         lines.append(f"3. Queue them in To review. {auto} can be sent for you ({why}); {rest} "
                      "will be filled in and ready for your click.")
@@ -327,15 +327,25 @@ def plan_text(*, n: int, titles: list[str], min_fit: int, auto: int, auto_compan
 
 def result_text(tailored: int, sent: int, assisted: bool = False) -> str:
     if assisted:
-        return (f"Done. Tailored {tailored}. They are in To review under Applications. Open one "
-                "and I fill in the form for you to check and submit.")
+        return (f"Done. Tailored {tailored}. They are in Ready to apply under Applications. Open "
+                "one and I fill in the form for you to check and submit.")
     rest = max(0, tailored - sent)
     return (f"Done. Tailored {tailored}. {sent} sent for you. {rest} ready for your click in "
-            "Auto-apply.")
+            "Applications.")
 
 
-def status_text(counts: dict, newest: list[str]) -> str:
-    """One bubble from the records: the four tiles and the newest items by name."""
+def status_text(counts: dict, newest: list[str], assisted: bool = False) -> str:
+    """One bubble from the records: the four tiles and the newest items by name. ``assisted``
+    (the apply agent off): the Applications page's one list, "Ready to apply", instead."""
+    if assisted:
+        text = (f"Ready to apply: {int(counts.get('ready') or 0)}. "
+                f"Applied today: {int(counts.get('submitted_today') or 0)}.")
+        names = [x for x in (newest or []) if x][:5]
+        if names:
+            text += " Newest: " + "; ".join(names) + "."
+        elif not counts.get("ready"):
+            text += " Nothing is waiting on you."
+        return text
     bits = [f"To review: {int(counts.get('review') or 0)}.",
             f"Waiting on you: {int(counts.get('waiting') or 0)}.",
             f"Needs you: {int(counts.get('needs') or 0)}.",

@@ -2435,7 +2435,7 @@ def _apply_agent_enabled() -> bool:
 
 
 _APPLY_AGENT_OFF = ("The apply agent is switched off in this version. Open the application, "
-                    "sign in, and press Fill this page.")
+                    "sign in, and press Autofill this page.")
 
 
 def _apply_mode() -> str:
@@ -2551,7 +2551,10 @@ _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   # their sign-up sponsorship answer (_jobs_scope_state).
                   "jobs_scope": "",
                   # They closed the sign-up sponsorship question without answering: not asked again.
-                  "sponsor_q_skipped": False}
+                  "sponsor_q_skipped": False,
+                  # Applications: closed jobs found after this time get the page's one quiet line
+                  # ("3 jobs closed before you applied. Removed from your list."), once per batch
+                  "aa_closed_seen": 0.0}
 
 
 def _prefs() -> dict:
@@ -2591,6 +2594,8 @@ def _set_prefs(patch: dict) -> dict:
         cur["jobs_scope"] = v if v in ("sponsors", "all") else ""
     if "sponsor_q_skipped" in patch:
         cur["sponsor_q_skipped"] = bool(patch["sponsor_q_skipped"])
+    if "aa_closed_seen" in patch:
+        cur["aa_closed_seen"] = max(0.0, float(patch["aa_closed_seen"] or 0))
     if "autopilot" in patch:                 # OFF by default; the person turns it on
         cur["autopilot"] = bool(patch["autopilot"])
     if "autopilot_per_day" in patch:
@@ -5259,12 +5264,14 @@ def _job_match(jd: str, title: str = "") -> dict | None:
     # One score for every surface (Jobs, Auto-apply, alerts): coverage, steadied by how close the
     # title is to the person's own roles, so an ad that names two skills can't read as a 100% fit.
     from notify.alerts import (THIN_JD_SKILLS, match_percent, profile_targets, profile_titles,
-                               title_fit)
+                               title_fit, too_thin_to_score)
     tfit = title_fit(title, profile_targets(profile), profile_titles(profile))
     m = {"total": len(terms), "ratio": overall, "required_total": req_total,
          "required_covered": req_covered, "title_fit": tfit}
     score = match_percent(m) if terms else None
-    if score is not None and len(terms) < THIN_JD_SKILLS:
+    if too_thin_to_score(m):
+        verdict = "thin"                 # "Not enough in the ad to score", no fit word either
+    elif score is not None and len(terms) < THIN_JD_SKILLS:
         # A thin ad: the verdict follows the steadied score, never the raw keyword hit rate.
         order = ["weak", "moderate", "good", "strong"]
         cap = "weak" if score < 40 else "moderate" if score < 60 else "good" if score < 80 else "strong"
@@ -5282,6 +5289,7 @@ def _job_match(jd: str, title: str = "") -> dict | None:
         "required_total": req_total,
         "required_covered": req_covered,
         "verdict": verdict,
+        "thin": verdict == "thin",
         "seniority": _jd_seniority(title, jd),
     }
 
@@ -6309,7 +6317,7 @@ def _telegram_file_import(meta: dict, blob: bytes) -> str:
         first = str(missing[0].get("q") or "").strip()
         msg += (f" It still needs {_plural(len(missing), 'detail')}"
                 + (f", like {first}" if first else "")
-                + ": open SponsorJobs, Auto-apply, Add the details to finish.")
+                + ": open SponsorJobs, Applications, Add the details to finish.")
     return msg
 
 
@@ -6770,7 +6778,14 @@ def autoapply_fill_report():
                  and p.get("page") != page]
         pages = sorted(pages + [entry], key=lambda p: p.get("page") or 0)[-12:]
         report = {"pages": pages, "updated": entry["at"]}
-        recs.merge_data(rid, {"fill_report": report})
+        patch = {"fill_report": report}
+        if filled and (page == 1 or not _record_data(rec).get("filled_at")):
+            # A fill put something on the form (the first page of a new fill): Applications asks
+            # "Did you submit it?" later if it is still not marked applied. A later page keeps the
+            # same fill; a run that found no form (a job page, a sign-in) fills nothing and asks
+            # nothing.
+            patch["filled_at"] = entry["at"]
+        recs.merge_data(rid, patch)
     finally:
         recs.close()
     return _nostore(jsonify({"ok": True, "fill_report": report}))
@@ -14277,7 +14292,11 @@ def _alert_match_score(row: dict):
     if not jd:
         job = _job_from_feed(sid)
         jd = ((job or {}).get("jd_text") or "").strip()
-    return match_percent(_job_match(jd, row.get("title") or "")) if jd else None
+    if not jd:
+        return None
+    from notify.alerts import UNSCORABLE, too_thin_to_score
+    m = _job_match(jd, row.get("title") or "")
+    return UNSCORABLE if too_thin_to_score(m) else match_percent(m)
 
 
 def _alert_rows() -> tuple[list[dict], str]:
@@ -14335,6 +14354,10 @@ def _notify_tick(scan: bool = False) -> dict:
     """One tick: poll the active channel, dispatch, send due alerts and the away digest.
     Serialised so the loop and an on-demand poll never handle the same tap twice."""
     from datetime import datetime
+    try:
+        _liveness_tick()          # closed postings leave Ready to apply while the app is open
+    except Exception:   # noqa: BLE001 - the check is best-effort; the tick goes on
+        traceback.print_exc()
     with _NOTIFY_TICK_LOCK:
         ch = _active_channel()
         if ch is None:
@@ -16090,7 +16113,7 @@ def _late_save(row: dict, picks: dict) -> str | None:
             if job else " That application already stopped, so these were not used on it.")
     if left:
         msg += " Not saved yet: " + "; ".join(name(it["question"]) for it in left) + "."
-    msg += " You can see and change your answers in SponsorJobs, Auto-apply, Your answers."
+    msg += " You can see and change your answers in SponsorJobs, Applications, Your answers."
     return AK.fit_text(msg)
 
 
@@ -17375,8 +17398,8 @@ def _digest_text(rows: list) -> tuple[str, list | None]:
             rows_b.append(row)
     head = ("Paused: 1 application needs you." if len(rows) == 1
             else f"Paused: {len(rows)} applications need you.")
-    tail = ("Tap a choice below, or answer in SponsorJobs, Auto-apply, Needs you. " if rows_b
-            else "Answer in SponsorJobs, Auto-apply, Needs you. ")
+    tail = ("Tap a choice below, or answer in SponsorJobs, Applications, Needs you. " if rows_b
+            else "Answer in SponsorJobs, Applications, Needs you. ")
     tail += "Each one carries on by itself once it has its answer."
     return AK.fit_text(head + "\n" + "\n".join(lines) + "\n" + tail), (rows_b or None)
 
@@ -18189,7 +18212,7 @@ def autoapply_agent_step():
 # background over the jobs waiting in Auto-apply. Only "closed" acts; "unknown" never does.
 JOB_CLOSED_MSG = "This job is closed. Nothing was spent."
 LIVENESS_RECHECK_S = 12 * 3600          # a queued job is checked again after this long
-_LIVENESS_RUN = {"running": False, "closed": 0, "checked": 0, "at": 0.0}
+_LIVENESS_RUN = {"running": False, "closed": 0, "checked": 0, "at": 0.0, "gen": 0}
 _LIVENESS_LOCK = threading.Lock()
 
 
@@ -18218,6 +18241,19 @@ def _mark_record_closed(rec: dict, url: str = "", phrase: str = "") -> None:
     patch["agent_ready"] = None
     patch["agent_park"] = None
     _records().merge_data(rec["id"], patch)
+    # Its Tracker card follows: Closed with "Job closed" (from Saved, In progress or Ready to
+    # apply only; an applied job stays where it is). The next board read does the same for any
+    # record closed before this existed (_board_reconcile).
+    try:
+        sid, _snap = _board_key(rec)
+        w = _watchlist()
+        try:
+            if w.stage_of(sid) is not None:
+                _close_posting_on_board(w, sid)
+        finally:
+            w.close()
+    except Exception:   # noqa: BLE001 - the record is closed either way; the board catches up
+        pass
 
 
 def _closed_job_ids() -> set:
@@ -18278,7 +18314,7 @@ def _liveness_recheck(rows: list[dict] | None = None, now: float | None = None) 
     a few at a time, and move the closed ones to the closed-posting state. Each record keeps
     {liveness: {status, at}} so the next page load does not ask again. Returns {checked, closed}."""
     from sourcing import liveness
-    from submit.stages import tile_of
+    from submit.stages import is_ready_to_apply, tile_of
     now = time.time() if now is None else now
     if rows is None:
         recs = _records()
@@ -18294,7 +18330,7 @@ def _liveness_recheck(rows: list[dict] | None = None, now: float | None = None) 
         tile = tile_of(data)
         if tile == "submitted" or data.get("job_closed"):
             continue
-        if tile not in ("review", "waiting") and not data.get("agent_park"):
+        if not is_ready_to_apply(data) and not data.get("agent_park"):
             continue
         url, sid = _record_job(r)
         if url and _liveness_due(data, now):
@@ -18322,8 +18358,8 @@ def _liveness_kick(rows: list[dict]) -> bool:
     with _LIVENESS_LOCK:
         if _LIVENESS_RUN["running"]:
             return True
-        from submit.stages import tile_of
-        due = any(tile_of(_record_data(r)) in ("review", "waiting") and _record_job(r)[0]
+        from submit.stages import is_ready_to_apply
+        due = any(is_ready_to_apply(_record_data(r)) and _record_job(r)[0]
                   and _liveness_due(_record_data(r), now) for r in rows)
         if not due:
             return False
@@ -18338,9 +18374,25 @@ def _liveness_kick(rows: list[dict]) -> bool:
         finally:
             with _LIVENESS_LOCK:
                 _LIVENESS_RUN.update(running=False, closed=out["closed"], checked=out["checked"])
+                if out["closed"]:
+                    # The Applications page compares this with what it last saw and reloads.
+                    _LIVENESS_RUN["gen"] = int(_LIVENESS_RUN.get("gen") or 0) + 1
 
     threading.Thread(target=work, name="liveness-recheck", daemon=True).start()
     return True
+
+
+def _liveness_tick() -> bool:
+    """The notify loop's closed-job check (every NOTIFY_INTERVAL while the app is open), so a
+    job that closes leaves Ready to apply even when the Applications page is not opened. Free
+    (no AI, no login) and rate-limited per job (LIVENESS_RECHECK_S); _liveness_kick starts the
+    background sweep only when some record is due. True while a sweep runs."""
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    return _liveness_kick(rows) if rows else False
 
 
 @app.get("/api/autoapply/liveness")
@@ -18600,7 +18652,7 @@ def autoapply_agent_portal_account_create():
         # rule, only while no sign-in or creation ever worked on this host.
         if not _portal_accounts_on():
             return jsonify({"ok": False, "reason": "portal_accounts_off",
-                            "message": "Creating portal accounts is turned off in Auto-apply settings."})
+                            "message": "Creating portal accounts is turned off in Applications settings."})
         if not _is_password_rule_error(str(b.get("error") or "")):
             return jsonify({"ok": False, "reason": "not-a-password-rule",
                             "message": "The site's error is not about the password."})
@@ -18609,7 +18661,7 @@ def autoapply_agent_portal_account_create():
         return jsonify({"ok": False, "reason": "no-create", "message": "Send create: true."})
     if not _portal_accounts_on():
         return jsonify({"ok": False, "reason": "portal_accounts_off",
-                        "message": "Creating portal accounts is turned off in Auto-apply settings."})
+                        "message": "Creating portal accounts is turned off in Applications settings."})
     existing = _portal_account(host)
     if existing and _password_weak(existing["password"]) and not _portal_confirmed(host):
         # A password saved by the old generator that most sites refuse (no digit, say), on a
@@ -19064,7 +19116,7 @@ def _aa_missing_error(missing: list[str]) -> dict:
     """The 400 body for a run or preview the saved profile cannot support yet: the plain
     questions, and the action the page turns into an "Add the details" button."""
     n = len(missing)
-    return {"error": f"Auto-apply needs {n} detail{'' if n == 1 else 's'} first.",
+    return {"error": f"Tailor & queue needs {n} detail{'' if n == 1 else 's'} first.",
             "missing": list(missing), "action": "complete_profile"}
 
 
@@ -19716,7 +19768,7 @@ def _agent_plan(intent: dict) -> dict:
     n, note = cap_count(intent.get("count"), left)
     if n <= 0:
         return {"text": "No packages left on your plan, so I cannot tailor right now. They refill "
-                        "when it renews, or add your own AI key under Auto-apply.", "buttons": []}
+                        "when it renews, or add your own AI key under Applications.", "buttons": []}
     min_fit = _aa_min_fit()
     score = _aa_scorer(rows, deadline=time.monotonic() + UPNEXT_BUDGET_S)
     res = rank(rows, records=_aa_records(), score_fn=score, count=n, min_fit=min_fit)
@@ -19726,7 +19778,7 @@ def _agent_plan(intent: dict) -> dict:
             return {"text": "Every matching role already has a package. Try broader titles or "
                             "another location.", "buttons": []}
         return {"text": f"None of the {res['scored']} best-fit roles reach your fit floor of "
-                        f"{min_fit}%. Lower the floor in Auto-apply, or broaden the titles.",
+                        f"{min_fit}%. Lower the floor in Applications, or broaden the titles.",
                 "buttons": []}
     if not res["pending"] and len(jobs) < n:
         # Every candidate is scored and fewer than asked pass: say the true number, never
@@ -19734,7 +19786,7 @@ def _agent_plan(intent: dict) -> dict:
         n = len(jobs)
         note = f"Only {n} {'matches' if n == 1 else 'match'} right now, so I will do {n}."
     auto = [j for j in jobs if _can_auto_apply(j)]
-    reason = ("sending for you is off in Auto-apply" if not _autonomous_on()
+    reason = ("sending for you is off in Applications" if not _autonomous_on()
               else "none of these sites allows it")
     telegram = bool(intent.get("telegram"))
     connected = _active_channel() is not None
@@ -19752,19 +19804,22 @@ def _agent_plan(intent: dict) -> dict:
 def _agent_status() -> dict:
     """status: one bubble from the records, the same tiles the Auto-apply page counts."""
     from agent.home import status_text
-    from submit.stages import tile_of
+    from submit.stages import is_ready_to_apply, tile_of
     _ts, today = _now_ts_today()
     recs = _records()
     try:
         rows = recs.list(limit=10000)
     finally:
         recs.close()
-    counts = {"review": 0, "waiting": 0, "needs": 0, "submitted_today": 0}
+    assisted = not _apply_agent_enabled()
+    counts = {"review": 0, "waiting": 0, "needs": 0, "submitted_today": 0, "ready": 0}
     newest: list[tuple[str, str]] = []
     for r in rows:
         data = _record_data(r)
         tile = tile_of(data)
-        if tile in ("review", "waiting", "needs"):
+        if assisted and is_ready_to_apply(data):
+            counts["ready"] += 1
+        if tile in ("review", "waiting", "needs") and (not assisted or is_ready_to_apply(data)):
             counts[tile] += 1
             role = (r.get("jd_label") or r.get("role") or "a role").split(" · ")[0]
             name = f"{role} at {r['company']}" if r.get("company") else role
@@ -19774,7 +19829,9 @@ def _agent_status() -> dict:
             if str(data.get("applied_at") or sub.get("at") or "")[:10] == today:
                 counts["submitted_today"] += 1
     newest.sort(key=lambda x: x[0], reverse=True)
-    return {"text": status_text(counts, [n for _w, n in newest]),
+    if not assisted:
+        counts.pop("ready")
+    return {"text": status_text(counts, [n for _w, n in newest], assisted=assisted),
             "buttons": [{"id": "open_autoapply", "label": "Open Applications"}],
             "counts": counts}
 
@@ -19893,36 +19950,56 @@ def agent_go():
 
 
 def _record_fit(rec: dict, data: dict) -> int | None:
-    """The ONE match number a saved application shows everywhere: how well the person fits the
-    job (the Jobs page and Auto-apply number), not how many of the ad's phrases made it onto the
-    one-page resume (that is "Keywords", in the editor). Kept on the record once worked out, so
-    the list doesn't re-read every ad on each load and every page agrees."""
+    """The ONE match number a saved application shows everywhere (see _record_fit_info)."""
+    return _record_fit_info(rec, data)[0]
+
+
+def _record_fit_info(rec: dict, data: dict, jobs: dict | None = None) -> tuple[int | None, bool]:
+    """(match percent, too thin to score) for a saved application: how well the person fits the
+    job (the Jobs page and Applications number), not how many of the ad's phrases made it onto
+    the one-page resume (that is "Keywords", in the editor). Kept on the record once worked out
+    (``fit`` and the rule it was worked out under, ``fit_rule``), so the list doesn't re-read
+    every ad on each load and every page agrees. A fit kept under an older rule is worked out
+    again from the ad (an old one could be a 100% from an ad that named one skill); with no ad
+    on this computer it is shown as it was, since there is nothing to judge it by."""
+    from notify.alerts import FIT_RULE, match_percent, too_thin_to_score
     fit = data.get("fit")
-    if isinstance(fit, (int, float)):
-        return int(round(fit))
+    current = data.get("fit_rule") == FIT_RULE
+    if current and data.get("fit_thin"):
+        return None, True
+    if isinstance(fit, (int, float)) and current:
+        return int(round(fit)), False
     jd = (data.get("jd_text") or "").strip()
+    if not jd and jobs is not None:
+        sid = str((data.get("source_job") or {}).get("source_id") or "").strip()
+        jd = ((jobs.get(sid) or {}).get("jd_text") or "").strip()
     if not jd:
-        return None
-    from notify.alerts import match_percent
+        return (int(round(fit)) if isinstance(fit, (int, float)) else None), False
     try:
-        m = _job_match(jd, rec.get("role") or "")
+        m = _job_match(jd, (rec.get("role") or "").split(" · ")[0])
     except Exception:   # noqa: BLE001 - a missing number, never a broken list
-        return None
+        return None, False
     if not m or not m.get("total"):
-        return None
+        return None, False
+    if too_thin_to_score(m):
+        _aa_keep_fit(rec["id"], None, thin=True)
+        return None, True
     pct = match_percent(m)
     if pct is not None:
         _aa_keep_fit(rec["id"], pct)
-    return pct
+    return pct, False
 
 
-def _aa_keep_fit(rid, fit) -> None:
-    """Keep the run's fit percent on the record, so the page shows the same match the run used."""
-    if fit is None:
+def _aa_keep_fit(rid, fit, thin: bool = False) -> None:
+    """Keep the run's fit percent on the record, so the page shows the same match the run used.
+    ``thin``: the ad named too few skills to score; kept too, so it is not worked out again."""
+    from notify.alerts import FIT_RULE
+    if fit is None and not thin:
         return
     recs = _records()
     try:
-        recs.merge_data(int(rid), {"fit": int(fit)})
+        recs.merge_data(int(rid), {"fit": None if thin else int(fit), "fit_rule": FIT_RULE,
+                                   "fit_thin": bool(thin)})
     except Exception:   # noqa: BLE001 - the package is saved; the number is a nicety
         pass
     finally:
@@ -19977,16 +20054,57 @@ def _aa_when(data: dict, rec: dict) -> str:
                or rec.get("created_at") or "")
 
 
+def _record_label(rec: dict, data: dict) -> tuple[str, str]:
+    """(role, company) of a saved application. A package saved before the pasted-description
+    fix (ui/session.py _jd_label) can hold the employer in ``role`` with no company, when the ad
+    started with the employer's name above the title; read from its own ad again, it shows the
+    title and the company the right way round."""
+    role = (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0].strip()
+    company = (rec.get("company") or "").strip()
+    jd = data.get("jd_text") or ""
+    if not company and role and jd:
+        from ui.session import _jd_label
+        try:
+            r2, c2 = _jd_label(jd)
+        except Exception:   # noqa: BLE001 - the stored label stays
+            r2, c2 = "", ""
+        if c2 and r2 and c2.lower() == role.lower():
+            return r2, c2
+    return role, company
+
+
+# The shell watches the Browser tab for the site's "application received" page for 30 minutes
+# after a fill (shell-electron/main.js armSuccessWatch) and marks it applied by itself. Only after
+# that window does the row ask "Did you submit it?", so the person is never asked while they are
+# still on the form.
+ASK_SUBMITTED_AFTER_S = 30 * 60
+
+
+def _ask_submitted(data: dict, stage: str, now: float | None = None) -> bool:
+    """True when a fill ran for this record more than ASK_SUBMITTED_AFTER_S ago, it is still not
+    sent or skipped, and the person has not answered Not yet for that fill."""
+    from datetime import datetime
+    at = str(data.get("filled_at") or "")
+    if not at or stage in ("submitted", "skipped") or data.get("submit_q_hidden") == at:
+        return False
+    try:
+        t = datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return False
+    return (time.time() if now is None else now) - t >= ASK_SUBMITTED_AFTER_S
+
+
 def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
     """One application as the Auto-apply page lists it. Only facts the record or its stored
     job hold; anything unknown is left empty, never guessed."""
     from submit import classify_record
-    from submit.stages import app_stage, row_action, tile_of
+    from submit.stages import app_stage, is_ready_to_apply, row_action, tile_of
     st = app_stage(data)
     tile = tile_of(data) or ""
     sj = data.get("source_job") or {}
     job = jobs.get(str(sj.get("source_id") or "").strip()) or {}
-    company = rec.get("company") or job.get("company") or ""
+    role, company = _record_label(rec, data)
+    company = company or job.get("company") or ""
     location = str(sj.get("location") or job.get("location") or "")
     tagged = _sponsors().tag_jobs([{"company": company, "location": location or "United States"}])[0]
     stance = {}
@@ -19997,7 +20115,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         if a["stance"] != UNKNOWN:
             stance = {"ad_stance": a["stance"], "ad_sentence": a["sentence"]}
     sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
-    match = _record_fit(rec, data)
+    match, thin = _record_fit_info(rec, data, jobs)
     url = (sj.get("url") or job.get("url") or "")
     plan = classify_record(data)
     # A job the apply agent parked (it needs the person): on Needs you, with what it needs and
@@ -20028,7 +20146,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
     if left and left.get("kind") == "prohibited" and tile == "waiting" and action in ("fill", "signin"):
         action = "open_self"          # the person opens it and applies on that board by hand
     return {
-        "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
+        "id": rec["id"], "role": role,
         "company": company, "location": location,
         "agent_note": (note or {}).get("message") or "",
         # (2026-11-19) Where the site sent the last run when it stopped as "left-site"
@@ -20039,6 +20157,14 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "visa": tagged.get("visa") or [], "sponsorship_stated": job.get("sponsorship_stated"),
         **stance,
         "match": round(match) if match is not None else None,
+        # The ad names too few skills to score: "Not enough in the ad to score", no percent
+        "match_thin": bool(thin),
+        # Ready to apply (submit.stages.is_ready_to_apply); "new" = tailored, never opened yet
+        "ready": is_ready_to_apply(data), "new": st["stage"] == "queued",
+        # The person pressed Autofill (the shell's fill report stamps it) and it is not marked
+        # applied yet: the row asks "Did you submit it?" until Yes or Not yet (for that fill)
+        "filled_at": data.get("filled_at") or "",
+        "ask_submitted": _ask_submitted(data, st["stage"]),
         "tile": tile, "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
         "reason": st["reason"], "how": st["how"], "queued": bool(data.get("queued")) and agent_on,
         "action": action,
@@ -20093,24 +20219,52 @@ def autoapply_board():
     finally:
         recs.close()
     jobs = _aa_job_index(rows)
-    rechecking = _liveness_kick(rows)      # closed postings leave Waiting on you (background)
+    rechecking = _liveness_kick(rows)      # closed postings leave Ready to apply (background)
+    board_stage, applied_total = _aa_board_view()
     tiles: dict[str, list[dict]] = {t: [] for t in TILES}
+    ready_by_job: dict[str, dict] = {}
+    p = _prefs()
+    seen = float(p.get("aa_closed_seen") or 0)
+    closed_new, closed_last = 0, 0.0
     for r in rows:
         data = _record_data(r)
         item = _aa_row(r, data, jobs)
         if item["tile"] in tiles:
             tiles[item["tile"]].append(item)
+        sid = _board_key(r)[0]
+        # Ready to apply: one row per job (its newest package), and only while its Tracker card
+        # is not further on (applied, closed, or archived by the person there), so this list and
+        # the Tracker's "Ready to apply" column count the same jobs.
+        if item["ready"] and board_stage.get(sid) in (None, "saved", "in_progress", "approved"):
+            if sid not in ready_by_job or ready_by_job[sid]["id"] < item["id"]:
+                ready_by_job[sid] = item
+        if item["reason"] == "posting_closed":
+            at = float((data.get("job_closed") or {}).get("at") or 1.0)
+            if at > seen:
+                closed_new += 1
+                closed_last = max(closed_last, at)
     for t in TILES:
         tiles[t].sort(key=lambda x: x["when"], reverse=True)
+    # Newest tailored first. Not by last move: opening a row approves it, and the list must not
+    # reorder under the person's pointer when they come back to it.
+    ready = sorted(ready_by_job.values(), key=lambda x: (x["created_at"], x["id"]), reverse=True)
     week = _aa_week_start()
     sent_week = [x for x in tiles["submitted"] if str(x["submitted_at"])[:10] >= week]
     counts = {t: len(tiles[t]) for t in TILES}
     ident = (_saved_full_profile().get("identity") or {})
-    p = _prefs()
     ts, today = _now_ts_today()
+    with _LIVENESS_LOCK:
+        gen = int(_LIVENESS_RUN.get("gen") or 0)
     return jsonify({
         "ok": True,
         "has_profile": _aa_has_profile(),
+        # The one list (assisted apply): every open, unsent, tailored application, newest first
+        "ready": ready, "ready_count": len(ready),
+        # The Tracker's own applied count (every job with an applied date), for "N applied."
+        "applied_count": applied_total,
+        # Found closed since the person last saw the line: {n, at} (POST /api/autoapply/closed/seen)
+        "closed_notice": {"n": closed_new, "at": closed_last} if closed_new else None,
+        "liveness_gen": gen,
         "counts": counts,
         "default": default_tile(counts),
         "tiles": tiles,
@@ -20129,6 +20283,57 @@ def autoapply_board():
         "rechecking": rechecking,
         "apply_agent": _apply_agent_enabled(),
     })
+
+
+def _aa_board_view() -> tuple[dict[str, str], int]:
+    """({job id: Tracker stage}, the Tracker's applied count), after the board took in every
+    record (_board_reconcile), so Applications reads the same numbers the Tracker shows."""
+    from datetime import date
+
+    from sourcing.board import funnel_metrics
+    w = _watchlist()
+    try:
+        _board_reconcile(w)
+        stages = {j["source_id"]: j.get("stage") for j in w.board_jobs(None)}
+        applied = funnel_metrics(w.funnel_rows(), date.today())["applied_total"]
+    except Exception:      # noqa: BLE001 - the list still shows; the counts are a nicety
+        traceback.print_exc()
+        stages, applied = {}, 0
+    finally:
+        w.close()
+    return stages, applied
+
+
+@app.post("/api/autoapply/closed/seen")
+@_guard
+def autoapply_closed_seen():
+    """The page showed (or the person dismissed) "N jobs closed before you applied": the line
+    is not shown again for those jobs. Body {at} (the newest closing it showed)."""
+    b = request.json or {}
+    try:
+        at = float(b.get("at") or time.time())
+    except (TypeError, ValueError):
+        at = time.time()
+    _set_prefs({"aa_closed_seen": max(float(_prefs().get("aa_closed_seen") or 0), at)})
+    return jsonify({"ok": True})
+
+
+@app.post("/api/autoapply/not-yet")
+@_guard
+def autoapply_not_yet():
+    """"Did you submit it?" Not yet: the row stops asking until the next Autofill of this
+    application. Body {record_id}. (Yes is /api/record/<id>/status {status: "applied"}.)"""
+    b = request.json or {}
+    try:
+        rid = int(b.get("record_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "record_id is required."}), 400
+    rec = _get_record(rid)
+    if not rec:
+        return jsonify({"error": "That application was not found."}), 404
+    data = _record_data(rec)
+    _records().merge_data(rid, {"submit_q_hidden": data.get("filled_at") or ""})
+    return jsonify({"ok": True})
 
 
 def _pdf_pages(path) -> int | None:
@@ -20486,61 +20691,88 @@ def _board_key(rec: dict) -> tuple[str, dict | None]:
     sj = data.get("source_job") or {}
     # A resume chat's own job (a pasted description's "pasted:" row) when it has no sourced one.
     sid = str(sj.get("source_id") or data.get("job_id") or "").strip()
-    role = (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0].strip()
+    role, company = _record_label(rec, data)
     if sid:
         from sourcing.board import PASTED_SOURCE
         src = sj.get("source") or (PASTED_SOURCE if sid.startswith(PASTED_SOURCE + ":") else "")
-        snap = {"source_id": sid, "source": src, "company": rec.get("company") or "",
+        snap = {"source_id": sid, "source": src, "company": company,
                 "title": role, "url": sj.get("url") or "", "posted_at": (rec.get("created_at") or "")[:10]}
         return sid, snap
     sid = f"{TAILORED_SOURCE}:{rec['id']}"
-    return sid, {"source_id": sid, "source": TAILORED_SOURCE, "company": rec.get("company") or "",
+    return sid, {"source_id": sid, "source": TAILORED_SOURCE, "company": company,
                  "title": role, "url": sj.get("url") or "", "posted_at": (rec.get("created_at") or "")[:10]}
 
 
 def _record_board_stage(data: dict) -> str:
-    """The board column one record belongs in: its funnel stage, except that a tailored
-    record the person approved (not submitted yet, or handed back after an auto attempt)
-    sits in Approved rather than Saved."""
-    from submit.stages import app_stage
+    """The board column one record belongs in: its funnel stage, except that a tailored record
+    that is ready to apply (new, opened, or handed back by an old agent run) sits in "Ready to
+    apply" (the ``approved`` stage) rather than Saved, and one whose posting closed before it was
+    sent sits in Archived (shown as Closed, "Job closed"). The Applications page lists the same
+    records (submit.stages.is_ready_to_apply), so the two pages count the same jobs."""
+    from submit.stages import is_closed, is_ready_to_apply
     from submit.tracker import effective_stage
     rstage = effective_stage(data)
-    if rstage == "saved" and app_stage(data)["stage"] in ("approved", "failed"):
-        return "approved"
+    if rstage == "saved":
+        if is_closed(data):
+            return "archived"
+        if is_ready_to_apply(data):
+            return "approved"
     return rstage
 
 
 def _board_reconcile(w) -> dict[str, list[dict]]:
     """Pull every tailored record onto the board and return {source_id: [records]}.
 
-    A record not on the board yet lands in its own stage (Saved when just tailored, Applied once
-    the assisted-apply engine, the auto lane, or the person marked it applied). A record that is
-    further along than its job (applied while the board still says Saved) moves the job forward
-    and logs why. The board is never moved backwards from here: once the person drags a card, the
-    board is the source of truth and the move patches the records instead."""
-    from sourcing.board import RANK, STAGES
+    A record not on the board yet lands in its own stage (Ready to apply when just tailored,
+    Applied once the assisted-apply engine, the auto lane, or the person marked it applied). A
+    record that is further along than its job (applied while the board still says Saved) moves
+    the job forward and logs why. A job whose only unsent records were found closed moves to
+    Archived (Closed, stamped "posting closed"), but only from Saved, In progress or Ready to
+    apply: an applied job stays where it is, since a posting often closes after the
+    application. The board is never moved backwards from here: once the person drags a card,
+    the board is the source of truth and the move patches the records instead."""
+    from sourcing.board import CLOSED_POSTING, RANK, STAGES
     recs = _records()
     try:
         rows = recs.list(limit=10000)
     finally:
         recs.close()
     by_job: dict[str, list[dict]] = {}
+    first: dict[str, tuple[dict, dict | None]] = {}
     for r in rows:
         sid, snap = _board_key(r)
-        data = _record_data(r)
-        rstage = _record_board_stage(data)
-        if rstage not in STAGES:
-            rstage = "saved"
-        applied_at = data.get("applied_at") or None
+        by_job.setdefault(sid, []).append(r)
+        first.setdefault(sid, (r, snap))
+    for sid, group in by_job.items():
+        r0, snap = first[sid]
+        stages = []
+        for r in group:
+            data = _record_data(r)
+            st = _record_board_stage(data)
+            stages.append((st if st in STAGES else "saved", data.get("applied_at") or None, r))
+        live = [x for x in stages if x[0] != "archived"]
+        if live:
+            rstage, applied_at, rr = max(live, key=lambda x: RANK[x[0]])
+        else:
+            rstage, applied_at, rr = "archived", None, r0
         cur = w.stage_of(sid)
-        note = {"applied": "Application submitted", "approved": "Approved"}.get(rstage, "Tailored a resume")
+        if rstage == "archived":
+            # Every unsent package of this job is closed: Closed with "Job closed", never Rejected.
+            if cur is None:
+                w.track_job(sid, "archived", note="Posting closed", job=None if w.get_job(sid) else snap)
+            elif cur in ("saved", "in_progress", "approved"):
+                w.move_stage(sid, "archived", note="Posting closed")
+            if w.stage_of(sid) == "archived":
+                w.mark_posting_closed(sid, CLOSED_POSTING)
+            continue
+        note = {"applied": "Application submitted", "approved": "Ready to apply"}.get(rstage, "Tailored a resume")
         if cur is None:
             existing = w.get_job(sid)
-            w.track_job(sid, rstage, note=note, now=(_local_stamp(r.get("created_at")) or None) if rstage == "saved" else None,
+            w.track_job(sid, rstage, note=note,
+                        now=(_local_stamp(rr.get("created_at")) or None) if rstage == "saved" else None,
                         job=None if existing else snap, applied_at=applied_at)
         elif cur not in ("rejected", "archived") and RANK[rstage] > RANK[cur]:
             w.move_stage(sid, rstage, note=note, applied_at=applied_at)
-        by_job.setdefault(sid, []).append(r)
     return by_job
 
 
@@ -20575,13 +20807,18 @@ def _board_patch_records(records: list[dict], stage: str) -> None:
     if stage == "approved" and records:
         # Dragged to Approved: the same as approving it in Review, minus any submit. A record
         # already approved or past it is left alone (the board never un-submits a record).
-        from submit.stages import app_stage, approved_patch
+        from submit.stages import app_stage, approved_patch, is_closed
         recs = _records()
         try:
             for r in records:
                 data = _record_data(r)
                 if app_stage(data)["stage"] == "queued":
                     recs.merge_data(r["id"], approved_patch())
+                elif is_closed(data):
+                    # Dragged out of Closed: the person says the job is open. It is an application
+                    # to fill again (the background check may find it closed again later).
+                    recs.merge_data(r["id"], {**approved_patch(), "job_closed": None, "liveness": None})
+                    _board_reopen(r)
                 elif data.get("status") == "applied":
                     recs.merge_data(r["id"], {**stage_patch(data, "saved", _now_iso()),
                                               **approved_patch()})
@@ -20606,6 +20843,17 @@ def _board_patch_records(records: list[dict], stage: str) -> None:
             recs.merge_data(r["id"], patch)
     finally:
         recs.close()
+
+
+def _board_reopen(rec: dict) -> None:
+    sid, _snap = _board_key(rec)
+    w = _watchlist()
+    try:
+        w.clear_posting_closed(sid)
+    except Exception:      # noqa: BLE001 - the card only keeps its "Job closed" line
+        pass
+    finally:
+        w.close()
 
 
 def _job_session_view(row: dict | None) -> dict | None:
@@ -20639,7 +20887,7 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
         rec = {"id": latest["id"], "role": latest.get("role") or "",
                # How it was sent, or why it came back: "Submitted for you", "Needs you".
                "state": st["stage"], "state_label": st["label"], "state_detail": st["detail"],
-               "how": st["how"],
+               "how": st["how"], "reason": st["reason"],
                # the employer's "we received it" mail, when the inbox saw one (_attach_confirmation)
                "confirmation": (data.get("confirmation") if isinstance(data.get("confirmation"), dict) else None),
                "pdf": f"/api/cv.pdf?job={job}" if (WORKDIR / f"{job}.pdf").exists() else None,
@@ -20647,8 +20895,14 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
                                 if (data.get("cover_letter") or "").strip() else None),
                "count": len(records)}
     fu = date_of(j.get("follow_up_at"))
+    company, title = j.get("company") or "", j.get("title") or ""
+    if not company and latest:
+        # A card made from a package whose label had the employer as the role (_record_label)
+        r2, c2 = _record_label(latest, _record_data(latest))
+        if c2 and title.strip().lower() == c2.lower():
+            company, title = c2, r2
     return {
-        "source_id": j["source_id"], "company": j.get("company") or "", "title": j.get("title") or "",
+        "source_id": j["source_id"], "company": company, "title": title,
         "display_name": j.get("display_name") or "",
         "location": j.get("location") or "", "url": j.get("url") or "", "source": j.get("source") or "",
         "stage": j.get("stage"), "stage_at": (j.get("stage_at") or "")[:10],

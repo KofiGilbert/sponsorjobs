@@ -28,7 +28,7 @@ def test_tracker_has_an_optional_in_progress_column_between_saved_and_approved()
 
 def test_a_tracker_card_with_a_session_shows_its_resume_and_opens_the_workspace():
     card = _fn("trkCardHtml")
-    assert "sessScore(sess)" in card and "tracker.chatAgo" in card and "tracker.postingClosed" in card
+    assert "sessScore(sess)" in card and "tracker.chatAgo" in card and "tracker.jobClosedOn" in card
     assert "data-session" in _fn("trkCardShell")
     board = _fn("renderTrackerBoard")
     assert "openJobWorkspace(card.dataset.sid)" in board and "data-trk-chat" in board
@@ -75,7 +75,7 @@ def test_a_closed_jobs_chat_shows_the_note_and_hides_apply():
 
 def test_every_new_label_is_in_all_five_languages_and_never_uses_resume_as_a_verb():
     keys = ["home.continue", "home.cInProgress", "home.cRecent", "home.cAll", "home.todayNew",
-            "tracker.stage.in_progress", "tracker.hintInProgress", "tracker.postingClosed",
+            "tracker.stage.in_progress", "tracker.hintInProgress", "tracker.jobClosedOn",
             "jobs.openResume", "jobs.mineLine", "jobs.mineChip", "cvs.download", "chat.closedTitle",
             "chat.closedBody", "chat.reuse", "chat.download", "sess.resumePct", "sess.pagePct"]
     assert set(LOCALES) >= {"en", "de", "es", "fr", "pt"}
@@ -98,7 +98,7 @@ def test_a_closed_applied_jobs_note_says_the_application_stands():
 def test_a_tracker_card_with_a_session_has_a_details_link_to_the_side_panel():
     card = _fn("trkCardHtml")
     assert card.count("trkDetailsLink()") == 2          # in progress, and applied or closed
-    assert "tracker.postingClosed" in card              # "Posting closed Nov 10" on the meta
+    assert "tracker.jobClosedOn" in card              # "Posting closed Nov 10" on the meta
     board = _fn("renderTrackerBoard")
     i = board.index("[data-trk-details]")
     assert "openTrackerPanel(card.dataset.sid)" in board[i:i + 200]

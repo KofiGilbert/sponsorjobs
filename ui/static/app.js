@@ -1228,16 +1228,16 @@
       }
       if (why === "blocked") {
         return r.blocker === "captcha"
-          ? "This page has a captcha. Solve it, then click Fill this page again."
-          : "This site wants you to sign in first. Sign in in the Browser tab, then click Fill this page again.";
+          ? I18N.t("fill.againCaptcha", "This page has a captcha. Solve it, then press Autofill this page again.")
+          : I18N.t("fill.againSignin", "This site wants you to sign in first. Sign in in the Browser tab, then press Autofill this page again.");
       }
       if (why === "no-page") return "Nothing is open in the Browser tab yet.";
       if (why === "not-a-form") {
         // The job page, not the application: nothing was typed (a search box is never filled).
         const btn = r.apply ? `\u201c${r.apply}\u201d` : "Apply";
-        return `This is the job page, not the application. Click ${btn} on the page first, then click Fill this page again.`;
+        return I18N.t("fill.againJob", "This is the job page, not the application. Press {btn} on the page first, then press Autofill this page again.").replace("{btn}", btn);
       }
-      if (why === "no-fields") return "No form on this page yet. Open the application form, then click Fill this page again.";
+      if (why === "no-fields") return I18N.t("fill.againNoForm", "No form on this page yet. Open the application form, then press Autofill this page again.");
       if (why === "bad-url") return "This application has no link. Paste the application link first.";
       return "Couldn't fill this page. It's open in the Browser tab, fill it by hand.";
     }
@@ -1254,7 +1254,7 @@
     let msg = fields ? "Filled " + fields + (attached ? ", resume attached." : ".")
       : attached ? "Resume attached." : "Nothing new to fill on this page.";
     if (r.reason === "captcha") msg += " This form has a captcha. Solve it before you submit.";
-    else if (r.reason === "login") msg += " The site wants a sign-in. Sign in, then click Fill this page again.";
+    else if (r.reason === "login") msg += " " + I18N.t("fill.againLogin", "The site wants a sign-in. Sign in, then press Autofill this page again.");
     else if (r.reason === "submit-covered") {
       msg += " A banner" + (r.covered_by ? " (" + r.covered_by + ")" : "") + " covers the submit button. Close it first.";
     }
@@ -2462,7 +2462,8 @@
     if (!m) { el.innerHTML = `<div class="fd-match-none">Add your resume, or complete your profile in the chat, and this shows how you match this role and every other one: skills you have and skills the ad asks for.</div>`; return; }
     if (!m.total) { el.innerHTML = `<div class="fd-match-none">No specific skills called out in this posting, tailoring will still align your resume to it.</div>`; return; }
     const pct = Math.round((m.ratio || 0) * 100);
-    const v = VERDICT[m.verdict];
+    // (2026-11-24) An ad naming fewer than 5 skills is not scored anywhere: no fit word either.
+    const v = m.verdict === "thin" ? [I18N.t("aa.matchThin", "Ad too short to score"), "mid"] : VERDICT[m.verdict];
     const label = v ? v[0] : `${pct}% match`;
     const cls = v ? v[1] : (pct >= 60 ? "good" : pct >= 35 ? "mid" : "low");
     const reqMiss = (m.required_missing || []).slice(0, 8);
@@ -6327,7 +6328,7 @@
      follow-up date, the timeline, links to the tailored resume and cover letter). The funnel at
      the top is computed server-side so the numbers match the claims export. */
   const TRK_STAGES = ["saved", "in_progress", "approved", "applied", "interviewing", "offer", "rejected", "archived"];
-  const TRK_STAGE_EN = { saved: "Saved", in_progress: "In progress", approved: "Approved", applied: "Applied", interviewing: "Interviewing",
+  const TRK_STAGE_EN = { saved: "Saved", in_progress: "In progress", approved: "Ready to apply", applied: "Applied", interviewing: "Interviewing",
     offer: "Offer", rejected: "Rejected", archived: "Archived" };
   const trkT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   const trkStageName = (s) => trkT("tracker.stage." + s, TRK_STAGE_EN[s] || s);
@@ -6404,7 +6405,11 @@
     const rec = c.record;
     const meta = [];
     const sess = c.has_session ? c.session : null;
-    const closed = c.closed_at ? `<span>${esc(trkT("tracker.postingClosed", "Posting closed {d}").replace("{d}", trkDay(c.closed_at)))}</span>` : "";
+    // A job whose posting closed before it was sent: "Job closed Nov 9" (Closed column).
+    // The Closed column holds two endings: the employer said no ("Not selected"), or the job
+    // closed before it was sent ("Job closed Nov 9"). Each card says which.
+    const closed = c.closed_at ? `<span class="trk-closed">${esc(trkT("tracker.jobClosedOn", "Job closed {d}").replace("{d}", trkDay(c.closed_at)))}</span>`
+      : c.stage === "rejected" ? `<span class="trk-closed">${esc(trkT("tracker.notSelected", "Not selected"))}</span>` : "";
     // A job with a resume session (the job workspace): how the resume stands and when its chat
     // last moved, then its links. In progress: "Resume 96% · page 95%" and "Chat · 2h ago".
     if (sess && !c.applied_at && !c.closed_at) {
@@ -6426,7 +6431,9 @@
     const chips = trkChips(c);
     // How it was sent, or why it came back (submit/stages.py). Only said where it adds news:
     // an auto-submit, or an approved application that is back with the person.
-    const st = rec && rec.state === "failed"
+    // With assisted apply a handed-back application is just Ready to apply, and a closed one
+    // says so in its meta line ("Job closed Nov 9"), so neither reads "Needs you".
+    const st = rec && rec.state === "failed" && APPLY_AGENT && rec.reason !== "posting_closed"
       ? `<div class="trk-card-state needs" title="${esc(rec.state_detail || "")}">${esc(trkT("tracker.needsYou", "Needs you"))}</div>`
       : rec && rec.state === "submitted" && rec.how === "auto" && c.stage === "applied"
       ? `<div class="trk-card-state">${esc(trkT("tracker.submittedForYou", "Submitted for you"))}</div>` : "";
@@ -6454,7 +6461,7 @@
     { key: "saved", stages: ["saved"], hint: ["tracker.hintSaved", "Jobs you save from the Jobs page"] },
     // A resume is being built for these (its session is open and not sent): shown while one is.
     { key: "in_progress", stages: ["in_progress"], optional: true, hint: ["tracker.hintInProgress", "Resumes you are tailoring"] },
-    { key: "approved", stages: ["approved"], optional: true, hint: ["tracker.hintApproved", "Approved, waiting on you"] },
+    { key: "approved", stages: ["approved"], optional: true, hint: ["tracker.hintApproved", "Tailored, ready for you to apply"] },
     { key: "applied", stages: ["applied"], hint: ["tracker.hintApplied", "Moves here when you apply"] },
     { key: "interviewing", stages: ["interviewing"], hint: ["tracker.hintInterview", "Drag a card here when they call"] },
     { key: "offer", stages: ["offer"], hint: ["tracker.hintOffer", "The goal"] },
@@ -12077,7 +12084,7 @@
   // With the desktop agent (docs/apply-agent.md) one button applies: it opens the job, clicks
   // Apply, signs in or creates the account, fills every page and stops at Submit.
   const AA_HAS_AGENT = () => APPLY_AGENT && !!(window.tailorShell && window.tailorShell.agentRun);
-  const AA_ACT = { review: ["aa.act.review", "Review"], fill: ["aa.act.fill", "Fill application"],
+  const AA_ACT = { review: ["aa.act.review", "Review"], fill: ["aa.act.fill", "Autofill application"],
     signin: ["aa.act.signin", "Sign in and fill"], finish: ["aa.act.finish", "Open and finish"], open_self: ["aa.act.finish", "Open and finish"], view: ["aa.act.view", "View"],
     // a job the apply agent parked: its question, or Continue after a step on the page
     answer: ["aa.act.answer", "Answer and continue"], continue: ["aa.act.continue", "Continue"],
@@ -12087,7 +12094,9 @@
     finish: ["aa.act.finish", "Open and finish"] };
   // What the button means, on hover: the visible run, not the walk-away one (that is Auto).
   const aaApplyTip = () => T("aa.act.applyTip", "I fill the form while you watch. I ask you when I need an answer, and you press Send.");
-  const aaActTip = a => (AA_HAS_AGENT() && (a === "fill" || a === "signin")) ? aaApplyTip() : "";
+  // Assisted apply: what Autofill does, in one line (the Browser bar's Autofill this page says the same).
+  const aaFillTip = () => T("aa.act.fillTip", "Fills the form from your profile. You check it and submit.");
+  const aaActTip = a => (AA_HAS_AGENT() && (a === "fill" || a === "signin")) ? aaApplyTip() : (a === "fill" ? aaFillTip() : "");
   const aaActName = a => T(...((AA_HAS_AGENT() && AA_AGENT_ACT[a]) || AA_ACT[a] || AA_ACT.view));
   const AA_REASON = { needs_signin: ["aa.reason.signin", "Needs your sign-in"],
     form_blocker: ["aa.reason.form", "A form question needs you"],
@@ -12174,6 +12183,7 @@
     aaLoadPrefs();
     if (AA.open != null) aaOpen(AA.open, { keep: true });   // refresh an open drawer
     if (b.rechecking) aaWatchRecheck();
+    aaWatchGen();
   }
 
   // (2026-11-02) The engine checks the queued jobs' postings in the background (free, no AI).
@@ -12188,7 +12198,8 @@
       if (++tries < 60 && r && r.running) return;
       clearInterval(AA_RECHECK); AA_RECHECK = null;
       if (r && !r.running && r.closed) {
-        toast(T("aa.closedFound", "{n} closed by the employer. Nothing was spent on them.").replace("{n}", r.closed));
+        // Assisted apply says it on the page instead ("N jobs closed before you applied").
+        if (APPLY_AGENT) toast(T("aa.closedFound", "{n} closed by the employer. Nothing was spent on them.").replace("{n}", r.closed));
         loadAutoApply();
       }
     }, 3000);
@@ -12197,6 +12208,7 @@
   function aaRender() {
     const b = AA.board;
     if (!b) return;
+    if (!APPLY_AGENT) { aaRenderReady(); aaRenderToday(); return; }
     const c = b.counts;
     const sub = {
       review: c.review ? T("aa.sub.review", "Tailored, ready for a look") : T("aa.sub.reviewNone", "Nothing to review"),
@@ -12304,13 +12316,7 @@
     const list = $("#aaList");
     if (items.length) { list.classList.remove("is-empty"); list.innerHTML = items.map(aaRow).join(""); return; }
     list.classList.add("is-empty");
-    if (!b.has_profile) {
-      list.innerHTML = `<div class="aa-empty"><div><div class="aa-empty-t">${esc(T("aa.empty.noResume", "Add your resume to start"))}</div>
-        <div class="aa-empty-s">${esc(T("aa.empty.noResumeSub", "I tailor it to your best matches."))}</div></div>
-        <button class="btn btn-ghost btn-sm" type="button" id="aaAddResume">${esc(T("aa.addResume", "Add your resume"))}</button></div>`;
-      $("#aaAddResume").addEventListener("click", () => openResumeBox());
-      return;
-    }
+    if (aaNoProfile(list, b)) return;
     const EMPTY = {
       review: ["aa.empty.review", "Nothing to review. Tailor & queue tailors your best matches into here."],
       waiting: ["aa.empty.waiting", "Nothing waiting on you. Approve a tailored role and it moves here."],
@@ -12318,6 +12324,102 @@
       needs: ["aa.empty.needs", "Nothing needs you."],
     };
     list.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(T(...EMPTY[t]))}</div></div>`;
+  }
+
+  function aaNoProfile(list, b) {
+    if (b.has_profile) return false;
+    list.innerHTML = `<div class="aa-empty"><div><div class="aa-empty-t">${esc(T("aa.empty.noResume", "Add your resume to start"))}</div>
+      <div class="aa-empty-s">${esc(T("aa.empty.noResumeSub", "I tailor it to your best matches."))}</div></div>
+      <button class="btn btn-ghost btn-sm" type="button" id="aaAddResume">${esc(T("aa.addResume", "Add your resume"))}</button></div>`;
+    $("#aaAddResume").addEventListener("click", () => openResumeBox());
+    return true;
+  }
+
+  /* ---- Ready to apply (assisted apply, 2026-11-24): the page is ONE list. Every open, unsent job
+     with a tailored resume (submit.stages.is_ready_to_apply), one row per job, the same jobs the
+     Tracker's "Ready to apply" column holds. No approve step: opening a row or pressing Autofill
+     moves a new one on by itself. Closed jobs leave the list with one quiet line; what was applied
+     to lives on the Tracker ("22 applied. See them in Tracker."). */
+  function aaMatchCell(it) {
+    if (it.match != null) return `${it.match}%<small>${esc(T("aa.match", "match"))}</small>`;
+    if (it.match_thin) return `<span class="aa-thin" title="${esc(T("aa.matchThinTip", "The ad names fewer than 5 skills, so a match number would be a guess."))}">${esc(T("aa.matchThin", "Ad too short to score"))}</span>`;
+    return "";
+  }
+  function aaReadyRow(it) {
+    const loc = usLocation(it.location), co = coName(it);
+    const role = it.role || T("aa.role", "Role");
+    const tag = it.new ? `<span class="aa-new">${esc(T("aa.new", "New"))}</span>` : "";
+    // Autofilled earlier and still not marked applied: ask once, in the row (Simplify's tracker asks
+    // the same after a submission). Yes marks it applied; Not yet hides it until the next Autofill.
+    const ask = it.ask_submitted ? `
+        <div class="aa-ask"><span>${esc(T("aa.askSubmitted", "Did you submit it?"))}</span>
+          <button class="btn btn-ghost btn-sm" type="button" data-act="yes">${esc(T("ans.yes", "Yes"))}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-act="notyet">${esc(T("aa.notYet", "Not yet"))}</button></div>` : "";
+    return `<div class="aa-row aa-ready-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(co)}, ${esc(role)}">
+      ${companyAvatar(it)}
+      <div class="aa-row-main"><div class="aa-t"><span class="aa-t-x">${esc(co || role)}</span>${tag}</div>
+        <div class="aa-s"><span class="co">${esc(co ? role : "")}${it.location ? (co ? " · " : "") + esc(loc) : ""}</span>${aaChip(it)}</div></div>
+      <span class="aa-match">${aaMatchCell(it)}</span>
+      <div class="aa-act"><button class="btn btn-ghost btn-sm aa-fillbtn" type="button" data-act="fill" title="${esc(aaFillTip())}">${esc(T("aa.act.fill", "Autofill application"))}</button></div>
+      ${ask}
+    </div>`;
+  }
+  function aaRenderReady() {
+    const b = AA.board, items = b.ready || [];
+    $("#aaSecTitle").textContent = T("aa.ready", "Ready to apply");
+    $("#aaSecCount").textContent = items.length ? fmtN(items.length) : "";
+    ["#aaApproveAll", "#aaTelegramSend", "#aaApplyAll"].forEach(sel => { const el = $(sel); if (el) el.hidden = true; });
+    aaRenderClosed();
+    const n = Number(b.applied_count) || 0, ap = $("#aaApplied");
+    if (ap) {
+      ap.hidden = !n;
+      $("#aaAppliedText").textContent = (n === 1 ? T("aa.appliedOne", "1 applied.") : T("aa.appliedN", "{n} applied.").replace("{n}", fmtN(n))) + " ";
+    }
+    const list = $("#aaList");
+    if (items.length) { list.classList.remove("is-empty"); list.innerHTML = items.map(aaReadyRow).join(""); return; }
+    list.classList.add("is-empty");
+    if (aaNoProfile(list, b)) return;
+    list.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(T("aa.empty.ready", "Nothing to apply to yet. Tailor & queue tailors your best matches into here."))}</div></div>`;
+  }
+  // "3 jobs closed before you applied. Removed from your list." Shown once per batch: the engine is
+  // told it was shown, and the line stays on this page until its x or the next batch.
+  function aaRenderClosed() {
+    const el = $("#aaClosed"), c = AA.board && AA.board.closed_notice;
+    if (!el) return;
+    if (c && c.n && (!AA.closed || AA.closed.at !== c.at)) {
+      AA.closed = { n: c.n, at: c.at };
+      api("/api/autoapply/closed/seen", { at: c.at }).catch(() => {});
+    }
+    const k = AA.closed;
+    if (!k || k.hidden) { el.hidden = true; return; }
+    el.innerHTML = `<span class="fn-text">${esc(k.n === 1 ? T("aa.closedOne", "1 job closed before you applied. Removed from your list.")
+        : T("aa.closedN", "{n} jobs closed before you applied. Removed from your list.").replace("{n}", fmtN(k.n)))}</span>`
+      + `<button class="fn-x" type="button" aria-label="${esc(T("job.dismiss", "Dismiss"))}" title="${esc(T("job.dismiss", "Dismiss"))}">×</button>`;
+    el.querySelector(".fn-x").addEventListener("click", () => { k.hidden = true; el.hidden = true; });
+    el.hidden = false;
+  }
+  $("#aaAppliedGo")?.addEventListener("click", () => navTo("tracker"));
+  // Opening a new one (the row, or its Autofill) is the look the old Approve stood for: it moves on
+  // silently, with no separate step. Nothing is sent: the apply agent is off.
+  async function aaSilentApprove(id) {
+    const it = aaFind(id);
+    if (APPLY_AGENT || !it || !it.new) return;
+    it.new = false;
+    const row = document.querySelector(`#aaList .aa-row[data-id="${id}"] .aa-new`);
+    if (row) row.remove();
+    try { await api("/api/review/approve", { approve: [id] }); } catch { it.new = true; }
+  }
+  // (2026-11-24) Closed postings are found in the background (the notify tick runs the check while
+  // the app is open). While this page shows, a cheap look every 30 s reloads it when some closed.
+  let AA_GEN_T = null;
+  function aaWatchGen() {
+    if (AA_GEN_T || APPLY_AGENT) return;
+    AA_GEN_T = setInterval(async () => {
+      if (!$("#view-autoapply")?.classList.contains("is-active") || document.hidden) return;
+      let r = null;
+      try { r = await api("/api/autoapply/liveness"); } catch { r = null; }
+      if (r && !r.running && AA.board && Number(r.gen || 0) > Number(AA.board.liveness_gen || 0)) loadAutoApply();
+    }, 30000);
   }
 
   function aaRenderToday() {
@@ -12338,8 +12440,15 @@
         <span class="aa-rec-w">${esc(aaAgo(it.submitted_at))}</span></button>`).join("")
       : `<div class="aa-rec-none">${esc(T("aa.recentNone", "Nothing sent yet."))}</div>`;
     const all = $("#aaSeeAll");
-    all.hidden = !b.counts.submitted || AA.tile === "submitted";
-    all.innerHTML = esc(T("aa.seeAll", "See all {n} submitted").replace("{n}", fmtN(b.counts.submitted))) + " &rarr;";
+    if (!APPLY_AGENT) {
+      // (2026-11-24) Assisted: everything applied lives on the Tracker, with the same count the
+      // line under the list gives ("22 applied"), never a second, smaller number.
+      all.hidden = !rec.length;
+      all.innerHTML = esc(T("aa.seeAllTracker", "See all in Tracker")) + " &rarr;";
+    } else {
+      all.hidden = !b.counts.submitted || AA.tile === "submitted";
+      all.innerHTML = esc(T("aa.seeAll", "See all {n} submitted").replace("{n}", fmtN(b.counts.submitted))) + " &rarr;";
+    }
   }
 
   // The Autopilot row: the switch, the per-day number typed in place (like the Tracker's weekly
@@ -12386,7 +12495,10 @@
     aaRender();
   }
   document.querySelectorAll("[data-aa-tile]").forEach(el => el.addEventListener("click", () => aaSelectTile(el.dataset.aaTile)));
-  $("#aaSeeAll")?.addEventListener("click", () => { aaSelectTile("submitted"); $("#aaList")?.scrollIntoView({ block: "nearest" }); });
+  $("#aaSeeAll")?.addEventListener("click", () => {
+    if (!APPLY_AGENT) { navTo("tracker"); return; }
+    aaSelectTile("submitted"); $("#aaList")?.scrollIntoView({ block: "nearest" });
+  });
   $("#aaTgBtn")?.addEventListener("click", async () => { await openSettings(); document.querySelector('[data-set="notify"]')?.click(); });
   // ---- How to apply: Auto / Assisted / Hybrid (the ONE saved choice; also Apply setup step 6)
   function aaRenderMode(d) {
@@ -12633,6 +12745,8 @@
   $("#aaRecent")?.addEventListener("click", e => { const r = e.target.closest("[data-id]"); if (r) aaOpen(Number(r.dataset.id)); });
 
   const aaFind = id => {
+    const hit0 = AA.board && (AA.board.ready || []).find(x => x.id === id);
+    if (hit0) return hit0;
     const t = AA.board && AA.board.tiles;
     if (!t) return null;
     for (const k of Object.keys(t)) { const hit = t[k].find(x => x.id === id); if (hit) return hit; }
@@ -13700,6 +13814,14 @@
     if (!row) return;
     const id = Number(row.dataset.id);
     const btn = e.target.closest("[data-act]");
+    if (!APPLY_AGENT) {
+      if (btn && btn.dataset.act === "fill") { aaSilentApprove(id).then(() => aaFill(id, { btn })); return; }
+      if (btn && btn.dataset.act === "yes") { aaMarkApplied(id, btn); return; }
+      if (btn && btn.dataset.act === "notyet") { aaNotYet(id); return; }
+      if (btn) return;
+      aaOpen(id);
+      return;
+    }
     if (btn && btn.dataset.act === "open_self") {
       // (2026-11-19) a board that forbids automated applications: the person opens it and applies
       const it = aaFind(id);
@@ -13713,6 +13835,22 @@
     aaOpen(id);
   });
   $("#aaApplyAll")?.addEventListener("click", () => aaApplyAll());
+  // "Did you submit it?" Yes: the same Mark as applied as the drawer's link (it moves to the Tracker's
+  // Applied). Not yet: the question goes until this application's next Autofill.
+  async function aaMarkApplied(id, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await api(`/api/record/${id}/status`, { status: "applied" });
+      toast(T("aa.markedApplied", "Marked as applied. It is on your Tracker."));
+      await loadAutoApply();
+    } catch (err) { if (btn) btn.disabled = false; toast(err.message || T("aa.fail", "Couldn't do that, try again.")); }
+  }
+  async function aaNotYet(id) {
+    const it = aaFind(id);
+    if (it) it.ask_submitted = false;
+    if (AA.board && !APPLY_AGENT) aaRenderReady();
+    try { await api("/api/autoapply/not-yet", { record_id: id }); } catch { /* it asks again next visit */ }
+  }
   $("#aaList")?.addEventListener("keydown", e => {
     if ((e.key === "Enter" || e.key === " ") && e.target.matches(".aa-row[data-id]")) { e.preventDefault(); aaOpen(Number(e.target.dataset.id)); }
   });
@@ -13741,6 +13879,7 @@
   };
   function aaHint(it) {
     const site = it.site || "";
+    if (!APPLY_AGENT && it.ready) return T("aa.hint.ready", "Look over your resume before you apply.");
     if (it.tile === "review") {
       return it.lane === "auto"
         ? T("aa.hint.reviewAuto", "Approving sends it for you on {site}.").replace("{site}", site)
@@ -13758,13 +13897,18 @@
     const post = /^https?:\/\//i.test(it.posting_url || "")
       ? `<a class="btn btn-ghost" href="${esc(it.posting_url)}" target="_blank" rel="noopener">${esc(T("aa.viewPosting", "View posting"))} &#8599;</a>` : "";
     const skip = `<button class="btn btn-ghost" type="button" data-dr="skip">${esc(T("aa.skip", "Skip"))}</button>`;
+    if (!APPLY_AGENT && it.ready) {
+      return `<button class="btn btn-primary" type="button" data-dr="fill" title="${esc(aaFillTip())}">${esc(T("aa.act.fill", "Autofill application"))} &rarr;</button>
+        <button class="btn btn-ghost" type="button" data-dr="again" id="aaDrAgain" hidden>${esc(T("pkg.fillAgain", "Autofill this page again"))}</button>
+        <button class="btn btn-ghost" type="button" data-dr="edit">${esc(T("aa.editResume", "Edit resume"))}</button>${post}${skip}`;
+    }
     if (it.tile === "review") {
       return `<button class="btn btn-primary" type="button" data-dr="approve">${esc(T("aa.approve", "Approve"))}</button>
         <button class="btn btn-ghost" type="button" data-dr="edit">${esc(T("aa.editResume", "Edit resume"))}</button>${post}${skip}`;
     }
     if (it.tile === "waiting" || (it.tile === "needs" && it.reason !== "posting_closed")) {
       return `<button class="btn btn-primary" type="button" data-dr="fill">${esc(aaActName(it.action === "view" ? "fill" : it.action))} &rarr;</button>
-        <button class="btn btn-ghost" type="button" data-dr="again" id="aaDrAgain" hidden>${esc(T("pkg.fillAgain", "Fill this page again"))}</button>${post}${skip}`;
+        <button class="btn btn-ghost" type="button" data-dr="again" id="aaDrAgain" hidden>${esc(T("pkg.fillAgain", "Autofill this page again"))}</button>${post}${skip}`;
     }
     if (it.tile === "needs") return `${post}${skip}`;
     return post;
@@ -13774,9 +13918,14 @@
     const out = [];
     if (it.picked) out.push(li("done", T("aa.tl.picked", "Picked from Jobs"), it.saved ? T("aa.tl.saved", "Saved job") : ""));
     out.push(li("done", T("aa.tl.tailored", "Tailored"), aaClock(it.created_at)));
+    if (!APPLY_AGENT && it.ready) {
+      out.push(li("now", T("aa.act.fill", "Autofill application"), T("aa.tl.yourTurn", "Your turn")));
+      out.push(li("later", T("tracker.stage.applied", "Applied")));
+      return out.join("");
+    }
     if (it.tile === "review") {
       out.push(li("now", T("aa.tl.approve", "Approve"), T("aa.tl.yourTurn", "Your turn")));
-      out.push(li("later", T("aa.act.fill", "Fill application")));
+      out.push(li("later", T("aa.act.fill", "Autofill application")));
       out.push(li("later", T("aa.tile.submitted", "Submitted")));
       return out.join("");
     }
@@ -13784,7 +13933,7 @@
     if (it.tile !== "submitted" || it.approved_at) out.push(li("done", T("aa.tl.approved", "Approved by you"), aaClock(it.approved_at)));
     if (it.tile === "waiting") {
       out.push(it.queued ? li("now", T("aa.tl.queued", "Queued to send"), T("aa.tl.forYou", "Sent for you when a slot opens"))
-        : li("now", T("aa.act.fill", "Fill application"), T("aa.tl.yourTurn", "Your turn")));
+        : li("now", T("aa.act.fill", "Autofill application"), T("aa.tl.yourTurn", "Your turn")));
       out.push(li("later", T("aa.tile.submitted", "Submitted")));
     } else if (it.tile === "needs") {
       out.push(li("now flag", T("aa.tl.back", "Came back to you"), T(...(AA_REASON[it.reason] || AA_REASON.site_error))));
@@ -13843,17 +13992,20 @@
     const facts = [it.company, it.location ? usLocation(it.location) : "", it.type || "", it.pay || ""].filter(Boolean);
     const stagePill = { review: T("aa.tile.review", "To review"), waiting: it.queued ? T("aa.pill.queued", "Queued") : T("aa.pill.approved", "Approved"),
       submitted: T("aa.tile.submitted", "Submitted"), needs: T("aa.tile.needs", "Needs you") }[it.tile] || "";
+    const ready = !APPLY_AGENT && it.ready;
+    const pill = ready ? (it.new ? T("aa.new", "New") : T("aa.ready", "Ready to apply")) : stagePill;
     const lane = it.lane === "auto" ? T("aa.lane.auto", "Sent for you") : T("aa.lane.you", "Your click");
     const posted = it.posted_at ? aaAgo(it.posted_at) : "";
-    const markable = it.tile === "waiting" || it.tile === "needs";
+    const markable = ready || it.tile === "waiting" || it.tile === "needs";
     return `<article class="aa-detail">
       <div class="fd-head">
         <div class="fd-headrow">${companyAvatar(it)}
           <div class="fd-headmain">
             <h2 class="fd-title" id="aaDrTitle">${esc(it.role || T("aa.role", "Role"))}</h2>
             <div class="fd-co">${facts.map(esc).join(" <span>&middot;</span> ")}</div>
-            <div class="fd-meta">${it.match != null ? `<span class="aa-dr-match">${it.match}% <span>${esc(T("aa.match", "match"))}</span></span>` : ""}
-              ${visaBadges(it)}<span class="aa-pill${it.tile === "needs" ? " flag" : ""}">${esc(stagePill)}</span></div>
+            <div class="fd-meta">${it.match != null ? `<span class="aa-dr-match">${it.match}% <span>${esc(T("aa.match", "match"))}</span></span>`
+              : it.match_thin ? `<span class="aa-thin" title="${esc(T("aa.matchThinTip", "The ad names fewer than 5 skills, so a match number would be a guess."))}">${esc(T("aa.matchThin", "Ad too short to score"))}</span>` : ""}
+              ${visaBadges(it)}<span class="aa-pill${it.tile === "needs" && !ready ? " flag" : ""}">${esc(pill)}</span></div>
           </div>
         </div>
         <div class="fd-actions">${aaDrawerActions(it)}</div>
@@ -13892,6 +14044,7 @@
       document.querySelectorAll("#aaList .aa-row").forEach(r => r.classList.toggle("is-active", Number(r.dataset.id) === id));
       $("#aaDrClose").focus();
     }
+    if (!keep) await aaSilentApprove(id);         // opening a new one is the look: no Approve step
     let it;
     try { it = await api("/api/autoapply/item/" + id); }
     catch (e) { if (keep && !row) { aaClose(); } return; }
@@ -14799,7 +14952,8 @@
       const r = await api("/api/autoapply/run", { count, focus, min_fit });
       // Zero is told as zero, with every reason; "They are in To review" is only true for 1+.
       msg.className = r.queued ? "aa-msg ok" : "aa-msg err";
-      msg.innerHTML = esc(r.queued ? T("aa.queued", "Queued {n}. They are in To review.").replace("{n}", r.queued)
+      msg.innerHTML = esc(r.queued ? (APPLY_AGENT ? T("aa.queued", "Queued {n}. They are in To review.")
+          : T("aa.queuedReady", "Tailored {n}. They are in Ready to apply.")).replace("{n}", r.queued)
                                    : T("aa.nothingQueued", "Nothing queued."))
         + aaRunReasons(r);
       AA_WANT = "review"; AA.next = null;

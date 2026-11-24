@@ -494,7 +494,7 @@ def test_c_app_import_names_what_is_still_missing(A, monkeypatch):
         {"q": "the dates for Portfolio Site"}, {"q": "your phone"}])
     reply = mod._telegram_file_import({"file_id": "F", "name": "cv.txt", "size": 9}, RESUME_TXT.encode())
     assert reply.endswith("It still needs 2 details, like the dates for Portfolio Site: open SponsorJobs, "
-                          "Auto-apply, Add the details to finish.")
+                          "Applications, Add the details to finish.")
 
 
 def test_c_app_import_failures_are_said_plainly(A, monkeypatch):

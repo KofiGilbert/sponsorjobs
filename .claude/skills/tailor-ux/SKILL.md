@@ -558,3 +558,18 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   The bar's list CSS is now scoped to `.ans-box` (the memory page's `.ans-row` used to override it).
   Read-only for now. Not yet checked at Kofi's window (no app run on the 8 GB builder); check at
   76% zoom and 100%, dark and light, before release.
+- 2026-11-24 (assisted apply, supersedes the four tiles while the apply agent is off): Applications
+  is ONE list, "Ready to apply" (subtitle "Jobs with a tailored resume, ready for you to apply.").
+  Every open, unsent, not-skipped job with a tailored resume (`submit.stages.is_ready_to_apply`),
+  one row per job: logo, company (a quiet outlined "New" pill until it is first opened), role and
+  place, one sponsorship chip, the match, and ONE outlined "Autofill application" (hover: "Fills the
+  form from your profile. You check it and submit."). No approve step: opening a row or pressing
+  Autofill moves a new one on silently. The drawer says "Look over your resume before you apply.";
+  Skip stays there. A closed posting never shows: one `.feed-notice` line, "3 jobs closed before you
+  applied. Removed from your list." with a quiet x, once per batch; on the Tracker it is in Closed
+  with "Job closed Nov 9", never "Needs you". Under the list one muted line, "22 applied. See them in
+  Tracker." (the Tracker's own applied count). After an Autofill, a row still not applied asks inline
+  "Did you submit it?" with ghost Yes / Not yet (Not yet waits for the next Autofill). An ad naming
+  fewer than 5 skills shows a muted "Not enough in the ad to score", never a percent (Jobs detail
+  too). The Browser bar button is "Autofill this page". The tiles stay for the agent only
+  (`data-agent-only`). The Tracker's approved column reads "Ready to apply" and counts the same jobs.

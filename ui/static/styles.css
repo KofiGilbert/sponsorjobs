@@ -1822,6 +1822,19 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .view-autoapply .aa-stage.flag .pip { background: var(--flag); }
 .view-autoapply .aa-match { font-size: 12.5px; font-weight: 650; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .view-autoapply .aa-match small { font-weight: 500; color: var(--muted); font-size: 11.5px; margin-left: 3px; }
+/* Ready to apply (assisted apply): logo, company and role, match, Autofill. The "New" tag sits after
+   the company and never truncates; a long company does. */
+.view-autoapply .aa-ready-row { grid-template-columns: 36px minmax(0, 1fr) 172px 176px; }
+.view-autoapply .aa-ready-row .aa-t { display: flex; align-items: center; gap: 8px; }
+.view-autoapply .aa-t-x { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.view-autoapply .aa-new { flex: none; font-size: 11px; font-weight: 600; color: var(--ink-2); padding: 1px 7px;
+  border: 1px solid var(--border-strong, var(--border)); border-radius: 999px; line-height: 1.5; }
+.view-autoapply .aa-thin { font-size: 11.5px; font-weight: 500; color: var(--muted); white-space: normal; line-height: 1.3; display: inline-block; text-align: right; }
+/* Its own line across the row (under the company, beside nothing), so it never wraps word by word. */
+.view-autoapply .aa-ask { grid-column: 2 / -1; display: flex; align-items: center; gap: 8px; margin-top: -2px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+.view-autoapply .aa-ask .btn { padding: 3px 10px; font-size: 12px; }
+.view-autoapply .aa-applied { margin: 10px 2px 0; font-size: 12.5px; color: var(--muted); }
+.view-autoapply .aa-closed { max-width: none; margin: 0 2px 10px; }
 .view-autoapply .aa-act { justify-self: end; }
 .view-autoapply .aa-act .btn { padding: 6px 12px; font-size: 12.5px; white-space: nowrap; }
 .view-autoapply .aa-act .btn.aa-fillbtn { color: var(--ink); border-color: var(--ink-2); }
@@ -2013,6 +2026,7 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 @container (max-width: 1354px) {
   .view-autoapply .aa-body { grid-template-columns: minmax(0, 1fr) 300px; }
   .view-autoapply .aa-row { grid-template-columns: 36px minmax(0, 1fr) 168px 76px 156px; gap: 12px; }
+  .view-autoapply .aa-ready-row { grid-template-columns: 36px minmax(0, 1fr) 150px 172px; }
 }
 @container (max-width: 1034px) {
   .view-autoapply .aa-body { grid-template-columns: minmax(0, 1fr); }

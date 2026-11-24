@@ -352,7 +352,8 @@ def test_tailored_records_land_on_the_board_and_the_review_queue_moves_it(app):
     applied = b["columns"]["applied"]
     assert [x["company"] for x in applied] == [JOB["company"]]      # pulled forward from Saved
     assert applied[0]["applied_at"] == "2026-10-06" and applied[0]["record"]["id"] == rid
-    saved = b["columns"]["saved"]
+    # (2026-11-24) a tailored, unsent package is Ready to apply (the approved column)
+    saved = b["columns"]["approved"]
     assert [x["source_id"] for x in saved] == [f"{TAILORED_SOURCE}:{rid2}"]
     assert saved[0]["title"] == "Platform Engineer" and saved[0]["company"] == "Gamma"
     # ...and that board-only row never shows on the Jobs feed.
@@ -362,10 +363,10 @@ def test_tailored_records_land_on_the_board_and_the_review_queue_moves_it(app):
     assert c.post(f"/api/record/{rid}/stage", json={"stage": "interviewing"}).status_code == 200
     assert c.get("/api/tracker/board").get_json()["columns"]["interviewing"][0]["source_id"] == JOB["source_id"]
     assert c.post(f"/api/record/{rid}/status", json={"status": "ready"}).status_code == 200
-    assert [x["source_id"] for x in c.get("/api/tracker/board").get_json()["columns"]["saved"]] \
-        == [JOB["source_id"], f"{TAILORED_SOURCE}:{rid2}"] or \
-        set(x["source_id"] for x in c.get("/api/tracker/board").get_json()["columns"]["saved"]) \
-        == {JOB["source_id"], f"{TAILORED_SOURCE}:{rid2}"}
+    # Back to Saved (status "ready" from the queue) stays Saved; the untouched package stays Ready to apply.
+    b = c.get("/api/tracker/board").get_json()
+    assert [x["source_id"] for x in b["columns"]["saved"]] == [JOB["source_id"]]
+    assert [x["source_id"] for x in b["columns"]["approved"]] == [f"{TAILORED_SOURCE}:{rid2}"]
 
     # A board move patches the record so the apply to-do agrees with the board.
     c.post("/api/tracker/move", json={"source_id": JOB["source_id"], "stage": "offer"})

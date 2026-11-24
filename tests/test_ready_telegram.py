@@ -64,7 +64,7 @@ def test_the_message_names_the_job_counts_and_flagged_lines():
     assert text.splitlines()[0] == "Ready to send: Data Analyst at Acme Corp."
     assert text.splitlines()[1] == "I filled 14 fields. 2 need a look:"
     assert NOTICE["lines"][0] in text and NOTICE["lines"][1] in text
-    assert text.splitlines()[-1] == ("Review it in SponsorJobs, Auto-apply (Review answers), then press Send there. "
+    assert text.splitlines()[-1] == ("Review it in SponsorJobs, Applications (Review answers), then press Send there. "
                                      "Nothing is sent until you do.")
     assert "–" not in text and "—" not in text and "CV" not in text and len(text) < 4096
     clean = RN.ready_text("Data Analyst", "", {"filled": 1, "flagged": 0, "lines": []})

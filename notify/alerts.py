@@ -205,6 +205,21 @@ def prescore(row: dict, targets: dict) -> int:
 # names two skills the person happens to have scored 100% for a "Cybersecurity Architect" on a
 # product/AI profile. A thin ad leans on title similarity instead (see match_percent).
 THIN_JD_SKILLS = 8
+# Below this many skills the ad does not name enough to score at all: each skill would move the
+# number by 20 points or more, so one lucky term reads as a 100% fit (a hotel "Assistant F&B
+# Manager" ad naming only "Forecasting" did; so did a "Research Assistant I" ad naming only
+# "Reporting"). Such an ad shows no percent ("Not enough in the ad to score") and is never picked
+# on its score. 5, not THIN_JD_SKILLS: in a sample of 800 feed ads about a third named fewer than
+# 5 skills and well over half fewer than 8, so 8 would leave most roles unscored, while 5..7
+# still blend toward title fit (below).
+MIN_SCORED_SKILLS = 5
+# Must-haves weigh most only when the "required" part of the ad names at least this many skills.
+# A required section that names one skill (a data scientist ad listed 14 skills, one of them under
+# "Minimum qualifications") let that single miss take 60% of the score and read 5%.
+MIN_REQUIRED_SKILLS = 3
+# Bumped whenever match_percent changes, so a fit stored on an application under an older rule
+# is worked out again on read (ui/app.py _record_fit) instead of shown as it was.
+FIT_RULE = 2
 
 _SENIOR_TITLE = re.compile(r"\b(senior|sr|staff|principal|lead|director|head|architect|vp|chief)\b", re.I)
 
@@ -223,16 +238,22 @@ def title_fit(title: str, targets: dict, profile_titles: list[str] | None = None
 
 
 def match_percent(match: dict | None) -> int | None:
-    """One honest number from ui/app.py's _job_match: must-have coverage weighs most. When the ad
-    names few skills, the score blends toward the title fit (a thin ad cannot vouch for a 100%);
-    with a rich ad the title only trims the score a little."""
+    """One honest number from ui/app.py's _job_match: the share of the skills the ad names that
+    the person's saved profile shows, with must-haves weighing most (60%) when the ad's required
+    part names at least MIN_REQUIRED_SKILLS of them. None when the ad names fewer than
+    MIN_SCORED_SKILLS skills (too thin to judge). With 5 to 7 skills the score blends toward the
+    title fit and can only go down from the skill share; with a rich ad the title only trims it
+    a little. It is the person's fit for the job, not how many of the ad's words made it onto
+    the one-page resume (that is "Keywords" in the editor)."""
     if not match:
         return None
+    total = int(match.get("total") or 0)
+    if total < MIN_SCORED_SKILLS:
+        return None                      # too thin to judge: see too_thin_to_score
     ratio = float(match.get("ratio") or 0.0)
     req_total = int(match.get("required_total") or 0)
-    req = (int(match.get("required_covered") or 0) / req_total) if req_total else ratio
+    req = (int(match.get("required_covered") or 0) / req_total) if req_total >= MIN_REQUIRED_SKILLS else ratio
     base = 0.6 * req + 0.4 * ratio
-    total = int(match.get("total") or 0)
     tf = match.get("title_fit")
     if tf is None:
         if 0 < total < THIN_JD_SKILLS:
@@ -245,6 +266,17 @@ def match_percent(match: dict | None) -> int | None:
         conf = total / THIN_JD_SKILLS
         score = conf * base + (1 - conf) * min(base, tf)
     return int(round(100 * score))
+
+
+def too_thin_to_score(match: dict | None) -> bool:
+    """The ad names some skills, but too few to score (MIN_SCORED_SKILLS): the page says "Not
+    enough in the ad to score" instead of a percent."""
+    return bool(match) and 0 < int(match.get("total") or 0) < MIN_SCORED_SKILLS
+
+
+# What a match_fn answers for a thin ad (too_thin_to_score): the alert engine passes the role
+# over instead of falling back to the title-only prescore, which would put a number on it.
+UNSCORABLE = "thin"
 
 
 def is_new(row: dict, now: datetime, days: int = LOOKBACK_DAYS) -> bool:
@@ -311,8 +343,8 @@ def digest_text(d: dict) -> str:
         sites = ", ".join(d.get("submitted_sites") or [])
         parts.append(f"submitted {d['submitted']}" + (f" ({sites})" if sites else ""))
     if d.get("waiting"):
-        parts.append(f"{d['waiting']} waiting for your click")
-    tail = (" Open SponsorJobs and go to Auto-apply to finish them."
+        parts.append(f"{d['waiting']} ready for you to apply")
+    tail = (" Open SponsorJobs and go to Applications to finish them."
             if d.get("waiting") else "")
     return "While you were away: " + ", ".join(parts) + "." + tail
 
@@ -361,6 +393,9 @@ class AlertEngine:
                     score = self.match_fn(r)
                 except Exception:   # noqa: BLE001 - one bad JD never stops the rest
                     score = None
+            if score == UNSCORABLE:
+                considered[r["source_id"]] = 0
+                continue
             if score is None:
                 score = pre
             score = int(score) - fewer_penalty(r, fewer)
