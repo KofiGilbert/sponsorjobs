@@ -691,13 +691,14 @@
     const setActive = (i) => {
       active = i;
       rows.forEach((r, k) => { r.classList.toggle("is-active", k === i); r.setAttribute("aria-selected", k === i ? "true" : "false"); });
-      if (i >= 0) box.setAttribute("aria-activedescendant", rows[i].id);
+      if (i >= 0) { box.setAttribute("aria-activedescendant", rows[i].id); homeRowInView(rows[i]); }
       else box.removeAttribute("aria-activedescendant");
     };
     const isOpen = () => !!list && !list.hidden;
     const openList = () => {
       if (!list || box.value) return;
       list.hidden = false; box.setAttribute("aria-expanded", "true"); setActive(-1);
+      list.scrollTop = 0; fitHomeList(list);
     };
     const closeList = () => {
       if (!list) return;
@@ -732,6 +733,16 @@
   })();
 
   // (The old next-best-action hero card is gone: the prompt IS the home now.)
+
+  // (2026-11-24) A list that opens under the Home box overlays the page, so on a short window its
+  // last rows ran off the bottom with no way to reach them. It is held to the room left under the
+  // box and scrolls inside itself; the active row is kept in view for the arrow keys.
+  function fitHomeList(list) {
+    if (!list || list.hidden) return;
+    const top = list.getBoundingClientRect().top;
+    list.style.maxHeight = Math.max(160, Math.floor(window.innerHeight - top - 16)) + "px";
+  }
+  function homeRowInView(row) { try { row && row.scrollIntoView({ block: "nearest" }); } catch { /* old engines */ } }
 
   /* ---- Home: "Continue tailoring · 2" beside See examples (2026-11-10). It pairs with Start
      tailoring (start new, or continue one). The list is the examples list's own style: group
@@ -777,12 +788,14 @@
     HC.rows.forEach((r, k) => { r.classList.toggle("is-active", k === i); r.setAttribute("aria-selected", k === i ? "true" : "false"); });
     const btn = $("#homeContinue");
     if (btn) { if (i >= 0) btn.setAttribute("aria-activedescendant", HC.rows[i].id); else btn.removeAttribute("aria-activedescendant"); }
+    if (i >= 0) homeRowInView(HC.rows[i]);
   }
   function openHomeContinue() {
     const list = $("#homeContinueList");
     if (!list || !HC.rows.length) return;
     $("#homeSuggest") && ($("#homeSuggest").hidden = true);   // one list at a time
     list.hidden = false; $("#homeContinue").setAttribute("aria-expanded", "true"); hcActive(-1);
+    list.scrollTop = 0; fitHomeList(list);
   }
   function closeHomeContinue() {
     const list = $("#homeContinueList");
