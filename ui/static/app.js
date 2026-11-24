@@ -739,8 +739,13 @@
   // box and scrolls inside itself; the active row is kept in view for the arrow keys.
   function fitHomeList(list) {
     if (!list || list.hidden) return;
+    // The room ends at the privacy line along the bottom of the window (it sits over the page),
+    // else at the window's edge.
     const top = list.getBoundingClientRect().top;
-    list.style.maxHeight = Math.max(160, Math.floor(window.innerHeight - top - 16)) + "px";
+    const line = document.querySelector(".privacy-line");
+    const lr = line && line.getBoundingClientRect();
+    const floor = lr && lr.height > 0 ? Math.min(window.innerHeight, lr.top) : window.innerHeight;
+    list.style.maxHeight = Math.max(160, Math.floor(floor - top - 12)) + "px";
   }
   function homeRowInView(row) { try { row && row.scrollIntoView({ block: "nearest" }); } catch { /* old engines */ } }
 
