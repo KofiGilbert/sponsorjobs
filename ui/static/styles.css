@@ -2419,6 +2419,8 @@ body.panel-open .app {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 6;
   background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .22); padding: 6px;
+  /* held to the room under the box (fitHomeList sets the exact height); scrolls inside itself */
+  max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
 }
 .home-suggest[hidden] { display: none; }
 .home-suggest-l {
