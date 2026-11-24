@@ -171,6 +171,32 @@ const BOARD_NAMES = { "linkedin.com": "LinkedIn", "indeed.com": "Indeed", "glass
   "ziprecruiter.com": "ZipRecruiter", "monster.com": "Monster", "dice.com": "Dice" };
 const boardName = (host) => { for (const [d, n] of Object.entries(BOARD_NAMES)) if (host === d || String(host).endsWith("." + d)) return n; return host; };
 const BOARD_LINE = (name) => "This job is on " + name + ", which does not allow automated applications. Open it and apply yourself.";
+// (2026-11-24) The person's OWN accounts with an identity provider (a Google, Microsoft or Apple
+// account ...) are theirs to sign in to or create, never the agent's. Google's careers site sends
+// Apply to accounts.google.com, which shares google.com with the job page, so the run thought it
+// was still on the job's site: it typed the person's email, then pressed "Create account" and
+// typed their name into Google's sign-up form. On any of these pages the run stops before
+// anything is typed or clicked: the person signs in there, and Continue opens the job again.
+const IDP_HOSTS = { "accounts.google.com": "Google", "accounts.youtube.com": "Google",
+  "login.microsoftonline.com": "Microsoft", "login.live.com": "Microsoft", "signup.live.com": "Microsoft",
+  "account.live.com": "Microsoft", "account.microsoft.com": "Microsoft",
+  "appleid.apple.com": "Apple", "idmsa.apple.com": "Apple", "account.apple.com": "Apple",
+  "login.yahoo.com": "Yahoo", "facebook.com": "Facebook", "github.com": "GitHub" };
+// github.com is only a sign-in page on these paths (a job's GitHub link is not a wall)
+const IDP_PATHS = { "github.com": /^\/(login|signup|session|join)\b/i, "facebook.com": /^\/(login|dialog\/oauth|r\.php|reg)\b/i };
+function idpName(url) {
+  let u;
+  try { u = new URL(String(url || "")); } catch { return ""; }
+  const h = u.hostname.toLowerCase();
+  for (const [d, n] of Object.entries(IDP_HOSTS)) {
+    if (h !== d && !h.endsWith("." + d)) continue;
+    const only = IDP_PATHS[d];
+    if (!only || only.test(u.pathname)) return n;
+  }
+  return "";
+}
+const IDP_LINE = (name) => "This application asks you to sign in with your " + name + " account. I never sign in to or create "
+  + name + " accounts for you. Sign in yourself in the Browser tab, then press Continue and I will finish.";
 const SURVEY_LINE = (host) => "This employer needs a short survey on another site (" + host + "). Do it yourself, then press Continue and I will finish.";
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2338,6 +2364,12 @@ function createAgent(deps) {
         }
         try {
         const url = wc.getURL() || "";
+        const idp = idpName(url);
+        if (idp) {
+          // the person's own Google/Microsoft/Apple account: never typed into, never created here
+          dlog("identity", "step " + step + " " + hostOf(url) + " (" + idp + ")");
+          return park("person", IDP_LINE(idp), { url, pageUrl: lastOn || applyUrl, identity: idp });
+        }
         if (!onSite(hosts, url)) {
           const h = hostOf(url), fromHost = hostOf(lastOn);
           const verdict = offSiteVerdict({ host: h, fence, adopted, fromHost, clicks: aggClicks, lastClick });
@@ -4644,7 +4676,7 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
-                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, mailLinkOk, regDomain, atsFamily, SURVEY_LINE, BOARD_LINE, boardName, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
+                   optionsFor, indexFor, contextFor, trimLabel, SUBMIT_RE, ATS_HOSTS, offSiteVerdict, mailLinkOk, regDomain, atsFamily, SURVEY_LINE, BOARD_LINE, boardName, idpName, IDP_LINE, uploadsOpen, isUploadLabel, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, reviewLines, refillChanged, reviewDiff, boxRefusal, notReady, lineName, safeReply, STRATEGIES,
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, engineAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
