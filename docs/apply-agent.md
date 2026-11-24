@@ -1,5 +1,16 @@
 # The apply agent: "Assisted apply"
 
+> **Switched off for launch (2026-11-24).** The product launches with assisted apply only: the
+> person opens the application, signs in, presses Fill this page, checks it and clicks Next and
+> Submit themselves; nothing is ever submitted by the app. Everything in this document stays in
+> the repo behind ONE switch, `SJ_APPLY_AGENT=1` in the engine's environment
+> (`ui/app.py _apply_agent_enabled`, written on `<html data-apply-agent>` for the page). Off, the
+> engine refuses `/api/autoapply/agent/*`, `/api/autoapply/auto/plan` and `/auto/release` (403,
+> `apply_agent_off`), the mode reads Assisted, the Autopilot never runs, `/api/submit/decision`
+> never allows a click on Submit, and the UI hides every agent control. To work on the agent, start
+> the app with `SJ_APPLY_AGENT=1 ./shell-electron/dev-start.sh`; its tests turn it on with the
+> `apply_agent_on` fixture (tests/conftest.py), and `e2e-agent.mjs` / `e2e-apply-step.mjs` set it.
+
 > The spec for the in-app agent that applies to a job the way a person would: opens the job,
 > clicks Apply, signs in (or creates the portal account), works through every page, uploads the
 > resume, and stops at Submit. Read it before touching `extension/agent_view.js`,

@@ -34,6 +34,9 @@ from autoapply.fields import FormField
 from autoapply.history import degree_level, field_of_study, form_history, form_skills, parse_span
 from autoapply.planner import office_option, visa_detail_text
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 
 try:

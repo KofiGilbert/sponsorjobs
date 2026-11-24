@@ -22,6 +22,10 @@ from submit.drivers import _to_candidates_endpoint, driver_for, recruitee_submit
 from submit.policy import submission_policy
 from submit.rate_limit import RateLimiter
 from ui.records import CVRecords
+import pytest
+
+# The apply agent is off by default (assisted apply only); these tests cover auto-lane submits, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
 
 
 _CV = Path(tempfile.mkdtemp()) / "cv-1.pdf"

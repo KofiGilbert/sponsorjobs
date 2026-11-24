@@ -105,7 +105,9 @@ w = Watchlist(${JSON.stringify(path.join(DATA, "resume_agent.db"))}); print(w.st
 // ---- 3. the engine on the test model, then the real app ------------------------------------------
 const engineEnv = { ...process.env, RESUME_AGENT_DATA_DIR: DATA, RESUME_AGENT_DEV: "1", RESUME_AGENT_FAKE_LLM: "1",
                     RESUME_AGENT_FAKE_MAILBOX: "1", RESUME_AGENT_CRED_FILE: path.join(DATA, "credentials.env"),
-                    TAILOR_SERVER_ONLY: "1", TAILOR_PORT: String(PORT), SJ_AGENT_DEBUG: "1" };
+                    TAILOR_SERVER_ONLY: "1", TAILOR_PORT: String(PORT), SJ_AGENT_DEBUG: "1",
+                    // the apply agent is off by default (ui/app.py _apply_agent_enabled); this test drives it
+                    SJ_APPLY_AGENT: "1" };
 const engine = spawn(PY, ["-m", "ui.app"], { cwd: REPO, env: engineEnv, stdio: ["ignore", "ignore", "pipe"] });
 let engineErr = "";
 engine.stderr.on("data", (d) => { engineErr += d.toString(); });

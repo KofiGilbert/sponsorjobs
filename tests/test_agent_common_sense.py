@@ -31,6 +31,9 @@ from autoapply.asks import known_answer, neutral_option
 from autoapply.fields import FormField
 from autoapply.planner import KnownContext, plan_known, worked_here_question
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 H = {"X-Tailor-Extension": "1"}
 CO = "Globex Hale LLP"

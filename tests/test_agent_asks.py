@@ -26,6 +26,9 @@ from autoapply.fields import FormField
 from autoapply.planner import KnownContext, plan_known
 from llm.base import FakeLLM
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 H = {"X-Tailor-Extension": "1"}
 LAM_REPLY = "Yes, I will need H1B\n\nMale\n\nDon't you have this information on my profile already ?"
 LAM_CITIZENSHIP = ("For the sole purpose of determining export licensing requirements, please provide your most "

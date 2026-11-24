@@ -20,6 +20,9 @@ from autoapply import asks as AK
 from autoapply.fields import FormField
 from autoapply.planner import KnownContext, plan_known
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 H = {"X-Tailor-Extension": "1"}
 DAY = dt.date(2026, 10, 30)
 AUTH = "Are you legally authorized to work in the United States?"

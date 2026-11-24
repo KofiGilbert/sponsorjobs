@@ -32,6 +32,9 @@ from autoapply.fields import FormField, applicant_from_record
 from autoapply.planner import KnownContext, plan_known
 from brain_fixtures import LAM_SALARY, write_legacy
 
+# The apply agent is off by default (assisted apply only); these tests use its routes, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 H = {"X-Tailor-Extension": "1"}
 ROOT = Path(__file__).resolve().parents[1]
 

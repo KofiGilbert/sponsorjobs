@@ -37,6 +37,9 @@ from autoapply.asks import known_answer, prompt_text, trim_label
 from autoapply.fields import FormField
 from autoapply.planner import KnownContext, asks_worked_here, plan_known, worked_here_question
 
+# The apply agent is off by default (assisted apply only); these tests use its routes, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 H = {"X-Tailor-Extension": "1"}
 CO = "Phoenix Contact"

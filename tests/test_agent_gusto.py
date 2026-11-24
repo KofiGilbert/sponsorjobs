@@ -22,6 +22,9 @@ from autoapply.fields import FormField, resolve_plan
 from autoapply.planner import (KnownContext, generic_source, plan_known, residence_option,
                                worked_here_question)
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 HEARD = "How did you hear about this opportunity? (select all that apply) *"
 SOURCES = ["LinkedIn", "Glassdoor", "Indeed", "Facebook", "Built In Colorado", "News Article", "Conference or Meetup",
            "Gusto Blog", "Gusto Employee", "Gusto Website", "Billboard/Outdoor Ads"]

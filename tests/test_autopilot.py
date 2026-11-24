@@ -18,6 +18,9 @@ import pytest
 import ui.app as app
 from ui.records import CVRecords
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 DAY1, DAY2 = "2026-10-26", "2026-10-27"
 

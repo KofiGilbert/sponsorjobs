@@ -2046,6 +2046,10 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .bb-btn:hover { background: #2a2a2a; }
 .bb-btn:disabled { opacity: .35; cursor: default; }
 .bb-btn.bb-out { width: auto; padding: 0 10px; font-size: 12.5px; white-space: nowrap; }
+/* Assisted apply's one action on the bar (Fill this page): the bar's own green, so it reads as
+   the thing to press once a page is open. */
+.bb-btn.bb-fillhere { background: #14201a; border-color: #2c4a38; color: #b7e4c7; }
+.bb-btn.bb-fillhere:hover { background: #1b2c22; }
 .bb-url {
   flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px;
   border: 1px solid #2e2e2e; border-radius: 6px;
@@ -5303,3 +5307,10 @@ a.cv-act { display: inline-flex; align-items: center; justify-content: center; t
   padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); }
 .sa-n { color: var(--flag); white-space: nowrap; font-size: 12.5px; }
 .sa-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+/* (2026-11-24) The one apply-agent switch (ui/app.py _apply_agent_enabled, on <html
+   data-apply-agent>). Off by default: assisted apply only, so every agent control is hidden and
+   the assisted wording shows instead. */
+html:not([data-apply-agent="1"]) [data-agent-only],
+html[data-apply-agent="1"] [data-assisted-only],
+html[data-apply-agent="1"] #bbFillHere { display: none !important; }

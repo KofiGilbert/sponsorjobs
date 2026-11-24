@@ -16,6 +16,9 @@ import ui.app as app
 from agent import home
 from ui.records import CVRecords
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 DAY1 = "2026-10-26"
 
@@ -266,7 +269,7 @@ def test_go_ahead_runs_once_with_the_parsed_focus_and_count(ag):
                                      "sponsor_only": True}}]
     assert len(ag["tailored"]) == 2
     assert d["text"] == "Done. Tailored 2. 0 sent for you. 2 ready for your click in Auto-apply."
-    assert d["buttons"] == [{"id": "open_autoapply", "label": "Open Auto-apply"}]
+    assert d["buttons"] == [{"id": "open_autoapply", "label": "Open Applications"}]
     assert d["telegram"] is False
     # The plan was consumed: a second Go ahead has nothing to run.
     r = c.post("/api/agent/go", json={})
@@ -367,7 +370,7 @@ def test_status_counts_the_tiles_and_names_the_newest(ag):
                                 "Newest: ")
     assert "Data Analyst at Acme" in d["text"] and "Analyst at Gamma" in d["text"]
     assert "Zeta" not in d["text"]                              # submitted ones are counted, not listed
-    assert d["buttons"] == [{"id": "open_autoapply", "label": "Open Auto-apply"}]
+    assert d["buttons"] == [{"id": "open_autoapply", "label": "Open Applications"}]
     assert d["counts"] == {"review": 1, "waiting": 1, "needs": 1, "submitted_today": 1}
 
 

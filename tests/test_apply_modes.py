@@ -28,6 +28,9 @@ from notify import daily as DN
 from notify.alerts import NotifyState
 from notify.channel import ChannelError
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 H = {"X-Tailor-Extension": "1"}
 AUTO_URL = "https://acme.recruitee.com/o/analyst"

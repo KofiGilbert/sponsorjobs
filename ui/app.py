@@ -1828,6 +1828,26 @@ def _guard_local_and_lock():
     return None
 
 
+# Routes only a running apply agent (or Auto mode's background queue) uses to act on a site.
+# With the agent switched off (_apply_agent_enabled) the engine refuses them, so a stray agent
+# run (an older shell, a parked job picked up again after a restart) cannot act. The parked list
+# reads empty instead, so the shell's poll finds nothing to carry on with and the Applications
+# page lists those jobs as normal applications to open and fill. The one-page fill (Fill this
+# page) uses none of these.
+_AGENT_ONLY_ROUTES = ("/api/autoapply/agent/", "/api/autoapply/auto/plan", "/api/autoapply/auto/release")
+
+
+@app.before_request
+def _apply_agent_gate():
+    p = request.path or ""
+    if _apply_agent_enabled() or not any(p == r or (r.endswith("/") and p.startswith(r))
+                                         for r in _AGENT_ONLY_ROUTES):
+        return None
+    if request.method == "GET" and p == "/api/autoapply/agent/parked":
+        return jsonify({"ok": True, "parked": [], "agent": False})
+    return jsonify({"ok": False, "error": _APPLY_AGENT_OFF, "reason": "apply_agent_off"}), 403
+
+
 # ---- App Lock endpoints (a passcode for a shared machine). Reachable while locked ON PURPOSE
 # (you must be able to unlock); the sensitive ones verify the passcode inside. ----
 @app.get("/api/lock/status")
@@ -1989,7 +2009,9 @@ def lock_now():
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    # The one apply-agent switch, on the page from its first paint (<html data-apply-agent>):
+    # app.js reads it synchronously, and CSS hides every agent-only control while it is "0".
+    return render_template("index.html", apply_agent=_apply_agent_enabled())
 
 
 @app.get("/api/health")
@@ -2402,11 +2424,29 @@ def _autonomous_legacy() -> bool:
         return False
 
 
+def _apply_agent_enabled() -> bool:
+    """THE one switch for the multi-step apply agent (2026-11-24: launch with assisted apply
+    only). Off by default. Off, the app only fills the page the person has open (Fill this
+    page) and never submits anything: no agent runs, no Auto or Hybrid mode, no Autopilot, and
+    no auto-submit on the verified allowlist either. The agent's code stays in the repo;
+    engineers turn it on with ``SJ_APPLY_AGENT=1`` in the engine's environment. There is no
+    user-facing toggle. Read on every call, so a test can set it with monkeypatch."""
+    return os.environ.get("SJ_APPLY_AGENT", "").strip() == "1"
+
+
+_APPLY_AGENT_OFF = ("The apply agent is switched off in this version. Open the application, "
+                    "sign in, and press Fill this page.")
+
+
 def _apply_mode() -> str:
     """The ONE saved choice of how applications go out (autoapply/modes.py): "auto",
     "assisted" or "hybrid". An install from before the three modes has none saved, so the old
-    Autonomous submit switch decides it: on -> auto, off -> assisted."""
+    Autonomous submit switch decides it: on -> auto, off -> assisted. With the apply agent
+    switched off (``_apply_agent_enabled``) it always reads assisted; the saved choice is left
+    as it was, for when the agent is back."""
     from autoapply import modes
+    if not _apply_agent_enabled():
+        return modes.ASSISTED
     try:
         saved = _apply_mode_file().read_text(encoding="utf-8").strip()
     except OSError:
@@ -2465,7 +2505,7 @@ def _may_send_alone(lane: str, match, data: dict | None = None) -> bool:
 def _submit_driver_for(url: str):
     """The submission driver for a URL's host, but ONLY when the person has opted into
     autonomous submission. Off by default, so nothing auto-submits without consent."""
-    if not _autonomous_on():
+    if not _autonomous_on() or not _apply_agent_enabled():
         return None
     from submit import driver_for
     from submit.policy import _host
@@ -2644,11 +2684,13 @@ def submit_settings():
         "daily_cap": p["daily_cap"],
         "min_gap": p["min_gap"],
         "inbox_auto_verify": bool(p.get("inbox_auto_verify")),
-        "autopilot": bool(p.get("autopilot")),
+        "autopilot": bool(p.get("autopilot")) and _apply_agent_enabled(),
         "autopilot_per_day": clamp_per_day(p.get("autopilot_per_day")),
         "portal_accounts": _portal_accounts_on(),
         "telegram_configured": _active_channel() is not None,
         "rate": _rate_limiter().status(ts, today),
+        # The one switch (``_apply_agent_enabled``): False hides every agent control in the UI.
+        "apply_agent": _apply_agent_enabled(),
     })
 
 
@@ -2659,7 +2701,11 @@ def submit_decision():
     shell-electron/main.js before every in-app Apply, so the rule lives in ONE tested place
     (submit.policy.apply_decision): submit is clicked only on the verified AUTO allowlist."""
     from submit.policy import apply_decision
-    return jsonify(apply_decision(request.args.get("url", ""), request.args.get("page_url", "")))
+    d = apply_decision(request.args.get("url", ""), request.args.get("page_url", ""))
+    if not _apply_agent_enabled():
+        # Assisted apply only: the shell fills, the person always clicks Submit (any lane).
+        d = {**d, "click_submit": False, "lane": "assisted"}
+    return jsonify(d)
 
 
 @app.post("/api/submit/settings")
@@ -2669,6 +2715,11 @@ def submit_settings_set():
     autopilot_per_day}. autonomous, approve_all and autopilot default OFF and must be turned on
     deliberately."""
     body = dict(request.json or {})
+    if not _apply_agent_enabled():
+        # The agent's own settings are not changed while it is switched off: the saved choices
+        # wait, untouched, for when it is back (and nothing here can turn sending on).
+        for k in ("apply_mode", "autonomous", "autopilot", "autopilot_per_day", "auto_min_match"):
+            body.pop(k, None)
     mode = body.pop("apply_mode", None)
     if mode is not None:
         try:
@@ -2678,8 +2729,11 @@ def submit_settings_set():
     elif "autonomous" in body:
         _set_autonomous(bool(body["autonomous"]))
     _set_prefs(body)
-    return jsonify({"ok": True, **_prefs(), "autonomous": _autonomous_on(), "apply_mode": _apply_mode(),
-                    "auto_min_match": _auto_min_match()})
+    out = {"ok": True, **_prefs(), "autonomous": _autonomous_on(), "apply_mode": _apply_mode(),
+           "auto_min_match": _auto_min_match(), "apply_agent": _apply_agent_enabled()}
+    if not _apply_agent_enabled():
+        out["autopilot"] = False
+    return jsonify(out)
 
 
 def _notify_assisted(rec: dict, result: dict) -> None:
@@ -2926,7 +2980,9 @@ class _BatchActions:
             if (data.get("status") or "ready") == "applied":   # never re-submit (idempotent)
                 return {"ok": True, "stage": "submitted", "message": f"Already submitted: {who}."}
             url = (data.get("source_job") or {}).get("url") or ""
-            driver = driver_for(_host(url))     # approval IS the consent for THIS item
+            # approval IS the consent for THIS item, while the apply agent is on; with it off
+            # (assisted apply only) nothing is ever sent by the app, on any site
+            driver = driver_for(_host(url)) if _apply_agent_enabled() else None
             if driver is not None:
                 # Auto-lane (verified), this really submits over the sanctioned API, so it
                 # is rate-limited (daily cap + spacing). Over the limit -> queue for later.
@@ -2976,7 +3032,10 @@ class _BatchActions:
 
     def drain(self, limit: int = 5) -> int:
         """Submit rate-limit-queued auto-lane approvals whose slot has come up. Called on
-        each poll tick so a burst gets spaced out across ticks."""
+        each poll tick so a burst gets spaced out across ticks. Nothing with the apply agent
+        switched off: a queued one waits on Waiting on you for the person's own click."""
+        if not _apply_agent_enabled():
+            return 0
         recs = _records()
         try:
             queued = [r for r in recs.list(limit=200) if _record_data(r).get("queued")]
@@ -7766,6 +7825,8 @@ def _setup_selfid(f: dict) -> None:
 
 
 def _setup_apply(f: dict) -> None:
+    if not _apply_agent_enabled():          # the agent's step: nothing to change while it is off
+        return
     patch = {}
     if "daily_cap" in f:
         try:
@@ -8123,7 +8184,7 @@ def inbox_status():
         "libs": libs, "creds": creds, "token": token,
         "configured": (libs and token) or method in ("imap", "fake", "alias"),
         "creds_path": str(g._CREDS_PATH),
-        "auto_verify": bool(_prefs().get("inbox_auto_verify")),
+        "auto_verify": bool(_prefs().get("inbox_auto_verify")) and _apply_agent_enabled(),
         "query": g.DEFAULT_QUERY,
         "method": method,
         "email": address if method == "alias" else mask_email(address or ""),
@@ -19234,13 +19295,16 @@ def _autopilot_status() -> dict:
     p = _prefs()
     _ts, today = _now_ts_today()
     st = _autopilot_state(today)
-    return {"on": bool(p.get("autopilot")), "per_day": clamp_per_day(p.get("autopilot_per_day")),
+    return {"on": bool(p.get("autopilot")) and _apply_agent_enabled(),
+            "per_day": clamp_per_day(p.get("autopilot_per_day")),
             "done": int(st.get("count") or 0), "paused": st.get("paused")}
 
 
 def _autopilot_kick() -> None:
     """The notify loop's scan tick: run the Autopilot on its own thread so a multi-minute
     tailoring never holds up taps and alerts. One thread at a time."""
+    if not _apply_agent_enabled():      # assisted apply only: the Autopilot never runs
+        return
     th = _AUTOPILOT_THREAD["thread"]
     if th is not None and th.is_alive():
         return
@@ -19278,6 +19342,8 @@ def _autopilot_tick() -> dict:
     channel is active. Backs off until tomorrow on: no AI (key or connectivity), no packages
     left, or AUTOPILOT_MAX_FAILURES runs in a row that tailored nothing because of errors."""
     from autoapply.picker import clamp_per_day
+    if not _apply_agent_enabled():
+        return {"ran": False, "why": "agent_off"}
     p = _prefs()
     if not p.get("autopilot"):
         return {"ran": False, "why": "off"}
@@ -19417,6 +19483,10 @@ def _autopilot_act(data: str) -> dict:
     Review sends the batch's items one by one with the usual Approve / Skip buttons. Skip marks
     them skipped, as the in-app Skip does. A batch is handled once."""
     from submit.stages import approved_patch
+    if not _apply_agent_enabled():
+        # An old Autopilot message's buttons, tapped after the agent was switched off: nothing
+        # is approved, sent or skipped from the phone; the person decides in the app.
+        return {"message": "Open SponsorJobs to review these under Applications."}
     parts = (data or "").split(":")
     if len(parts) != 3 or parts[0] != "ap":
         return {"message": "Unrecognized action."}
@@ -19670,7 +19740,8 @@ def _agent_plan(intent: dict) -> dict:
     connected = _active_channel() is not None
     text = plan_text(n=n, titles=titles, min_fit=min_fit, auto=len(auto),
                      auto_companies=_companies(auto), auto_reason=reason, telegram=telegram,
-                     telegram_connected=connected, packages_left=left, note=note)
+                     telegram_connected=connected, packages_left=left, note=note,
+                     assisted=not _apply_agent_enabled())
     _AGENT["plan"] = {"focus": focus, "count": n, "min_fit": min_fit, "telegram": telegram,
                       "titles": titles}
     return {"text": text, "buttons": [{"id": "go", "label": "Go ahead"},
@@ -19704,7 +19775,7 @@ def _agent_status() -> dict:
                 counts["submitted_today"] += 1
     newest.sort(key=lambda x: x[0], reverse=True)
     return {"text": status_text(counts, [n for _w, n in newest]),
-            "buttons": [{"id": "open_autoapply", "label": "Open Auto-apply"}],
+            "buttons": [{"id": "open_autoapply", "label": "Open Applications"}],
             "counts": counts}
 
 
@@ -19795,9 +19866,10 @@ def agent_go():
         except Exception:               # noqa: BLE001 - it stays in To review, under Needs you
             res = {}
         (sent if res.get("stage") == "submitted" else failed).append(it)
-    text = result_text(len(tailored), len(sent))
+    agent_on = _apply_agent_enabled()
+    text = result_text(len(tailored), len(sent), assisted=not agent_on)
     out = {"ok": True, "text": text, "buttons": [{"id": "open_autoapply",
-                                                 "label": "Open Auto-apply"}],
+                                                 "label": "Open Applications"}],
            "tailored": len(tailored), "sent": len(sent), "skipped": payload.get("skipped") or [],
            "telegram": False}
     ch = _active_channel() if plan.get("telegram") else None
@@ -19811,7 +19883,9 @@ def agent_go():
             st["batches"] = dict(list(st["batches"].items())[-20:])
         _autopilot_save(st)
         try:
-            ch.send(batch_message(tailored, sent, _companies), autopilot_buttons(bid))
+            # With the apply agent off the batch buttons would do nothing (_autopilot_act), so
+            # the message goes without them: the person reviews in the app.
+            ch.send(batch_message(tailored, sent, _companies), autopilot_buttons(bid) if agent_on else None)
             out["telegram"] = True
         except Exception:               # noqa: BLE001 - the packages are queued either way
             traceback.print_exc()
@@ -19928,7 +20002,10 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
     plan = classify_record(data)
     # A job the apply agent parked (it needs the person): on Needs you, with what it needs and
     # "Answer and continue" (a question) or "Continue" (a captcha or a step on the page).
-    park = data.get("agent_park") if isinstance(data.get("agent_park"), dict) else None
+    # With the apply agent switched off, a job it parked or left at Ready to send in an earlier
+    # session is listed as a normal application to open and fill (nothing here can carry it on).
+    agent_on = _apply_agent_enabled()
+    park = data.get("agent_park") if isinstance(data.get("agent_park"), dict) and agent_on else None
     if park and st["stage"] not in ("submitted", "skipped") and park.get("state") in ("waiting", "answered"):
         waiting = park.get("state") == "waiting"
         msg = str(park.get("message") or "")
@@ -19940,7 +20017,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         park = None
         action = row_action(tile, st["reason"])
     # Left on its review page by the agent: Send (one click, also once the page is gone).
-    ready = data.get("agent_ready") if isinstance(data.get("agent_ready"), dict) else None
+    ready = data.get("agent_ready") if isinstance(data.get("agent_ready"), dict) and agent_on else None
     if ready and not park and st["stage"] == "approved":
         st = dict(st, detail="Ready to send. Press Send and I submit it, filling it in again if the page was closed.")
         action = "send"
@@ -19963,7 +20040,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         **stance,
         "match": round(match) if match is not None else None,
         "tile": tile, "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
-        "reason": st["reason"], "how": st["how"], "queued": bool(data.get("queued")),
+        "reason": st["reason"], "how": st["how"], "queued": bool(data.get("queued")) and agent_on,
         "action": action,
         "paused": ({"state": park.get("state"), "kind": park.get("kind"), "questions": park.get("questions") or [],
                     "message": park.get("message") or ""} if park else None),
@@ -19971,7 +20048,8 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         # The stored Review answers: how many, and how many deserve a look ("N to check")
         "answers_n": _ready_count(data if ready else None),
         "answers_check": int((_ready_answers(data) or {}).get("flagged") or 0) if ready else 0,
-        "lane": plan["tier"],
+        # With the apply agent off every application is the person's click (no AUTO lane)
+        "lane": plan["tier"] if agent_on else "assisted",
         # Auto mode may press Submit by itself for this one (allowlist, and the match threshold)
         "auto_send": _may_send_alone(plan["tier"], match, data),
         # (2026-11-19) Auto's best guesses on this application: "N answers need your check"
@@ -20049,6 +20127,7 @@ def autoapply_board():
         "min_fit": _aa_min_fit(),
         "autopilot": _autopilot_status(),
         "rechecking": rechecking,
+        "apply_agent": _apply_agent_enabled(),
     })
 
 

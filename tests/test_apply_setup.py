@@ -219,6 +219,7 @@ def test_a_refused_value_saves_nothing_from_its_step(app):
         lib.close()
 
 
+@pytest.mark.usefixtures("apply_agent_on")   # the "How to apply" step is the agent's
 def test_selfid_and_apply_save_into_their_stores(app):
     A, c = app
     d = _save(c, "selfid", SELFID)

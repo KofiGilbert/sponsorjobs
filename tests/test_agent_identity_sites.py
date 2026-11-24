@@ -13,6 +13,9 @@ from pathlib import Path
 
 import pytest
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 AGENT = ROOT / "shell-electron" / "agent.js"
 

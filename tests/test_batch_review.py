@@ -13,6 +13,10 @@ from notify.batch import BatchReview, batch_summary_text, item_caption
 from notify.telegram import TelegramBot
 from submit.rate_limit import RateLimiter
 from ui.records import CVRecords
+import pytest
+
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
 
 # Only these Bot API methods should ever be called — all OUTBOUND. No setWebhook / listener.
 OUTBOUND_METHODS = {"sendMessage", "sendPhoto", "sendDocument", "answerCallbackQuery", "getUpdates"}

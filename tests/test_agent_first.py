@@ -36,6 +36,9 @@ from autoapply.fields import FormField
 from autoapply.planner import KnownContext, plan_known
 from llm.base import FakeLLM
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 H = {"X-Tailor-Extension": "1"}
 TODAY = dt.date(2026, 11, 18)

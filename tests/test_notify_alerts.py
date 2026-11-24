@@ -286,6 +286,7 @@ def test_message_template_auto():
     assert alert_buttons(a, True)[0][0] == {"id": "job:apply:s1", "label": "Apply for me"}
 
 
+@pytest.mark.usefixtures("apply_agent_on")   # sending for you exists only with the agent on
 def test_can_auto_apply_follows_allowlist_and_setting(tmp_path, monkeypatch):
     import ui.app as app
     monkeypatch.setattr(app, "_AUTONOMOUS_FILE", tmp_path / "auto")

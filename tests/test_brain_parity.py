@@ -26,6 +26,9 @@ from autoapply.fields import FormField
 from autoapply.planner import KnownContext, plan_known
 from brain_fixtures import CUBA_Q, LAM_EXPORT, LAM_SALARY, PREFS, write_legacy
 
+# The apply agent is off by default (assisted apply only); these tests use its routes, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 H = {"X-Tailor-Extension": "1"}
 GENDER = ["Male", "Female", "I don't wish to answer"]
 RACE = ["Asian", "Black or African American", "White", "I don't wish to answer"]

@@ -35,6 +35,9 @@ from autoapply.brain import (STRATEGIES, SYSTEM_PROMPT, build_user_message, clas
                              estimate_cost, not_ready, parse_reply, step, unavailable_message)
 from llm.base import FakeLLM
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 APPLICANT = {"first_name": "Kofi", "email": "kofi@example.com", "phone": "555-100-2000"}
 PORTAL = {"host": "acme.wd5.myworkdayjobs.com", "email": "kofi@example.com", "password": "Zq8!kL2m9Xp#4Rt7"}

@@ -161,7 +161,9 @@ const ASK_WAIT_S = 20;
 const engineEnv = { ...process.env, RESUME_AGENT_DATA_DIR: DATA, RESUME_AGENT_DEV: "1", RESUME_AGENT_FAKE_LLM: "1",
                     RESUME_AGENT_FAKE_MAILBOX: "1", SJ_AGENT_ASK_WAIT_S: String(ASK_WAIT_S),
                     RESUME_AGENT_CRED_FILE: path.join(DATA, "credentials.env"), TAILOR_SERVER_ONLY: "1",
-                    TAILOR_SESSION_TOKEN: SESSION };
+                    TAILOR_SESSION_TOKEN: SESSION,
+                    // the apply agent is off by default (ui/app.py _apply_agent_enabled); this test drives it
+                    SJ_APPLY_AGENT: "1" };
 const engine = spawn(PY, ["-m", "ui.app"], { cwd: REPO, env: engineEnv, stdio: ["ignore", "ignore", "pipe"] });
 let engineErr = "";
 engine.stderr.on("data", (d) => { engineErr += d.toString(); });

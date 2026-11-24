@@ -24,6 +24,9 @@ from autoapply.fields import FormField
 from autoapply.planner import KnownContext, plan_known
 from llm.base import FakeLLM
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 H = {"X-Tailor-Extension": "1"}
 PAY = "What base pay are you targeting for this position?"
 USP = "Are you a U.S. person?"

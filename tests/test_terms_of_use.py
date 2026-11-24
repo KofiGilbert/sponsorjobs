@@ -18,6 +18,9 @@ from pathlib import Path
 
 import pytest
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
 INDEX = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -203,15 +206,16 @@ def test_the_memory_page_card_holds_the_switches():
 
 
 def test_the_terms_page_says_it_in_plain_words():
-    i = TERMS.index('<h2 id="applying">Applying on your behalf</h2>')
+    # (2026-11-24) Launch with assisted apply only: the app fills, the person submits.
+    i = TERMS.index('<h2 id="applying">Filling in applications</h2>')
     sec = TERMS[i:TERMS.index("<h2", i + 10)]
-    for words in ("Accept the privacy notices and terms a job site requires", "Create an account on a job site",
-                  "with your SponsorJobs email", "Fill the site's forms with the answers you saved",
-                  "never accepts marketing or cookie choices", "never solves a captcha",
-                  "without your Send", "Autonomous submit", "listed on the application before you send",
-                  "turn each of these off in the app"):
+    for words in ("press Fill", "with the answers you saved", "marks the ones it had to guess",
+                  "sign in to job sites yourself", "click Next and Submit yourself",
+                  "never submits an application for you", "never solves a captcha"):
         assert words in sec, words
-    assert '<a href="#applying">Applying on your behalf</a>' in TERMS
+    for gone in ("Auto-apply", "Autonomous submit", "Create an account on a job site"):
+        assert gone not in sec, gone
+    assert '<a href="#applying">Filling in applications</a>' in TERMS
     assert not re.search(r"[—–]", sec)
 
 

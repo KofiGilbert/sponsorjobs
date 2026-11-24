@@ -87,6 +87,7 @@ def test_empty_or_junk_url_is_never_submitted(url):
     assert apply_decision(url, url)["click_submit"] is False
 
 
+@pytest.mark.usefixtures("apply_agent_on")   # the AUTO lane is only clicked with the agent on
 def test_decision_endpoint_matches_the_policy():
     import ui.app as app
     c = app.app.test_client()
@@ -148,8 +149,9 @@ def test_old_fill_handlers_are_gone():
 # ---------------------------------------------------------------- one button, one path (app.js)
 
 def test_every_apply_button_uses_the_one_path():
-    # The package page and the Auto-apply page (its rows and drawer share aaFill) call applyInPane.
-    assert APP_JS.count("applyInPane({") == 2
+    # The package page, the Applications page (its rows and drawer share aaFill) and the Browser
+    # bar's Fill this page (assisted apply) call applyInPane.
+    assert APP_JS.count("applyInPane({") == 3
     assert "assistFill(" not in APP_JS and "assistFillCurrent(" not in APP_JS
     for gone in ("pkgAutoBtn", "pkgAutoHereBtn", "pkgAssistBtn", "pkgAssistHereBtn"):
         assert gone not in APP_JS

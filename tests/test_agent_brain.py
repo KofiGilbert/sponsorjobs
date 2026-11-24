@@ -20,6 +20,9 @@ from autoapply.brain import (SYSTEM_PROMPT, build_user_message, loop_nudges, par
 from llm.base import FakeLLM
 from submit.policy import run_allowed_hosts
 
+# The apply agent is off by default (assisted apply only); these tests cover it, so it is on here.
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
+
 APPLICANT = {"first_name": "Kofi", "last_name": "Gilbert", "full_name": "Kofi Gilbert",
              "email": "kofi@example.com", "phone": "555-100-2000", "city": "Austin"}
 PORTAL = {"host": "acme.wd5.myworkdayjobs.com", "email": "kofi@example.com", "password": "Zq8!kL2m9Xp#4Rt7"}

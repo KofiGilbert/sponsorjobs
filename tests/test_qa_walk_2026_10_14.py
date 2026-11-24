@@ -95,7 +95,7 @@ def test_back_links_name_the_page_the_rail_names():
     # (Phase 6) Your answers is part of the memory page (My profile), so a door from the page
     # itself shows no back link; the other doors name where they came from.
     assert 'origin: origin === "profile" ? "" : (origin || "autoapply")' in APP_JS
-    assert 'autoapply: ["nav.autoapply", "Auto-apply"], package: ["ans.backApp", "Application"]' in APP_JS
+    assert 'autoapply: ["nav.autoapply", "Applications"], package: ["ans.backApp", "Application"]' in APP_JS
     assert all("ans.backProfile" not in loc for loc in LOCALES.values())
 
 
