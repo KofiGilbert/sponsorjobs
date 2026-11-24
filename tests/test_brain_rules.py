@@ -203,6 +203,8 @@ def test_a_choice_never_adds_words():
         for e in out["experience"]:
             for r in e.get("roles") or []:
                 r.pop("_lead", None)
+        for e in out.get("projects") or []:
+            e.pop("_rel", None)           # the project's relevance rank, a private mark
         assert set(re.findall(r"\w+", json.dumps(out))) <= words_in, ch
 
 

@@ -1675,8 +1675,10 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
 
     # 2. PROJECTS BEFORE JOBS (Kofi, 2026-11-24): the projects past the cap are already out
     # (``_cap_projects``); next the least relevant project goes (one always stays), then project
-    # bullets down to one each, and only then an experience bullet.
-    if _drop_project(profile, cuts):
+    # bullets down to one each, and only then an experience bullet. The project is marked
+    # ``room``: when the jobs cannot use all the room it made (their material runs dry), the
+    # restore pass at the end puts it back if it fits, so the page is never left short for it.
+    if _drop_project(profile, cuts, room=True):
         return True
     if _drop_project_bullet(profile, cuts):
         return True

@@ -319,8 +319,10 @@ def test_make_room_cuts_older_material_in_kofis_order_and_can_undo():
         # The oldest role keeps two (Kofi, 2026-11-10: it used to go down to one).
         ([2, 2, 2, 2], [1, 1], 5),      # (3) skills lines beyond the minimum (4)
         ([2, 2, 2, 2], [1, 1], 4),
+        # (4) Projects before jobs (Kofi, 2026-11-24): the least relevant project, one stays.
+        ([2, 2, 2, 2], [1], 4),
     ]
-    assert len(trims) == 7 and page["summary"] == "Analyst." and len(page["experience"]) == 4
+    assert len(trims) == 8 and page["summary"] == "Analyst." and len(page["experience"]) == 4
     for u in reversed(undo):
         u()
     assert page == whole and trims == []
@@ -366,7 +368,9 @@ def test_on_a_near_full_page_the_recent_roles_still_get_three_by_trimming_older_
     assert res.trims and all(t["kind"] == "bullet" or t.get("room") for t in res.trims)
     assert all(t["section"] == "projects" or t.get("staircase") or t.get("room") for t in res.trims)
     assert all(len(p["bullets"]) >= 1 for p in res.profile_used["projects"])
-    assert len(res.profile_used["projects"]) == 2
+    # Projects go before jobs (Kofi, 2026-11-24): the least relevant project may go whole, and
+    # one always stays.
+    assert 1 <= len(res.profile_used["projects"]) <= 2
 
 
 @requires_latex
@@ -570,7 +574,11 @@ def test_a_room_cut_that_a_later_height_change_made_unnecessary_is_put_back(temp
     assert r.fill_ratio > r0.fill_ratio
     assert cut not in trims                                         # off the Put back list
     on_page = {b for p in page["projects"] for b in p["bullets"]}
-    assert cut["text"] in on_page
+    if cut["kind"] == "project":                                    # a whole project made room
+        from tailoring.assembler import entry_label
+        assert cut["label"] in {entry_label(p) for p in page["projects"]}
+    else:
+        assert cut["text"] in on_page
     assert _counts(page)[:2] == _counts(res.profile_used)[:2]       # minimums untouched
 
 
