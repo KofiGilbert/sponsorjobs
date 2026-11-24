@@ -1696,6 +1696,9 @@ class AssembleResult:
     # Figures in the tailored bullets with no origin in the person's material. Flagged
     # for the review, never a reason to fail the build (tailoring/fact_gate.py).
     fact_flags: list = field(default_factory=list)
+    # Facts the guard put back (tailoring/facts.py): a title, employer, date, location, school,
+    # degree or project name that differed from the person's own value. Logged; empty is clean.
+    fact_fixes: list = field(default_factory=list)
     # The selected, pre-tailoring material the page was built from (same roles, same bullet
     # order as ``profile_used``), so a later review can show each bullet before and after.
     source_profile: dict | None = None
@@ -2971,6 +2974,7 @@ def assemble_cv(
     skill_cap: int | None = None,
     skill_keep=(),
     role_terms: dict | None = None,
+    facts: dict | None = None,
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -2995,11 +2999,23 @@ def assemble_cv(
     the person's own bullets first, then, when ``fill_writes`` (default: ``tailor``) and a
     model are given, splits of merged bullets and bullets written from each role's own
     material, listed in ``added`` (``written``) so the person can check them.
+
+    ``facts`` is the person's own value for every job title, employer, date, location, school,
+    degree and project name (their saved profile plus their explicit edits in this chat). The
+    page always shows those values: a fact that differs is put back before rendering, and listed
+    in ``fact_fixes`` (tailoring/facts.py). Without ``facts`` the page keeps the facts it was
+    given, whatever a pass below does.
     """
 
     workdir = Path(workdir)
     preamble = extract_preamble(template_source)
     full_profile = normalize_profile(profile)  # tolerate loose LLM-drafted shapes
+    # FACTS ARE NEVER REWORDED (tailoring/facts.py): a job title, employer, dates, location,
+    # school, degree or project name on the page is the person's own value for that entry.
+    from .facts import restore_facts
+    import copy as _cp
+    fact_anchor = normalize_profile(facts) if isinstance(facts, dict) else _cp.deepcopy(full_profile)
+    fact_fixes: list = restore_facts(full_profile, fact_anchor, where="build") if facts else []
     _dedupe_entry_bullets(full_profile)      # one fact, one bullet, per entry
     # A Skills line shows skills: no degree, certification or years of experience, no "BI"
     # beside "Power BI", no "CI" and "CD" for CI/CD (tailoring/linefit.clean_skill_block).
@@ -3227,7 +3243,11 @@ def assemble_cv(
     # Whatever won must also exist under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);
     # without this the chat reported the grown page's fill while the viewer showed the first,
     # small compile (seen 2026-10-07).
-    if result and result.pdf_path and Path(result.pdf_path).stem != jobname:
+    # THE FACTS GUARD, last: whatever a pass above did, every fact on the page is the person's
+    # own value for that entry; one that differs is put back and the page compiled again.
+    late = restore_facts(used, fact_anchor, where="page")
+    fact_fixes += late
+    if late or (result and result.pdf_path and Path(result.pdf_path).stem != jobname):
         result = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
                              workdir, jobname=jobname)
 
@@ -3303,6 +3323,7 @@ def assemble_cv(
         added=added,
         bullet_notes=bullet_notes,
         origins=dict(origins),
+        fact_fixes=fact_fixes,
     )
 
 
