@@ -811,7 +811,11 @@ def freehire_employer_url_ok(row: dict) -> bool:
     if not re.match(r"^https?://", url, re.I):
         return False
     host = (urllib.parse.urlsplit(url).hostname or "").lower()
-    return bool(host) and host != "freehire.me" and not host.endswith(".freehire.me")
+    if not host or host == "freehire.me" or host.endswith(".freehire.me"):
+        return False
+    # A job board's copy (quality.is_job_board_link) is not the employer's posting either.
+    from .quality import is_job_board_link
+    return not is_job_board_link(url)
 
 
 def freehire_bulk(search="", company="", fetch=fetch_json, cap=None, visa_sponsorship=False):
