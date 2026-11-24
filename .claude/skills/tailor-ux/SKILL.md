@@ -573,6 +573,25 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   fewer than 5 skills shows a muted "Not enough in the ad to score", never a percent (Jobs detail
   too). The Browser bar button is "Autofill this page". The tiles stay for the agent only
   (`data-agent-only`). The Tracker's approved column reads "Ready to apply" and counts the same jobs.
+- 2026-11-24 (six tabs, the apply agent off): the side menu is six items, Home, Resumes, Jobs,
+  Tracker, Projects, Interview. Applications, Inbox and the live Building item are the agent's
+  (`data-agent-only`, `paintLiveNav` paints nothing while it is off) and come back with
+  SJ_APPLY_AGENT=1. No door may land on a hidden page: `navTo` maps Applications to the Tracker
+  (`navDest`), a click on the hidden nav item does the same, and every back link and chat button
+  goes through `navTo` ("Open Tracker" in the Home chat). The flow is one job at a time: on Home,
+  paste a job or pick a suggested one, tailor in the chat, press Apply at the end (the Browser tab
+  opens and autofills). Home's "Ask me to" list is ONE row, "Tailor my resume for a job I paste",
+  which readies the box for the paste instead of sending its words; a batch request typed anyway
+  gets "Paste a job here, or pick one on Home, and I will tailor your resume for it." in the
+  assistant chat and runs nothing; a posting pasted in that chat starts its tailoring.
+  "Continue tailoring" is the only way back to an unfinished resume chat, so it lists every one
+  (no cap). Resumes is templates and resumes only: the follow-up banner left (follow-up dates
+  live on Tracker cards; the per-row "Follow up due" stays). Forms get the person's own email;
+  the Settings Email block (the SponsorJobs address) is the agent's. Settings, Applying shows in
+  both modes: Your answers and Apply setup rows (ghost Open, the Data & privacy row grammar), and,
+  only when that mailbox has mail, "Mail to your SponsorJobs address" (the message count) which
+  opens the old Inbox read only, without the address line or Get an address, under a `.tpl-back`
+  named for where it came from (Settings, or Tracker from a card's "N messages").
 - 2026-11-24 (Tracker, "just learn from Jira"; the owner's Jira board screenshot is the reference):
   the Tracker is a Jira-style board. Top to bottom: the title with ONE quiet numbers line under it
   ("5 applied · 1 interview · 0 offers · 5 of [10] this week", the goal editable in place; no tiles,

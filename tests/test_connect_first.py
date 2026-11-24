@@ -10,9 +10,15 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
 import ui.app as app
 from agent import home
 from test_home_agent import FakeChannel, _ask, ag  # noqa: F401  (ag is the shared fixture)
+
+# Find-and-apply plans and the SponsorJobs address are the apply agent's (six tabs, 2026-11-24):
+# with it off a batch request runs nothing and forms use the own email (tests/test_six_tabs.py).
+pytestmark = pytest.mark.usefixtures("apply_agent_on")
 
 ROOT = Path(__file__).resolve().parents[1]
 REPLIES: list[str] = []

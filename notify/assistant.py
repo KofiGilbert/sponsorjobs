@@ -29,17 +29,40 @@ from autoapply import eeo as EEO
 from autoapply.answers import normalize
 
 WHERE_ANSWERS = "Applications, Your answers"
+# (2026-11-24, six tabs) With the apply agent off the Applications page is hidden and Your answers
+# opens from Settings, Applying. Every text below comes in both versions; ui/app.py picks one by
+# _apply_agent_enabled() (``assisted`` = the agent off).
+WHERE_ANSWERS_ASSISTED = "Settings, Your answers"
 WHERE_PROFILE = "My profile"
+
+
+def where_answers(assisted: bool = False) -> str:
+    return WHERE_ANSWERS_ASSISTED if assisted else WHERE_ANSWERS
+
+
 # What the reply says in place of a claim the chat cannot keep.
-POINTER = ("I can't keep details typed in this chat. Send your resume here as a file and SponsorJobs "
-           f"imports it, or add details in SponsorJobs under {WHERE_PROFILE}. Form answers go under "
-           f"{WHERE_ANSWERS}.")
-EEO_POINTER = ("I can't keep form answers from this chat. To use these on applications, open "
-               f"SponsorJobs and go to {WHERE_ANSWERS}.")
+def pointer(assisted: bool = False) -> str:
+    return ("I can't keep details typed in this chat. Send your resume here as a file and SponsorJobs "
+            f"imports it, or add details in SponsorJobs under {WHERE_PROFILE}. Form answers go under "
+            f"{where_answers(assisted)}.")
+
+
+def eeo_pointer(assisted: bool = False) -> str:
+    return ("I can't keep form answers from this chat. To use these on applications, open "
+            f"SponsorJobs and go to {where_answers(assisted)}.")
+
+
+POINTER = pointer()
+EEO_POINTER = eeo_pointer()
 FALLBACK = ("I can help with your applications here. Send /list for what is waiting, or /help "
             "for the commands.")
 
-SYSTEM = (
+def system(assisted: bool = False) -> str:
+    """The assistant's instructions, naming where form answers live in this mode."""
+    return _SYSTEM.replace("{where_answers}", where_answers(assisted))
+
+
+_SYSTEM = (
     "You are the SponsorJobs assistant in the person's Telegram chat. SponsorJobs is a desktop "
     "app on their computer: it finds jobs at companies with a visa sponsorship record, tailors "
     "their resume to each job, drafts cover letters, and applies or helps them apply.\n"
@@ -51,7 +74,7 @@ SYSTEM = (
     "2. When the person types resume details (roles, schools, skills, dates), tell them to send "
     f"their resume here as a file, or to add the details in SponsorJobs under {WHERE_PROFILE}. When "
     "they give form answers (salary, start date, work authorization, demographic questions), tell "
-    f"them to add them under {WHERE_ANSWERS}.\n"
+    "them to add them under {where_answers}.\n"
     "3. Never start a resume interview and never ask for their background: the app already has "
     "what is listed below. If something is missing there, say where in the app to add it.\n"
     "4. Never invent facts about the person, their applications or the app. If you do not know, "
@@ -63,6 +86,7 @@ SYSTEM = (
     "6. Commands they can send: /list, /approve <id>, /status <id>, /stop, /resume, /skip, /help.\n"
     "7. Use plain words and commas. No em or en dashes. Say 'resume', never 'CV'."
 )
+SYSTEM = system()
 
 
 # --------------------------------------------------------------------------- the summary
@@ -256,7 +280,7 @@ def claims_a_save(text: str) -> bool:
     return any(_CLAIM.search(s) and not _NEG.search(s) for s in _SENT.split(str(text or "")) if s.strip())
 
 
-def honest(reply: str) -> str:
+def honest(reply: str, assisted: bool = False) -> str:
     """The model's reply without any sentence that claims a save the chat never made; when one
     was dropped, the reply says where those details really go. Never empty."""
     kept, dropped = [], False
@@ -269,5 +293,5 @@ def honest(reply: str) -> str:
         kept.append(s.strip())
     out = " ".join(kept).strip()
     if dropped:
-        out = (out + " " + POINTER).strip()
+        out = (out + " " + pointer(assisted)).strip()
     return out or FALLBACK

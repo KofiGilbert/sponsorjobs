@@ -2796,17 +2796,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .cv-stage-offer { color: #12b76a; background: var(--good-soft); border-color: color-mix(in srgb, #12b76a 35%, transparent); }
 .cv-stage-rejected { color: var(--muted); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 
-/* Follow-up nudge banner above the applications list. */
-.fu-banner { margin: 2px 0 12px; padding: 11px 14px; border: 1px solid color-mix(in srgb, var(--flag) 30%, transparent);
-  background: var(--flag-soft); border-radius: var(--r); }
-.fu-lead { font-size: 12.5px; color: var(--ink-2); display: flex; align-items: center; gap: 8px; }
-.fu-lead b { color: var(--ink); }
-.fu-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--flag); }
-.fu-list { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
-.fu-item { font-size: 12px; padding: 3px 10px; border-radius: var(--r-pill); border: 1px solid var(--border);
-  background: var(--surface); color: var(--ink-2); cursor: pointer; }
-.fu-item:hover { border-color: var(--border-strong); color: var(--ink); }
-.fu-co { color: var(--muted); }
 .cv-row .cv-actions { position: static; top: auto; right: auto; opacity: 0; }
 .cv-row:hover .cv-actions, .cv-row:focus-within .cv-actions { opacity: 1; }
 .cv-row .cv-rename { font-size: 13.5px; font-weight: 600; }

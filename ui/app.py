@@ -1409,12 +1409,14 @@ def _annalisa_reply(text: str) -> str:
             palace.remember_turn("user", text)
         except Exception:      # noqa: BLE001
             history = []
+    assisted = not _apply_agent_enabled()     # where Your answers lives: Settings with the agent off
     if AS.carries_eeo(text):
-        reply = AS.EEO_POINTER
+        reply = AS.eeo_pointer(assisted)
     else:
         try:
             user = AS.build_user(_assistant_summary(), AS.scrub_history(history), text)
-            reply = AS.honest(str(_make_llm().app_assistant(AS.SYSTEM, user) or ""))
+            reply = AS.honest(str(_make_llm().app_assistant(AS.system(assisted), user) or ""),
+                              assisted=assisted)
         except Exception as exc:   # noqa: BLE001 - no key, offline: help instead of a stack trace
             traceback.print_exc()
             # OUR AI being down is said plainly (the same words as the app), never as "help".
@@ -6317,7 +6319,8 @@ def _telegram_file_import(meta: dict, blob: bytes) -> str:
         first = str(missing[0].get("q") or "").strip()
         msg += (f" It still needs {_plural(len(missing), 'detail')}"
                 + (f", like {first}" if first else "")
-                + ": open SponsorJobs, Applications, Add the details to finish.")
+                + (": open SponsorJobs, Applications, Add the details to finish." if _apply_agent_enabled()
+                   else ": open SponsorJobs, My profile, to add them."))
     return msg
 
 
@@ -7595,7 +7598,9 @@ def _setup_payload() -> dict:
             "linkedin": link("linkedin", "linkedin"), "github": link("github", "github"),
             "website": link("blog", "website"),
             "none": {"linkedin": "linkedin" in declined, "github": "github" in declined, "website": "blog" in declined},
-            "alias": _mail_alias(), "apply_with_alias": bool(p.get("apply_with_alias", True)),
+            # "Apply with my SponsorJobs address" is the agent's: off, forms use the own email.
+            "alias": _mail_alias() if _apply_agent_enabled() else "",
+            "apply_with_alias": bool(p.get("apply_with_alias", True)),
         },
         "workauth": {
             "work_auth": wa,
@@ -8219,13 +8224,19 @@ def _mail_alias() -> str:
 
 
 def _application_email() -> str:
-    """The e-mail the agent applies WITH: the SponsorJobs alias when the person took one and left
-    "apply with it" on (docs/mail-alias.md: the site's codes and links reach the agent, recruiters'
-    replies reach the real inbox), else the profile's own address."""
+    """The e-mail forms get. With the apply agent on: the SponsorJobs alias when the person took
+    one and left "apply with it" on (docs/mail-alias.md: the site's codes and links reach the
+    agent, recruiters' replies reach the real inbox), else the profile's own address. With the
+    agent off (assisted apply, the default since 2026-11-24) ALWAYS the profile's own address:
+    the person checks and submits every form themselves, so the employer's mail must reach them
+    directly. The alias and its mail are kept untouched for when the agent is back."""
+    own = str((_saved_identity() or {}).get("email") or "").strip()
+    if not _apply_agent_enabled():
+        return own
     alias = _mail_alias()
     if alias and _prefs().get("apply_with_alias", True):
         return alias
-    return str((_saved_identity() or {}).get("email") or "").strip()
+    return own
 
 
 _RELAY = {"box": None, "alias": ""}      # one RelayMailbox per alias, so its cursor persists
@@ -14368,7 +14379,8 @@ def _notify_tick(scan: bool = False) -> dict:
             except Exception:   # noqa: BLE001 - alerts are best-effort
                 traceback.print_exc()
         out = _notify_hub().tick(ch, datetime.now().astimezone(), _can_auto_apply,
-                                 records_fn=_notify_records, site_name_fn=_site_name)
+                                 records_fn=_notify_records, site_name_fn=_site_name,
+                                 assisted=not _apply_agent_enabled())
         if out.get("error") != "no_owner":            # fail-closed: an own bot with no owner gets nothing
             out["ready_sent"] = _ready_notice_flush(ch)
         return out
@@ -15071,7 +15083,7 @@ def autoapply_plan():
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
     applicant = _applicant_for(prof)                     # city, state, ZIP and country from memory too
     if _application_email():
-        applicant["email"] = _application_email()       # the alias, when the person took one
+        applicant["email"] = _application_email()       # the alias only with the agent on
     resume = _resume_upload_path(rec) if rec else ""   # named after the person, not cv-<id>.pdf
     letter = _cover_upload_path(rec) if rec else ""    # the cover letter drafted for this job
     # The person's own answers first (work authorization, the answer library, this record's
@@ -16077,6 +16089,7 @@ def _late_save(row: dict, picks: dict) -> str | None:
     by its question only, never its value (it does not travel back through the broker). None
     when nothing could be saved."""
     from autoapply import asks as AK
+    from notify import assistant as AS
     items = row["items"]
     saved = []
     lib = _answer_lib()
@@ -16113,7 +16126,8 @@ def _late_save(row: dict, picks: dict) -> str | None:
             if job else " That application already stopped, so these were not used on it.")
     if left:
         msg += " Not saved yet: " + "; ".join(name(it["question"]) for it in left) + "."
-    msg += " You can see and change your answers in SponsorJobs, Applications, Your answers."
+    msg += (" You can see and change your answers in SponsorJobs, "
+            + AS.where_answers(not _apply_agent_enabled()) + ".")
     return AK.fit_text(msg)
 
 
@@ -18093,7 +18107,7 @@ def autoapply_agent_step():
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
     applicant = _applicant_for(prof)                     # city, state, ZIP and country from memory too
     if _application_email():
-        applicant["email"] = _application_email()       # the alias, when the person took one
+        applicant["email"] = _application_email()       # the alias only with the agent on
     portal = _portal_account(_host(url))
     placeholders, values = _agent_placeholders(applicant, prof, portal)
     # A one-time code the shell took from the person's own mailbox (inbox/await): typed by the
@@ -19538,7 +19552,7 @@ def _autopilot_act(data: str) -> dict:
     if not _apply_agent_enabled():
         # An old Autopilot message's buttons, tapped after the agent was switched off: nothing
         # is approved, sent or skipped from the phone; the person decides in the app.
-        return {"message": "Open SponsorJobs to review these under Applications."}
+        return {"message": "Open SponsorJobs to review these in the Tracker."}
     parts = (data or "").split(":")
     if len(parts) != 3 or parts[0] != "ap":
         return {"message": "Unrecognized action."}
@@ -19655,6 +19669,8 @@ def _integration_on(name: str) -> bool:
 
 def _agent_missing(intent: dict) -> str:
     from agent.home import needs
+    if not _apply_agent_enabled() and intent.get("intent") in ("find_and_apply", "email"):
+        return ""     # agent off: no batch runs and no SponsorJobs address, so nothing to connect
     return next((n for n in needs(intent) if not _integration_on(n)), "")
 
 
@@ -19671,14 +19687,22 @@ def _agent_integration_answer(intent: dict, just: bool) -> dict:
         return {"text": github_text(login, names, ok=bool(got.get("ok")), just=just),
                 "buttons": [{"id": "open_projects", "label": "Open Projects"}]}
     if kind == "email":
-        return {"text": email_text(_mail_alias(), just=just), "buttons": []}
+        return {"text": email_text(_mail_alias(), just=just, assisted=not _apply_agent_enabled()),
+                "buttons": []}
     return {"text": extension_text(just=just), "buttons": []}
 
 
 def _agent_answer(intent: dict) -> dict:
     """The answer to a request whose integrations are all connected."""
-    from agent.home import empty_intent, other_text, tailor_one_text
+    from agent.home import empty_intent, other_text, single_job_text, tailor_one_text
     kind = intent.get("intent")
+    assisted = not _apply_agent_enabled()
+    if kind == "find_and_apply" and assisted:
+        # (2026-11-24, six tabs) Agent off: Home tailors one job at a time. A batch request runs
+        # nothing and keeps no plan, so Go ahead has nothing to run either.
+        _AGENT["plan"] = None
+        _AGENT["intent"] = None
+        return {"text": single_job_text(), "buttons": []}
     if kind == "find_and_apply":
         _AGENT["intent"] = intent
         return _agent_plan(intent)
@@ -19687,10 +19711,12 @@ def _agent_answer(intent: dict) -> dict:
     if kind in ("github", "email", "extension"):
         return _agent_integration_answer(intent, just=False)
     if kind == "tailor_one":
+        if assisted:
+            return {"text": tailor_one_text(intent, assisted=True), "buttons": []}
         _AGENT["intent"] = {**empty_intent("find_and_apply"), "titles": intent.get("titles") or []}
         return {"text": tailor_one_text(intent),
                 "buttons": [{"id": "find", "label": "Find matching roles"}]}
-    return {"text": other_text(), "buttons": []}
+    return {"text": other_text(assisted=assisted), "buttons": []}
 
 
 def _agent_hold(text: str, intent: dict, need: str) -> dict:
@@ -19831,9 +19857,11 @@ def _agent_status() -> dict:
     newest.sort(key=lambda x: x[0], reverse=True)
     if not assisted:
         counts.pop("ready")
+    # Agent off, the Applications page is hidden: ready to apply and applied live on the Tracker.
+    button = ({"id": "open_tracker", "label": "Open Tracker"} if assisted
+              else {"id": "open_autoapply", "label": "Open Applications"})
     return {"text": status_text(counts, [n for _w, n in newest], assisted=assisted),
-            "buttons": [{"id": "open_autoapply", "label": "Open Applications"}],
-            "counts": counts}
+            "buttons": [button], "counts": counts}
 
 
 @app.post("/api/agent/ask")
@@ -19898,7 +19926,11 @@ def agent_go():
     run lock. Then send only what the app's own gate allows (verified allowlist AND autonomous
     on) through the same approve as Approve all; everything else waits in To review. With
     Telegram asked for and connected, one message with the Autopilot batch buttons."""
-    from agent.home import batch_message, result_text
+    from agent.home import batch_message, result_text, single_job_text
+    if not _apply_agent_enabled():
+        # Agent off: no batch ever runs from Home (a stale plan from before the switch included).
+        _AGENT["plan"] = None
+        return jsonify({"ok": False, "batch": "off", "text": single_job_text(), "buttons": []})
     plan = _AGENT.get("plan")
     if not plan:
         return jsonify({"error": "There is no plan to run. Tell me what to find first."}), 400
@@ -20676,7 +20708,10 @@ def tracker_continue():
             recent.append(x)
         else:
             going.append(x)
-    return jsonify({"count": len(going), "in_progress": going[:6], "recent": recent[:3]})
+    # Every unfinished one is listed (2026-11-24): with the Building sidebar item gone (agent
+    # off), this list is the only way back into a resume chat, so none may be cut off. The list
+    # scrolls inside itself on Home.
+    return jsonify({"count": len(going), "in_progress": going, "recent": recent[:3]})
 
 
 def _jobs_mark(page_rows: list[dict]) -> list[dict]:

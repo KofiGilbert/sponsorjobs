@@ -337,14 +337,17 @@ def alert_buttons(alert: dict, can_apply: bool) -> list:
             [{"id": f"job:fewer:{sid}", "label": "Fewer like this"}]]
 
 
-def digest_text(d: dict) -> str:
+def digest_text(d: dict, assisted: bool = False) -> str:
+    """The away digest. ``assisted`` (the apply agent off): the Applications page is hidden, so
+    the jobs to finish are on the Tracker, in Ready to apply."""
     parts = [f"tailored {d['tailored']}"]
     if d.get("submitted"):
         sites = ", ".join(d.get("submitted_sites") or [])
         parts.append(f"submitted {d['submitted']}" + (f" ({sites})" if sites else ""))
     if d.get("waiting"):
         parts.append(f"{d['waiting']} ready for you to apply")
-    tail = (" Open SponsorJobs and go to Applications to finish them."
+    where = "the Tracker" if assisted else "Applications"
+    tail = (f" Open SponsorJobs and go to {where} to finish them."
             if d.get("waiting") else "")
     return "While you were away: " + ", ".join(parts) + "." + tail
 
