@@ -160,7 +160,8 @@ class NotifyHub:
         return {"handled": handled, "results": results}
 
     # -- outbound ---------------------------------------------------------------- #
-    def send_digest(self, channel, records, now: datetime, site_name_fn=None) -> str:
+    def send_digest(self, channel, records, now: datetime, site_name_fn=None,
+                    assisted: bool = False) -> str:
         """The away digest. Returns what happened: sent / wait / reset / none / off / quiet."""
         st = self.state.load()
         prefs = self.state.prefs()
@@ -186,12 +187,12 @@ class NotifyHub:
         local = now.astimezone()
         if in_quiet_hours(local.hour, prefs["quiet_start"], prefs["quiet_end"]):
             return "quiet"
-        channel.send(digest_text(act))
+        channel.send(digest_text(act, assisted=assisted))
         self.state.set("last_digest_at", now_utc.isoformat())
         return "sent"
 
     def tick(self, channel, now: datetime, can_apply_fn, records_fn=None,
-             site_name_fn=None) -> dict:
+             site_name_fn=None, assisted: bool = False) -> dict:
         if channel is None:
             return {"ok": False, "channel": "none"}
         out = {"ok": True, "channel": getattr(channel, "name", "?")}
@@ -204,7 +205,8 @@ class NotifyHub:
             out["alerts_sent"], out["send_error"] = 0, exc.code
         if records_fn is not None:
             try:
-                out["digest"] = self.send_digest(channel, records_fn(), now, site_name_fn)
+                out["digest"] = self.send_digest(channel, records_fn(), now, site_name_fn,
+                                                 assisted=assisted)
             except ChannelError as exc:
                 out["digest"] = f"error: {exc.code}"
         return out

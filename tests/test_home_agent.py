@@ -404,8 +404,14 @@ def test_texts_have_no_dashes_and_say_resume():
         assert "CV" not in t, t
 
 
+def _page() -> str:
+    """index.html as the engine renders it (the agent is on in this file): the Home list and the
+    box's hint are chosen by the apply-agent switch at render time."""
+    return app.app.test_client().get("/").get_data(as_text=True)
+
+
 def test_ui_source_has_the_box_the_pills_and_the_strings():
-    html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    html = _page()
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     css = (ROOT / "ui" / "static" / "styles.css").read_text(encoding="utf-8")
     assert 'placeholder="Paste a job description, or tell me what to do..."' in html
@@ -453,7 +459,7 @@ def test_plan_asks_for_missing_hard_details_and_soft_gaps_never_stop_it(ag, monk
 # --- the suggestion list under the Home box (replaced the Try pills, 2026-10-27) ----------------
 
 def test_home_box_has_a_suggestion_list_not_try_pills():
-    html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    html = _page()
     css = (ROOT / "ui" / "static" / "styles.css").read_text(encoding="utf-8")
     assert 'id="homeTry"' not in html and "home-pill" not in html
     assert ".home-pill" not in css and ".home-try" not in css

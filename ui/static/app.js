@@ -211,6 +211,9 @@
   function paintLiveNav(st) {
     const host = $("#liveNav");
     if (!host) return;
+    // (2026-11-24, six tabs) The Building item is the agent's: with it off the sidebar has six
+    // items, and an unfinished resume is reopened from Home's "Continue tailoring" list.
+    if (!APPLY_AGENT) { host.hidden = true; host.innerHTML = ""; return; }
     // Saved (phase "done"): the resume is in Resumes now, not in progress.
     if (!st || !(st.active || st.phase) || st.phase === "done") { host.hidden = true; host.innerHTML = ""; return; }
     const who = [st.role, st.company].filter(Boolean).join(" · ") || "Untitled Resume";
@@ -248,7 +251,7 @@
      marks the drop slot; folder headers highlight as targets; the drop settles
      fast. Rename avoids the double-click-opens trap: pencil, F2, or the card
      menu, never a timing-sensitive click. */
-  let CV_RECS = [], CV_FOLDERS = [], CV_TEMPLATES = [], CV_FOLLOWUPS = [];
+  let CV_RECS = [], CV_FOLDERS = [], CV_TEMPLATES = [];
   const cvSortKey = (r) => (typeof r.sort === "number" ? r.sort : -r.id);
 
   const cvsTplCard = (t) => `<button class="cvs-tpl" data-use="${esc(t.name)}" type="button" title="${esc(t.best_for || t.display_name)}">
@@ -273,12 +276,11 @@
   async function loadCvs() {
     const root = $("#cvManager");
     try {
-      const [r, tpl, f, fu] = await Promise.all([
-        api("/api/records"), api("/api/templates"), api("/api/folders"),
-        api("/api/followups").catch(() => ({ due: [] }))]);
+      // (2026-11-24) Resumes is templates and the person's resumes only. The "worth a quick
+      // follow-up" banner left: follow-up dates live on the Tracker's cards.
+      const [r, tpl, f] = await Promise.all([api("/api/records"), api("/api/templates"), api("/api/folders")]);
       CV_RECS = r.records || [];
       CV_FOLDERS = f.folders || [];   // load saved folders so the organizer actually works
-      CV_FOLLOWUPS = fu.due || [];
       renderCvsTemplates(tpl.templates || []);
     } catch {
       root.innerHTML = `<div class="empty">Couldn't load your applications, the SponsorJobs app may have stopped. <b>Reload</b> to retry.</div>`;
@@ -340,19 +342,6 @@
     renderCvManager();
   }
 
-  // A gentle, honest nudge above the list: applications you applied to that are due for a check-in.
-  // It never messages anyone, it just reminds you; clicking one opens that application.
-  function followupBannerHTML() {
-    const due = CV_FOLLOWUPS || [];
-    if (!due.length || CV_QUERY) return "";
-    const items = due.slice(0, 6).map(f =>
-      `<button class="fu-item" data-fu="${f.id}" type="button">${esc(f.role)}${f.company ? ` <span class="fu-co">at ${esc(f.company)}</span>` : ""}</button>`).join("");
-    const n = due.length;
-    return `<div class="fu-banner"><div class="fu-lead"><span class="fu-dot"></span>`
-      + `<b>${n} application${n > 1 ? "s" : ""}</b> ${n > 1 ? "are" : "is"} worth a quick follow-up</div>`
-      + `<div class="fu-list">${items}</div></div>`;
-  }
-
   let CV_EXPANDED = false, CV_QUERY = "";
   function renderCvManager() {
     const root = $("#cvManager");
@@ -394,8 +383,7 @@
     const LIMIT = 10;
     const truncate = !CV_QUERY && !CV_EXPANDED && recs.length > LIMIT;
     const shown = truncate ? recs.slice(0, LIMIT) : recs;
-    root.innerHTML = followupBannerHTML()
-      + `<section class="cvf" data-folder=""><div class="cv-grid">${shown.map(cvCardHTML).join("")}</div></section>`;
+    root.innerHTML = `<section class="cvf" data-folder=""><div class="cv-grid">${shown.map(cvCardHTML).join("")}</div></section>`;
     if (more) {
       if (!CV_QUERY && recs.length > LIMIT) {
         more.hidden = false;
@@ -498,8 +486,6 @@
       sel.addEventListener("click", (e) => e.stopPropagation());   // don't open the package
       sel.addEventListener("change", (e) => setCvStage(sel.dataset.id, e.target.value));
     });
-    root.querySelectorAll(".fu-item").forEach(b =>
-      b.addEventListener("click", () => openPackage(b.dataset.fu)));
     wireCvDrag(root);
   }
 
@@ -711,7 +697,17 @@
       if (!list) return;
       list.hidden = true; box.setAttribute("aria-expanded", "false"); setActive(-1);
     };
-    const pick = (i) => { box.value = rows[i].textContent.trim(); closeList(); sync(); start(); };
+    const pick = (i) => {
+      // Agent off the list has one row, "Tailor my resume for a job I paste": it readies the box
+      // for the paste (one line in it says what to paste) instead of sending its own words.
+      if (rows[i].hasAttribute("data-sug-paste")) {
+        closeList();
+        box.placeholder = sjT("home.pasteHere", "Paste the job description or a link here.");
+        box.focus();
+        return;
+      }
+      box.value = rows[i].textContent.trim(); closeList(); sync(); start();
+    };
     rows.forEach((r, i) => {
       r.addEventListener("mousedown", (e) => e.preventDefault());   // keep focus, so blur does not close it first
       r.addEventListener("mouseenter", () => setActive(i));
@@ -999,7 +995,8 @@
     const lbl = $("#pkgBackLbl");
     // The back link names the page it returns to, as the sidebar names it (the rail says Home).
     if (lbl) lbl.textContent = PKG_ORIGIN === "cvs" ? T("nav.cvs", "Resumes")
-      : PKG_ORIGIN === "autoapply" ? T("nav.autoapply", "Applications") : "Home";
+      : PKG_ORIGIN === "autoapply" ? T("nav.autoapply", "Applications")
+      : PKG_ORIGIN === "tracker" ? T("nav.tracker", "Tracker") : "Home";
     PKG_ID = id; showView("package"); loadPackage(id);
   }
 
@@ -1169,7 +1166,8 @@
 
   $("#pkgBack").addEventListener("click", () => {
     if (PKG_ORIGIN === "cvs") { loadCvs(); showView("cvs"); }
-    else if (PKG_ORIGIN === "autoapply") { loadAutoApply(); showView("autoapply"); }
+    else if (PKG_ORIGIN === "autoapply") navTo("autoapply");   // agent off, it lands on the Tracker
+    else if (PKG_ORIGIN === "tracker") navTo("tracker");
     else { loadDashboard(); showView("dashboard"); }
   });
   $("#pkgExport").addEventListener("click", () => { if (PKG_ID) window.location = `/api/record/${PKG_ID}/export`; });
@@ -3045,9 +3043,15 @@
   // Review page folded into Auto-apply (2026-10), so an old "review" link (a stale button, a
   // notification, a saved deep link) opens Auto-apply on its To review tile.
   const NAV_MOVED = { review: ["autoapply", "review"] };
+  // (2026-11-24, six tabs) With the apply agent off the sidebar has six items (Home, Resumes,
+  // Jobs, Tracker, Projects, Interview). A door to one of the agent's pages still lands somewhere
+  // real: Applications opens the Tracker (ready to apply and applied live there); the Inbox opens
+  // read only, with a back link to where it was opened from (Settings or the Tracker).
+  const navDest = (dest) => (!APPLY_AGENT && dest === "autoapply" ? "tracker" : dest);
   function navTo(dest, tile) {
     const moved = NAV_MOVED[dest];
     if (moved) { dest = moved[0]; tile = tile || moved[1]; }
+    dest = navDest(dest);
     if (dest === "autoapply" && tile) AA_WANT = tile;
     document.querySelector(`.nav-item[data-nav="${dest}"]`)?.click();
   }
@@ -4593,7 +4597,15 @@
     const val = composerInput.value.trim();
     if (!val) return;
     composerInput.value = ""; autoGrow();
-    if (AGENT.on) { agentAsk(val); return; }       // assistant mode: not a resume-session turn
+    if (AGENT.on) {                                // assistant mode: not a resume-session turn
+      // A posting or a link pasted here starts its tailoring, as it does in the Home box (the
+      // assistant says "Paste a job here"); before, the server's {kind: "jd"} answer was dropped.
+      agentAsk(val).then(r => {
+        if (!r || r.kind === "agent") return;
+        openBuilder(); $("#jdInput").value = val; $("#jdStart").click();
+      });
+      return;
+    }
     if (applyLinkReply(val)) return;               // the link Apply asked for
     sendTurn(val, esc(val).replace(/\n/g, "<br>"));
   });
@@ -4621,9 +4633,12 @@
     $("#steps").hidden = on;
     $("#builderTpl").hidden = true;
     const sub = view.querySelector(".chat-head-sub");
-    if (sub) sub.textContent = on ? agentT("agent.sub", "Your assistant. Ask for a search, a resume, or an update.")
+    // Agent off, the assistant tailors one job at a time: no searches or batch runs to offer.
+    if (sub) sub.textContent = on ? (APPLY_AGENT ? agentT("agent.sub", "Your assistant. Ask for a search, a resume, or an update.")
+                                                 : agentT("agent.subA", "Paste a job and I will tailor your resume for it."))
                                   : BUILDER_WORDS.sub;
-    composerInput.placeholder = on ? agentT("agent.placeholder", "Ask for a search, a resume, or an update.")
+    composerInput.placeholder = on ? (APPLY_AGENT ? agentT("agent.placeholder", "Ask for a search, a resume, or an update.")
+                                                  : agentT("agent.placeholderA", "Paste a job description or a link."))
                                    : BUILDER_WORDS.placeholder;
     $("#uploadBtn").hidden = on;
   }
@@ -4644,6 +4659,7 @@
     const wrap = el("div", "agent-acts");
     const labels = { go: agentT("agent.go", "Go ahead"), change: agentT("agent.change", "Change"),
                      open_autoapply: agentT("agent.open", "Open Applications"),
+                     open_tracker: agentT("agent.openTracker", "Open Tracker"),
                      find: agentT("agent.find", "Find matching roles"),
                      add_resume: agentT("agent.addResume", "Add my resume"),
                      add_details: agentT("agent.addDetails", "Add the details"),
@@ -4669,8 +4685,8 @@
     } else if (id === "change") {
       bubble("agent", esc(agentT("agent.changeQ", "What should I change? The titles, how many, or where.")));
       AGENT.change = true; composerInput.focus();
-    } else if (id === "open_autoapply") {
-      document.querySelector('[data-nav="autoapply"]')?.click();
+    } else if (id === "open_autoapply" || id === "open_tracker") {
+      navTo(id === "open_tracker" ? "tracker" : "autoapply");   // agent off, both land on the Tracker
     } else if (id === "add_resume") {
       document.querySelector('[data-nav="cvs"]')?.click();
     } else if (id === "add_details") {
@@ -5384,7 +5400,7 @@
     if (o === "package") showView("package");
     else if (o === "builder") showView("builder");
     else if (o === "settings") { showView("dashboard"); loadDashboard(); openSettings(); }
-    else document.querySelector('[data-nav="autoapply"]')?.click();
+    else navTo("autoapply");   // agent off, navTo lands on the Tracker
   });
   $("#memJump")?.addEventListener("click", e => {
     const b = e.target.closest("[data-jump-to]");
@@ -5410,13 +5426,16 @@
   const SU_LEDE = {
     contact: ["setup.l.contact", "From your resume. Check it once and every form gets the same details."],
     workauth: ["setup.l.workauth", "Forms ask this a hundred ways. Every one gets the same answer."],
-    wants: ["setup.l.wants", "Tailor & queue picks roles by your titles and places, and skips the companies you name."],
+    // Tailor & queue is the agent's (on the hidden Applications page while it is off).
+    wants: APPLY_AGENT ? ["setup.l.wants", "Tailor & queue picks roles by your titles and places, and skips the companies you name."]
+                       : ["setup.l.wantsA", "Forms ask what you want. Every one gets the same answer."],
     forms: ["setup.l.forms", "Questions most forms ask. Leave any blank and I ask you when a form needs it."],
     selfid: ["setup.l.selfid", "Only you see these, on this computer. Forms get them; no model, server or chat ever does."],
     apply: ["setup.l.apply", "You can change this any time on Applications."],
     finish: ["setup.l.finish", "What is still open, I ask when a form needs it."],
   };
-  const SU_BACK = { profile: ["acct.myProfile", "My profile"], autoapply: ["nav.autoapply", "Applications"] };
+  const SU_BACK = { profile: ["acct.myProfile", "My profile"], autoapply: ["nav.autoapply", "Applications"],
+                    settings: ["mem.backSettings", "Settings"] };
   const SU_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
   const SU_CC = ["US", "UK", "CA", "AU", "EU"];
 
@@ -5452,7 +5471,8 @@
   }
   function suLeave() {
     if (SU.origin === "profile") openMemory({});
-    else if (SU.origin === "autoapply") document.querySelector('[data-nav="autoapply"]')?.click();
+    else if (SU.origin === "settings") { showView("dashboard"); loadDashboard(); openSettings(); }
+    else if (SU.origin === "autoapply") navTo("autoapply");
     else document.querySelector('[data-nav="dashboard"]')?.click();
   }
   $("#suBack")?.addEventListener("click", suLeave);
@@ -7151,10 +7171,14 @@
   function ibPaintEmpty(kind) {
     const host = $("#ibEmpty");
     let t, d, btn = "";
-    if (kind === "noaddr") {
+    if (!APPLY_AGENT && kind !== "noresults") {
+      // Agent off: the Inbox is old mail, read only. It never asks for an address or says where
+      // new mail goes (forms use the person's own email).
+      t = ibT("mbox.empty.oldT", "No mail here");
+      d = ibT("mbox.empty.old", "There is no old mail to show.");
+    } else if (kind === "noaddr") {
       t = ibT("mbox.empty.noaddrT", "No SponsorJobs address yet");
-      d = APPLY_AGENT ? ibT("mbox.empty.noaddr", "You get a SponsorJobs address when the agent first applies for you. Mail from employers will show here.")
-        : ibT("mbox.empty.noaddrA", "Get a SponsorJobs address to use on your applications. Mail from employers will show here.");
+      d = ibT("mbox.empty.noaddr", "You get a SponsorJobs address when the agent first applies for you. Mail from employers will show here.");
       btn = `<button class="btn btn-primary" type="button" data-ib-getaddr>${esc(ibT("mail.get", "Get an address"))}</button>`;
     } else if (kind === "nomail") {
       t = ibT("mbox.empty.nomailT", "No mail yet");
@@ -7438,6 +7462,27 @@
     if (ibActive()) ibFetch("refresh"); else refreshInboxBadge();
   }, IB_POLL);
 
+  // (2026-11-24, six tabs) Agent off, the Inbox has no sidebar item. It opens read only from
+  // Settings, Applying ("Mail to your SponsorJobs address", only when there is mail) or from a
+  // Tracker card's "N messages", and its back link returns there. IB_FROM is set by the opener
+  // ("settings"); otherwise the page it was opened from decides.
+  let IB_FROM = "", IB_BACK_TO = "settings";
+  const IB_BACK = { settings: ["mem.backSettings", "Settings"], tracker: ["nav.tracker", "Tracker"] };
+  function ibSetBack() {
+    const v = document.querySelector(".view.is-active")?.id?.replace("view-", "") || "";
+    const from = IB_FROM || (v === "inbox" ? IB_BACK_TO : v);
+    IB_FROM = "";
+    IB_BACK_TO = IB_BACK[from] ? from : "settings";
+    const lbl = $("#ibPageBackLbl");
+    if (lbl) { const b = IB_BACK[IB_BACK_TO]; lbl.dataset.i18n = b[0]; lbl.textContent = T(b[0], b[1]); }
+  }
+  $("#ibPageBack")?.addEventListener("click", async () => {
+    if (IB_BACK_TO === "tracker") { navTo("tracker"); return; }
+    showView("dashboard"); loadDashboard();
+    document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("is-active", x.dataset.nav === "dashboard"));
+    await openSettings(); document.querySelector('.set-tab[data-set="applying"]')?.click();
+  });
+
   // Tracker's job panel: "3 messages", a door to this application's mail in the Inbox.
   async function trkPanelMessages(sid, j) {
     let n = 0;
@@ -7480,6 +7525,14 @@
 
   /* nav */
   document.querySelectorAll(".nav-item").forEach(n => n.addEventListener("click", () => {
+    // Agent off: Applications is hidden, and any old door to it (a stale button, a chat line,
+    // a back link) clicks its nav item. That lands on the Tracker instead.
+    if (navDest(n.dataset.nav) !== n.dataset.nav) {
+      document.querySelector(`.nav-item[data-nav="${navDest(n.dataset.nav)}"]`)?.click();
+      return;
+    }
+    // Agent off: the Inbox (old mail) opens read only, with a back link named for where from.
+    if (n.dataset.nav === "inbox" && !APPLY_AGENT) ibSetBack();
     teardownCvi();   // leaving via the sidebar ends any in-progress live interview (no leaked meter or pane)
     document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("is-active", x === n));
     if (n.dataset.nav !== "jobs") stopFeedPoll();
@@ -11418,6 +11471,7 @@
     renderConnections();
     renderNotify();
     renderMemory();
+    renderMailRow();
   }
   function closeSettings() { if (setModal) setModal.hidden = true; ntStopPoll(); }
 
@@ -11428,6 +11482,24 @@
     if (count) count.textContent = "";
   }
   $("#memOpenSettings")?.addEventListener("click", () => { closeSettings(); openMemory({ origin: "settings" }); });
+  // ---- Applying (2026-11-24, six tabs): the doors that lived on the Applications page, in both
+  // modes: Your answers (what autofill puts in forms) and Apply setup. With the agent off, old
+  // mail to the SponsorJobs address opens from here too, read only, and only when there is some.
+  $("#setAnswersOpen")?.addEventListener("click", () => { closeSettings(); openAnswers("settings"); });
+  $("#setSetupOpen")?.addEventListener("click", () => { closeSettings(); openApplySetup({ origin: "settings" }); });
+  $("#setMailOpen")?.addEventListener("click", () => { closeSettings(); IB_FROM = "settings"; navTo("inbox"); });
+  async function renderMailRow() {
+    const row = $("#setMailRow");
+    if (!row || APPLY_AGENT) return;
+    let n = 0;
+    try {
+      const [a, b] = await Promise.all([ibGet("/api/inbox/messages?" + IBV.listQuery({ per: 1 })),
+                                        ibGet("/api/inbox/messages?" + IBV.listQuery({ per: 1, archived: true }))]);
+      n = (Number(a.count) || 0) + (Number(b.count) || 0);
+    } catch { n = 0; }
+    row.hidden = !n;
+    if (n && $("#setMailDesc")) $("#setMailDesc").textContent = IBV.countText(n, ibT);
+  }
   $("#memAddBtn")?.addEventListener("click", async () => {
     const ta = $("#memAddText"), text = (ta?.value || "").trim();
     if (!text) { toast(MT("mem.writeSomething", "Write something for me to remember.")); return; }
@@ -13743,7 +13815,7 @@
         if (window.Panel) window.Panel.close();
         AA_WANT = "needs";
         if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
-        else document.querySelector("[data-nav=autoapply]")?.click();
+        else navTo("autoapply");
       });
     } else if (info.state === "basics") {
       const answer = btn(T(info.missing === 1 ? "aa.basics.answer1" : "aa.basics.answer", info.missing === 1 ? "Answer it" : "Answer them"),
@@ -14853,7 +14925,9 @@
       try {
         aaPaintPrefs(await api("/api/autoapply/company", { list: "exclude", name: SW.company, from_skip: true }));
         AA.next = null; if (AA.board) aaLoadNext();
-        swSay(esc(T("aa.why.allDone", "You won't see {c} in Applications again.").replace("{c}", SW.company)), 3200);
+        // Agent off there are no runs to leave the company out of: Jobs marks its roles instead.
+        swSay(esc((APPLY_AGENT ? T("aa.why.allDone", "You won't see {c} in Applications again.")
+                               : T("aa.why.allDoneA", "Done. Roles at {c} show as Never apply on Jobs.")).replace("{c}", SW.company)), 3200);
       } catch (err) { swSay(esc(err.message || T("aa.fail", "Couldn't do that, try again."))); }
     }
   });

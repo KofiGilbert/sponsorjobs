@@ -78,7 +78,8 @@ def test_the_page_and_the_settings_carry_the_switch(A, monkeypatch):
     mod, c = A
     page = c.get("/").get_data(as_text=True)
     assert '<html lang="en" data-apply-agent="0">' in page
-    assert "Find 5 data analytics roles and tailor my resume for each" in page
+    # (six tabs) Home offers one job at a time: no batch idea at all
+    assert "Tailor my resume for a job I paste" in page and "Find 5 data analytics roles" not in page
     assert "apply for me" not in page
     s = c.get("/api/submit/settings", headers=H).get_json()
     assert s["apply_agent"] is False and s["autopilot"] is False
@@ -242,7 +243,8 @@ def test_every_agent_control_is_hidden_and_fill_this_page_is_on_the_bar():
                    'class="aa-cap" data-agent-only', 'id="aaMayRow" data-agent-only',
                    'id="aaTou" hidden data-agent-only', 'id="aaAutoSum" hidden data-agent-only',
                    'id="aaApplyAll" type="button" hidden data-agent-only', 'aria-labelledby="memMayH" data-agent-only',
-                   'data-i18n="settings.applying" data-agent-only', 'data-pane="applying" data-agent-only',
+                   # (six tabs) the Applying tab shows in both modes; its send switches are the agent's
+                   '<p class="set-note" data-agent-only>SponsorJobs only ever auto-submits',
                    'data-i18n="aa.how1" data-agent-only', 'data-i18n="signin.terms2" data-agent-only'):
         assert marker in INDEX, marker
     assert 'id="bbFillHere"' in INDEX and 'data-i18n="bb.fillHere"' in INDEX
@@ -255,7 +257,7 @@ def test_the_page_is_called_applications_and_every_new_string_has_every_locale()
     assert 'data-rail="Applications">Applications</span>' in INDEX
     want = {"en": "Applications", "de": "Bewerbungen", "es": "Solicitudes", "fr": "Candidatures", "pt": "Candidaturas"}
     keys = ("bb.fillHere", "aa.howA1", "aa.howA2", "aa.howA3", "notify.tgDescA", "notify.updatesDescA",
-            "aa.sub.submittedA", "aa.footA", "mbox.empty.noaddrA", "signin.terms2A", "home.try1A")
+            "aa.sub.submittedA", "aa.footA", "signin.terms2A", "home.tryPaste")
     for code in LOCALES:
         d = json.loads((ROOT / f"ui/static/locales/{code}.json").read_text(encoding="utf-8"))
         assert d["nav.autoapply"] == want[code]

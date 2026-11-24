@@ -255,14 +255,30 @@ DEFAULT_COUNT = 5
 RUN_CAP = 10          # the Auto-apply route's cap per run
 
 
-def other_text() -> str:
+# (2026-11-24, six tabs) With the apply agent off, Home tailors ONE job at a time: a pasted
+# description or link, or one of the suggested jobs under the box. A batch request ("find 5
+# roles", "tailor 10 while I am away") gets this one plain line and runs nothing.
+# The reply shows in the assistant chat, so "here" is its box and the suggested jobs are on Home.
+SINGLE_JOB_TEXT = "Paste a job here, or pick one on Home, and I will tailor your resume for it."
+
+
+def single_job_text() -> str:
+    return SINGLE_JOB_TEXT
+
+
+def other_text(assisted: bool = False) -> str:
+    if assisted:
+        return SINGLE_JOB_TEXT
     return ('I can find roles and apply, tailor a resume for a job description, or tell you '
             'what is waiting. Try "' + EXAMPLES[0] + '", "' + EXAMPLES[1] + '" or "'
             + EXAMPLES[2] + '".')
 
 
-def tailor_one_text(intent: dict) -> str:
+def tailor_one_text(intent: dict, assisted: bool = False) -> str:
     what = ", ".join(intent.get("titles") or []) or "that role"
+    if assisted:
+        return (f"To tailor your resume for {what} I need the job description or a link to it. "
+                "Paste it here, or pick one on Home.")
     return (f"To tailor your resume for {what} I need the job description or a link to it. "
             "Paste it here, or I can find matching roles for you instead.")
 
@@ -442,7 +458,10 @@ def github_text(login: str, repos: list[str], ok: bool = True, just: bool = Fals
     return lead + f" I can see {n} {plural(n, 'repo')}, newest first: {_names(repos[:3])}."
 
 
-def email_text(address: str, just: bool = False) -> str:
+def email_text(address: str, just: bool = False, assisted: bool = False) -> str:
+    if assisted:
+        # The agent is off: forms get the person's own email, never the SponsorJobs address.
+        return "Forms use the email on your profile, so employers write to you directly."
     if address:
         lead = "Done. Applications use " if just else "Applications already use "
         return (lead + f"{address}. Verification codes and links reach me, and recruiter replies "
