@@ -72,7 +72,25 @@
   "preview": {
     "certifications": [
       "State Teaching Certificate, Secondary Mathematics (Grades 7-12), expected 20XX",
-      "TESOL Certificate, 120 hours, 20XX"
+      "Praxis Mathematics: Content Knowledge, passed 20XX",
+      "TESOL Certificate, 120 hours, 20XX",
+      "First Aid and CPR/AED Certification, 20XX"
+    ],
+    "education": [
+      {
+        "school": "State University",
+        "degree": "Master of Arts in Teaching, Secondary Mathematics",
+        "date": "May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Curriculum Design, Adolescent Development, Assessment, Teaching English Language Learners"
+      },
+      {
+        "school": "State College",
+        "degree": "Bachelor of Science in Mathematics",
+        "date": "May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Linear Algebra, Probability and Statistics, Geometry, Calculus, Discrete Mathematics"
+      }
     ],
     "extracurricular": [
       {
@@ -80,14 +98,25 @@
         "date": "Jan 20XX - May 20XX",
         "bullets": [
           "Planned and taught five sections of 28 students, designing a differentiated unit on linear functions that lifted the unit assessment average by 11 points.",
-          "Built formative check-ins into every lesson and used the data to regroup students weekly; two sections moved from below to above the department average."
+          "Built formative check-ins into every lesson and used the data to regroup students weekly; two sections moved from below to above the department average.",
+          "Adapted lessons and assessments for seven students with IEPs and 504 plans in partnership with the special education co-teacher.",
+          "Called or emailed every family in the first month and kept a weekly log that raised homework completion from 64 to 81 percent."
+        ]
+      },
+      {
+        "title": "Practicum, Grade 10 Geometry, Anytown High School",
+        "date": "Fall 20XX",
+        "bullets": [
+          "Taught a three-week unit on proofs and transformations to two sections, using Desmos activities and exit tickets.",
+          "Ran after-school review sessions before each test for about 15 students."
         ]
       },
       {
         "title": "Field Experience, Grade 7 Mathematics, Anytown Middle School",
-        "date": "Fall 20XX",
+        "date": "Spring 20XX",
         "bullets": [
-          "Co-taught small groups of English language learners and built visual scaffolds the cooperating teacher kept in use."
+          "Co-taught small groups of English language learners and built visual scaffolds the cooperating teacher kept in use.",
+          "Observed and wrote reflections on 40 hours of instruction across three classrooms."
         ]
       }
     ],
@@ -102,31 +131,51 @@
             "bullets": [
               "Tutor 15 high-school students weekly in algebra and geometry; 12 raised their course grade by a letter.",
               "Wrote the center's practice-problem bank now used by three tutors.",
-              "Ran a six-week summer bridge course for incoming ninth graders, 22 of 24 completing the full program."
+              "Ran a six-week summer bridge course for incoming ninth graders, 22 of 24 completing the full program.",
+              "Track each student's progress in a shared sheet and send monthly updates to families.",
+              "Trained two new volunteer tutors on questioning strategies and session planning."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "Contoso Learning Academy",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Summer Program Instructor",
+            "dates": "Jun 20XX - Aug 20XX",
+            "bullets": [
+              "Taught daily mathematics and problem-solving workshops to groups of 18 students in grades 6 to 8.",
+              "Designed a project-based unit on budgeting and percentages that the program kept for later summers.",
+              "Supervised field trips and supported students with behavior plans alongside the program director.",
+              "Reported weekly progress for each student to families and program staff."
+            ]
+          }
+        ]
+      },
+      {
+        "org": "State College Mathematics Department",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Undergraduate Teaching Assistant",
+            "dates": "Sep 20XX - May 20XX",
+            "bullets": [
+              "Led weekly problem sessions for 30 students in introductory calculus.",
+              "Graded homework and quizzes and held two office hours a week.",
+              "Wrote worked solutions for the course's online study guide."
             ]
           }
         ]
       }
     ],
     "skills": {
-      "Instruction": "Differentiated instruction, formative assessment, classroom management, IEP accommodations",
-      "Technology": "Google Classroom, Desmos, Canvas, SMART Board",
+      "Instruction": "Differentiated instruction, formative assessment, classroom management, IEP accommodations, co-teaching",
+      "Assessment": "Unit and lesson planning, data-driven grouping, rubric design, RTI progress monitoring",
+      "Technology": "Google Classroom, Desmos, Canvas, SMART Board, GeoGebra, Kahoot",
       "Languages": "Spanish (fluent), Portuguese (conversational)"
     },
-    "education": [
-      {
-        "school": "State University",
-        "degree": "Master of Arts in Teaching, Secondary Mathematics",
-        "date": "May 20XX",
-        "location": "Anytown, ST",
-        "courses": "Curriculum Design, Adolescent Development, Assessment, Teaching English Language Learners"
-      },
-      {
-        "school": "State College",
-        "degree": "Bachelor of Science in Mathematics",
-        "date": "May 20XX",
-        "location": "Anytown, ST"
-      }
-    ]
+    "interests": "Coaching a middle-school math club, hiking, community choir, chess"
   }
 }
