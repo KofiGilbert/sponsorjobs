@@ -724,7 +724,11 @@ class StaticFeed:
         return True
 
     def _set(self, data: dict, mtime: float) -> None:
-        self._jobs = data.get("jobs") or []
+        # A feed built before the job-board rule (quality.is_job_board_link) may still carry
+        # job-board copies: they are left out here, so the board never shows one.
+        from .quality import is_job_board_link
+        self._jobs = [j for j in (data.get("jobs") or [])
+                      if not (isinstance(j, dict) and is_job_board_link(j.get("url")))]
         self._header = {k: v for k, v in data.items() if k != "jobs"}
         self._loaded_mtime = mtime
         self._by_id = None

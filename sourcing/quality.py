@@ -162,6 +162,24 @@ def is_entry_level(title: str, jd_text: str = "") -> bool:
 # also carries a capped slice of general rows for job seekers who need no sponsorship; every row
 # is marked `sponsor_relevant` (this check) so the app's "Sponsors only" filter shows exactly the
 # board it showed before.
+# (2026-11-24) Job boards that copy an employer's posting and link back to their own page, not to
+# the employer's application. FreeHire mixes these in (its row `source` names the board): about a
+# third of its newest US rows were LinkedIn copies, which open on a sign-in wall the apply agent
+# must never drive (CLAUDE.md section 7). The board shows the employer's own posting or nothing,
+# so such a row is dropped when the feed is built and when the app reads a feed built before this
+# rule. The hosts are the apply side's own list of sites that ban automation
+# (submit/allowlist.PROHIBITED_HOSTS), plus a few boards that only re-post.
+REPOST_ONLY_HOSTS = ("powertofly.com", "simplyhired.com", "careerbuilder.com")
+
+
+def is_job_board_link(url: str) -> bool:
+    """Does this link open a job board's copy of a posting rather than the employer's own page?"""
+    from submit.allowlist import PROHIBITED_HOSTS
+    m = re.match(r"^\s*https?://([^/?#:]+)", str(url or ""), re.I)
+    host = (m.group(1) if m else "").lower().rstrip(".")
+    return any(host == h or host.endswith("." + h) for h in PROHIBITED_HOSTS + REPOST_ONLY_HOSTS)
+
+
 AGGREGATOR_SOURCES = frozenset({"remotive", "adzuna", "arbeitnow", "remoteok", "jsearch", "freehire",
                                 "hackernews"})
 
