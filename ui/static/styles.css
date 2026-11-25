@@ -3046,6 +3046,11 @@ body.cv-dragging * { cursor: grabbing !important; }
 .upg-stu-row > * { flex: 1; }
 .upg-link { border: 0; background: transparent; padding: 0; font: inherit; font-size: 11.5px; color: var(--muted);
   text-decoration: underline; cursor: pointer; align-self: flex-start; }
+/* An upgrade moment outside the plans panel: one quiet line and a "See plans" link. */
+.upg-moment { display: flex; align-items: center; justify-content: flex-start; gap: 8px; flex-wrap: wrap;
+  margin: 14px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.upg-moment .upg-moment-link { align-self: auto; font-size: 12.5px; color: var(--ink); }
+.r1-solo-msg.is-plain { color: var(--r1-muted); flex: 1 1 22ch; }
 .upg-err { font-size: 11.5px; line-height: 1.4; color: var(--danger, #d9534f); }
 .upg-mine { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
 .upg-mine-p { font-size: 12.5px; line-height: 1.45; color: var(--ink); }
@@ -3078,7 +3083,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* An undo toast: one action beside the message, clickable while it shows. */
 .toast.has-act { display: flex; align-items: center; gap: 14px; }
 .toast.has-act.show { pointer-events: auto; }
-.toast-act { background: none; border: 0; padding: 0; font: inherit; font-weight: 650; color: inherit;
+.toast-act { background: none; border: 0; padding: 0; font: inherit; font-weight: 650; color: inherit; white-space: nowrap; flex: none;
   text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .toast-act:focus-visible { outline: 2px solid var(--bg); outline-offset: 2px; border-radius: 3px; }
 

@@ -83,17 +83,72 @@ Haiku 4.5 $1/$5. Avatar (Tavus) ~ $0.32-0.37 per minute; a 15-minute live interv
   - hard stop at zero balance -> "buy credits" prompt (never silent overage)
 - **Cost-per-user tracking from day one** so real prices are set on real data.
 
-### Pricing (decided by the owner 2026-11-20): plans that renew
+### Pricing (decided by the owner 2026-11-25): monthly plans only, stated free limits
 
 Plans renew automatically (the industry standard), as Stripe subscriptions sold by the Worker
-broker (`worker/src/billing.ts`, `worker/src/subscriptions.ts`):
+broker (`worker/src/billing.ts`, `worker/src/subscriptions.ts`). **On sale at launch:**
 
-| Plan | Price | Renews | Live interviews a period | Tailored packages a period |
-|---|---|---|---|---|
-| `student_monthly` | $29 | every month | 3 | 60 |
-| `student_quarterly` | $69 | every 3 months | 9 | 150 |
-| `standard_monthly` | $49 | every month | 3 | 60 |
-| `standard_quarterly` | $119 | every 3 months | 9 | 150 |
+| What | Price | Renews | Live interviews (20 min each) | Tailored applications | Recorded practice interviews, scored |
+|---|---|---|---|---|---|
+| Free (no card) | $0 | calendar month | 0 | 3 a month | 1 a month |
+| `student_monthly` | $29 | every month | 3 a period | 60 a period | unlimited |
+| `standard_monthly` | $49 | every month | 3 a period | 60 a period | unlimited |
+| Extra live interview, 1 (`pack_1`) | $12 | one-time, never expires | 1 | | |
+| Extra live interviews, 3 (`pack_3`) | $33 | one-time, never expires | 3 | | |
+
+Free also keeps every job with sponsorship marks, the tracker and autofill, on the cheaper model
+(`claude-haiku-4-5`) with the existing monthly token cap.
+
+**Not sold, kept in code:**
+
+| What | Price | Why it is still there | How to sell it again |
+|---|---|---|---|
+| `student_quarterly`, `standard_quarterly` | $69, $119 every 3 months (9 interviews, 150 applications) | A subscription already on one keeps renewing, reading and cancelling as before | Set `SELL_QUARTERLY` to `"1"` in `worker/wrangler.jsonc` and deploy; run `scripts/stripe_setup.py --sell-quarterly` if the prices do not exist yet. The app shows its Monthly / Every 3 months switch on its own once the broker offers one |
+| `pass30`, `pass90` (one-time passes) | $29, $69 | Holders keep a pass until it ends | `SELL_PASSES` = `"1"` with `STRIPE_PRICE_PASS30/90` set |
+| `pack_5` (5 extra interviews) | $39 | A 5-pack already paid for is still granted | Add it back to `SOLD_PACKS` in `worker/src/metering.ts` |
+
+The switches stop NEW sales only: offers, the plans panel and checkout. The webhook handling for a
+plan or pass someone already holds is untouched.
+
+**The free recorded interview limit** is enforced in the broker, where the free packages are
+(`worker/src/metering.ts` `recordedLeft`, `worker/src/store.ts` `takeFreeRecorded`, one guarded
+SQL statement). The app calls `POST /interview/recorded` once, the first time a recorded interview
+is scored; Free gets 1 per calendar month (`usage.recorded_interviews`, migration 0017, the same
+monthly row as the free packages, so it resets with them) and `402 recorded_limit` after. Paid
+plans are unlimited and never counted. `GET /me/usage` reports `recorded_left` (null = unlimited),
+which the app reads before starting another one.
+
+**Upgrade moments.** Each is one plain line with a "See plans" button that opens the one plans
+panel; no price is written anywhere else in the app:
+
+- the 3rd free tailored resume is used: "You've used your 3 free tailored resumes this month.
+  Plans include 60 a month."
+- a Free user starts another recorded interview after this month's is used: "You've used this
+  month's practice interview. Plans include unlimited recorded practice."
+- the Round 1 report, Free only: "Practise live with an interviewer".
+- a Free user opens the live interview (the Round 2 gate).
+
+#### Margins at these prices
+
+Conservative costs. **The Tavus rate is an assumption the owner must confirm against the real
+invoice:** $0.37 a minute, so one 20-minute live interview costs **$7.40**. A tailored application
+is taken at about $0.15 on the paid model (about $0.05 on the free one), the figure used since
+2026-10-02; it has not been re-measured on the current models. Stripe is 2.9% + $0.30 a US card
+payment, plus 0.7% Billing on a subscription payment.
+
+| What | Price | Stripe | Tavus if every interview is used | Tailoring if all 60 are used | Left if everything is used | Left at half use |
+|---|---|---|---|---|---|---|
+| Student, monthly | $29.00 | $1.34 | 3 x $7.40 = $22.20 | 60 x $0.15 = $9.00 | **minus $3.54** | $12.06 |
+| Standard, monthly | $49.00 | $2.06 | $22.20 | $9.00 | $15.74 | $31.34 |
+| 1 extra interview | $12.00 | $0.65 | $7.40 | | $3.95 | |
+| 3 extra interviews | $33.00 | $1.26 | $22.20 | | $9.54 | |
+| Free | $0 | $0 | $0 | 3 x $0.05 = $0.15 | minus $0.15, plus a few cents for the one scored recorded interview | |
+
+Reading it: the Student plan loses about $3.54 a month on a person who uses all 3 live interviews
+AND all 60 applications, and earns about $12 on one who uses half. The live interviews are the
+cost that matters (77% of a full month's cost). Scoring a recorded interview is a handful of model
+calls, cents at most; on paid plans it is unlimited but still under the plan's monthly token cap.
+The cost of scoring one recorded interview has not been measured.
 
 - **Who pays the student price:** students, and graduates up to 24 months after their graduation
   month, verified ONCE while still a student with a 6-digit code to a school email
@@ -108,9 +163,9 @@ broker (`worker/src/billing.ts`, `worker/src/subscriptions.ts`):
 - **Disclosure and consent** (auto-renewal laws such as California's): the price, the interval,
   that it renews until cancelled and how to cancel sit next to the button with a checkbox; the
   broker refuses a checkout without `consent: true` and records the consent time.
-- Extra interview packs are unchanged (one-time, sold while a plan is active). The one-time passes
-  below are retired: holders keep them until they end, and a plan bought on top carries what is
-  left into its first period.
+- Extra interview packs are one-time and sold only while a plan is active: 1 for $12, 3 for $33
+  (2026-11-25). The one-time passes below are retired: holders keep them until they end, and a
+  plan bought on top carries what is left into its first period.
 
 ### Pricing before plans (decided by the owner 2026-10-02, retired 2026-11-20)
 

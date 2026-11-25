@@ -33,7 +33,7 @@ def test_the_terms_say_price_interval_renewal_and_how_to_cancel():
     assert "{price}" in terms and "{every}" in terms
     assert "Renews automatically until you cancel" in terms
     assert "Cancel anytime" in terms and "Your plan" in terms          # how: account menu, Your plan
-    assert EN["upg.everyMonth"] == "every month" and EN["upg.every3"] == "every 3 months"
+    assert EN["upg.everyMonth"] == "every month"
     for code, d in LOCALES.items():                                     # every language carries both
         assert "{price}" in d["upg.terms"] and "{every}" in d["upg.terms"], code
 
@@ -67,12 +67,76 @@ def test_the_account_area_shows_the_renewal_date_and_a_cancel():
 
 def test_the_website_shows_both_tiers_and_says_it_renews():
     text = re.sub(r"<[^>]+>", " ", PRICING)
-    for price in ("$29", "$69", "$49", "$119", "$9", "$24", "$39"):
+    for price in ("$29", "$49", "$12", "$33"):
         assert price in text, price
     assert "Student" in text and "Standard" in text
     assert "renew automatically until you cancel" in text
     assert "Cancel anytime" in text
-    assert "Free" in text and "3 tailored applications a month" in text
+    assert "Free" in text and "3 tailored resumes" in text
+
+
+def _row(label: str) -> list[str]:
+    """The cells of one comparison-table row on the pricing page, by its row heading."""
+    m = re.search(r'<tr><th scope="row">%s</th>(.*?)</tr>' % re.escape(label), PRICING)
+    assert m, label
+    return [re.sub(r"<[^>]+>", "", c) for c in re.findall(r"<td[^>]*>(.*?)</td>", m.group(1))]
+
+
+def test_the_website_sells_only_the_monthly_plans_and_states_the_free_limits():
+    """Owner decision 2026-11-25: Free / Student $29 a month / Standard $49 a month. No every-3-months
+    price, no 5-pack, no old pack prices, on the pricing page, the home page or the terms."""
+    home = (ROOT / "site/index.html").read_text(encoding="utf-8")
+    for name, page in (("pricing.html", PRICING), ("index.html", home), ("terms.html", TERMS)):
+        text = re.sub(r"<[^>]+>", " ", page)
+        assert not re.search(r"every 3 months|quarter", text, re.I), name
+        for gone in ("$69", "$119", "$39", "$24", "$35"):
+            assert gone not in page, (name, gone)
+        assert not re.search(r"\$9(?!\d)", page), name
+    assert _row("Price") == ["$0", "$29 a month", "$49 a month"]
+    assert _row("Tailored one-page resumes") == ["3 a month", "60 a month", "60 a month"]
+    assert _row("Recorded practice interviews, scored") == ["1 a month", "Unlimited", "Unlimited"]
+    assert _row("Live AI interviews, 20 minutes each") == ["No", "3 a month", "3 a month"]
+    assert _row("Application tracker") == ["Yes", "Yes", "Yes"]
+    text = re.sub(r"<[^>]+>", " ", PRICING)
+    assert "1 for $12, 3 for $33" in text
+    # The structured data lists exactly the three offers.
+    for page in (PRICING, home):
+        assert re.findall(r'"@type": "Offer", "name": "([^"]+)", "price": "(\d+)"', page) == [
+            ("Free", "0"), ("Student, monthly", "29"), ("Standard, monthly", "49")]
+
+
+def test_the_plans_panel_sells_monthly_only_and_shows_the_switch_only_when_the_broker_does():
+    assert 'id="upgSeg" hidden' in INDEX                               # hidden until an offer needs it
+    paint = APP_JS[APP_JS.index("function paintPlans()"):APP_JS.index("function paintMine()")]
+    assert 'p.interval === "quarterly"' in paint and "seg.hidden = !quarterlySold" in paint
+    assert EN["upg.feat3"] == "3 live interviews of 20 minutes a month"
+    assert EN["upg.feat60"] == "60 tailored applications a month"
+    assert EN["upg.featRecorded"] == "Unlimited recorded practice interviews"
+    assert EN["upg.free"] == ("Free keeps every job with sponsorship marks, the tracker, autofill, "
+                              "3 tailored resumes a month and 1 recorded practice interview a month.")
+    assert EN["upg.free"] in INDEX
+
+
+def test_the_upgrade_lines_are_the_decided_words_and_carry_no_price():
+    """Every upgrade moment opens the ONE plans panel, so no price is repeated in any of them."""
+    lines = {
+        "upg.freeResumesUsed": "You've used your 3 free tailored resumes this month. Plans include 60 a month.",
+        "upg.recordedUsed": "You've used this month's practice interview. Plans include unlimited recorded practice.",
+        "upg.practiseLive": "Practise live with an interviewer",
+        "outage.upgrade.btn": "See plans",
+    }
+    for key, text in lines.items():
+        assert EN[key] == text, key
+        for code, d in LOCALES.items():
+            assert d[key].strip() and "$" not in d[key], (code, key)
+    moments = APP_JS[APP_JS.index("// ---- Upgrade moments"):APP_JS.index("$(\"#menuUpgrade\")")]
+    assert moments.count("openUpgrade") >= 2 and "$" not in re.sub(r"\$\(|\$\{", "", moments)
+    assert "window.__upgradeMoment" in moments and "window.__recordedLimit" in moments
+    assert "window.__r1FreeUpsell" in moments and 'ACCT_PLAN !== "free"' in moments
+    # The engine uses the same two lines.
+    from ui import app as A
+    assert A.FREE_RESUMES_USED_LINE == lines["upg.freeResumesUsed"]
+    assert A.FREE_RECORDED_USED_LINE == lines["upg.recordedUsed"]
 
 
 def test_the_terms_page_describes_the_subscription_and_cancelling():
