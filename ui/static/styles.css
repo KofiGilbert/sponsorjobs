@@ -2749,8 +2749,12 @@ body.cv-dragging * { cursor: grabbing !important; }
 .tpl-modal-x:focus-visible, .tpl-arrow:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .tpl-modal-stage { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center;
   justify-content: space-between; gap: 16px; }
-/* As tall as the stage; the width follows the paper's shape. */
-.tpl-modal-paper { flex: none; height: 100%; aspect-ratio: 8.5 / 11; max-width: calc(100% - 136px);
+/* As large as the window allows in BOTH directions: the width is the smaller of what the row
+   leaves beside the two arrows and what the height allows for a letter page (the 120px is the
+   modal's padding, the bar and the gap). The height follows the paper's shape, so the page is
+   never cropped or stretched in a short, narrow or very wide window. */
+.tpl-modal-paper { flex: none; aspect-ratio: 8.5 / 11; height: auto; max-height: 100%;
+  width: min(calc(100% - 120px), calc((100vh - 120px) * 8.5 / 11)); min-width: 0;
   background: #fff; border-radius: 4px; overflow: hidden;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.30); }
 .tpl-modal-frame { width: 100%; height: 100%; border: 0; background: #fff; display: block; object-fit: contain; }
@@ -2759,6 +2763,17 @@ body.cv-dragging * { cursor: grabbing !important; }
   border-radius: 50%; transition: background var(--dur) var(--ease); }
 .tpl-arrow:hover { background: rgba(255, 255, 255, 0.20); }
 .tpl-arrow[hidden] { display: block !important; visibility: hidden; }   /* keeps the paper centred */
+/* A narrow window (the Browser pane open beside the app): smaller arrows, the bar's name can
+   shorten, the button never wraps or leaves the screen. */
+@media (max-width: 640px) {
+  .tpl-modal { padding: 12px; }
+  .in-shell .tpl-modal { padding-right: 54px; }
+  .tpl-modal-stage { gap: 8px; }
+  .tpl-arrow { width: 36px; height: 36px; }
+  .tpl-modal-paper { width: min(calc(100% - 88px), calc((100vh - 104px) * 8.5 / 11)); height: auto; }
+  .tpl-modal-bar { padding-left: 14px; gap: 10px; }
+}
+.tpl-modal-bar .btn { flex: none; white-space: nowrap; }
 /* One slim line: which template you're on, and the single commit. */
 .tpl-modal-bar { flex: none; width: min(640px, 100%); display: flex; align-items: center;
   justify-content: space-between; gap: 16px; padding: 8px 8px 8px 20px;
