@@ -2737,6 +2737,8 @@ body.cv-dragging * { cursor: grabbing !important; }
   background: rgba(14, 15, 17, 0.66); backdrop-filter: blur(14px) saturate(120%);
   -webkit-backdrop-filter: blur(14px) saturate(120%);
   animation: rise var(--dur) var(--ease) both; }
+/* In the desktop app the 42px panel rail sits on top at the right edge: stay clear of it. */
+.in-shell .tpl-modal { padding-right: 66px; }
 .tpl-modal-card { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0;
   display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .tpl-modal-x { position: absolute; top: 0; right: 0; z-index: 2;
