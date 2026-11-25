@@ -3523,6 +3523,10 @@ body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-sta
    can't transcribe. */
 .r1-done { grid-column: 1 / -1; align-self: center; justify-self: center; width: min(640px, 100%); max-height: 100%; overflow-y: auto; text-align: center; }
 .r1-done .r1-h { max-inline-size: none; }
+/* The device check's heading is a title, not a question: one line, sized to fit its pane (the
+   two or three balanced lines are for questions). It may wrap only in the narrow stacked layout. */
+.r1-h.r1-h-one { font-size: clamp(20px, 4.3cqi, 30px); max-inline-size: none; white-space: nowrap; }
+@media (max-width: 999px) { .r1-h.r1-h-one { white-space: normal; } }
 .r1-done-sub { margin: 10px auto 18px; max-width: 46ch; font-size: 14px; line-height: 1.5; color: var(--r1-muted); }
 .r1-spinner { width: 22px; height: 22px; margin: 6px auto 0; border-radius: 50%; border: 2px solid var(--r1-border); border-top-color: var(--r1-primary); animation: r1spin .9s linear infinite; }
 @keyframes r1spin { to { transform: rotate(360deg); } }

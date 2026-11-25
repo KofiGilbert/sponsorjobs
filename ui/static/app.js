@@ -9928,7 +9928,7 @@
     scrHead("", ""); SCR_PHASE = "check"; SCR_CUR = null;
     $("#scrStage").innerHTML = r1Stage("check", { body: `
       <div class="r1-text">
-        <h2 class="r1-h">${esc(T("r1.devicesH", "Check your camera and microphone"))}</h2>
+        <h2 class="r1-h r1-h-one">${esc(T("r1.devicesH", "Check your camera and microphone"))}</h2>
         <div class="r1-devs" data-r1-devs></div>
         <ul class="r1-tips">
           <li>${esc(T("r1.tip1", "Light in front of you."))}</li>
