@@ -339,7 +339,7 @@ def alert_buttons(alert: dict, can_apply: bool) -> list:
 
 def digest_text(d: dict, assisted: bool = False) -> str:
     """The away digest. ``assisted`` (the apply agent off): the Applications page is hidden, so
-    the jobs to finish are on the Tracker, in Ready to apply."""
+    the jobs to finish are on the Tracker, in To apply."""
     parts = [f"tailored {d['tailored']}"]
     if d.get("submitted"):
         sites = ", ".join(d.get("submitted_sites") or [])

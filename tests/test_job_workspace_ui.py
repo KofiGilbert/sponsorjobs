@@ -17,22 +17,25 @@ def _fn(name: str) -> str:
     return JS.split(f"function {name}(", 1)[1].split("\n  }\n", 1)[0]
 
 
-def test_tracker_has_an_optional_in_progress_column_between_saved_and_approved():
+def test_tracker_keeps_in_progress_jobs_in_to_apply_between_saved_and_resume_ready():
+    # (2026-11-25, five states) "In progress" is no longer a column of its own: it is a state
+    # inside To apply, shown as the "Tailoring" lozenge. The stage key is unchanged.
     cols = JS.split("const TRK_COLS = [", 1)[1].split("];", 1)[0]
-    keys = re.findall(r'key: "(\w+)"', cols)
-    assert keys[:3] == ["saved", "in_progress", "approved"]
-    line = next(l for l in cols.splitlines() if 'key: "in_progress"' in l)
-    assert "optional: true" in line
+    assert re.findall(r'key: "(\w+)"', cols) == ["todo", "applied", "interviewing", "offer", "closed"]
+    line = next(l for l in cols.splitlines() if 'key: "todo"' in l)
+    assert 'stages: ["saved", "in_progress", "approved"]' in line and "optional" not in cols
     assert '"in_progress"' in JS.split("const TRK_STAGES", 1)[1].split(";", 1)[0]
+    assert 'if (c.stage === "in_progress") return loz("tailoring", "info", "tracker.loz.tailoring", "Tailoring");' in _fn("trkState")
 
 
-def test_a_tracker_card_in_progress_says_when_its_resume_moved_and_the_panel_opens_the_workspace():
-    # (2026-11-24, Jira-style board) The card is compact: one line, "Updated 2h ago". Its resume
-    # chat opens from the side panel's Chat, the one place for the resume, letter and chat.
-    meta = _fn("trkCardMeta")
-    assert "sessAgo(c.session.updated_at)" in meta and "tracker.updatedAgo" in meta and "tracker.jobClosedOn" in meta
-    assert "data-trk-chat" in _fn("trkPanelActions")
-    assert "openJobWorkspace(sid)" in _fn("openTrackerPanel")
+def test_a_tracker_job_in_progress_continues_its_resume_chat_from_the_panel():
+    # The card says "Tailoring"; the panel's primary button is "Continue tailoring", which opens
+    # the job's workspace. A job with a chat that is not being tailored keeps a quiet Chat link.
+    assert 'if (c.stage === "in_progress" || c.has_session) return "continue";' in _fn("trkAction")
+    acts = _fn("trkPanelActions")
+    assert "tracker.continueTailoring" in acts and 'data-trk-act="continue"' in acts and "tracker.chat" in acts
+    assert "openJobWorkspace(sid)" in _fn("trkContinue")
+    assert "tracker.jobClosedOn" in _fn("trkCardDate")
 
 
 def test_jobs_detail_offers_open_your_resume_and_says_when_you_tailored():

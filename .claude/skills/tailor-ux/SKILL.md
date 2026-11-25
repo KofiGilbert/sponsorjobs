@@ -572,7 +572,8 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   "Did you submit it?" with ghost Yes / Not yet (Not yet waits for the next Autofill). An ad naming
   fewer than 5 skills shows a muted "Not enough in the ad to score", never a percent (Jobs detail
   too). The Browser bar button is "Autofill this page". The tiles stay for the agent only
-  (`data-agent-only`). The Tracker's approved column reads "Ready to apply" and counts the same jobs.
+  (`data-agent-only`). The Tracker's approved column reads "Ready to apply" and counts the same jobs
+  (2026-11-25: those jobs are now "Resume ready" cards in the Tracker's To apply column).
 - 2026-11-24 (six tabs, the apply agent off): the side menu is six items, Home, Resumes, Jobs,
   Tracker, Projects, Interview. Applications, Inbox and the live Building item are the agent's
   (`data-agent-only`, `paintLiveNav` paints nothing while it is off) and come back with
@@ -616,6 +617,36 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   Autofill (aaSilentApprove, then aaFill); after an Autofill the card asks "Did you submit it?"
   Yes / Not yet on its own line. Verified with a throwaway engine on made-up cards at 1440x900 and at
   the owner's 76% window (2491x1557 CSS px), light and dark.
+- 2026-11-25 (Tracker v2, supersedes the 2026-11-24 card and columns): **a board shows states; the
+  panel acts.** Five columns, always all five, always fitting (a 5-column grid, min 168px each, no
+  sideways scroll from 1280px): **To apply** (Jira's To do: the saved, in_progress and approved
+  stage keys together), **Applied**, **Interviewing**, **Offer** (a quiet green check), **Closed**
+  (rejected and archived). The eight stage keys and their data are unchanged. A card carries
+  information only, never a button or a link: the title (14/20, 500, two lines max); ONE row of at
+  most two 18px lozenges, the state inside the column ("Resume ready" green, "Tailoring" blue, "No
+  resume yet" neutral, "Did you submit?" amber, "Follow up due" amber, "Not selected" / "Job closed"
+  / "Archived" neutral; sentence case) then one sponsorship tag in its own green; then a footer with
+  the 18px logo and company (12/16, muted) on the left and ONE date with a 14px icon on the right
+  (calendar; a flag in amber when a follow-up is due), tabular numbers, on a common right edge.
+  Two type sizes on a card, 12px padding, 8px gaps, 8px radius. Columns are a sunken surface
+  (darker than the page in dark, greyer in light), cards are raised on it (white in light), hover
+  lifts the shadow, the dragged picture is lifted and tilted, focus is a 2px ink ring. One icon set
+  (`TRK_IC`, 16px grid, 1.5px round strokes, currentColor), no emoji. Tracker lozenge colours are
+  the page's only hues (`--trk-loz-*`), each tied to a meaning. Actions live in the side panel:
+  logo, company and title, the column name with the lozenges, "Did you submit it?" Yes / Not yet
+  (amber block), ONE action row whose primary is named for the state ("Apply", "Continue
+  tailoring", "Tailor resume"; none once applied) with quiet icon links (Resume, Cover letter,
+  Chat, Job posting), then Status and Follow-up side by side, Notes, Contacts, Email, Files,
+  Timeline, all on 24px section gaps with 12px uppercase labels. Drops map to stages (`trkDropStage`):
+  To apply = approved with a resume, in_progress with only a chat, else saved; Closed = archived when
+  never applied, else rejected. The toolbar adds a "Resume ready N" quick filter beside "Follow-ups
+  due N". "From your inbox" is ONE 40px line (label, first message, its buttons; "N more" opens the
+  rest). The table has the same lozenges and a chevron, no controls. The view never scrolls and ends
+  above the fixed "Local." line (`--trk-foot`), and each column scroller has 12px under its last
+  card. "Ready to apply" is retired everywhere: the column is "To apply", the state is "Resume
+  ready". Sources: Atlassian elevation, spacing, typography, lozenge and tag pages; Atlassian "What
+  is a kanban board"; Linear board layout; Trello due-date badges; Huntr and Teal stage names.
+  Measured on a throwaway engine with 30 made-up jobs at 1440x806 and 2491x1557, light and dark.
 - 2026-11-24: **At most 3 projects, jobs keep their bullets.** A resume shows at most 3 projects,
   at most 2 once the person has 3 or more years of work (roles' date ranges merged, "Present" is
   today; internships and placeholder dates like "20XX" count for nothing, so the gallery's John Doe

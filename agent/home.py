@@ -324,8 +324,8 @@ def plan_text(*, n: int, titles: list[str], min_fit: int, auto: int, auto_compan
     rest = max(0, n - auto)
     why = auto_companies if auto else auto_reason
     if assisted:
-        lines.append("3. Put them in Ready to apply under Applications. Open one and I fill in "
-                     "the form for you to check and submit.")
+        lines.append("3. Put them in To apply on the Tracker. Open one and press Apply: I fill "
+                     "in the form for you to check and submit.")
     else:
         lines.append(f"3. Queue them in To review. {auto} can be sent for you ({why}); {rest} "
                      "will be filled in and ready for your click.")
@@ -343,8 +343,8 @@ def plan_text(*, n: int, titles: list[str], min_fit: int, auto: int, auto_compan
 
 def result_text(tailored: int, sent: int, assisted: bool = False) -> str:
     if assisted:
-        return (f"Done. Tailored {tailored}. They are in Ready to apply under Applications. Open "
-                "one and I fill in the form for you to check and submit.")
+        return (f"Done. Tailored {tailored}. They are in To apply on the Tracker. Open one and "
+                "press Apply: I fill in the form for you to check and submit.")
     rest = max(0, tailored - sent)
     return (f"Done. Tailored {tailored}. {sent} sent for you. {rest} ready for your click in "
             "Applications.")
@@ -352,9 +352,9 @@ def result_text(tailored: int, sent: int, assisted: bool = False) -> str:
 
 def status_text(counts: dict, newest: list[str], assisted: bool = False) -> str:
     """One bubble from the records: the four tiles and the newest items by name. ``assisted``
-    (the apply agent off): the Applications page's one list, "Ready to apply", instead."""
+    (the apply agent off): the jobs with a resume ready (the Tracker's To apply column) instead."""
     if assisted:
-        text = (f"Ready to apply: {int(counts.get('ready') or 0)}. "
+        text = (f"Resume ready, to apply: {int(counts.get('ready') or 0)}. "
                 f"Applied today: {int(counts.get('submitted_today') or 0)}.")
         names = [x for x in (newest or []) if x][:5]
         if names:
