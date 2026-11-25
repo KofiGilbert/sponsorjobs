@@ -1992,6 +1992,8 @@
   let JOBS_PAGE = 1;
   let FEED_TOTAL = 0;       // filtered total the server reports (drives the pager + count)
   let FEED_ALLTOTAL = 0;    // unfiltered board size (the big "N live roles" number)
+  let FEED_COUNT_LABEL = ""; // server search: "about 812" / "1,000+" in place of the exact count
+  let FEED_SEARCH_NOTE = ""; // server search offline: the board shows the recent slice only
   const JOBS_PER_PAGE = 30; // page size requested from the server
   // A windowed run of page numbers around the current page, so a long list doesn't spray 40 buttons.
   function pageWindow(cur, pages) {
@@ -2009,7 +2011,7 @@
       ? `<span class="fp-num is-cur">${n}</span>`
       : `<button class="fp-num" data-page="${n}" type="button">${n}</button>`).join("");
     return `<div class="feed-pager">
-      <span class="fp-count">${start + 1} to ${start + shown} of ${total.toLocaleString()}</span>
+      <span class="fp-count">${start + 1} to ${start + shown} of ${FEED_COUNT_LABEL || total.toLocaleString()}</span>
       <div class="fp-nav">
         <button class="fp-btn" data-page="${JOBS_PAGE - 1}" ${JOBS_PAGE <= 1 ? "disabled" : ""} type="button">Prev</button>
         ${nums}
@@ -2833,6 +2835,11 @@
       FEED_NEWEST = r.newest_at || null;
       FEED_TOTAL = r.count != null ? r.count : (r.jobs || []).length;
       FEED_ALLTOTAL = r.total != null ? r.total : FEED_TOTAL;
+      // Server search (JOBS_SEARCH=server) only: an approximate count, the offline note, and one
+      // more poll while the server's count for this query is on its way.
+      FEED_COUNT_LABEL = r.count_label || "";
+      FEED_SEARCH_NOTE = r.note ? I18N.t("jobs.offlineSlice", r.note) : "";
+      if (r.count_pending) setTimeout(() => { if (my === FEED_REQ) loadPage(JOBS_PAGE); }, 1500);
       LAST_JOBS = r.jobs || [];
       FEED_LOADED = true;
       if (!r.degraded) FEED_OK = true;             // we have a trustworthy board to fall back on
@@ -2892,7 +2899,9 @@
     el.classList.remove("feed-note-quiet", "feed-note-stale");   // only the age line below sets them
     const total = FEED_ALLTOTAL, shown = FEED_TOTAL;
     // "N of M" where M is every live job, so Sponsors only stays honest about what it leaves out.
-    const count = JSCOPE.countText(shown, total, n => n.toLocaleString());
+    const count = FEED_COUNT_LABEL
+      ? `${FEED_COUNT_LABEL} of ${total.toLocaleString()} roles`
+      : JSCOPE.countText(shown, total, n => n.toLocaleString());
     // While reconnecting, say so instead of flashing a stale count or a frozen timestamp. On a cold
     // start (no good board yet) there's no count to keep, so just show "connecting to the live feed".
     // The list pane says it once (downloading, or the failure with Retry): keep the note quiet.
@@ -2917,6 +2926,7 @@
         : I18N.t("jobs.loading", "Loading jobs");
       return;
     }
+    if (FEED_SEARCH_NOTE) { el.textContent = `${count} · ${FEED_SEARCH_NOTE}`; return; }
     // The age of the NEWEST JOB, never the age of the last rebuild. If nothing new has arrived for
     // a while, say so: a quiet board that admits it beats a fresh-looking one that isn't.
     const newest = tsUTC(FEED_NEWEST);

@@ -1168,6 +1168,7 @@
   "r2.endAsk": "Encerrar a entrevista agora?",
   "r2.doneSub": "Avaliando a sua entrevista. Leva um minuto.",
   "jobs.updating": "atualizando para a lista de hoje",
+  "jobs.offlineSlice": "Mostrando vagas recentes. Pesquise todas as vagas quando estiver online novamente.",
   "set.privacyTitle": "Seus dados ficam neste computador",
   "set.privacyBody": "Seu perfil, currículos e candidaturas ficam numa pasta local. Entrar com um código por e-mail é opcional e só vincula o seu plano. Os planos e a IA incluída passam pelo nosso servidor, que guarda apenas contagens de uso para cobrança. A edição comunitária pode usar a sua própria chave de IA. As entrevistas ao vivo são transmitidas entre você e a Tavus. Os e-mails enviados para o seu endereço SponsorJobs ficam no nosso servidor só até este app baixá-los, por 30 dias no máximo. Depois disso, ficam nesta máquina.",
   "r1.leaveAsk": "Sair da entrevista? Suas respostas até agora são mantidas.",

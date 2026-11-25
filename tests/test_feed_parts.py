@@ -123,9 +123,11 @@ def test_the_uploader_sends_parts_immutable_before_the_list_and_prunes_old_versi
     s3 = _S3()
 
     def refs(m):
-        st = m["stable"]
-        return ([f"feed/{f['url']}" for f in m["parts"]["files"] + st["files"]]
-                + ([f"feed/{st['removed']['url']}"] if st.get("removed") else []))
+        out = [f"feed/{f['url']}" for f in m["parts"]["files"]]
+        for st in (m["stable"], m.get("slice") or {}):          # the slice's parts go up too
+            out += [f"feed/{f['url']}" for f in st.get("files") or []]
+            out += [f"feed/{st['removed']['url']}"] if st.get("removed") else []
+        return out
     m1 = _build(tmp_path / "v1", _rows(300))
     keys = upload_feed.upload(tmp_path / "v1", s3, "b", prefix="feed", log=lambda *a: None)
     part_keys = refs(m1)

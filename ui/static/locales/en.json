@@ -1168,6 +1168,7 @@
   "r2.endAsk": "End the interview now?",
   "r2.doneSub": "Scoring your interview. This takes a minute.",
   "jobs.updating": "updating to today's list",
+  "jobs.offlineSlice": "Showing recent roles. Search all jobs when you're back online.",
   "set.privacyTitle": "Your data stays on this machine",
   "set.privacyBody": "Your profile, resumes and applications live in a local folder. Signing in with an email code is optional and only links your plan. Plans and the included AI run through our server, which keeps only usage counts for billing. The community edition can use your own AI key instead. Live interviews stream between you and Tavus. Mail sent to your SponsorJobs address is held on our server only until this app downloads it, 30 days at most. After that it lives on this machine.",
   "r1.leaveAsk": "Leave the interview? Your answers so far are kept.",

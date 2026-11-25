@@ -1,6 +1,7 @@
 # Server-side job search: when and how
 
-**Status: plan (2026-10-23). Nothing here is built.** Prices were read from Cloudflare's and the
+**Status: phase 1 built 2026-10-23; phase 2 (index + API) built 2026-10-24 and not deployed; see
+"Phase 2 as built" at the end.** Prices were read from Cloudflare's and the
 vendors' pages on 2026-10-23: **verify before buying.**
 
 Today every install downloads the whole slim list (`sourcing/feedclient.py`, ~1 MB gzipped per 10k
@@ -123,7 +124,7 @@ GET /v1/jobs/search?q=&loc=&days=&remote=&visa=H1B,OPT&level=&pay=&sort=recent|p
   "jobs": [ <the same slim row the feed carries: source_id, source, company, title, location,
             remote, url, posted_at, first_seen, salary, sponsorship_stated, us, entry_level,
             visa, nationality_visas, sponsor, ad_stance> ],
-  "count": 812, "count_capped": false,        // capped at 1000 -> "1,000+"
+  "count": 112, "count_capped": false,        // exact up to 200, then 200 + true -> "200+"
   "next_cursor": "...",                       // keyset on (sort key, source_id); null at the end
   "index_version": "...", "generated_at": "..."
 }
@@ -207,3 +208,91 @@ so they run locally.
    public, so the risk does not rise much, but the depth limit and rate limits should ship from day one.
 7. **Hosting:** Pages' 100 GB/month soft limit cannot carry today's full-list model past a few
    hundred users. Keep the feed on R2 (free egress) whatever is decided here.
+
+## Phase 2 as built (2026-10-24)
+
+Not deployed. Nothing runs until the owner says yes (Workers Paid, section 4) and adds the loader's
+token.
+
+- **Database**: its own D1 database, `sponsorjobs-search` (binding `SEARCH_DB`,
+  `worker/migrations-search/`), so search never queues behind billing and sign-ins in the broker's
+  database. `wrangler.jsonc` holds a placeholder id until the owner creates it (worker/README.md).
+- **Schema** (`worker/migrations-search/0001_job_search.sql`, in its own D1 database `sponsorjobs-search`, binding `SEARCH_DB`, so search never queues behind the broker's billing and sign-ins): `jobs` (the slim row as
+  JSON plus columns the loader precomputes in Python: recency key, annual pay, posting time, lowered
+  title / company / location, visa codes, flags), `job_extras` (the per-employer `sponsor`, `visa`,
+  `nationality_visas` fields stored once and joined back: they were ~1.3 KB of a ~2 KB row),
+  `jobs_fts` (FTS5, **trigram** tokenizer, external content, over title, company and location) and
+  `search_meta` (`index_version`, `generated_at`, `rows`). Trigram, not a word tokenizer, because
+  `q` and `loc` are substring matches in `apply_facets` ("eng" finds "Engineer").
+- **API** (`worker/src/search.ts`): the routes and response shape of section 3. 400 on a malformed
+  parameter, 503 until an index is loaded, 409 `stale_cursor`, 429 `rate_limited`. The cursor is
+  signed (HMAC); set `SEARCH_CURSOR_SECRET` before launch or a caller could forge one past the
+  depth limit. Rate limits use the `ratelimits` binding in `wrangler.jsonc` (no resource to
+  create); the install token is read from `X-Install-Token`, the header the client sends.
+  **Counts stop at 200** ("200+", 2026-10-24): counting to 1,000 was most of a keyword search's
+  cost. Plan choice: page 1 of a keyword search counts the index's matches up to
+  `ftsLimit = sqrt(15.5 * N)` (~1.7k at 184k rows, ~2.8k at 500k). Fewer: the index answers
+  exactly. More: the ordered index is walked, and for a keyword-only search the probe is the
+  count. Searches with no keyword walk the ordered index within a row budget. Keys and the count
+  come from one query; the page's rows are then read by id.
+- **Loader** (`scripts/load_search_index.py`, `feed.yml` step after the build, only when the
+  `SEARCH_D1_TOKEN` secret is set, with `SEARCH_D1_ACCOUNT_ID` / `SEARCH_D1_DATABASE_ID`
+  variables): diffs the feed against the last loaded state and sends deletes and upserts as SQL
+  literals (~90 KB statements; D1 allows 100 bound parameters a query). `--dry-run` prints the
+  counts. A failed load deletes its state; the next run rebuilds it from D1 and finishes.
+- **Parity**: `worker/test/search-parity.test.ts` runs 57 facet mixes (50 search, 7 candidates)
+  through the Worker on 420 synthetic rows and gets `apply_facets`' IDs in the same order, through
+  both query plans. No semantic difference was needed. Known edges, not exercised by real data:
+  JS and Python can lowercase a few rare Unicode characters differently, and the loader drops NUL
+  characters from text.
+
+### Measured sizes and costs (local D1 in miniflare, the live 184,552-row list on 2026-10-24)
+
+The 500k column loads that list 2.7 times over (new IDs, same text), so a term matches 2.7 times
+as many rows.
+
+| | 184k rows | 500k rows |
+|---|---|---|
+| storage | 326 MB (jobs 173, FTS 64, indexes ~80) | ~0.9-1.0 GB |
+| first load | 1,848 requests, 165 MB of SQL, 1.48M rows written | 5,043 requests, 4.0M rows written |
+| a 3-hourly diff (1% new, 1% changed, 1% removed) | 54 requests, ~26k rows written | ~70k rows written |
+| rows written a month (8 loads a day) | ~6M (included: 50M) | ~17M |
+
+Rows read by page 1 (later pages in brackets), counts capped at 200:
+
+| query | 184k | 500k |
+|---|---|---|
+| no keyword (default, `sort=pay`, `days=7`, `sponsored=1`, `pay=150000&sort=pay`) | 321 (150) | 321 (150) |
+| `visa=H-1B` / `level=entry` / `loc=remote` | 402 / 2,033 / 2,460 | 513 / 2,925 / 1,152 |
+| `q=engineer` | 1,953 (256) | 3,138 (247) |
+| `q=software engineer` | 2,523 (1,231) | 3,495 (640) |
+| `q=nurse` | 2,248 (929) | 3,789 (508) |
+| `q=data analyst&sort=pay` | 1,495 (1,190) | 3,785 (3,022) |
+| `loc=new york` | 2,093 (436) | 3,258 (265) |
+| `q=accountant&sort=pay` | 1,760 (1,402) | 4,540 (3,626) |
+| `q=engineer&visa=H-1B` / `q=engineer&days=7` | 3,633 / 2,988 | 4,274 / 3,752 |
+| `q=nurse&days=30` | 5,019 (929) | 6,692 (508) |
+| `q=analyst&loc=new york` | 2,930 (2,338) | 7,685 (6,142) |
+| `q=data scientist&remote=remote` | 2,919 (2,215) | 7,524 (5,709) |
+| `q=zzqx` (no match) | 2 | 2 |
+| expensive: a common keyword plus a rare facet mix (`q=engineer&level=entry`, `q=engineer&days=7&level=entry`, `q=product manager&visa=H-1B&days=14`) | 16k-28k | 22k-37k |
+
+A typical keyword search reads ~2-4k rows (184k) and ~3-8k (500k). Weighting 60% plain keyword,
+30% keyword plus a common facet and 10% of the expensive mixes gives an average of ~5k rows a
+keyword search at 184k and ~7k at 500k; searches with no keyword read under ~2.5k.
+
+**Monthly cost** (the plan's 500 searches per user a month, half answered by the edge cache, and
+assuming every search that reaches D1 is a keyword search, the worst case for design (d)):
+
+| | 10k MAU | 100k MAU |
+|---|---|---|
+| Worker requests (10M included, then $0.30/M) | 5M: $0 | 50M: ~$12 |
+| D1 queries | 2.5M | 25M |
+| rows read (25B included, then $0.001/M) | 12-18B: $0 | 125-175B: ~$100-150 |
+| rows written, storage | included | included |
+| **total** | **$5 (the Workers Paid plan)** | **~$115-165** |
+
+That is above the $20-70 first estimated in section 2(a) (which assumed ~3k rows a query at
+100k MAU), and well below the ~$450-600 that counting to 1,000 measured. Further cuts, if needed:
+the slice in phase 3 answers page 1 with no keyword on the device, and the expensive mixes could
+be answered from the FTS plan with a count of "about N".
