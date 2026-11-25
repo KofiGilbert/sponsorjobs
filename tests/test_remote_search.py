@@ -138,17 +138,20 @@ class FakeServer:
         self.rows, self.version = rows, version
         self.calls: list[tuple[str, dict]] = []
         self.down = False
+        self.status = 200
 
     def __call__(self, url, headers, timeout):
         self.calls.append((url, dict(headers)))
         if self.down:
             raise OSError("network is unreachable")
+        if self.status != 200:
+            return self.status, b'{"reason":"daily_budget"}'
         parts = urlsplit(url)
         q = dict(parse_qsl(parts.query))
         rows = apply_facets(self.rows, q=q.get("q", ""), loc=q.get("loc", ""), days=q.get("days", 0),
                             remote=q.get("remote", ""), visa=[v for v in q.get("visa", "").split(",") if v],
                             level=q.get("level", ""), pay=q.get("pay", 0), sort=q.get("sort", ""),
-                            sponsored=q.get("sponsored", ""))
+                            sponsored=q.get("sponsored", ""), scope=q.get("scope", "all"))
         if parts.path.endswith("/candidates") and q.get("titles"):
             want = [t.lower() for t in q["titles"].split("|")]
             rows = [r for r in rows if any(t in r["title"].lower() for t in want)]
@@ -161,7 +164,10 @@ class FakeServer:
         lim = int(q.get("limit", 30))
         page = rows[off:off + lim]
         nxt = f"{self.version}:{off + lim}" if off + lim < len(rows) else None
-        body = {"jobs": page, "count": min(len(rows), 1000), "count_capped": len(rows) > 1000,
+        # As the API answers: exact once the end is in this page, else what it saw plus an estimate.
+        end = nxt is None
+        body = {"jobs": page, "count": len(rows) if end else min(len(rows), off + lim + 1),
+                "count_capped": not end, "count_estimate": None if end else len(rows),
                 "next_cursor": nxt, "index_version": self.version, "generated_at": NOW.isoformat()}
         return 200, json.dumps(body).encode()
 
@@ -217,7 +223,7 @@ def test_board_pages_follow_cursors_and_refill_short_pages(tmp_path):
     keep = lambda r: r["source_id"] not in hidden                    # noqa: E731
     p1 = rs.board_page({}, 1, 30, keep=keep)
     assert len(p1["jobs"]) == 30 and not hidden & {r["source_id"] for r in p1["jobs"]}
-    assert len(srv.calls) == 3 and p1["count"] == 200 and not p1["end"]
+    assert len(srv.calls) == 3 and p1["count_estimate"] == 200 and not p1["end"]
     p2 = rs.board_page({}, 2, 30, keep=keep)
     expect = [r["source_id"] for r in ALL[40:]]
     assert [r["source_id"] for r in p1["jobs"] + p2["jobs"]] == expect[:60]   # no gap, no repeat
@@ -265,7 +271,26 @@ def test_a_down_server_fails_fast_then_recovers(tmp_path):
 
 
 def test_count_label():
-    assert count_label(812, False) == "about 812" and count_label(1000, True) == "1,000+"
+    assert count_label(812, False) == "812" and count_label(31, True) == "31+"
+    assert count_label(31, True, 4900) == "about 4,900" and count_label(250, True, None) == "250+"
+
+
+def test_the_scope_is_sent_only_when_it_narrows():
+    assert ("scope", "sponsors") in build_query({"scope": "sponsors"})
+    assert "scope" not in dict(build_query({"scope": "all"})) and "scope" not in dict(build_query({}))
+
+
+def test_a_503_backs_off_for_ten_minutes(tmp_path):
+    srv = FakeServer(ALL)
+    t = [1000.0]
+    rs = RemoteSearch("https://api.test", tmp_path, fetch=srv, clock=lambda: t[0], down_for=30)
+    srv.status = 503                                  # no index yet, or today's allowance is used
+    with pytest.raises(SearchUnavailable):
+        rs.search({"q": "a"})
+    t[0] += 120
+    assert rs.down()                                  # not asked again after 30 s ...
+    t[0] += 600
+    assert not rs.down()                              # ... but after ten minutes
 
 
 # -- the app ------------------------------------------------------------------------------------- #
@@ -311,22 +336,53 @@ def test_switch_off_is_the_full_list_and_never_calls_the_server(app):
     app.test_install(False)
     d = app.app.test_client().get("/api/jobs?q=engineer&page=2").get_json()
     assert d["total"] == 150 and d["page"] == 2 and d["source"] == "central"
-    assert set(d) == {"jobs", "count", "total", "page", "per_page", "refreshed_at", "newest_at",
-                      "stale", "source"}
+    assert set(d) == {"jobs", "count", "total", "scope", "fit_ranked", "page", "per_page",
+                      "refreshed_at", "newest_at", "stale", "source", "attribution"}
     assert app.test_server.calls == []
 
 
-def test_page_one_without_a_keyword_comes_from_the_slice_then_gets_the_server_count(app):
+def test_the_board_comes_from_the_server_with_main_s_response_keys(app):
     sf, rs = app.test_install(True)
+    d = app.app.test_client().get("/api/jobs").get_json()
+    assert d["search"] == "server" and d["total"] == 150 and d["page"] == 1
+    assert set(d) >= {"jobs", "count", "total", "scope", "fit_ranked", "page", "per_page",
+                      "refreshed_at", "newest_at", "stale", "source", "attribution"}
+    assert d["count"] == 150 and d["count_label"] == "about 150"
+    assert [j["source_id"] for j in d["jobs"]] == [r["source_id"] for r in app.test_server.rows[:30]]
+
+
+def test_the_scope_goes_to_the_server_and_general_rows_stay_off_sponsors_only(app):
+    sf, rs = app.test_install(True)
+    general = {r["source_id"] for r in app.test_server.rows[::4]}
+    app.test_server.rows = [dict(r, sponsor_relevant=r["source_id"] not in general)
+                            for r in app.test_server.rows]
     c = app.app.test_client()
-    d = c.get("/api/jobs").get_json()
-    assert d["search"] == "slice" and d["count"] == 60 and d["total"] == 150
-    assert {j["source_id"] for j in d["jobs"]} <= {r["source_id"] for r in site_rows(sf)}
-    assert d.get("count_pending") is True
-    assert _wait(lambda: rs.cached(app._facets({}), limit=30) is not None)
-    d = c.get("/api/jobs").get_json()
-    assert d["count"] == 150 and d["count_label"] == "about 150" and not d.get("count_pending")
-    assert d["search"] == "slice"                                    # rows still from the slice
+    d = c.get("/api/jobs?scope=sponsors&per_page=100").get_json()
+    assert d["scope"] == "sponsors" and d["jobs"]
+    assert not general & {j["source_id"] for j in d["jobs"]}
+    assert "scope=sponsors" in app.test_server.urls()[-1]
+    d = c.get("/api/jobs?scope=all&per_page=100").get_json()
+    assert general & {j["source_id"] for j in d["jobs"]}
+
+
+def test_home_ranks_the_local_slice_and_sends_nothing(app):
+    app.test_install(True)
+    d = app.app.test_client().get("/api/jobs?home=1").get_json()
+    assert d["search"] == "slice" and d["jobs"] and app.test_server.calls == []
+
+
+def test_closed_and_ad_says_no_rows_are_hidden_on_this_machine(app, monkeypatch):
+    sf, rs = app.test_install(True)
+    rows = app.test_server.rows
+    closed, no_visa = rows[0]["source_id"], rows[1]["source_id"]
+    app.test_server.rows = [dict(r, ad_stance="not_offered", ad_sentence="We do not sponsor.")
+                            if r["source_id"] == no_visa else r for r in rows]
+    monkeypatch.setattr(app, "_closed_job_ids", lambda: {closed})
+    monkeypatch.setattr(app, "_load_prefs", lambda: {"work_auth": {"US": {"needs_sponsorship": True}}})
+    import autoapply.learning as learning
+    monkeypatch.setattr(learning, "needs_sponsorship", lambda prefs: True)
+    got = {j["source_id"] for j in app.app.test_client().get("/api/jobs").get_json()["jobs"]}
+    assert closed not in got and no_visa not in got and len(got) == 30
 
 
 def site_rows(sf):
@@ -353,6 +409,7 @@ def test_deeper_pages_go_to_the_server(app):
     d = app.app.test_client().get("/api/jobs?page=3").get_json()
     assert d["search"] == "server" and len(d["jobs"]) == 30 and d["page"] == 3
     assert d["count_label"] == "about 150"
+    assert [j["source_id"] for j in d["jobs"]] == [r["source_id"] for r in app.test_server.rows[60:90]]
 
 
 def test_offline_shows_the_slice_with_the_note(app):
@@ -363,7 +420,7 @@ def test_offline_shows_the_slice_with_the_note(app):
     assert d["search"] == "slice" and d["note"] == app.OFFLINE_SLICE_NOTE
     assert d["jobs"] and all("engineer" in j["title"].lower() for j in d["jobs"])
     d = c.get("/api/jobs").get_json()                                # page 1 knows it is offline too
-    assert d["note"] == app.OFFLINE_SLICE_NOTE and not d.get("count_pending")
+    assert d["note"] == app.OFFLINE_SLICE_NOTE and d["search"] == "slice" and d["count"] == 60
 
 
 def test_the_offline_note_is_in_every_locale():
@@ -408,7 +465,7 @@ def test_privacy_guard_nothing_personal_leaves_the_machine(app, monkeypatch):
     monkeypatch.setattr(app, "_dismissed_ids", lambda: {"greenhouse:acme:7"})
     monkeypatch.setattr(app, "_saved_ids", lambda: {"greenhouse:acme:70"})
     c = app.app.test_client()
-    for qs in ("q=engineer", "q=engineer&page=2", "page=3&visa=H1B,OPT&sponsored=1",
+    for qs in ("q=engineer", "q=engineer&page=2", "page=3&visa=H1B,OPT&sponsored=1", "scope=sponsors",
                "loc=New%20York&remote=hybrid&level=entry&pay=50000&sort=pay&days=7&page=2"):
         c.get("/api/jobs?" + qs)
     with app.app.app_context():

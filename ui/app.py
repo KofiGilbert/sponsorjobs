@@ -5180,30 +5180,36 @@ def _page_attribution(page_jobs, credits=None) -> dict:
 
 
 def _jobs_search_view(jobs: list[dict], header: dict):
-    """/api/jobs with server search on (same response shape, plus optional `count_label`, `note`,
-    `count_pending`, `search`). No keyword on page 1: the slice answers at once, and page 1 of the
-    same query is fetched from the server in the background for its count (`count_pending` asks
-    the board to poll once more). A keyword or a deeper page: the search API, through the same
-    local layers as the full list (personal, dismissed, company marks, saved). Offline or server
-    down: the slice, with OFFLINE_SLICE_NOTE."""
+    """/api/jobs with server search on (JOBS_SEARCH=server; docs/server-search-plan.md). Same
+    response as the full-list path, plus optional `search` ("server" or "slice"), `count_label`
+    ("about 4,900", "250+") and `note`.
+
+    The board's pages come from the search API (scope, facets, cursors), then go through the same
+    personal layers as the full list, on this machine: roles closed to a visa holder hidden while
+    the person needs sponsorship, their dismissed roles and closed postings left out, company
+    marks, resume sessions and the saved overlay. Home's "best-fit roles" ranks the local SLICE
+    (the newest roles, downloaded with the feed) by fit to the profile, so nothing from the profile
+    is ever sent. Offline, or when the API is down or out of its daily allowance: the slice, with
+    OFFLINE_SLICE_NOTE."""
     from autoapply.learning import closed_to_visa, needs_sponsorship
     from sourcing.filters import apply_facets, paginate
     from sourcing.remotesearch import SearchUnavailable, count_label
     a = request.args
     facets = _facets(a)
+    home = a.get("home") == "1"
     _, _, page, per_page = paginate([], a.get("page", 1), a.get("per_page", 30))
-    hidden = _dismissed_ids()                        # the person's own Dismiss, kept locally
+    hidden = _dismissed_ids() | _closed_job_ids()   # the person's own Dismiss, and closed postings
     needs = needs_sponsorship(_load_prefs())
 
-    def keep(j: dict) -> bool:                       # _jobs_personal + dismissed, one row at a time
-        return j.get("source_id") not in hidden and not (needs and closed_to_visa(j))
+    def keep(j: dict) -> bool:                       # _jobs_personal + hidden, one row at a time
+        return j.get("source_id") not in hidden and not (needs and closed_to_visa(j, title=True))
 
-    rs = _remote_search()
     extra: dict = {"search": "slice"}
     server = None
-    if facets["q"].strip() or page > 1:
+    fit_ranked = False
+    if not home:
         try:
-            server = rs.board_page(facets, page, per_page, keep=keep)
+            server = _remote_search().board_page(facets, page, per_page, keep=keep)
         except SearchUnavailable:
             extra["note"] = OFFLINE_SLICE_NOTE
     if server is not None:
@@ -5212,24 +5218,21 @@ def _jobs_search_view(jobs: list[dict], header: dict):
         if server["end"]:                            # the last page: the count is exact
             count = (page - 1) * per_page + len(page_jobs)
         else:
-            count = max(server["count"], page * per_page + 1)
-            extra["count_label"] = count_label(server["count"], server["count_capped"])
+            # The pager needs a number: the server's (an estimate, or "N+"), never past the
+            # 1,000-result depth the API serves.
+            n = server.get("count_estimate") or server["count"]
+            count = min(max(n, page * per_page + 1), 1000)
+            extra["count_label"] = count_label(server["count"], server["count_capped"],
+                                               server.get("count_estimate"))
         extra["search"] = "server"
     else:
-        filtered = [j for j in apply_facets(jobs, **facets) if keep(j)]
+        filtered = _jobs_personal(apply_facets(jobs, **facets), home=home)
+        if hidden:
+            filtered = [j for j in filtered if j.get("source_id") not in hidden]
+        if home:
+            filtered, fit_ranked = _home_fit_rank(filtered)
         page_jobs, count, page, per_page = paginate(filtered, page, per_page)
-        if "note" not in extra and page == 1:
-            first = rs.cached(facets, limit=per_page)
-            if first is not None:                    # the whole board's count for this query
-                n = int(first.get("count") or 0)
-                if n > count:
-                    count = n
-                    extra["count_label"] = count_label(n, bool(first.get("count_capped")))
-            elif rs.down():
-                extra["note"] = OFFLINE_SLICE_NOTE
-            elif rs.prefetch(facets, limit=per_page):
-                extra["count_pending"] = True
-    page_jobs = _jobs_mark([dict(j) for j in page_jobs])   # never mutate the cached rows
+    page_jobs = _jobs_with_sessions(_jobs_mark([dict(j) for j in page_jobs]))   # never mutate cached rows
     saved = _saved_ids()                             # overlay the user's bookmarks
     if saved:
         for j in page_jobs:
@@ -5237,10 +5240,13 @@ def _jobs_search_view(jobs: list[dict], header: dict):
     refreshed = header.get("generated_at")
     return jsonify({"jobs": page_jobs, "count": count,
                     "total": int(header.get("board_count") or len(jobs)),
+                    "scope": facets["scope"], "fit_ranked": fit_ranked,
                     "page": page, "per_page": per_page, "refreshed_at": refreshed,
                     "newest_at": _newest_arrival(jobs),
                     "stale": _is_stale(refreshed, hours=12) if refreshed else False,
-                    "source": "central", **extra})
+                    "source": "central",
+                    "attribution": _page_attribution(page_jobs, header.get("attribution")),
+                    **extra})
 
 
 @app.get("/api/jobs/detail")
@@ -19209,14 +19215,14 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
         j["entry_level"] = is_entry_level(j.get("title", ""))
     board = _board_rows()
     strat = _aa_saved_search()
-    if _search_server():
-        board = _aa_server_board(board, (strat or {}).get("filters") or {}, titles)
-    profile = _match_profile()
-    from autoapply.learning import needs_sponsorship
-    needs = needs_sponsorship(_load_prefs())
     # The board in the person's scope, the same one the Jobs screen shows (2026-11-20): someone
     # on Sponsors only is never handed a role from the general rows, chip or no chip.
     scope = _jobs_scope_state()["scope"]
+    if _search_server():
+        board = _aa_server_board(board, {**((strat or {}).get("filters") or {}), "scope": scope}, titles)
+    profile = _match_profile()
+    from autoapply.learning import needs_sponsorship
+    needs = needs_sponsorship(_load_prefs())
     skip = tuple(_prefs().get("aa_skip") or [])
     # The prefilter reads every row of the board (~0.7 s on 100k rows), so its order is kept
     # until something it depends on changes: the board itself, the focus, the saved search,

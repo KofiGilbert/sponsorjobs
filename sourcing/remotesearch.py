@@ -38,7 +38,7 @@ from urllib.parse import urlencode
 SEARCH_PATH = "/v1/jobs/search"
 CANDIDATES_PATH = "/v1/jobs/candidates"
 # The only query keys that may ever leave the machine (the plan's "What goes to the server").
-FACET_KEYS = ("q", "loc", "days", "remote", "visa", "level", "pay", "sort", "sponsored")
+FACET_KEYS = ("q", "loc", "days", "remote", "visa", "level", "pay", "sort", "sponsored", "scope")
 SEARCH_KEYS = frozenset(FACET_KEYS + ("limit", "cursor"))
 CANDIDATE_KEYS = SEARCH_KEYS | {"titles"}
 SEARCH_LIMIT = 50           # the API's caps: 50 rows a search page...
@@ -48,6 +48,7 @@ TITLE_MAX = 80
 Q_MAX = 200
 TIMEOUT = 6                 # seconds per request; then the board serves the slice
 DOWN_FOR = 30               # after a failure, no request for this long (the slice serves)
+BUSY_FOR = 600              # after a 503 (no index yet, or the day's free allowance used up)
 CACHE_SIZE = 50             # responses kept in memory
 PAGE_CALLS = 3              # server calls to fill one short board page
 MAX_WALK = 40               # pages walked forward to reach a deep page (1,000 results / 30 = 34)
@@ -117,6 +118,10 @@ def build_query(facets: dict | None, *, cursor: str | None = None, limit: int = 
         out.append(("sort", sort))
     if str(f.get("sponsored", "")).strip().lower() in ("1", "true", "yes", "on"):
         out.append(("sponsored", "1"))
+    # The board's scope (sourcing/filters.apply_facets): only "sponsors" narrows, so "all" and an
+    # empty scope send nothing.
+    if str(f.get("scope") or "").strip().lower() == "sponsors":
+        out.append(("scope", "sponsors"))
     if candidates:
         typed = []
         for t in titles or []:
@@ -216,6 +221,9 @@ class RemoteSearch:
                 self._lru.clear()
                 self._starts.clear()
             raise StaleCursor("the search index changed")
+        if status == 503:                           # not loaded yet, or out of today's allowance
+            self._failed(BUSY_FOR)
+            raise SearchUnavailable("search is not available right now (503)")
         if status != 200:
             self._failed()
             raise SearchUnavailable(f"search returned HTTP {status}")
@@ -236,9 +244,9 @@ class RemoteSearch:
                 self._lru.popitem(last=False)
         return data
 
-    def _failed(self) -> None:
+    def _failed(self, wait: float | None = None) -> None:
         with self._lock:
-            self._down_until = self._clock() + self._down_for
+            self._down_until = self._clock() + max(self._down_for, wait or 0)
 
     def search(self, facets: dict | None, *, cursor: str | None = None, limit: int = 30) -> dict:
         return self._get(SEARCH_PATH, build_query(facets, cursor=cursor, limit=limit))
@@ -341,11 +349,18 @@ class RemoteSearch:
     @staticmethod
     def _page_out(rows, meta, end: bool) -> dict:
         meta = meta or {}
+        est = meta.get("count_estimate")
         return {"jobs": rows, "count": _int(meta.get("count")),
                 "count_capped": bool(meta.get("count_capped")), "end": end,
+                "count_estimate": _int(est) if est else None,
                 "index_version": meta.get("index_version"), "generated_at": meta.get("generated_at")}
 
 
-def count_label(count: int, capped: bool) -> str:
-    """How the board reads a server count: "about 812", or "1,000+" when the server capped it."""
-    return f"{max(1000, count):,}+" if capped else f"about {count:,}"
+def count_label(count: int, capped: bool, estimate: int | None = None) -> str:
+    """How the board reads a server count: exact ("812"), an estimate the server made from what
+    it read ("about 4,900"), or a floor ("250+") when it stopped counting."""
+    if not capped:
+        return f"{count:,}"
+    if estimate:
+        return f"about {estimate:,}"
+    return f"{count:,}+"
