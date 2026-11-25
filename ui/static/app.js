@@ -9705,7 +9705,7 @@
   // the interview UI; the person is interviewing for the role, not one of our CV variants.
   function prepRole(p) { return String((p && p.role) || "").replace(/,\s*[A-Za-z0-9]+:\s.+$/, "").trim(); }
   function scrHead(count, timer) { $("#scrCount").textContent = count || ""; $("#scrTimer").textContent = timer || ""; }
-  function r1Title(p) { return esc(prepRole(p)) + (p.company ? " " + esc(T("r1.at", "at")) + " " + esc(p.company) : ""); }
+
   // Screen 1: the intro. ONE screen before the camera turns on (the real product also opens on a
   // single page that walks through the interview's requirements): who it is for, what to expect in
   // the real configured numbers, where recordings go, the extra-time option (it multiplies both
@@ -9716,49 +9716,79 @@
     if (!SCR_DEFAULTS) { try { const d = await api("/api/screens/config"); if (d && d.prep_s) SCR_DEFAULTS = d; } catch (e) { /* the line then says only how many questions */ } }
     r1FactsPaint();
   }
-  // "30 seconds", "2 minutes": whole minutes are said as minutes.
-  function r1Dur(secs) {
-    if (secs % 60) return T("r1.secs", "{n} seconds").replace("{n}", String(secs));
-    const m = secs / 60;
-    return m === 1 ? T("r1.min1", "1 minute") : T("r1.mins", "{n} minutes").replace("{n}", String(m));
+  // "30 sec", "2 min": whole minutes are said as minutes.
+  function r1Short(secs) {
+    return secs % 60 ? T("r1.unitSec", "{n} sec").replace("{n}", String(secs)) : T("r1.unitMin", "{n} min").replace("{n}", String(secs / 60));
   }
-  // What to expect, from the numbers the interview will really run on.
+  // What to expect, as separate facts a person can scan (a number, a small label under it), from
+  // the numbers the interview will really run on. Not a sentence: four facts run together with
+  // dots read as one lump.
   function r1Facts() {
     const n = SCR_DRILL ? SCR_DRILL.length : R1_QUESTIONS, d = SCR_DEFAULTS;
-    const parts = [n === 1 ? T("r1.factQuestion", "1 question") : T("r1.factQuestions", "{n} questions").replace("{n}", String(n))];
+    const out = { stats: [[String(n), n === 1 ? T("r1.statQuestion", "question") : T("r1.statQuestions", "questions")]], retake: "" };
     if (d) {
       const f = SCR_EXTRA ? Number(d.extra_time_factor || 2) : 1, prep = d.prep_s * f, answer = d.answer_s * f, re = Number(d.retakes || 0);
       const mins = Math.max(5, Math.round((n * (prep + answer) * (1 + re * 0.5)) / 60 / 5) * 5);
-      parts.push(T("r1.factAbout", "about {n} minutes").replace("{n}", String(mins)));
-      parts.push(T("r1.factClocks", "{prep} to prepare, {answer} to answer").replace("{prep}", r1Dur(prep)).replace("{answer}", r1Dur(answer)));
-      parts.push(re === 0 ? T("r1.factNoRetake", "no retakes") : re === 1 ? T("r1.factRetake", "1 retake") : T("r1.factRetakes", "{n} retakes").replace("{n}", String(re)));
+      out.stats.push(["~" + r1Short(mins * 60), T("r1.statTotal", "in total")],
+                     [r1Short(prep), T("r1.statPrep", "to prepare")], [r1Short(answer), T("r1.statAnswer", "to answer")]);
+      out.retake = re === 1 ? T("r1.retakeNote1", "1 retake per question") : re > 1 ? T("r1.retakeNoteN", "{n} retakes per question").replace("{n}", String(re)) : "";
     }
-    return parts;
+    return out;
   }
-  // Each fact stays whole when the line wraps: it breaks at a dot, never inside "30 seconds to prepare".
-  const r1FactsHtml = () => r1Facts().map(x => `<span>${esc(x)}</span>`).join(" \u00b7 ");
-  function r1FactsPaint() { const el = $("#r1Facts"); if (el) el.innerHTML = r1FactsHtml(); }
+  const r1StatsHtml = (f) => f.stats.map(([v, l]) => `<div class="r1-stat"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
+  function r1FactsPaint() {
+    const f = r1Facts(), el = $("#r1Facts"); if (!el) return;
+    el.innerHTML = r1StatsHtml(f); el.dataset.n = String(f.stats.length);
+    const re = $("#r1Retake"); if (re) re.textContent = f.retake;
+  }
+  // A title is never broken onto two lines when it can fit on one (owner's rule). Every heading on
+  // the stage is set on one line and stepped down in size until it fits; it wraps only when it
+  // still does not fit at the smallest size. Questions are the one exception: they are meant to
+  // sit on two or three balanced lines (.r1-q).
+  function r1FitTitles() {
+    document.querySelectorAll("#scrStage .r1-h").forEach(h => {
+      h.classList.remove("is-wrap"); h.style.fontSize = "";
+      const max = parseFloat(getComputedStyle(h).fontSize) || 0, min = Math.max(17, max * 0.72);
+      let size = max;
+      while (h.scrollWidth > h.clientWidth + 0.5 && size > min) { size = Math.max(min, size - 0.5); h.style.fontSize = size + "px"; }
+      if (h.scrollWidth > h.clientWidth + 0.5) h.classList.add("is-wrap");
+    });
+  }
+  if ($("#scrStage")) {
+    new MutationObserver(r1FitTitles).observe($("#scrStage"), { childList: true });
+    if (window.ResizeObserver) new ResizeObserver(r1FitTitles).observe($("#scrStage"));
+    try { document.fonts?.ready?.then(r1FitTitles); } catch (e) {}
+  }
   function renderR1Intro() {
     const p = SCR_PREP;
     scrHead("", ""); SCR_PHASE = "idle";
     const point = (ic, key, text) => `<li>${R1_IC[ic]}<span>${esc(T(key, text))}</span></li>`;
-    $("#scrStage").innerHTML = r1Stage("intro", { solo: true, body: `
+    const f = r1Facts();
+    $("#scrStage").innerHTML = r1Stage("intro", { solo: true, foot: T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."), body: `
       <div class="r1-label"><span>${esc(T("r1.eyebrow", "Round 1 \u00b7 recorded interview"))}</span></div>
-      <h2 class="r1-h">${r1Title(p)}</h2>
-      <p class="r1-facts" id="r1Facts">${r1FactsHtml()}</p>
+      <div class="r1-id">
+        ${p.company ? companyAvatar({ company: p.company }) : ""}
+        <div class="r1-id-t">
+          <h2 class="r1-h">${esc(prepRole(p))}</h2>
+          ${p.company ? `<p class="r1-co">${esc(p.company)}</p>` : ""}
+        </div>
+      </div>
+      <div class="r1-stats" id="r1Facts" data-n="${f.stats.length}">${r1StatsHtml(f)}</div>
+      <p class="r1-retake" id="r1Retake">${esc(f.retake)}</p>
       ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : ""}
       <ul class="r1-points">
         ${point("lock", "r1.notice1", "Recordings stay on this computer.")}
         ${point("trash", "r1.notice2", "Delete them any time.")}
         ${point("eyeOff", "r1.notice3", "No facial analysis. Only your words are scored.")}
       </ul>
-      <label class="r1-check"><input type="checkbox" id="scrExtra" ${SCR_EXTRA ? "checked" : ""}>
-        <span><b>${esc(T("r1.extraTime", "I need extra time"))}</b> <span class="r1-check-d">${esc(T("r1.extraTimeD", "Doubles the prep and answer time."))}</span></span></label>
+      <label class="r1-opt">
+        <span class="r1-opt-t"><b>${esc(T("r1.extraTime", "Need extra time?"))}</b><span>${esc(T("r1.extraTimeD", "Doubles the prep and answer time."))}</span></span>
+        <input type="checkbox" id="scrExtra" ${SCR_EXTRA ? "checked" : ""}>
+      </label>
       <div class="r1-solo-acts">
         <button class="r1-btn r1-btn-primary" id="scrBegin" type="button"><i class="r1-btn-spin" aria-hidden="true"></i><span id="scrBeginT">${esc(T("r1.getStarted", "Get started"))}</span></button>
         <span class="r1-solo-msg" id="scrBeginMsg" role="alert" hidden></span>
-      </div>
-      <p class="r1-fine">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>` });
+      </div>` });
     $("#scrExtra")?.addEventListener("change", (e) => { SCR_EXTRA = !!e.target.checked; r1FactsPaint(); });
     $("#scrBegin")?.addEventListener("click", async () => {
       const btn = $("#scrBegin"), msg = $("#scrBeginMsg");
@@ -9828,7 +9858,7 @@
             </span>
           </div>
         </header>
-        <main class="r1-main"><div class="r1-card${o.solo ? " is-solo" : ""}">${o.body || ""}</div></main>
+        <main class="r1-main"><div class="r1-card${o.solo ? " is-solo" : ""}">${o.body || ""}</div>${o.foot ? `<p class="r1-foot">${esc(o.foot)}</p>` : ""}</main>
       </div>`;
   }
   // The clock: one place and one style for the prep countdown and the response countdown, with a

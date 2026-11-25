@@ -71,7 +71,7 @@ async function stub(page, questions, opts) {
   const screen = { id: "s1", prep_id: "p1", i: null, config: { prep_s: 30, answer_s: 120, retakes: 1, extra_time: false },
                    questions: questions.map((text) => ({ text, q: text, kind: "behavioral" })) };
   await page.route("**/api/preps", (r) => r.request().method() === "POST"
-    ? json(r, { prep: { id: "p1", role: "Data Analyst", company: "Acme Robotics", questions: [] } }) : r.continue());
+    ? json(r, { prep: { id: "p1", role: (opts && opts.role) || "Product Manager", company: (opts && opts.company) || "Acme Robotics Foundation", questions: [] } }) : r.continue());
   await page.route("**/api/screens", async (r) => {
     if (opts) opts.sent = r.request().postDataJSON();          // what Get started really asked for
     if (opts && opts.slowStart) await new Promise((ok) => setTimeout(ok, opts.slowStart));
@@ -82,6 +82,7 @@ async function stub(page, questions, opts) {
   await page.route("**/api/screens/s1/answers/*", (r) => json(r, r.request().url().endsWith("/transcribe")
     ? { available: true, transcript: "I learned it by doing it." } : { ok: true, takes_left: 0 }));
   await page.route("**/api/screens/s1/score", () => { /* never answers: the All done screen stays up */ });
+  await page.route("**/api/logo*", (r) => r.fulfill({ status: 404, body: "" }));   // the monogram, never the network
 }
 
 async function open(browser, { w, h, theme, questions, multi, practice, net }) {
@@ -128,6 +129,19 @@ const question = (page) => page.evaluate(() => {
            cut: q.scrollWidth > q.clientWidth + 1 || pane.scrollHeight > pane.clientHeight + 1 || pane.scrollWidth > pane.clientWidth + 1,
            shownText: q.textContent };
 });
+// Every title on the stage: its text and how many lines it takes. A title is never broken in two
+// when it can fit on one; only questions (.r1-q) are meant to wrap.
+const titles = (page) => page.evaluate(() => [...document.querySelectorAll("#r1Stage .r1-h")].map((h) => {
+  const r = document.createRange(); r.selectNodeContents(h);
+  const tops = new Set([...r.getClientRects()].filter((x) => x.width > 0).map((x) => Math.round(x.top)));
+  return { text: h.textContent.trim(), lines: tops.size, size: parseFloat(getComputedStyle(h).fontSize), cut: h.scrollWidth > h.clientWidth + 1 };
+}));
+async function oneLine(page, w, step) {
+  for (const t of await titles(page)) {
+    assert(!t.cut, `${step}: the title is not cut (${JSON.stringify(t)})`);
+    if (w >= 1440 && t.text.length < 50) assert(t.lines === 1, `${step}: a title under 50 characters is one line at ${w} (${JSON.stringify(t)})`);
+  }
+}
 // Text elements a person reads on the stage (visible, own text), for the before/after count.
 const strings = (page) => page.evaluate(() => {
   const out = [];
@@ -166,19 +180,35 @@ async function layoutRun(browser, w, h, theme) {
   // The intro is the same stage: only the card, the app's chrome hidden. One screen, one action.
   const chrome = [".sidebar", "#view-prep > .page-head", "#prepScreen > .mock-top", ".privacy-line", ".panel-rail", "#prepProgress"];
   for (const sel of chrome) assert(!(await shown(page, sel)), `${sel} is hidden on the intro`);
-  await page.waitForFunction(() => /retake/.test(document.querySelector("#r1Facts")?.textContent || ""));
+  await page.waitForFunction(() => document.querySelectorAll("#r1Facts .r1-stat").length === 4);
   const solo = await rect(page, ".r1-card");
-  assert(near(solo.x + solo.w / 2, w / 2, 2) && solo.y >= 52 && solo.b <= h, "the intro card is centred and whole");
+  assert(near(solo.x + solo.w / 2, w / 2, 2) && solo.y >= 52 && solo.b <= h, `the intro card is centred and whole (${JSON.stringify(solo)})`);
   assert(solo.w >= 720 && solo.w >= w * 0.49, `the intro card is a proper size for the window (${Math.round(solo.w)} of ${w})`);
   assert(solo.y - 52 <= h - solo.b + 2, "the intro card sits in the upper middle");
+  await oneLine(page, w, "intro");
   const type = await page.evaluate(() => { const px = (sel) => parseFloat(getComputedStyle(document.querySelector(sel)).fontSize);
-    return { h: px(".r1-card .r1-h"), facts: px("#r1Facts"), point: px(".r1-points li"), check: px(".r1-check"), btn: px("#scrBegin") }; });
-  assert(type.h >= 26 && type.facts >= 16 && type.point >= 16 && type.check >= 16, `the intro is set at the stage's scale (${JSON.stringify(type)})`);
-  const tick = await rect(page, "#scrExtra"), ic = await rect(page, ".r1-points li svg");
-  assert(near(tick.w, ic.w, 2) && near(tick.x, ic.x, 1.5), `the tick box is the size of the icons and lines up with them (${tick.w} and ${ic.w})`);
+    return { h: px(".r1-card .r1-h"), co: px(".r1-co"), stat: px(".r1-stat b"), statL: px(".r1-stat span"), point: px(".r1-points li"), opt: px(".r1-opt-t b"), btn: px("#scrBegin") }; });
+  assert(type.h >= 25 && type.stat >= 24 && type.point >= 15.5 && type.opt >= 15.5 && type.co >= 15, `the intro is set at the stage's scale (${JSON.stringify(type)})`);
   if (w > 2000) assert(type.h >= 40 && type.point >= 24, `and scales up in a large window (${JSON.stringify(type)})`);
-  assert((await page.textContent("#r1Facts")) === "5 questions · about 20 minutes · 30 seconds to prepare, 2 minutes to answer · 1 retake", `what to expect, in the real numbers (${await page.textContent("#r1Facts")})`);
+  // Who it is for: the role is the title, the company a quiet line under it.
+  assert((await page.textContent(".r1-card .r1-h")) === "Product Manager" && (await page.textContent(".r1-co")) === "Acme Robotics Foundation", "the role is the title, the company its own line");
+  // The facts: four separate items on one row, a number over a small label, evenly spaced.
+  const stats = await page.evaluate(() => [...document.querySelectorAll("#r1Facts .r1-stat")].map((e) => { const r = e.getBoundingClientRect(), b = e.querySelector("b"), l = e.querySelector("span");
+    return { v: b.textContent, l: l.textContent, x: r.x, y: r.y, w: r.width, under: l.getBoundingClientRect().top >= b.getBoundingClientRect().bottom - 2, tab: getComputedStyle(b).fontVariantNumeric }; }));
+  assert(JSON.stringify(stats.map((x) => [x.v, x.l])) === JSON.stringify([["5", "questions"], ["~20 min", "in total"], ["30 sec", "to prepare"], ["2 min", "to answer"]]), `what to expect, in the real numbers (${JSON.stringify(stats.map((x) => [x.v, x.l]))})`);
+  assert(stats.every((x) => near(x.y, stats[0].y) && near(x.w, stats[0].w, 2) && x.under && x.tab.includes("tabular-nums")), "one evenly spaced row, each number over its label, tabular numbers");
+  assert((await page.textContent("#r1Retake")) === "1 retake per question", "the retake rule is one quiet line");
   assert(await page.evaluate(() => document.querySelectorAll(".r1-points li svg").length === 3 && document.querySelectorAll(".r1-card .r1-btn").length === 1), "three points with icons, one button");
+  // Extra time is its own row: the words on the left, the box at the right end, keyboard operable.
+  const opt = await rect(page, ".r1-opt"), box = await rect(page, "#scrExtra"), optT = await rect(page, ".r1-opt-t");
+  assert(near(box.r, opt.r, 1.5) && optT.r < box.x && near(opt.w, (await rect(page, "#r1Facts")).w, 2), "the extra-time row spans the card with its box at the right end");
+  await page.focus("#scrExtra"); await page.keyboard.press("Space");
+  assert(await page.isChecked("#scrExtra"), "the extra-time box works from the keyboard");
+  await page.keyboard.press("Space");
+  // The card ends on the action; the footnote is under the card, not in it.
+  const act = await rect(page, "#scrBegin"), foot = await rect(page, ".r1-foot");
+  assert(near(act.x, opt.x, 1.5) && solo.b - act.b < solo.h * 0.2 && foot.y >= solo.b && foot.b <= h, `the action closes the card on its left edge and the footnote sits under the card (${JSON.stringify({ act, foot, solo })})`);
+  assert(await page.evaluate(() => !document.querySelector(".r1-card .r1-foot") && !document.querySelector(".r1-card .r1-fine")), "nothing follows the action inside the card");
   // Enabled means the solid primary, at full strength.
   const btn = await page.evaluate(() => { const b = document.querySelector("#scrBegin"), cs = getComputedStyle(b), probe = document.createElement("i");
     probe.style.color = "var(--r1-primary)"; b.parentElement.appendChild(probe); const want = getComputedStyle(probe).color; probe.remove();
@@ -191,6 +221,7 @@ async function layoutRun(browser, w, h, theme) {
   const stage = await rect(page, "#r1Stage");
   assert(near(stage.x, 0) && near(stage.y, 0) && near(stage.w, w) && near(stage.h, h), `the stage fills the window (${JSON.stringify(stage)})`);
   const c0 = await composed(page, w, h, "device check");
+  await oneLine(page, w, "device check");
   const vCheck = c0.v, bCheck = await rect(page, "#r1Acts .r1-btn-primary");
   assert((await rect(page, ".r1-col-q")).r <= vCheck.x, "the words sit to the left of the video");
   // The meter visibly moves (the fake microphone beeps).
@@ -364,9 +395,10 @@ async function introRun(browser) {
   SHOT_TAG = "1440x806-light";
   const net = { slowStart: 1500 };
   let { ctx, page } = await open(browser, { w: 1440, h: 806, net });
-  await page.waitForFunction(() => /retake/.test(document.querySelector("#r1Facts")?.textContent || ""));
-  await page.check("#scrExtra");
-  assert((await page.textContent("#r1Facts")) === "5 questions · about 40 minutes · 1 minute to prepare, 4 minutes to answer · 1 retake", `extra time doubles the clocks in the line (${await page.textContent("#r1Facts")})`);
+  await page.waitForFunction(() => document.querySelectorAll("#r1Facts .r1-stat").length === 4);
+  await page.click(".r1-opt-t");                                         // the whole row is the control
+  const doubled = await page.evaluate(() => [...document.querySelectorAll("#r1Facts .r1-stat b")].map((b) => b.textContent));
+  assert(await page.isChecked("#scrExtra") && JSON.stringify(doubled) === JSON.stringify(["5", "~40 min", "1 min", "4 min"]), `extra time doubles the clocks in the facts, live (${JSON.stringify(doubled)})`);
   await shot(page, "0-intro-extra-time");
   await page.click("#scrBegin");
   assert((await page.textContent("#scrBeginT")) === "Get started", "a quick start does not flash a second label");
@@ -393,16 +425,43 @@ async function introRun(browser) {
   await page.click("#scrBegin"); await page.waitForSelector('#r1Stage[data-step="check"]');
   await ctx.close();
 
-  // Narrow: the Browser pane open beside the intro.
-  SHOT_TAG = "700x806-light";
-  ({ ctx, page } = await open(browser, { w: 1000, h: 806 }));
-  await page.setViewportSize({ width: 700, height: 806 });
-  await page.waitForFunction(() => /retake/.test(document.querySelector("#r1Facts")?.textContent || ""));
-  const card = await rect(page, ".r1-card"), b = await rect(page, "#scrBegin");
-  assert(card.x >= 0 && card.r <= 700 && card.b <= 806 && b.b <= card.b, `narrow: the intro card is whole (${JSON.stringify(card)})`);
-  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "narrow: no sideways scroll");
-  await shot(page, "0-intro");
+  // A long role and a long company: still one line each, the title stepped down to fit.
+  for (const [tag, w, h] of [["1440x806-light", 1440, 806], ["2491x1557-light", 2491, 1557]]) {
+    SHOT_TAG = tag;
+    ({ ctx, page } = await open(browser, { w, h, net: { role: "Senior Business Intelligence Analyst", company: "Massachusetts General Brigham Incorporated" } }));
+    await page.waitForFunction(() => document.querySelectorAll("#r1Facts .r1-stat").length === 4);
+    const t = (await titles(page))[0], co = await page.evaluate(() => { const e = document.querySelector(".r1-co"); return Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)); });
+    assert(t.lines === 1 && !t.cut && co === 1, `a long role and company each stay on one line at ${w} (${JSON.stringify(t)}, company lines ${co})`);
+    await shot(page, "0-intro-long-names");
+    await ctx.close();
+  }
+  // The fallback: a title that cannot fit even at the smallest size wraps, whole, instead of being cut.
+  SHOT_TAG = "1440x806-light";
+  ({ ctx, page } = await open(browser, { w: 1440, h: 806, net: { role: "Senior Principal Business Intelligence and Advanced Analytics Engineering Program Manager, Global Markets", company: "Acme" } }));
+  await page.waitForFunction(() => document.querySelectorAll("#r1Facts .r1-stat").length === 4);
+  let t = (await titles(page))[0];
+  assert(t.lines === 2 && !t.cut && t.size < 25, `only a title that cannot fit at the smallest size wraps (${JSON.stringify(t)})`);
+  assert((await rect(page, ".r1-card")).b <= 806, "and the card still fits");
+  await shot(page, "0-intro-title-fallback");
   await ctx.close();
+
+  // Narrow: the Browser pane open beside the intro. The facts become two by two.
+  SHOT_TAG = "700x806-light";
+  for (const [name, net] of [["0-intro", {}], ["0-intro-long-names", { role: "Senior Business Intelligence Analyst", company: "Massachusetts General Brigham Incorporated" }]]) {
+    ({ ctx, page } = await open(browser, { w: 1000, h: 806, net }));
+    await page.setViewportSize({ width: 700, height: 806 });
+    await page.waitForFunction(() => document.querySelectorAll("#r1Facts .r1-stat").length === 4);
+    await page.waitForTimeout(200);
+    const card = await rect(page, ".r1-card"), b = await rect(page, "#scrBegin");
+    assert(card.x >= 0 && card.r <= 700 && card.b <= 806 && b.b <= card.b, `narrow: the intro card is whole (${JSON.stringify(card)})`);
+    const grid = await page.evaluate(() => [...document.querySelectorAll("#r1Facts .r1-stat")].map((e) => Math.round(e.getBoundingClientRect().y)));
+    assert(grid[0] === grid[1] && grid[2] === grid[3] && grid[2] > grid[0], `narrow: the facts are two by two (${grid})`);
+    t = (await titles(page))[0];
+    assert(t.lines === 1 && !t.cut, `narrow: the title is still one line (${JSON.stringify(t)})`);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "narrow: no sideways scroll");
+    await shot(page, name);
+    await ctx.close();
+  }
 }
 
 async function deviceRun(browser) {

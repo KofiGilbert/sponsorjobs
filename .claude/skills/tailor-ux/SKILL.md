@@ -24,6 +24,14 @@ never fought for. The user has said this repeatedly. When in doubt, remove.
 
 ## 2. Copy rules (hard)
 
+- **A title is never broken onto two lines when it can fit on one** (owner, 2026-11-25: "you know I
+  don't like it when we break text into 2"). No `text-wrap: balance` and no narrow max line length
+  on headings or titles. Size the title to fit one line (step the size down to a sensible minimum)
+  and let it wrap only when it truly cannot fit at that minimum. If a title is long because it
+  joins two things ("Role at Company"), split it into a title and a quiet second line instead.
+  The one exception is a long interview QUESTION, which is meant to sit on two or three balanced
+  lines. On the interview stage `r1FitTitles` does this for every `.r1-h`.
+
 - **No em or en dashes in any user-facing text.** They read as AI-written. Enforced by
   `tests/test_no_dashes.py` (scans index.html, app.js, copy modules, and mdash/ndash
   entities). Use `&rarr;` for arrows, a comma or full stop otherwise. Hyphens are fine.
@@ -69,12 +77,16 @@ a feature name, icon or heading; the only mention is the one-line disclaimer on 
 ("Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc.").
 Our Round 1 tracks the real candidate flow screen by screen:
 1. **Intro** (ONE screen, the old welcome and "Before you begin" merged; the real product also
-   opens on a single page that walks through the interview's requirements): the label ("ROUND 1 ·
-   RECORDED INTERVIEW"), the role as the heading, one line of what to expect in the REAL numbers
-   ("5 questions · about 20 minutes · 30 seconds to prepare, 2 minutes to answer · 1 retake", from
-   `GET /api/screens/config`, never typed into the copy), three privacy points with small icons (lock,
-   trash, eye-off), the "I need extra time" tick (it multiplies both clocks and updates the line),
-   ONE button ("Get started"), the disclaimer. Exit (in the bar) is the way out: no Back, no "Not now".
+   opens on a single page that walks through the interview's requirements). Five parts, parted by
+   whitespace and hairlines: WHO (the label "ROUND 1 · RECORDED INTERVIEW", the company mark, the
+   role as a ONE-LINE title, the company as a quiet line under it); THE FACTS as a stat row, never a
+   sentence ("5 / questions", "~20 min / in total", "30 sec / to prepare", "2 min / to answer": a
+   large tabular number over a small label, from `GET /api/screens/config`, never typed into the
+   copy; two by two when narrow), with "1 retake per question" as one quiet line; PRIVACY (three
+   points with small icons); THE SETTING ("Need extra time?" in its own row with a checkbox at the
+   right end; a checkbox, not a switch, because it applies on Get started); THE ACTION ("Get
+   started", left aligned, the last thing in the card). The disclaimer sits under the card. Exit (in
+   the bar) is the way out: no Back, no "Not now".
 2. (merged into 1.)
 3. **Device check**: left "SET UP", the one-line heading, a Camera menu and a Microphone menu (real
    devices, switched live, remembered); right "CAMERA PREVIEW", the strip with the two tips ("Light
@@ -716,3 +728,13 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   normal window and growing with it (never a small box on a big screen), heading 26px and up, body
   16px and up. A primary button never looks disabled while enabled: in flight it keeps its colour
   (`is-busy`), and only after about 300 ms shows a spinner and "Starting...".
+- 2026-11-25 (intro, second pass): the owner rejected the first merged intro for two things: the
+  title "Product Manager at Ochsner Clinic Foundation" was balanced onto two lines although it fit
+  on one, and the facts ("5 questions · about 20 minutes · 30 seconds to prepare, 2 minutes to answer
+  · 1 retake") were one lumped sentence. Fixed with the one-line title rule (§2), role and company
+  on separate lines, and a four-item stat row. References: NN/g on chunking ("Presenting content in
+  chunks makes scanning easier") and on scanning; the number-over-label statistic pattern (UK MoJ
+  "numeric data", HubSpot "statistics", at most four side by side); HackerRank's test intro (duration
+  and number of questions as separate facts); LukeW on aligning the primary action with the
+  content's left edge; NN/g toggle guidelines (a switch must take effect at once, so this is a
+  checkbox); Apple HIG ("Aim to keep titles short enough to display on a single line").

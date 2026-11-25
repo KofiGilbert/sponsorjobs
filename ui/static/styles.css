@@ -3426,7 +3426,10 @@ body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-sta
 .r1-q[data-size="s"] { font-size: clamp(17px, 1.55cqi, 27px); line-height: 1.42; max-inline-size: 40ch; }
 /* One short line under the question during prep, or none. */
 .r1-q-help { min-height: 1.5em; margin: clamp(12px, 1.2cqi, 20px) 0 0; font-size: clamp(13px, 1.05cqi, 16px); line-height: 1.5; color: var(--r1-muted); }
-.r1-h { margin: 0; font-size: clamp(20px, 1.8cqi, 30px); font-weight: 600; line-height: 1.3; letter-spacing: -0.012em; color: var(--r1-ink); text-wrap: balance; }
+/* Titles sit on ONE line (owner's rule): never balanced onto two, no narrow measure. r1FitTitles steps
+   the size down until the title fits and adds .is-wrap only when it cannot fit at the smallest size. */
+.r1-h { margin: 0; font-size: clamp(20px, 1.8cqi, 30px); font-weight: 600; line-height: 1.3; letter-spacing: -0.012em; color: var(--r1-ink); white-space: nowrap; }
+.r1-h.is-wrap { white-space: normal; }
 .r1-conn { margin: 14px 0 0; font-size: 13px; color: var(--r1-warn); }
 .r1-conn:empty { display: none; }
 /* Settings: a quiet link at the bottom of the words column; the menus open above it. */
@@ -3508,30 +3511,58 @@ body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-sta
 .r1-btn-stop:hover { background: var(--r1-rec-hover); }
 
 /* The intro and All done: the same card, one column, at the same scale as the main card. It
-   grows with the window like the main card does, so it is never a small box lost on the screen. */
-.r1-card.is-solo { display: block; width: min(100cqw - 32px, max(740px, 54cqw)); padding: clamp(30px, 3.2cqw, 76px) clamp(28px, 3.4cqw, 84px) clamp(32px, 3.4cqw, 80px); }
-.r1-card.is-solo .r1-label { min-height: 0; padding-bottom: clamp(12px, 1.8cqi, 22px); margin-bottom: clamp(22px, 3.4cqi, 42px); font-size: clamp(11.5px, 1.6cqi, 18px); }
-.r1-card.is-solo .r1-h { font-size: clamp(26px, 3.7cqi, 46px); line-height: 1.2; letter-spacing: -0.018em; max-inline-size: 24ch; }
-.r1-facts { margin: clamp(10px, 1.5cqi, 18px) 0 0; font-size: clamp(16px, 2.2cqi, 27px); line-height: 1.5; color: var(--r1-muted); text-wrap: balance; }
-.r1-facts > span { white-space: nowrap; }
-.r1-points { list-style: none; margin: clamp(24px, 3.6cqi, 44px) 0 0; padding: clamp(20px, 3cqi, 36px) 0 0; border-top: 1px solid var(--r1-line);
-  display: grid; gap: clamp(12px, 1.8cqi, 22px); font-size: clamp(16px, 2.2cqi, 27px); line-height: 1.45; color: var(--r1-ink-2); }
-.r1-points li { display: flex; align-items: flex-start; gap: .75em; }
-.r1-points svg { flex: none; width: 1.12em; height: 1.12em; margin-top: .17em; color: var(--r1-muted); }
-.r1-check { display: flex; align-items: flex-start; gap: .75em; margin: clamp(18px, 2.6cqi, 32px) 0 0; font-size: clamp(16px, 2.2cqi, 27px); line-height: 1.45; color: var(--r1-ink); cursor: pointer; }
-.r1-card .r1-check input[type="checkbox"] { flex: none; font-size: inherit; width: 1.12em; height: 1.12em; margin: .17em 0 0; accent-color: var(--r1-primary); }
-.r1-check b { font-weight: 600; }
-.r1-check-d { color: var(--r1-muted); }
-.r1-solo-acts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: clamp(26px, 3.8cqi, 46px); }
-.r1-solo-acts .r1-btn { min-height: clamp(46px, 6.2cqi, 74px); padding: 0 clamp(26px, 3.6cqi, 44px); font-size: clamp(15.5px, 2.1cqi, 25px); border-radius: clamp(10px, 1.4cqi, 16px); }
+   grows with the window like the main card does, so it is never a small box lost on the screen.
+   Spacing is on an 8px unit (--u) that scales with the card; sections (who, the facts, privacy,
+   the setting, the action) are parted by whitespace and hairlines. */
+.r1-card.is-solo { display: block; width: min(100cqw - 32px, max(740px, 54cqw)); padding: clamp(28px, 3cqw, 72px) clamp(28px, 3.4cqw, 84px) clamp(30px, 3.2cqw, 76px); }
+.r1-card.is-solo > *, .r1-foot { --u: clamp(8px, 1.18cqi, 14px); }
+.r1-card.is-solo .r1-label { min-height: 0; padding-bottom: calc(var(--u) * 1.5); margin-bottom: calc(var(--u) * 3); font-size: clamp(11.5px, 1.6cqi, 18px); }
+.r1-id { display: flex; align-items: center; gap: calc(var(--u) * 2); }
+.r1-id .fr-logo { width: calc(var(--u) * 6.5); height: calc(var(--u) * 6.5); border-radius: calc(var(--u) * 1.4); }
+.r1-id .av-mono { font-size: calc(var(--u) * 2.3); }
+.r1-id-t { flex: 1; min-width: 0; }
+.r1-card.is-solo .r1-h { font-size: clamp(25px, 3.6cqi, 44px); line-height: 1.2; letter-spacing: -0.018em; }
+.r1-co { margin: .18em 0 0; font-size: clamp(15px, 2.1cqi, 25px); line-height: 1.35; color: var(--r1-muted); }
+/* The facts: four separate items, a large tabular number with a small label under it. */
+.r1-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: calc(var(--u) * 3.5); border-top: 1px solid var(--r1-line); border-bottom: 1px solid var(--r1-line); }
+.r1-stats[data-n="1"] { grid-template-columns: minmax(0, 1fr); }
+.r1-stat { display: grid; gap: .28em; padding: calc(var(--u) * 2.25) 0 calc(var(--u) * 2.25) calc(var(--u) * 2.5); border-left: 1px solid var(--r1-line); }
+.r1-stat:first-child { padding-left: 0; border-left: 0; }
+.r1-stat b { font-size: clamp(24px, 3.5cqi, 42px); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--r1-ink); white-space: nowrap; }
+.r1-stat span { font-size: clamp(13px, 1.85cqi, 22px); line-height: 1.3; color: var(--r1-muted); white-space: nowrap; }
+.r1-retake { margin: calc(var(--u) * 1.5) 0 0; font-size: clamp(13px, 1.85cqi, 22px); line-height: 1.4; color: var(--r1-muted); }
+.r1-retake:empty { display: none; }
+.r1-points { list-style: none; margin: calc(var(--u) * 3.5) 0 0; padding: 0; display: grid; gap: calc(var(--u) * 1.5);
+  font-size: clamp(15.5px, 2.15cqi, 26px); line-height: 1.4; color: var(--r1-ink-2); }
+.r1-points li { display: flex; align-items: flex-start; gap: calc(var(--u) * 1.5); }
+.r1-points svg { flex: none; width: 1.15em; height: 1.15em; margin-top: .12em; color: var(--r1-muted); }
+/* Extra time is a setting, not a bullet: its own row between hairlines, the control at the end.
+   A checkbox, not a switch: it takes effect on Get started, and a switch promises "right now". */
+.r1-opt { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--u) * 3); margin-top: calc(var(--u) * 3.5); padding: calc(var(--u) * 2.25) 0;
+  border-top: 1px solid var(--r1-line); border-bottom: 1px solid var(--r1-line); cursor: pointer; }
+.r1-opt-t { display: grid; gap: .16em; min-width: 0; }
+.r1-opt-t b { font-size: clamp(15.5px, 2.15cqi, 26px); font-weight: 600; line-height: 1.35; color: var(--r1-ink); }
+.r1-opt-t span { font-size: clamp(13px, 1.85cqi, 22px); line-height: 1.4; color: var(--r1-muted); }
+.r1-card .r1-opt input[type="checkbox"] { flex: none; width: calc(var(--u) * 2.75); height: calc(var(--u) * 2.75); margin: 0; accent-color: var(--r1-primary); cursor: pointer; }
+/* One primary action, on the left edge the eye has followed down the card. The card ends on it. */
+.r1-solo-acts { display: flex; align-items: center; gap: calc(var(--u) * 2); flex-wrap: wrap; margin-top: calc(var(--u) * 3.5); }
+.r1-solo-acts .r1-btn { min-height: calc(var(--u) * 6); padding: 0 calc(var(--u) * 4); font-size: clamp(15.5px, 2.1cqi, 25px); border-radius: calc(var(--u) * 1.4); }
 .r1-solo-msg { font-size: clamp(14px, 1.9cqi, 22px); color: var(--r1-rec); }
 /* Starting: the button keeps its colour (a greyed primary reads as disabled); a spinner and
    "Starting..." appear only if the call takes more than a moment. */
 .r1-btn.is-busy { pointer-events: none; }
 .r1-btn-spin { display: none; width: 1em; height: 1em; border-radius: 50%; border: 2px solid currentColor; border-top-color: transparent; opacity: .85; animation: r1spin .8s linear infinite; }
 .r1-btn.is-slow .r1-btn-spin { display: inline-block; }
-.r1-fine { margin: clamp(22px, 3.2cqi, 40px) 0 0; font-size: clamp(11.5px, 1.5cqi, 17px); line-height: 1.5; color: var(--r1-faint); }
-.r1-card.is-solo .rc-drill-list { margin: clamp(14px, 2cqi, 24px) 0 0; font-size: clamp(14.5px, 1.9cqi, 23px); color: var(--r1-ink-2); }
+/* The footnote sits under the card, not in it. */
+.r1-foot { flex: none; box-sizing: border-box; width: min(100cqw - 32px, max(740px, 54cqw)); margin: 14px 0 0; padding: 0 8px; text-align: center;
+  font-size: clamp(11.5px, .62cqw + 3px, 15px); line-height: 1.5; color: var(--r1-faint); }
+.r1-card.is-solo .rc-drill-list { margin: calc(var(--u) * 2) 0 0; font-size: clamp(14.5px, 1.9cqi, 23px); color: var(--r1-ink-2); }
+/* A narrow card: the facts become two by two. */
+@container r1card (max-width: 620px) {
+  .r1-stats:not([data-n="1"]) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .r1-stat:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .r1-stat:nth-child(n + 3) { border-top: 1px solid var(--r1-line); }
+}
 .r1-done-sub { margin: 0 0 18px; font-size: clamp(16px, 2.2cqi, 27px); line-height: 1.5; color: var(--r1-muted); }
 .r1-spinner { width: 22px; height: 22px; margin: 6px 0 0; border-radius: 50%; border: 2px solid var(--r1-border); border-top-color: var(--r1-primary); animation: r1spin .9s linear infinite; }
 @keyframes r1spin { to { transform: rotate(360deg); } }

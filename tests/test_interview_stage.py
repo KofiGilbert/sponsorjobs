@@ -130,7 +130,7 @@ def test_every_text_earns_its_place():
     assert "r1.notNow" not in stage and '"r1.back"' not in stage, "Exit is the way out of the intro; no second button says the same"
     assert en["r1.micSilent"] == "No sound from this microphone. Pick another one or check it is not muted."
     for key in ("r1.tip1", "r1.tip2", "r1.qHelp", "r1.practiceDone", "r1.doneSub",
-                "r1.notice1", "r1.notice2", "r1.notice3", "r1.extraTimeD", "r1.factClocks"):
+                "r1.notice1", "r1.notice2", "r1.notice3", "r1.extraTimeD", "r1.extraTime", "r1.retakeNote1"):
         assert len(en[key].split()) <= 9, f"{key} is one short line: {en[key]!r}"
 
 
@@ -206,11 +206,45 @@ def test_the_intro_states_the_real_clocks():
     src = _stage_src()
     facts = src.split("function r1Facts()", 1)[1].split("\n  }\n", 1)[0]
     assert "SCR_DEFAULTS" in facts and "extra_time_factor" in facts
-    assert not re.search(r'"[^"]*\b(30 seconds|2 minutes|20 minutes)\b', facts), "no clock is hard-coded in the copy"
+    assert not re.search(r'"[^"]*\b(30 sec|2 min|20 min)', facts), "no clock is hard-coded in the copy"
     for lang in ("en", "de", "es", "fr", "pt"):
         loc = json.loads((LOCALES / f"{lang}.json").read_text(encoding="utf-8"))
-        assert "{prep}" in loc["r1.factClocks"] and "{answer}" in loc["r1.factClocks"]
+        assert "{n}" in loc["r1.unitMin"] and "{n}" in loc["r1.unitSec"]
         assert "r1.landingFacts" not in loc, "the hand-written '5 questions, about 20 minutes' is gone"
+
+
+def test_a_title_is_never_broken_in_two_when_it_fits_on_one():
+    """The owner's standing rule. Titles are set on one line and stepped down to fit; they wrap
+    only when they cannot fit at the smallest size. Only questions (.r1-q) are balanced lines."""
+    css = CSS.read_text(encoding="utf-8")
+    for sel in (".r1-h {", ".r1-card.is-solo .r1-h {"):
+        rule = css.split(sel, 1)[1].split("}", 1)[0]
+        assert "text-wrap" not in rule and "max-inline-size" not in rule and "max-width" not in rule, f"{sel} must not balance or narrow a title"
+    assert "white-space: nowrap" in css.split(".r1-h {", 1)[1].split("}", 1)[0]
+    assert ".r1-h.is-wrap { white-space: normal; }" in css
+    assert "text-wrap: balance" in css.split(".r1-q {", 1)[1].split("}", 1)[0], "questions are the exception"
+    src = _stage_src()
+    fit = src.split("function r1FitTitles()", 1)[1].split("\n  }\n", 1)[0]
+    assert "scrollWidth > h.clientWidth" in fit and 'classList.add("is-wrap")' in fit
+    assert "new MutationObserver(r1FitTitles)" in src and "new ResizeObserver(r1FitTitles)" in src
+    # The role is the title and the company its own quiet line: no "X at Y" run-on to wrap.
+    intro = src.split("function renderR1Intro()", 1)[1].split("\n  }\n", 1)[0]
+    assert '<h2 class="r1-h">${esc(prepRole(p))}</h2>' in intro and 'class="r1-co"' in intro and '"r1.at"' not in src
+
+
+def test_the_facts_are_a_stat_row_not_a_sentence():
+    src = _stage_src()
+    facts = src.split("function r1Facts()", 1)[1].split("\n  }\n", 1)[0]
+    for key in ("r1.statQuestions", "r1.statTotal", "r1.statPrep", "r1.statAnswer"):
+        assert key in facts
+    assert '.join(" \\u00b7 ")' not in facts, "the facts are separate items, not one dotted sentence"
+    css = CSS.read_text(encoding="utf-8")
+    assert ".r1-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));" in css
+    assert "tabular-nums" in css.split(".r1-stat b {", 1)[1].split("}", 1)[0]
+    intro = src.split("function renderR1Intro()", 1)[1].split("\n  }\n", 1)[0]
+    card = intro.split("body: `", 1)[1].split("` });", 1)[0]
+    assert card.rstrip().endswith("</div>") and card.index('class="r1-opt"') < card.index('id="scrBegin"'), "the card ends on the action"
+    assert "r1.disclaimer" not in card and 'foot: T("r1.disclaimer"' in intro, "the footnote sits under the card"
 
 
 def test_starting_never_greys_the_primary_button():
