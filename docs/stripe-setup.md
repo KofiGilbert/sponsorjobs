@@ -13,7 +13,8 @@ What is on sale (decided 2026-11-25). The script creates exactly these four pric
 | 1 extra live interview | $12 | one-time | `STRIPE_PRICE_PACK_1` |
 | 3 extra live interviews | $33 | one-time | `STRIPE_PRICE_PACK_3` |
 
-Each plan includes 60 tailored applications and 3 live interviews of 20 minutes a period.
+Each plan includes 3 live interviews of 20 minutes a period. Student includes 40 tailored
+applications a month, Standard 60.
 
 Not sold any more: the every-3-months plans ($69 and $119), the 5-pack and the old one-time
 passes. The script no longer creates them. Prices an earlier run made stay in Stripe, and their

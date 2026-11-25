@@ -22,8 +22,9 @@ A TEST key (sk_test_...) is stored as STRIPE_TEST_SECRET_KEY, and billing then s
 account ids you give with --testers: Stripe's public test card would otherwise hand anyone a real
 plan. A LIVE key (sk_live_...) is stored as STRIPE_SECRET_KEY and sells to everyone.
 
-Pricing (decided 2026-11-25): Student $29 every month and Standard $49 every month, each with 60
-tailored applications and 3 live interviews of 20 minutes a period; both renew until cancelled.
+Pricing (decided 2026-11-25): Student $29 every month (40 tailored applications) and Standard
+$49 every month (60 tailored applications), each with 3 live interviews of 20 minutes a period;
+both renew until cancelled.
 Extra live interviews (20 minutes each): 1 for $12, 3 for $33, one-time. Nothing else is created:
 no every-3-months plan, no 5-pack, no one-time pass. Prices made by an earlier run are left alone
 in Stripe (a subscription already on one keeps renewing), and their Worker secrets are not touched.
@@ -66,8 +67,10 @@ PORTAL_TAG = "sponsorjobs_portal"
 
 def _plan(lookup: str, name: str, cents: int, months: int, env: str, who: str) -> dict:
     every = "every month" if months == 1 else f"every {months} months"
-    allowance = "3 live interviews and 60 tailored packages" if months == 1 else \
-        "9 live interviews and 150 tailored packages"
+    # Student includes 40 tailored packages a month, Standard 60 (worker/src/metering.ts PLANS).
+    student = lookup.startswith("student")
+    packages = (40 if student else 60) if months == 1 else (100 if student else 150)
+    allowance = f"{3 if months == 1 else 9} live interviews and {packages} tailored packages"
     return {"lookup": lookup, "name": name, "amount": cents, "env": env,
             "recurring": {"interval": "month", "interval_count": months},
             "desc": f"{who}. {allowance} {every}. Renews automatically until you cancel."}

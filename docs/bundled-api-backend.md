@@ -91,7 +91,7 @@ broker (`worker/src/billing.ts`, `worker/src/subscriptions.ts`). **On sale at la
 | What | Price | Renews | Live interviews (20 min each) | Tailored applications | Recorded practice interviews, scored |
 |---|---|---|---|---|---|
 | Free (no card) | $0 | calendar month | 0 | 3 a month | 1 a month |
-| `student_monthly` | $29 | every month | 3 a period | 60 a period | unlimited |
+| `student_monthly` | $29 | every month | 3 a period | 40 a period | unlimited |
 | `standard_monthly` | $49 | every month | 3 a period | 60 a period | unlimited |
 | Extra live interview, 1 (`pack_1`) | $12 | one-time, never expires | 1 | | |
 | Extra live interviews, 3 (`pack_3`) | $33 | one-time, never expires | 3 | | |
@@ -103,7 +103,7 @@ Free also keeps every job with sponsorship marks, the tracker and autofill, on t
 
 | What | Price | Why it is still there | How to sell it again |
 |---|---|---|---|
-| `student_quarterly`, `standard_quarterly` | $69, $119 every 3 months (9 interviews, 150 applications) | A subscription already on one keeps renewing, reading and cancelling as before | Set `SELL_QUARTERLY` to `"1"` in `worker/wrangler.jsonc` and deploy; run `scripts/stripe_setup.py --sell-quarterly` if the prices do not exist yet. The app shows its Monthly / Every 3 months switch on its own once the broker offers one |
+| `student_quarterly`, `standard_quarterly` | $69, $119 every 3 months (9 interviews; 100 applications on Student, 150 on Standard) | A subscription already on one keeps renewing, reading and cancelling as before | Set `SELL_QUARTERLY` to `"1"` in `worker/wrangler.jsonc` and deploy; run `scripts/stripe_setup.py --sell-quarterly` if the prices do not exist yet. The app shows its Monthly / Every 3 months switch on its own once the broker offers one |
 | `pass30`, `pass90` (one-time passes) | $29, $69 | Holders keep a pass until it ends | `SELL_PASSES` = `"1"` with `STRIPE_PRICE_PASS30/90` set |
 | `pack_5` (5 extra interviews) | $39 | A 5-pack already paid for is still granted | Add it back to `SOLD_PACKS` in `worker/src/metering.ts` |
 
@@ -122,7 +122,7 @@ which the app reads before starting another one.
 panel; no price is written anywhere else in the app:
 
 - the 3rd free tailored resume is used: "You've used your 3 free tailored resumes this month.
-  Plans include 60 a month."
+  Plans include 40 or 60 a month."
 - a Free user starts another recorded interview after this month's is used: "You've used this
   month's practice interview. Plans include unlimited recorded practice."
 - the Round 1 report, Free only: "Practise live with an interviewer".
@@ -136,17 +136,20 @@ is taken at about $0.15 on the paid model (about $0.05 on the free one), the fig
 2026-10-02; it has not been re-measured on the current models. Stripe is 2.9% + $0.30 a US card
 payment, plus 0.7% Billing on a subscription payment.
 
-| What | Price | Stripe | Tavus if every interview is used | Tailoring if all 60 are used | Left if everything is used | Left at half use |
+| What | Price | Stripe | Tavus if every interview is used | Tailoring if every application is used | Left if everything is used | Left at half use |
 |---|---|---|---|---|---|---|
-| Student, monthly | $29.00 | $1.34 | 3 x $7.40 = $22.20 | 60 x $0.15 = $9.00 | **minus $3.54** | $12.06 |
-| Standard, monthly | $49.00 | $2.06 | $22.20 | $9.00 | $15.74 | $31.34 |
+| Student, monthly | $29.00 | $1.34 | 3 x $7.40 = $22.20 | 40 x $0.15 = $6.00 | **minus $0.54** | $13.56 |
+| Standard, monthly | $49.00 | $2.06 | $22.20 | 60 x $0.15 = $9.00 | $15.74 | $31.34 |
 | 1 extra interview | $12.00 | $0.65 | $7.40 | | $3.95 | |
 | 3 extra interviews | $33.00 | $1.26 | $22.20 | | $9.54 | |
 | Free | $0 | $0 | $0 | 3 x $0.05 = $0.15 | minus $0.15, plus a few cents for the one scored recorded interview | |
 
-Reading it: the Student plan loses about $3.54 a month on a person who uses all 3 live interviews
-AND all 60 applications, and earns about $12 on one who uses half. The live interviews are the
-cost that matters (77% of a full month's cost). Scoring a recorded interview is a handful of model
+Reading it: the Student plan includes 40 tailored applications a month, not 60 (owner decision
+2026-11-25), which takes $3.00 off its full-use cost. It now loses about $0.54 a month on a person
+who uses all 3 live interviews AND all 40 applications, and earns about $13.56 on one who uses half
+(1.5 interviews at $11.10, 20 applications at $3.00). Without the 0.7% Billing fee, Stripe is $1.14
+and those two figures are minus $0.34 and $13.76. The live interviews are the cost that matters
+(about three quarters of the Student plan's full-month cost). Scoring a recorded interview is a handful of model
 calls, cents at most; on paid plans it is unlimited but still under the plan's monthly token cap.
 The cost of scoring one recorded interview has not been measured.
 

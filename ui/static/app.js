@@ -66,7 +66,7 @@
     // is a plan, so the button opens the ONE plans panel. No price is written here.
     upgrade_required: {
       hk: "outage.upgrade.h", h: "You've used this month's free resumes",
-      pk: "upg.freeResumesUsed", p: "You've used your 3 free tailored resumes this month. Plans include 60 a month.",
+      pk: "upg.freeResumesUsed", p: "You've used your 3 free tailored resumes this month. Plans include 40 or 60 a month.",
       btnk: "outage.upgrade.btn", btn: "See plans",
     },
     service_down: {
@@ -11456,6 +11456,14 @@
       `<button class="upg-cta is-get" type="button" data-stu-send${STU.busy ? " disabled" : ""}>${esc(T("upg.stuSend", "Send code"))}</button>` +
       err + `<p class="upg-note">${esc(T("upg.stuPrivacy", "We keep only your school's domain and graduation month."))}</p></div>`;
   }
+  // How many tailored applications a plan includes: the broker's number (the offers), so the
+  // panel never states its own. The fallback is only for a plan the broker is not offering now
+  // (before the offers load, or an every-3-months plan someone is still on).
+  const PLAN_PACKAGES = { student_monthly: 40, student_quarterly: 100, standard_monthly: 60, standard_quarterly: 150 };
+  function planPackages(id) {
+    const p = ((OFFERS && OFFERS.plans) || []).find(x => x.id === id);
+    return String(p && p.packages > 0 ? p.packages : PLAN_PACKAGES[id]);
+  }
   function paintPlans() {
     if (!upgModal) return;
     const o = OFFERS || {};
@@ -11480,7 +11488,8 @@
       card.querySelector("[data-unit]").textContent = unitText(UPG_INTERVAL);
       card.querySelector("[data-feats]").innerHTML = [
         q ? T("upg.feat9", "9 live interviews every 3 months") : T("upg.feat3", "3 live interviews of 20 minutes a month"),
-        q ? T("upg.feat150", "150 tailored applications every 3 months") : T("upg.feat60", "60 tailored applications a month"),
+        (q ? T("upg.featAppsQ", "{n} tailored applications every 3 months") : T("upg.featApps", "{n} tailored applications a month"))
+          .replace("{n}", planPackages(id)),
         T("upg.featRecorded", "Unlimited recorded practice interviews"),
         T("upg.betterModel", "Tailoring on our best AI model"),
       ].map(x => `<li>${esc(x)}</li>`).join("");
@@ -11654,7 +11663,7 @@
   // The free plan's 3rd tailored resume of the month was just used (the engine says so once).
   window.__upgradeMoment = (kind) => {
     if (kind !== "free_resumes_used") return;
-    toast(T("upg.freeResumesUsed", "You've used your 3 free tailored resumes this month. Plans include 60 a month."),
+    toast(T("upg.freeResumesUsed", "You've used your 3 free tailored resumes this month. Plans include 40 or 60 a month."),
           { label: T("outage.upgrade.btn", "See plans"), run: openUpgrade }, 12000);
   };
   // Free, and this month's recorded practice interview is used: the one line (plain, it is not an

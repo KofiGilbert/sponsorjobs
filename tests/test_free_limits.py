@@ -19,7 +19,7 @@ import importlib
 import pytest
 
 RECORDED_LINE = "You've used this month's practice interview. Plans include unlimited recorded practice."
-RESUMES_LINE = "You've used your 3 free tailored resumes this month. Plans include 60 a month."
+RESUMES_LINE = "You've used your 3 free tailored resumes this month. Plans include 40 or 60 a month."
 
 
 @pytest.fixture
