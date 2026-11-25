@@ -121,6 +121,10 @@ tier: "free"|"pass30"|"pass90"|null, pass_until: int|null, offer: "passes"|"pack
   least one pack offered.
 - An `AVATAR_API_KEY` left on disk by an older version is ignored and never sent anywhere.
 
+`GET /api/interview/round2/config` -> `{minutes, questions_min, questions_max}`: what a live
+interview runs on (`_cvi_timing()["minutes"]`, `ROUND2_Q_MIN` / `ROUND2_Q_MAX`, the same numbers
+the briefing and the plan use), so the intro states them before the call exists.
+
 `POST /api/interview/round2/buy` `{pack}` -> `{url}` (a Stripe Checkout page the app opens in
 its pane, or the system browser via `/api/open`). Proxies the broker's
 `POST /billing/packs/<pack>/checkout`; 400 bad/unknown pack, 402 `{offer: "passes"}` when no
@@ -222,10 +226,13 @@ gate lists the extra-interview packs with their prices).
 | Case | Status | Gate |
 |---|---|---|
 | Pass (or extra interviews), a full interview left | `plan`, available | green room, "N interviews left" |
-| Pass, used up, packs on sale | `no_minutes`, `can_buy`, `offer: "packs"` | one button per pack with its price, "Finish here" |
-| Pass, used up, no packs on sale | `no_minutes`, `offer: "packs"` | "See passes", "Finish here" |
-| No pass | `no_pass`, `offer: "passes"` | one button per pass ("Job Hunt Pass, $29, 3 live interviews"), "See passes", "Finish here" |
-| Broker down | `unreachable`, `offer: null` | "Check again", "Finish here" |
+| Plan used up, packs on sale | `no_minutes`, `can_buy`, `offer: "packs"` | "They refill on <date>.", "Buy more interviews" (opens the plans panel), "Not now" |
+| Plan used up, no packs on sale | `no_minutes`, `offer: "packs"` | "They refill when your plan renews.", "Not now" |
+| No plan | `no_pass`, `offer: "passes"` | "Live interviews are part of every plan.", "See plans" (opens the plans panel), "Not now" |
+| Broker down | `unreachable`, `offer: null` | "Check again", "Not now" |
+
+The Round 2 screen never lists a plan or a price (2026-11-25): prices live in one place, the
+plans panel.
 
 ## Tavus (the broker's company-key calls)
 
