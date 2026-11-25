@@ -1,0 +1,9 @@
+// Only for scripts/local-d1.mjs: a local D1 database with the search migrations. Never deployed.
+{
+  "name": "sponsorjobs-search-local",
+  "compatibility_date": "2026-08-22",
+  "d1_databases": [
+    { "binding": "SEARCH_DB", "database_name": "sponsorjobs-search-local",
+      "database_id": "00000000-0000-0000-0000-00000000d1d1", "migrations_dir": "../migrations-search" }
+  ]
+}

@@ -70,6 +70,23 @@
     }
   ],
 
+  // ---- Server-side job search (src/search.ts, docs/server-search-plan.md): OFF until go-live.
+  // Nothing below is bound yet, so /v1/jobs/* answers 503 no_index and a deploy is unchanged.
+  // To switch it on (the go-live checklist in the plan):
+  //   1. `npx wrangler d1 create sponsorjobs-search`, then add this entry to "d1_databases"
+  //      above with the id it prints (its own database, so search never queues behind the broker):
+  //        { "binding": "SEARCH_DB", "database_name": "sponsorjobs-search",
+  //          "database_id": "<the id>", "migrations_dir": "migrations-search" }
+  //   2. `npx wrangler d1 migrations apply SEARCH_DB --remote`
+  //   3. Uncomment the rate limits (60 a minute per install token, 300 per network; the
+  //      namespace ids are our own labels, not created resources):
+  // "ratelimits": [
+  //   { "name": "SEARCH_TOKEN_LIMITER", "namespace_id": "7101", "simple": { "limit": 60, "period": 60 } },
+  //   { "name": "SEARCH_IP_LIMITER", "namespace_id": "7102", "simple": { "limit": 300, "period": 60 } }
+  // ],
+  //   Optional vars: SEARCH_DAILY_ROWS_READ (default 3500000) and SEARCH_DAILY_REQUESTS (default
+  //   60000) cap what search may use of the free plan in one UTC day; "0" removes a cap (paid plan).
+
   // Defaults matching backend/broker.py and backend/metering.py. Override per deployment here or
   // in the dashboard; they are plain settings, not secrets.
   "vars": {

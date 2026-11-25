@@ -86,6 +86,19 @@ export interface Env {
   ACCESS_AUD?: string;              // the Access application's Audience (AUD) tag
   ADMIN_EMAILS?: string;            // optional extra lock: comma-separated e-mails allowed in
   ADMIN_HOST?: string;              // default "admin.sponsorjobs.ai"
+  // Job search (src/search.ts, docs/server-search-plan.md). ALL optional: until the search database
+  // is created and bound (the commented block in wrangler.jsonc), /v1/jobs/* answers 503 no_index
+  // and nothing else changes. The index lives in its OWN D1 database (migrations-search/): a D1
+  // database runs one query at a time, and search must not queue behind billing and sign-ins.
+  // The rate limiters are `ratelimits` bindings. The cursor secret is optional (`wrangler secret
+  // put SEARCH_CURSOR_SECRET`): without it cursors are signed with a public key. The two daily
+  // limits keep search inside its share of the free plan (defaults in search.ts; "0" = no limit).
+  SEARCH_DB?: D1Database;
+  SEARCH_TOKEN_LIMITER?: RateLimit;
+  SEARCH_IP_LIMITER?: RateLimit;
+  SEARCH_CURSOR_SECRET?: string;
+  SEARCH_DAILY_ROWS_READ?: string;
+  SEARCH_DAILY_REQUESTS?: string;
 }
 
 /** A numeric var with a fallback, so a missing or mistyped value never turns into NaN limits. */

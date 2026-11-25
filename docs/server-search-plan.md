@@ -1,7 +1,9 @@
 # Server-side job search: when and how
 
-**Status: plan (2026-10-23). Nothing here is built.** Prices were read from Cloudflare's and the
-vendors' pages on 2026-10-23: **verify before buying.**
+**Status (2026-11-25): built and tested, behind the `JOBS_SEARCH=server` switch, OFF. Not
+deployed: no Cloudflare resource exists yet.** Read "As built" and "Staying on Cloudflare's free
+plan" at the end first; sections 1 to 4 are the October plan, kept for its reasoning. Prices were
+read from Cloudflare's pages: **verify before buying.**
 
 Today every install downloads the whole slim list (`sourcing/feedclient.py`, ~1 MB gzipped per 10k
 roles, in content-addressed parts) and filters it in the engine (`sourcing/filters.apply_facets`,
@@ -118,13 +120,14 @@ allowlist of keys. The server stores counters, not query logs linked to an insta
 
 ```
 GET /v1/jobs/search?q=&loc=&days=&remote=&visa=H1B,OPT&level=&pay=&sort=recent|pay
-                   &sponsored=1&limit=30&cursor=<opaque>
+                   &sponsored=1&scope=sponsors|all&limit=30&cursor=<opaque>
 -> 200 {
   "jobs": [ <the same slim row the feed carries: source_id, source, company, title, location,
             remote, url, posted_at, first_seen, salary, sponsorship_stated, us, entry_level,
             visa, nationality_visas, sponsor, ad_stance> ],
-  "count": 812, "count_capped": false,        // capped at 1000 -> "1,000+"
-  "next_cursor": "...",                       // keyset on (sort key, source_id); null at the end
+  "count": 112, "count_capped": false,        // exact once the scan reached the end
+  "count_estimate": null,                     // else "about N" when the server could tell
+  "next_cursor": "...",                       // where the scan stopped; null at the end
   "index_version": "...", "generated_at": "..."
 }
 
@@ -140,9 +143,11 @@ GET /v1/jobs/candidates?<same facets>&titles=Data%20Analyst|BI%20Analyst&limit=5
 
 ### Jobs page
 
-`/api/jobs` keeps its response shape. With no keyword, page 1 comes from the slice. With a keyword,
-or deeper pages, it calls `/v1/jobs/search`, then applies the local layers it applies today:
-`_jobs_personal`, dismissed, `_jobs_mark`, and the saved overlay. Because dismissed rows are removed
+`/api/jobs` keeps its response shape. As built, every Jobs page (keyword or not) calls
+`/v1/jobs/search` (the default board costs 62 rows read and is edge-cached), then applies the local
+layers it applies today: `_jobs_personal`, dismissed and closed postings, `_jobs_mark`, resume
+sessions and the saved overlay. Home's best-fit strip ranks the local slice instead, so nothing
+from the profile leaves the machine. The slice also answers whenever the API cannot. Because dismissed rows are removed
 on the device, a page can come back short. The engine then fetches the next cursor until it has 30
 rows or has made 3 calls. The total reads "about N".
 
@@ -207,3 +212,141 @@ so they run locally.
    public, so the risk does not rise much, but the depth limit and rate limits should ship from day one.
 7. **Hosting:** Pages' 100 GB/month soft limit cannot carry today's full-list model past a few
    hundred users. Keep the feed on R2 (free egress) whatever is decided here.
+
+## As built (2026-11-25)
+
+PR "Server-side job search, ready behind a switch" ports #96 (index + API) and #95 (client) onto
+main and rebuilds the index to fit Cloudflare's free plan. Nothing changes for anyone until the
+go-live checklist below is followed.
+
+**Index** (`worker/migrations-search/0001_job_search.sql`, its own D1 database
+`sponsorjobs-search`, binding `SEARCH_DB`, so search never queues behind the broker):
+
+- One table row per job. Its `id` IS the board's newest-first order (a dated bit, the posting
+  day, a label that keeps `feedfile.recency_key`'s order inside a day; 41 bits, exact in
+  JavaScript), so the table is its own date index and no second row is written per job.
+- Every filter is precomputed by the loader with the app's own Python functions: flags in `f`
+  (sponsor board, entry level, ad offers sponsorship, has a visa record, work type), visa codes as
+  bits in `vm`, `pay` (`salary_value`), `ts` (posting time). The rest of the row is a positional
+  JSON array; each company's sponsor and visa block is stored once in `extras`.
+- Two small partial indexes (pay > 0, about half the rows; "ad offers sponsorship", under 1%) and
+  an FTS5 trigram keyword index with `detail=none` (140 bytes a job instead of 343). The keyword
+  index only says which rows hold every trigram of the text; the Worker checks the real substring.
+- `search_meta` (version, sizes, the lists the rows are encoded with, per-day row counts and pay
+  quantiles that bound each walk) and `search_usage` (rows read and written, requests, per UTC day).
+
+**Loader** (`scripts/load_search_index.py`, a `feed.yml` step that runs only when the
+`SEARCH_D1_TOKEN` secret exists and never blocks the feed): sends only what changed (removals
+first, then new jobs newest first, then changed jobs), stops at a daily write budget
+(`SEARCH_D1_DAILY_WRITES`, default 80,000, the rest of the free 100,000 left to the broker) and
+carries on next run. D1 reports the rows each statement really wrote, keyword index included, and
+the loader counts them. A run that dies part-way leaves a "dirty" marker; the next run rebuilds its
+state from D1 and finishes. The API answers 503 `no_index` until the first full load is in.
+
+**API** (`worker/src/search.ts`): the facets of section 3 plus `scope=sponsors`. Each request is
+a plain ordered walk that SQLite stops when the page is full, bounded to about 2,000 index rows
+(6,000 for the picker's pool) by the loader's histograms; a rare filter mix comes back short with
+a cursor that carries on from where the scan stopped. No counting past the page: the count is
+exact once the scan reached the end, else "about N" (the sponsor or whole-board size, a keyword's
+match count up to 250, or the share of rows walked that matched), else "N+". 1,000 results deep at
+most. Rate limits 60 a minute per install token and 300 per network. A daily budget
+(`SEARCH_DAILY_ROWS_READ` 3,500,000 and `SEARCH_DAILY_REQUESTS` 60,000; "0" turns a cap off)
+answers 503 `daily_budget` before search can use the free allowance the broker needs.
+Two D1 details found while measuring: D1 binds a JavaScript number as REAL, and FTS5 then ignores a
+rowid bound (36,892 rows read instead of 306), so those bounds are CAST to INTEGER; and with a
+partial index SQLite takes the first range term it sees, so `pay >= ?` comes before `pay > 0`.
+
+**App** (`JOBS_SEARCH=server`, `sourcing/remotesearch.py`, `ui/app.py _jobs_search_view`): with
+the switch on, the app downloads only the feed's slice (roles first seen in the last 7 days, at most
+40,000) and asks the API for the Jobs pages, through the same local layers as the full list:
+closed postings and dismissed roles left out, "ad says no sponsorship" and citizenship roles hidden
+while the person needs sponsorship, general (no-record) rows and their chips as they come, company
+marks, resume sessions, saved overlay, source credits. Home ranks the slice by fit on the device.
+The picker sends its saved search's filters, the scope and typed titles only. Offline, or on a 503,
+the board shows the slice with "Showing recent roles. Search all jobs when you're back online." and
+waits 10 minutes before asking again. Job alerts stay local on the slice.
+
+**Tests:** worker `npm test` (the parity test runs 68 facet mixes, scope included, through every
+plan and a one-row scan cap, and gets `apply_facets`' IDs in the same order), `tests/test_search_index.py`,
+`tests/test_remote_search.py` (with the privacy guard over every outgoing URL and header).
+
+**Try it locally, no Cloudflare account:** `node worker/scripts/local-d1.mjs --dir /tmp/sd1`
+(the real D1 engine behind a stand-in of the D1 HTTP API), then
+`SEARCH_D1_API_URL=http://127.0.0.1:8791/query python scripts/load_search_index.py --feed jobs.json.gz --state /tmp/st.json.gz --daily-writes 0`,
+stop the stand-in, and `node worker/scripts/measure-search.mjs --dir /tmp/sd1` for the rows each
+search reads (`--trace 'q=nurse&level=entry'` for one query's statements). Use a sample of 20k to
+50k jobs on an 8 GB machine.
+
+## Staying on Cloudflare's free plan
+
+Free plan (Workers Free + D1 free): 100,000 Worker requests a day, 5 million D1 rows read a day,
+100,000 rows written a day, 500 MB per database and 5 GB in all. These are **account-wide**: the
+broker's own database and requests share them. Workers Paid, $5 a month: 10M requests, 25B rows
+read and 50M rows written a month included, 10 GB per database.
+
+Measured on 2026-11-25 with the real D1 engine (workerd) on the live feed, 332,937 jobs:
+
+| | measured |
+|---|---|
+| first load | 845,826 rows written: **2.54 a job** (table, keyword index, pay index) |
+| storage | 209.5 MB: **629 bytes a job** (table 459, keyword index 140, company blocks 21, pay 9) |
+| daily change | the 2026-11-16 and 11-25 feeds differ by 98,262 added, 69,814 removed and 6,722 changed jobs; loading that difference wrote 413,685 rows, **about 46,000 a day, 0.144 writes a job a day**. A lower bound: a job that came and went inside the 9 days does not show |
+| bookkeeping | about 20 rows a run (version, sizes, histograms), 8 runs a day |
+| rows read, page 1 | 39 typical searches: **mean 672, most 2,682**. Default board 62, sponsors only 90, sort by pay 62, a keyword about 340 (250 of them the match count), keyword plus a rare filter 450 to 2,700. Page 2 is cheaper. This barely grows with the number of jobs: a walk stops at the page |
+
+What that means at each size (80,000 writes a day for search):
+
+| jobs | first load | daily writes to keep up | storage | free? |
+|---|---|---|---|---|
+| 333k (today) | 16 days | 48,000 | 210 MB | yes |
+| 350k | 18 days | 50,000 | 220 MB | yes |
+| 500k | about 40 days | 72,000 | 315 MB | yes, close to the write budget |
+| 600k | never (change outruns the budget) | 87,000 | 377 MB | no |
+| 1M | never | 144,000 | 629 MB | no (writes and storage) |
+
+The first-load figures count the daily change of the rows already loaded, which slows the load
+as it goes. One paid month ($5, `SEARCH_D1_DAILY_WRITES=0`) does any of these first loads in a day.
+
+**Where each free limit is first passed:**
+
+1. **Rows read, by daily users (comes first).** 3.5M rows a day for search / about 700 a search =
+   about 5,000 searches a day: **about 200 daily active users** at 25 searches each, about 400
+   with half of the searches answered by the edge cache. The number of jobs hardly matters.
+2. **Rows written, by job count:** the 80,000 budget at **about 555,000 jobs**; the account's whole
+   100,000 at about 690,000 (less whatever the broker writes).
+3. **Storage:** 500 MB a database at **about 790,000 jobs**.
+4. **Requests:** 100,000 a day at about 33 a daily user (pages and short-page refills) = about 3,000
+   daily users, so never the first limit.
+
+**Workers Paid ($5 a month) becomes necessary at about 200 to 400 daily active users who search,
+or at about 550,000 jobs, whichever comes first.** 500k fits on free; 1M does not. On the paid
+plan the same numbers cost: 1M jobs is about 4.3M writes a month (50M included), and 100k monthly
+users at 500 searches each are about 35B rows read (25B included, then $0.001 a million, about
+$10). Set `SEARCH_DAILY_ROWS_READ`, `SEARCH_DAILY_REQUESTS` and `SEARCH_D1_DAILY_WRITES` to "0"
+after upgrading.
+
+Not verified: that production D1 counts rows read and written exactly as the local engine does
+(same engine, but check the dashboard in the first week), and the 500 MB free database limit
+(read it on Cloudflare's D1 limits page before relying on it).
+
+## Go-live checklist
+
+1. **Create the database:** `cd worker && npx wrangler d1 create sponsorjobs-search`. Uncomment
+   the `SEARCH_DB` block in `wrangler.jsonc` (inside `"d1_databases"`) and paste the id it printed.
+2. **Apply its migrations:** `npx wrangler d1 migrations apply SEARCH_DB --remote`.
+3. **Rate limits and cursor secret:** uncomment the `"ratelimits"` block;
+   `npx wrangler secret put SEARCH_CURSOR_SECRET` (any long random string). Deploy the Worker.
+   `/v1/jobs/search` answers 503 `no_index` until step 5 finishes.
+4. **Loader credentials (GitHub, repo settings):** secret `SEARCH_D1_TOKEN` (a Cloudflare API
+   token with D1 Edit), variables `SEARCH_D1_ACCOUNT_ID` and `SEARCH_D1_DATABASE_ID` (from step 1).
+   Optional: `SEARCH_D1_DAILY_WRITES` ("0" for a paid month).
+5. **First load:** the feed workflow loads after each build; watch its `[search-index]` lines
+   (`left=` counts down). About 16 days on free at today's size, or a day on a paid month. Done when
+   `search_meta` has `ready = 1` (`npx wrangler d1 execute SEARCH_DB --remote --command
+   "SELECT * FROM search_meta WHERE k IN ('ready','rows','pending')"`).
+6. **Switch on for dev:** run a dev build with `JOBS_SEARCH=server` (and `JOBS_SEARCH_URL` if the
+   API is not the broker URL). Check Jobs (keyword, filters, Sponsors only / All jobs, deep pages),
+   Home, and offline (the slice note).
+7. **Switch on for everyone:** set `JOBS_SEARCH=server` in the shipped app (`shell-electron`), keep
+   publishing the full list for one or two releases for older apps, then raise the feed's size
+   past 330k. Watch D1's rows read and written in the dashboard the first week.

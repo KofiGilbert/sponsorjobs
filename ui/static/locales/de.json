@@ -1168,6 +1168,7 @@
   "r2.endAsk": "Das Interview jetzt beenden?",
   "r2.doneSub": "Dein Interview wird bewertet. Das dauert eine Minute.",
   "jobs.updating": "Aktualisierung auf die heutige Liste",
+  "jobs.offlineSlice": "Neueste Stellen werden angezeigt. Durchsuche alle Jobs, sobald du wieder online bist.",
   "set.privacyTitle": "Deine Daten bleiben auf diesem Gerät",
   "set.privacyBody": "Dein Profil, deine Lebensläufe und Bewerbungen liegen in einem lokalen Ordner. Die Anmeldung mit einem E-Mail-Code ist freiwillig und verknüpft nur deinen Plan. Pläne und die enthaltene KI laufen über unseren Server, der nur Nutzungszahlen für die Abrechnung speichert. Die Community-Edition kann stattdessen deinen eigenen KI-Schlüssel nutzen. Live-Interviews laufen direkt zwischen dir und Tavus. E-Mails an deine SponsorJobs-Adresse liegen nur so lange auf unserem Server, bis diese App sie heruntergeladen hat, höchstens 30 Tage. Danach liegen sie auf diesem Gerät.",
   "r1.leaveAsk": "Interview verlassen? Deine bisherigen Antworten bleiben gespeichert.",
