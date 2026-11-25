@@ -273,6 +273,32 @@ jobs:
             --state-manifest "${{ github.workspace }}/.state/restored.json" \
             ${{ inputs.allow_drop && '--allow-drop' || '' }}
 
+      # Server-side job search (docs/server-search-plan.md), OFF until the SEARCH_D1_TOKEN secret
+      # is added: write the rows that changed to the search index (its own D1 database,
+      # sponsorjobs-search), inside the free plan's daily write allowance. The loader keeps its
+      # state in the data dir (search-index-state.json.gz), so the state save below carries it to
+      # the next run; a load cut short by the budget carries on there. It never blocks the feed.
+      - name: Is the search index configured?
+        id: search-index
+        env:
+          SEARCH_D1_TOKEN: ${{ secrets.SEARCH_D1_TOKEN }}
+        run: if [ -n "$SEARCH_D1_TOKEN" ]; then echo "on=1" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Load the search index (D1, changed rows only)
+        if: ${{ steps.search-index.outputs.on == '1' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          SEARCH_D1_TOKEN: ${{ secrets.SEARCH_D1_TOKEN }}
+          SEARCH_D1_ACCOUNT_ID: ${{ vars.SEARCH_D1_ACCOUNT_ID }}
+          SEARCH_D1_DATABASE_ID: ${{ vars.SEARCH_D1_DATABASE_ID }}
+          # Rows the index may write in one UTC day (free plan: 100,000 for the whole account,
+          # the broker included). 0 = no limit, for a paid month or the paid plan.
+          SEARCH_D1_DAILY_WRITES: ${{ vars.SEARCH_D1_DAILY_WRITES || '80000' }}
+        run: |
+          python scripts/load_search_index.py --feed "$FEED_OUT_DIR/jobs.json.gz" \
+            --state "$FEED_DATA_DIR/search-index-state.json.gz"
+
       # The merged state is saved ONLY after a successful merge and guard, as a new state named by
       # this run (full + slim archives, then the latest.json pointer last); the newest 5 are kept.
       - name: Save the crawl state to R2
