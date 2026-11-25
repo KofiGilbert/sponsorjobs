@@ -590,7 +590,12 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
     exact = false;
     estimate = null;
     const onlyText = q.where.length === (f.q ? 1 : 0) + (f.loc ? 1 : 0) + (f.titles.length ? 1 : 0);
-    if (probe !== null && onlyText) {
+    const scopeOnly = q.where.length === 1 && f.scope === "sponsors";
+    if (q.where.length === 0 || scopeOnly) {
+      // No filter, or only the sponsor board: the loader counted those rows.
+      const total = scopeOnly ? info.sponsorRows : info.rows;
+      if (total > 0) estimate = Math.max(count, total);
+    } else if (probe !== null && onlyText) {
       // The keyword index's own count: the rows holding the text's trigrams, a close upper bound.
       if (probe <= FTS_COUNT_CAP) estimate = Math.max(probe, count);
     } else if (probe === null && !match && scanned >= 50 && !(f.days > 0)) {
