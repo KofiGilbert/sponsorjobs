@@ -93,12 +93,22 @@ def main(argv=None) -> int:
                     help="resolve hosts to IPv4 only: on a network with broken IPv6 every request "
                          "to a dual-stack API (SmartRecruiters, Ashby) first waits out two IPv6 "
                          "timeouts, which made one employer take two minutes (seen 2026-10-12)")
+    ap.add_argument("--no-record", action="store_true",
+                    help="the GENERAL lane: probe the seed's employers with NO sponsorship record "
+                         "(E-Verify participants, filers without an approval) instead of the "
+                         "sponsors. Their boards are written to the seed AND to --general, so "
+                         "their rows are published as general rows, never as sponsor roles")
+    ap.add_argument("--general", default=None,
+                    help="the general-board list (default: seed/watchlist_general.csv beside --seed)")
     ap.add_argument("--ats", default=",".join(DISCOVER_ATS),
                     help="comma list of ATSs to probe (default: all of "
                          f"{', '.join(DISCOVER_ATS)}); e.g. --ats workday")
     args = ap.parse_args(argv)
     if args.evidence is None:
         args.evidence = str(Path(args.seed).with_name(growth.WATCHLIST_EVIDENCE.name))
+    if args.general is None:
+        from sourcing.quality import GENERAL_BOARDS_SEED
+        args.general = str(Path(args.seed).with_name(GENERAL_BOARDS_SEED.name))
     atss = tuple(a.strip().lower() for a in args.ats.split(",") if a.strip())
     unknown = [a for a in atss if a not in DISCOVER_ATS]
     if unknown or not atss:
@@ -110,7 +120,7 @@ def main(argv=None) -> int:
     before = growth.read_watchlist_seed(args.seed)
     before_ats = growth.per_ats_counts(before)
     checkpoint = growth.Checkpoint(args.checkpoint)
-    sponsors = growth.load_sponsor_seed(args.sponsors)
+    sponsors = growth.load_sponsor_seed(args.sponsors, no_record=args.no_record)
     fetch = growth.PoliteFetch(timeout=args.timeout, host_delay=args.host_delay,
                                robots=not args.no_robots, blocked_hosts=checkpoint.blocked_hosts())
     if not args.no_robots and args.limit > 0:
@@ -119,7 +129,7 @@ def main(argv=None) -> int:
             print(f"robots.txt: leaving {a} out of this run ({why})")
         atss = tuple(atss_ok)
     rank_kw = {"cap_boost": 1.0 if args.no_cap_boost else growth.CAP_EXEMPT_BOOST,
-               "cap_exempt_only": args.cap_exempt_only}
+               "cap_exempt_only": args.cap_exempt_only, "no_record": args.no_record}
     ranked = (growth.candidates(sponsors, checkpoint, growth.watched_norms(before),
                                 None if args.owed_only else args.limit,
                                 atss, **rank_kw)
@@ -129,7 +139,8 @@ def main(argv=None) -> int:
     caps = sum(1 for r in ranked if r.get("cap_exempt_likely"))
     owed = sum(1 for r in ranked if r.get("atss"))
     print(f"Watchlist before: {len(before)} boards {before_ats}")
-    print(f"Sponsor seed: {len(sponsors)} employers with H-1B approvals; "
+    print(f"Sponsor seed: {len(sponsors)} employers "
+          f"{'with NO sponsorship record (general lane)' if args.no_record else 'with H-1B approvals'}; "
           f"{len(checkpoint.records)} already checkpointed; probing the next {len(ranked)} "
           f"({owed} of them only on the ATSs a throttled run still owes) "
           f"across {', '.join(atss)} (workers={args.workers}, "
@@ -167,7 +178,10 @@ def main(argv=None) -> int:
     # Every verified hit in the checkpoint — this run's AND any earlier run's that was stopped
     # before it could write (Ctrl-C, the time cap mid-flight) — goes into the seed now.
     known = {(r["ats"], r["board_id"]) for r in before}
-    by_norm = {r["norm_name"]: r for r in sponsors}
+    # Every seed employer, record or not, so a checkpointed hit from the OTHER lane (a sponsor
+    # found before a --no-record run, or the reverse) is still written with its true record.
+    by_norm = {r["norm_name"]: r for r in
+               [*growth.load_sponsor_seed(args.sponsors, no_record=not args.no_record), *sponsors]}
     new_rows: list[dict] = []
     evidence: list[dict] = []
     norms: list[str] = []
@@ -208,6 +222,13 @@ def main(argv=None) -> int:
     if not args.dry_run and new_rows:
         after = growth.write_watchlist_seed(args.seed, after)
         growth.write_evidence(args.evidence, evidence)
+        # A board whose employer has no sponsorship record is ALSO listed as a general board, in
+        # the same write, so its rows are never published as sponsor roles (quality.py).
+        general = [growth.general_board_row(ev, source="discovery")
+                   for ev in evidence if not growth.has_record(ev)]
+        if general:
+            growth.write_general_boards(args.general, general)
+            print(f"{len(general)} of the new boards have no sponsorship record: listed in {args.general}")
     after_ats = growth.per_ats_counts(after)
     mins = (time.monotonic() - t0) / 60
     jobs = sum(b["jobs"] for b in new_rows)

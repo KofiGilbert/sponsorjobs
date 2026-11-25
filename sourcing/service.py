@@ -193,9 +193,19 @@ def _fill_detail(ats: str, job: dict, fetch, sleep) -> bool:
     return bool((job.get("jd_text") or "").strip())
 
 
+def crawl_keeps(job: dict, all_roles: bool = False) -> bool:
+    """May a crawl STORE this row? The desktop app's own crawl keeps only roles a visa holder can
+    take (quality.is_intl_student_accessible). The central feed build passes `all_roles=True`
+    (2026-11-25): the board is open to every job seeker, so a role at a clearance-heavy employer,
+    or one whose ad says it will not sponsor or needs citizenship, is stored too. It is never
+    shown as a sponsor role: quality.is_sponsor_relevant marks it a general row, and the ad's own
+    sentence travels with it as the "No sponsorship" / "Citizenship or clearance" chip."""
+    return True if all_roles else is_intl_student_accessible(job)
+
+
 def select_checked_rows(ats: str, jobs: list[dict], criteria: dict, fetch=fetch_json, known_ids=(),
                         max_detail: int | None = None, cap: int = MAX_PER_COMPANY,
-                        sleep=time.sleep) -> tuple[list[dict], int, int]:
+                        sleep=time.sleep, all_roles: bool = False) -> tuple[list[dict], int, int]:
     """The rows of a list-only board (Workday, SmartRecruiters) a refresh may keep:
     criteria-matching AND accessibility-CHECKED.
 
@@ -208,7 +218,9 @@ def select_checked_rows(ats: str, jobs: list[dict], criteria: dict, fetch=fetch_
     per-board detail budget (`max_detail`, env {ATS}_MAX_DETAIL / {ATS}_MAX_DETAIL_FEED) is spent.
     Rows the budget did not reach, and rows whose detail could not be read, are NOT returned and
     so never stored: an unchecked row never reaches the board or the public feed (it is simply
-    picked up by a later refresh). Returns (kept, details_fetched, left_unchecked)."""
+    picked up by a later refresh). `all_roles` keeps a checked row whatever its description says
+    (crawl_keeps); the description is still read first, so the row carries what its ad says.
+    Returns (kept, details_fetched, left_unchecked)."""
     if ats not in DETAIL_BUDGET_ENV:
         raise ValueError(f"not a list-only ATS: {ats!r}")
     if max_detail is None:
@@ -238,7 +250,7 @@ def select_checked_rows(ats: str, jobs: list[dict], criteria: dict, fetch=fetch_
             if not _fill_detail(ats, j, fetch, sleep):
                 unchecked += 1                     # detail unreadable / blank: cannot be checked
                 continue
-        if is_intl_student_accessible(j):
+        if crawl_keeps(j, all_roles):
             kept.append(j)
     return kept, fetched, unchecked
 
@@ -324,7 +336,8 @@ def matches_criteria(job: dict, criteria: dict) -> bool:
 def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail: int | None = None,
                       detail_budgets: dict[str, int] | None = None, sleep=time.sleep,
                       boards: list[dict] | None = None, time_budget: float | None = None,
-                      clock=time.monotonic, include_aggregators: bool = True) -> dict:
+                      clock=time.monotonic, include_aggregators: bool = True,
+                      all_roles: bool = False) -> dict:
     """Fetch every watched company's official feed, filter by criteria, and
     upsert matches. Returns a summary the UI can show. `detail_budgets` is the per-board
     description budget of each list-only ATS ({"workday": n, "smartrecruiters": n}; default: env
@@ -335,7 +348,9 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
     the board pass once it is spent -- the aggregator pulls that follow are a handful of requests
     and still run. The summary's `boards_crawled` / `boards_total` / `stopped_early` say how far
     it got. `include_aggregators=False` runs the board pass only (sections 2-3b are skipped): the
-    feed build's second crawl shard leaves the aggregators to the first, so no API is hit twice."""
+    feed build's second crawl shard leaves the aggregators to the first, so no API is hit twice.
+    `all_roles=True` (the central feed build) stores every role, including the ones a visa holder
+    cannot take (crawl_keeps); the default keeps the desktop crawl to accessible roles."""
     criteria = store.get_criteria()
     fetched = matched = new_total = duplicates = 0
     budgets = dict(detail_budgets or {})
@@ -387,15 +402,14 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
                     known[w["ats"]] = store.source_ids_with_jd(w["ats"])
                 jobs, _, left = select_checked_rows(w["ats"], jobs, criteria, fetch,
                                                     known[w["ats"]], budgets.get(w["ats"]),
-                                                    sleep=sleep)
+                                                    sleep=sleep, all_roles=all_roles)
                 unchecked[w["ats"]] += left
                 full = full and len(jobs) < MAX_PER_COMPANY   # it stops once `cap` rows are kept
         except Exception as exc:  # a bad board id / network blip shouldn't kill the run
             errors.append({"company": w["company"], "error": str(exc)})
             store.record_crawl(w["ats"], w["board_id"], False, error=str(exc))
             continue
-        keep = [j for j in jobs if matches_criteria(j, criteria)
-                and is_intl_student_accessible(j)]
+        keep = [j for j in jobs if matches_criteria(j, criteria) and crawl_keeps(j, all_roles)]
         full = full and len(keep) <= MAX_PER_COMPANY
         keep, dup = index.filter(keep[:MAX_PER_COMPANY])
         duplicates += dup
@@ -435,7 +449,7 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
                 seen.update(j["source_id"] for j in jobs)
                 fetched += len(jobs)
                 keep = [j for j in jobs if matches_criteria(j, criteria)
-                        and is_intl_student_accessible(j)][:MAX_PER_COMPANY]
+                        and crawl_keeps(j, all_roles)][:MAX_PER_COMPANY]
                 keep, dup = index.filter(keep)
                 duplicates += dup
                 matched += len(keep)
@@ -456,7 +470,7 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
         try:
             fjobs = freehire_bulk(fetch=fetch)
             fetched += len(fjobs)
-            keep = [j for j in fjobs if is_intl_student_accessible(j)]
+            keep = [j for j in fjobs if crawl_keeps(j, all_roles)]
             keep, dup = index.filter(keep)
             duplicates += dup
             matched += len(keep)
@@ -479,7 +493,7 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
             try:
                 sjobs = freehire_bulk(fetch=fetch, cap=scap, visa_sponsorship=True)
                 fetched += len(sjobs)
-                keep = [j for j in sjobs if is_intl_student_accessible(j)]
+                keep = [j for j in sjobs if crawl_keeps(j, all_roles)]
                 keep, dup = index.filter(keep)
                 duplicates += dup
                 matched += len(keep)
@@ -502,7 +516,7 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
             fetched += len(hjobs)
             watched = watched_brands(store.companies())
             keep = [j for j in hjobs if not brand_watched(j.get("company", ""), watched)
-                    and is_intl_student_accessible(j)]
+                    and crawl_keeps(j, all_roles)]
             keep, dup = index.filter(keep)
             duplicates += dup
             matched += len(keep)

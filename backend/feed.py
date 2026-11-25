@@ -148,10 +148,11 @@ def feed_jobs(level: str | None = None) -> list[dict]:
         # What each ad says about sponsorship, read from its own text (sourcing/adstance.py).
         # Done here, before the relevance filter, so an ad that says it will NOT sponsor is kept
         # off the board, and the stance travels with the row into the public feed.
-        from sourcing.adstance import UNKNOWN, ad_stance
+        from sourcing.adstance import UNKNOWN
+        from sourcing.quality import feed_ad_stance
         texts = w.get_jd_texts([j["source_id"] for j in jobs])
         for j in jobs:
-            st = ad_stance(texts.get(j["source_id"]) or "")
+            st = feed_ad_stance(texts.get(j["source_id"]) or "")
             if st["stance"] != UNKNOWN:
                 j["ad_stance"], j["ad_sentence"] = st["stance"], st["sentence"]
     finally:
@@ -165,8 +166,13 @@ def feed_jobs(level: str | None = None) -> list[dict]:
     _nu = [j for j in jobs if not j.get("us")]
     FUNNEL_SAMPLES["not_us"] = _random.Random(7).sample(_nu, min(400, len(_nu)))
     us = [j for j in jobs if j.get("us")]
+    # A clearance-heavy contractor's roles are dead ends for a visa holder, so a sponsor-only feed
+    # (general_max() == 0) drops them. A feed that carries general rows keeps them as general
+    # rows: is_sponsor_relevant is False for them, and they count against the general cap below.
+    cap = general_max()
     FUNNEL["clearance_employer"] = sum(1 for j in us if employer_is_clearance_heavy(j.get("company", "")))
-    us = [j for j in us if not employer_is_clearance_heavy(j.get("company", ""))]
+    if cap <= 0:
+        us = [j for j in us if not employer_is_clearance_heavy(j.get("company", ""))]
     FUNNEL["jd_unchecked"] = sum(1 for j in us if not is_jd_checked(j))
     chk = [j for j in us if is_jd_checked(j)]
     _closed = ("not_offered", "restricted")          # the ad says no, or citizenship / clearance
@@ -177,14 +183,18 @@ def feed_jobs(level: str | None = None) -> list[dict]:
     # sponsorship: the rest of the checked US rows, English titles only, newest first, at most
     # general_max() of them. Each row says which kind it is (`sponsor_relevant`), so the app's
     # "Sponsors only" filter shows exactly the sponsor board.
-    cap = general_max()
+    # The cap is never silent: `general_over_cap` is how many general rows it left out, so a
+    # build log shows when FEED_GENERAL_MAX needs raising (docs/feed.md, "Every employer").
     general_ids: set = set()
+    over_cap = 0
     if cap > 0:
         for j in chk:                                  # recent-sorted: the newest come first
-            if len(general_ids) >= cap:
-                break
             if not is_sponsor_relevant(j) and looks_english(j.get("title") or ""):
-                general_ids.add(id(j))
+                if len(general_ids) < cap:
+                    general_ids.add(id(j))
+                else:
+                    over_cap += 1
+    FUNNEL["general_over_cap"] = over_cap
     jobs = []
     for j in chk:
         rel = is_sponsor_relevant(j)

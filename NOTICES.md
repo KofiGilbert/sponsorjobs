@@ -121,7 +121,9 @@ company's brand apart from its legal name (`sourcing/brands.py`).
   Copyright (c) remoteintech contributors. Used 2026-10-30 as a list of company names and careers
   URLs to find public ATS boards; 42 verified boards were added to `seed/watchlist_seed.csv`
   (marked `source=remoteintech` in `seed/watchlist_evidence.csv`). Only those facts were used; no
-  text from the project was copied.
+  text from the project was copied. Used again 2026-11-25, company names only, for boards of
+  employers with no sponsorship record: 33 more verified boards (21 of them listed in
+  `seed/watchlist_general.csv`).
 - **Hacker News "Ask HN: Who is hiring?"** (https://news.ycombinator.com), read through the HN
   search API (https://hn.algolia.com/api). **Off by default**: the adapter
   (`sourcing/hackernews.py`) runs only with `HN_WHOISHIRING=1`, because Y Combinator's site terms
