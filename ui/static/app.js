@@ -9710,47 +9710,42 @@
     const kinds = [...new Set((p.questions || []).map(q => String(q.type || q.kind || "").trim()).filter(Boolean))];
     return kinds.length ? kinds.join(", ") : T("r1.kindsDefault", "Behavioral and role-specific questions");
   }
-  // Screen 1: the landing. Company and role, what to expect, one action.
+  // Screen 1: the welcome. Company and role, what to expect, one action. Exit (in the bar) is
+  // the way out, so there is no second "Not now" button.
   function renderR1Landing() {
     const p = SCR_PREP;
-    scrHead("", "");
-    $("#scrStage").innerHTML = `
-      <div class="scr-intro"><div class="scr-welcome">
-        <div class="r1-eyebrow">${esc(T("r1.eyebrow", "Round 1, recorded interview"))}</div>
-        <h2 class="scr-welcome-h">${r1Title(p)}</h2>
-        <p class="scr-welcome-sub">${SCR_DRILL
-          ? esc(T("rc.drillFacts", "Re-drill: {n} questions from your report card.").replace("{n}", String(SCR_DRILL.length)))
-          : esc(T("r1.landingFacts", "5 questions, about 20 minutes.")) + " " + esc((k => k ? k.charAt(0).toUpperCase() + k.slice(1) : "")(r1Kinds(p))) + "."}</p>
-        <div class="scr-welcome-acts">
-          <button class="btn btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
-          <button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
-        </div>
-        ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : ""}
-        <p class="scr-disclaimer">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>
-      </div></div>`;
+    scrHead("", ""); SCR_PHASE = "idle";
+    $("#scrStage").innerHTML = r1Stage("welcome", { solo: true, body: `
+      <div class="r1-label"><span>${esc(T("r1.eyebrow", "Round 1, recorded interview"))}</span></div>
+      <h2 class="r1-h">${r1Title(p)}</h2>
+      <p class="r1-sub">${SCR_DRILL
+        ? esc(T("rc.drillFacts", "Re-drill: {n} questions from your report card.").replace("{n}", String(SCR_DRILL.length)))
+        : esc(T("r1.landingFacts", "5 questions, about 20 minutes.")) + " " + esc((k => k ? k.charAt(0).toUpperCase() + k.slice(1) : "")(r1Kinds(p))) + "."}</p>
+      ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : ""}
+      <div class="r1-solo-acts">
+        <button class="r1-btn r1-btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
+      </div>
+      <p class="r1-fine">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>` });
     $("#scrBegin")?.addEventListener("click", renderR1Notice);
-    $("#scrBail")?.addEventListener("click", quitScreen);
   }
   // Screen 2: the notice. Where recordings go, how to delete them, no facial analysis, and the
   // extra-time option (doubles the clocks), which replaced the old Realistic/Relaxed switch.
   function renderR1Notice() {
-    scrHead("", "");
-    $("#scrStage").innerHTML = `
-      <div class="scr-intro"><div class="scr-welcome">
-        <h2 class="scr-ready-h">${esc(T("r1.noticeH", "Before you begin"))}</h2>
-        <ul class="r1-notice">
-          <li>${esc(T("r1.notice1", "Your recordings stay on this computer. Nothing is uploaded."))}</li>
-          <li>${esc(T("r1.notice2", "You can delete them from the report at any time."))}</li>
-          <li>${esc(T("r1.notice3", "There is no facial analysis. Only what you say is scored."))}</li>
-        </ul>
-        <label class="r1-check"><input type="checkbox" id="scrExtra" ${SCR_EXTRA ? "checked" : ""}>
-          <span><b>${esc(T("r1.extraTime", "I need extra time"))}</b> <span class="r1-check-d">${esc(T("r1.extraTimeD", "Doubles the prep and answer clocks on every question."))}</span></span></label>
-        <div class="scr-welcome-acts">
-          <button class="btn btn-primary" id="scrNoticeGo" type="button">${esc(T("r1.continue", "Continue"))}</button>
-          <button class="btn btn-ghost" id="scrNoticeBack" type="button">${esc(T("r1.back", "Back"))}</button>
-          <span class="prep-step1-msg" id="scrNoticeMsg" hidden></span>
-        </div>
-      </div></div>`;
+    scrHead("", ""); SCR_PHASE = "idle";
+    $("#scrStage").innerHTML = r1Stage("notice", { solo: true, body: `
+      <div class="r1-label"><span>${esc(T("r1.noticeH", "Before you begin"))}</span></div>
+      <ul class="r1-notice">
+        <li>${esc(T("r1.notice1", "Recordings stay on this computer."))}</li>
+        <li>${esc(T("r1.notice2", "Delete them any time from the report."))}</li>
+        <li>${esc(T("r1.notice3", "No facial analysis. Only your words are scored."))}</li>
+      </ul>
+      <label class="r1-check"><input type="checkbox" id="scrExtra" ${SCR_EXTRA ? "checked" : ""}>
+        <span><b>${esc(T("r1.extraTime", "I need extra time"))}</b> <span class="r1-check-d">${esc(T("r1.extraTimeD", "Doubles the prep and answer time."))}</span></span></label>
+      <div class="r1-solo-acts">
+        <button class="r1-btn r1-btn-primary" id="scrNoticeGo" type="button">${esc(T("r1.continue", "Continue"))}</button>
+        <button class="r1-btn r1-btn-ghost" id="scrNoticeBack" type="button">${esc(T("r1.back", "Back"))}</button>
+        <span class="r1-solo-msg" id="scrNoticeMsg" hidden></span>
+      </div>` });
     $("#scrExtra")?.addEventListener("change", (e) => { SCR_EXTRA = !!e.target.checked; });
     $("#scrNoticeBack")?.addEventListener("click", renderR1Landing);
     $("#scrNoticeGo")?.addEventListener("click", async () => {
@@ -9764,14 +9759,15 @@
       goDevices();
     });
   }
-  // ---- The stage (screens 3 to 6): one full-window surface, the same on every step.
-  // While a session runs the app's own chrome is gone (CSS: a .r1-stage inside the open Interview
-  // view hides the side menu, the page title and the footer), like the real product, which shows
-  // no navigation around an interview. One slim bar: Exit on the left (it asks before a recording
-  // or saved answers would be left behind; Escape asks too, it never ends a recording), the step and
-  // the clock in the centre, the recording status on the right, always in that one place. Below it
-  // two panes that scale with the window: the words on the left, the camera on the right with the
-  // one action under it, in the same spot on every step. Narrow windows stack them.
+  // ---- The stage (the whole of Round 1 up to the report): one composed card, the same on every
+  // step, laid out like the real product's recording screen. While it is up the app's own chrome is
+  // gone (CSS: a .r1-stage inside the open Interview view hides the side menu, the page title and
+  // the footer). A slim bar holds Exit (it asks before a recording or saved answers would be left
+  // behind; Escape asks too, it never ends a recording). The card has two columns that start on one
+  // line, each under a small label: the words on the left with a quiet Settings link at the bottom,
+  // the camera on the right with its controls ATTACHED: a strip on top of the video (the clock, a
+  // progress bar, the one action at its right end, in the same spot on every step) and the
+  // microphone level directly under it. Narrow windows stack the columns.
   const R1_IC = {
     back: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     cam: `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="1.8" y="4" width="8.6" height="8" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.4 7.2l3.8-2v5.6l-3.8-2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
@@ -9780,21 +9776,23 @@
     gear: `<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   };
   const r1Meter = () => `<span class="rec-meter" title="${esc(T("r1.micLevel", "Mic level"))}"><span class="rec-meter-ic" aria-hidden="true">${R1_IC.mic}</span><span class="rec-meter-track"><i class="rec-meter-fill"></i></span></span>`;
+  const r1Label = (text, id, extra) => `<div class="r1-label"><span${id ? ` id="${id}"` : ""}>${esc(text)}</span>${extra || ""}</div>`;
+  // The strip on top of the video: what is left of it (the clock and its bar, or one short line),
+  // and the action at its right end.
+  const r1Strip = (line, acts) => `
+    <div class="r1-strip">
+      <div class="r1-strip-l">
+        <span class="r1-clock" id="r1Clock" hidden><span class="r1-clock-l"><span data-l="prep">${esc(T("r1.prepTime", "Prep time"))}</span><span data-l="left">${esc(T("r1.responseTime", "Response time"))}</span></span><b id="r1ClockT"></b><span class="r1-prog" aria-hidden="true"><i id="r1Prog"></i></span></span>
+        <span class="r1-strip-t" id="r1StripT">${esc(line || "")}</span>
+      </div>
+      <div class="r1-acts" id="r1Acts">${acts || ""}</div>
+    </div>`;
   function r1Stage(step, o) {
     o = o || {};
     return `
       <div class="r1-light r1-stage" id="r1Stage" data-step="${step}">
         <header class="r1-bar">
           <button class="r1-exit" id="r1Exit" type="button">${R1_IC.back}<span>${esc(T("r1.exit", "Exit"))}</span></button>
-          <div class="r1-bar-mid">
-            <span class="r1-step" id="r1Step">${esc(o.label || "")}</span>
-            <span class="r1-clock" id="r1Clock" hidden><span class="r1-clock-l"><span data-l="prep">${esc(T("r1.prepTime", "Prep"))}</span><span data-l="left">${esc(T("r1.timeLeft", "Time left"))}</span></span><b id="r1ClockT"></b></span>
-          </div>
-          <div class="r1-bar-end">
-            ${o.status ? `<span class="r1-status" id="r1Status" role="status"><i class="r1-status-dot"></i><span id="r1StatusT">${esc(T("r1.notRecording", "Not recording"))}</span></span>
-            <button class="r1-gear" id="r1Gear" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="${esc(T("r1.devSettings", "Camera and microphone"))}" title="${esc(T("r1.devSettings", "Camera and microphone"))}">${R1_IC.gear}</button>
-            <div class="r1-pop" id="r1Pop" role="dialog" aria-label="${esc(T("r1.devSettings", "Camera and microphone"))}" hidden><div class="r1-devs" data-r1-devs></div></div>` : ""}
-          </div>
           <div class="r1-leave" id="r1Leave" role="alertdialog" aria-labelledby="r1LeaveT" hidden>
             <span class="r1-leave-t" id="r1LeaveT"></span>
             <span class="r1-leave-acts">
@@ -9803,20 +9801,25 @@
             </span>
           </div>
         </header>
-        <main class="r1-main"><div class="r1-grid">${o.body || ""}</div></main>
+        <main class="r1-main"><div class="r1-card${o.solo ? " is-solo" : ""}">${o.body || ""}</div></main>
       </div>`;
   }
-  // The clock: one place and one style for the prep countdown and the answer countdown.
-  function r1Clock(which, secs, warn) {
+  // The clock: one place and one style for the prep countdown and the response countdown, with a
+  // bar that drains as the time goes.
+  function r1Clock(which, secs, total, warn) {
     const el = $("#r1Clock"); if (!el) return;
     el.hidden = secs == null;
+    const line = $("#r1StripT"); if (line && secs != null) line.textContent = "";
     if (secs == null) return;
     el.dataset.l = which; $("#r1ClockT").textContent = fmtClock(Math.max(0, secs));
+    const bar = $("#r1Prog"); if (bar) bar.style.width = (total > 0 ? Math.max(0, Math.min(100, (secs / total) * 100)) : 0) + "%";
     el.classList.toggle("warn", !!warn);
   }
+  function r1Line(text) { const el = $("#r1StripT"); if (el) el.textContent = text || ""; }
   function r1Status(rec) {
     const st = $("#r1Status"); if (!st) return;
     st.classList.toggle("is-rec", !!rec);
+    $("#r1Frame")?.classList.toggle("is-rec", !!rec);
     $("#r1StatusT").textContent = rec ? T("r1.recording", "Recording") : T("r1.notRecording", "Not recording");
     r1GearSync();
   }
@@ -9906,9 +9909,7 @@
   }
   function r1DevPaint() {
     document.querySelectorAll("#scrStage [data-r1-devs]").forEach(host => {
-      host.innerHTML = r1DevRow("cam") + r1DevRow("mic")
-        + `<div class="r1-dev r1-dev-level"><span></span>${r1Meter()}</div>`
-        + `<p class="r1-dev-note" role="status">${esc(r1DevNote())}</p>`;
+      host.innerHTML = r1DevRow("cam") + r1DevRow("mic") + `<p class="r1-dev-note" role="status">${esc(r1DevNote())}</p>`;
     });
   }
   function r1DevNotePaint() { const t = r1DevNote(); document.querySelectorAll("#scrStage .r1-dev-note").forEach(el => { if (el.textContent !== t) el.textContent = t; }); }
@@ -10000,22 +10001,21 @@
   function renderR1Devices() {
     scrHead("", ""); SCR_PHASE = "check"; SCR_CUR = null;
     $("#scrStage").innerHTML = r1Stage("check", { body: `
-      <div class="r1-text">
-        <h2 class="r1-h r1-h-one">${esc(T("r1.devicesH", "Check your camera and microphone"))}</h2>
+      <section class="r1-col r1-col-q">
+        ${r1Label(T("r1.setUp", "Set up"))}
+        <h2 class="r1-h">${esc(T("r1.devicesH", "Check your camera and microphone"))}</h2>
         <div class="r1-devs" data-r1-devs></div>
-        <ul class="r1-tips">
-          <li>${esc(T("r1.tip1", "Light in front of you."))}</li>
-          <li>${esc(T("r1.tip2", "Somewhere quiet."))}</li>
-        </ul>
         <p class="r1-conn" id="r1Conn" role="status"></p>
-      </div>
-      <div class="r1-cam"><div class="r1-cam-in">
-        <div class="scr-video-wrap"><video class="scr-video" id="scrVideo" autoplay muted playsinline></video></div>
-        <div class="r1-under"></div>
-        <div class="r1-acts" id="r1Acts">
-          <button class="r1-btn r1-btn-primary" id="scrToPractice" type="button">${esc(T("r1.toPractice", "Try a practice question"))}</button>
+      </section>
+      <section class="r1-col r1-col-v">
+        ${r1Label(T("r1.preview", "Camera preview"))}
+        <div class="r1-frame" id="r1Frame">
+          ${r1Strip(T("r1.tip1", "Light in front of you.") + " " + T("r1.tip2", "Somewhere quiet."),
+            `<button class="r1-btn r1-btn-primary" id="scrToPractice" type="button">${esc(T("r1.toPractice", "Try a practice question"))}</button>`)}
+          <div class="scr-video-wrap"><video class="scr-video" id="scrVideo" autoplay muted playsinline></video></div>
         </div>
-      </div></div>` });
+        <div class="r1-under" id="r1Under">${r1Meter()}</div>
+      </section>` });
     $("#scrVideo").srcObject = SCR_STREAM;
     r1DevPaint(); r1ConnPaint();
     startMicMeter(SCR_STREAM);
@@ -10034,24 +10034,30 @@
     SCR_CUR = { practice, idx, q };
     SCR_PHASE = "prep"; r1PlaybackClear();
     if (!practice) retakesLeft(idx);
-    const progress = practice ? T("r1.practiceLabel", "Practice · not saved") : T("r1.progress", "Question {n} of {total}").replace("{n}", idx + 1).replace("{total}", n);
+    const progress = practice ? T("r1.practiceLabel", "Practice question · not saved") : T("r1.progress", "Question {n} of {total}").replace("{n}", idx + 1).replace("{total}", n);
     const text = String(q.text || q.q || "");
     scrHead("", "");
-    $("#scrStage").innerHTML = r1Stage("question", { label: progress, status: true, body: `
-      <div class="r1-text">
+    $("#scrStage").innerHTML = r1Stage("question", { body: `
+      <section class="r1-col r1-col-q">
+        ${r1Label(progress, "r1Step")}
         <h2 class="r1-q" id="r1Q" data-size="${SJStage.questionTier(text)}">${esc(text)}</h2>
         <p class="r1-q-help" id="r1Help">${esc(T("r1.qHelp", "Recording starts when prep ends."))}</p>
-      </div>
-      <div class="r1-cam"><div class="r1-cam-in">
-        <div class="scr-video-wrap">
-          <video class="scr-video" id="scrVideo" autoplay muted playsinline></video>
-          <div class="r1-count" id="r1Count" hidden></div>
+        <div class="r1-set">
+          <button class="r1-link" id="r1Gear" type="button" aria-haspopup="dialog" aria-expanded="false">${R1_IC.gear}<span>${esc(T("r1.settings", "Settings"))}</span></button>
+          <div class="r1-pop" id="r1Pop" role="dialog" aria-label="${esc(T("r1.devSettings", "Camera and microphone"))}" hidden><div class="r1-devs" data-r1-devs></div></div>
+        </div>
+      </section>
+      <section class="r1-col r1-col-v">
+        ${r1Label(T("r1.yourResponse", "Your response"), "", `<span class="r1-status" id="r1Status" role="status"><i class="r1-status-dot"></i><span id="r1StatusT">${esc(T("r1.notRecording", "Not recording"))}</span></span>`)}
+        <div class="r1-frame" id="r1Frame">
+          ${r1Strip("", `<button class="r1-btn r1-btn-primary" id="r1Start" type="button">${esc(T("r1.startRecording", "Start recording"))}</button>`)}
+          <div class="scr-video-wrap">
+            <video class="scr-video" id="scrVideo" autoplay muted playsinline></video>
+            <div class="r1-count" id="r1Count" hidden></div>
+          </div>
         </div>
         <div class="r1-under" id="r1Under">${r1Meter()}</div>
-        <div class="r1-acts" id="r1Acts">
-          <button class="r1-btn r1-btn-primary" id="r1Start" type="button">${esc(T("r1.startRecording", "Start recording"))}</button>
-        </div>
-      </div></div>` });
+      </section>` });
     $("#scrVideo").srcObject = SCR_STREAM;
     startMicMeter(SCR_STREAM);
     r1GearSync();
@@ -10066,10 +10072,10 @@
   }
   function startPrepClock(secs) {
     stopPrepClock(); let s = secs;
-    r1Clock("prep", s);
+    r1Clock("prep", s, secs);
     SCR_PREPT = setInterval(() => {
       s--;
-      r1Clock("prep", s);
+      r1Clock("prep", s, secs);
       if (s <= 0) { stopPrepClock(); if (SCR_PHASE === "prep") beginCountdown(); }
     }, 1000);
   }
@@ -10078,7 +10084,7 @@
   function beginCountdown() {
     if (SCR_PHASE !== "prep") return;
     SCR_PHASE = "countdown"; stopPrepClock();
-    r1Clock("", null); r1GearSync(); r1Help("");
+    r1GearSync(); r1Help("");
     const start = $("#r1Start"); if (start) start.disabled = true;
     const ov = $("#r1Count"); let n = 3;
     if (ov) { ov.hidden = false; ov.textContent = String(n); }
@@ -10104,7 +10110,7 @@
     SCR_REC_T0 = Date.now();                                 // report card: the take's real length
     SCR_PHASE = "recording";
     r1Status(true); r1Help("");
-    $("#r1Acts").innerHTML = `<button class="r1-btn r1-btn-stop" id="r1Stop" type="button">${esc(T("r1.stopRecording", "Stop recording"))}</button>`;
+    $("#r1Acts").innerHTML = `<button class="r1-btn r1-btn-stop" id="r1Stop" type="button">${esc(T("r1.stopRecording", "Done answering"))}</button>`;
     $("#r1Stop")?.addEventListener("click", stopRecording);
     startAnswerClock(Number((SCREEN.config || {}).answer_s || 120));
   }
@@ -10112,10 +10118,10 @@
   // The answer clock counts down; at zero the take is submitted for you, like the real thing.
   function startAnswerClock(cap) {
     stopAnswerClock(); let s = cap;
-    r1Clock("left", s);
+    r1Clock("left", s, cap);
     SCR_TIMER = setInterval(() => {
       s--;
-      r1Clock("left", s, s <= 15);
+      r1Clock("left", s, cap, s <= 15);
       if (s <= 0) { stopAnswerClock(); stopRecording(); }
     }, 1000);
   }
@@ -10123,7 +10129,7 @@
   async function onR1Stopped() {
     stopAnswerClock();
     SCR_PHASE = "review";
-    r1Status(false); r1Clock("", null); r1LeaveAsk(false);
+    r1Status(false); r1Clock("", null); r1Help(""); r1LeaveAsk(false);
     const cur = SCR_CUR; if (!cur) return;
     const blob = new Blob(SCR_CHUNKS, { type: SCR_CHUNKS[0]?.type || "video/webm" });
     const under = $("#r1Under"); if (under) under.classList.add("is-off");
@@ -10138,7 +10144,7 @@
         v.classList.add("is-playback"); try { v.pause(); } catch (e) {}
         stopMicMeter();
       }
-      r1Help(T("r1.practiceDone", "Play it back to check your picture and sound."));
+      r1Line(T("r1.practiceDone", "Play it back to check your picture and sound."));
       $("#r1Acts").innerHTML = `
         <button class="r1-btn r1-btn-ghost" id="r1Another" type="button">${esc(T("r1.anotherPractice", "Another practice question"))}</button>
         <button class="r1-btn r1-btn-primary" id="r1StartReal" type="button">${esc(T("r1.startInterview", "Start the interview"))}</button>`;
@@ -10156,7 +10162,7 @@
     SCR_SECS[idx] = SCR_REC_T0 ? Math.round((Date.now() - SCR_REC_T0) / 100) / 10 : null; SCR_REC_T0 = 0;
     uploadTake(idx, blob, SCR_SECS[idx]);
     const left = retakesLeft(idx);
-    r1Help(T("r1.saved", "Saved on this computer."));
+    r1Line(T("r1.saved", "Saved on this computer."));
     $("#r1Acts").innerHTML = `
       ${left > 0 ? `<button class="r1-btn r1-btn-ghost" id="r1Retake" type="button">${esc(T("r1.retake", "Retake ({n} left)").replace("{n}", String(left)))}</button>` : ""}
       <button class="r1-btn r1-btn-primary" id="r1Next" type="button">${esc(last ? T("r1.finish", "Finish interview") : T("r1.next", "Next question"))}</button>`;
@@ -10181,9 +10187,9 @@
     stopPrepClock(); stopAnswerClock(); stopMicMeter(); stopScrStream();
     scrHead("", "");
     SCR_PHASE = "done"; r1PlaybackClear();
-    $("#scrStage").innerHTML = r1Stage("done", { body: `
+    $("#scrStage").innerHTML = r1Stage("done", { solo: true, body: `
       <div class="r1-done">
-        <h2 class="r1-h">${esc(T("r1.allDone", "All done"))}</h2>
+        ${r1Label(T("r1.allDone", "All done"))}
         <p class="r1-done-sub" id="r1DoneSub">${esc(T("r1.doneSub", "Scoring your answers. This takes a minute."))}</p>
         <div class="r1-spinner" id="r1Spin" aria-hidden="true"></div>
         <div id="r1DoneBody"></div>
@@ -10198,7 +10204,7 @@
       <div class="r1-type">
         <div class="r1-type-q">${i + 1}. ${esc((SCREEN.questions[i] || {}).text || "")}</div>
         <textarea class="fld r1-ta" data-i="${i}" rows="3" placeholder="${esc(T("r1.typePh", "Your answer, in words"))}"></textarea>
-      </div>`).join("") + `<div class="r1-acts"><button class="r1-btn r1-btn-primary" id="r1Score" type="button">${esc(T("r1.scoreBtn", "Score my interview"))}</button></div>`;
+      </div>`).join("") + `<div class="r1-solo-acts"><button class="r1-btn r1-btn-primary" id="r1Score" type="button">${esc(T("r1.scoreBtn", "Score my interview"))}</button></div>`;
     $("#r1Score")?.addEventListener("click", async () => {
       const tas = [...document.querySelectorAll(".r1-ta")];
       if (tas.some(t => !t.value.trim())) { toast(T("r1.typeAll", "Add the words for every answer first.")); return; }

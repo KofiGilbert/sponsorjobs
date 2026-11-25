@@ -1,12 +1,15 @@
 // The recorded interview stage in a real Chromium, with a fake camera and microphone.
 //
-// Walks the real app.js through the session (device check, practice, countdown, recording,
-// playback, a real question, All done) with every /api answer stubbed here, so nothing depends
-// on a model or a saved profile. It checks the rules the stage promises:
+// Walks the real app.js through the session (welcome, notice, device check, practice, countdown,
+// recording, playback, a real question, All done) with every /api answer stubbed here, so nothing
+// depends on a model or a saved profile. It checks the rules the stage promises:
 //   - focus mode: the app's chrome is hidden only while a session runs, and comes back on Exit;
-//   - the stage fills the window, the video stays 16:9, the action button never moves;
+//   - one composed card in the upper middle of the window, nothing clipped, no empty void;
+//   - two columns that start on one line, each under a small label;
+//   - the controls are attached to the video: the strip (clock, bar, action) on top of it, the
+//     microphone level directly under it, all the same width; the action never moves;
 //   - the recording status and the clock sit in one fixed place in both states;
-//   - the question is set on balanced lines, steps down when long, and is never cut;
+//   - the question is medium, top aligned under its label, on balanced lines, never cut;
 //   - narrow windows stack the question above the video;
 //   - the camera and microphone menus list real devices, switch live, remember the choice,
 //     survive an unplugged device, and are locked while recording;
@@ -115,7 +118,7 @@ const question = (page) => page.evaluate(() => {
     const line = lines.find((l) => Math.abs(l.top - top) < 4);
     if (line) { line.words++; line.chars += m[0].length + 1; } else lines.push({ top, words: 1, chars: m[0].length });
   }
-  const pane = q.closest(".r1-text"), cs = getComputedStyle(q);
+  const pane = q.closest(".r1-col-q"), cs = getComputedStyle(q);
   return { lines, size: parseFloat(cs.fontSize), weight: cs.fontWeight, align: cs.textAlign, tier: q.dataset.size,
            cut: q.scrollWidth > q.clientWidth + 1 || pane.scrollHeight > pane.clientHeight + 1 || pane.scrollWidth > pane.clientWidth + 1,
            shownText: q.textContent };
@@ -134,25 +137,44 @@ const strings = (page) => page.evaluate(() => {
   return out;
 });
 
+// The composition the card promises, measured on whatever step is on screen.
+async function composed(page, w, h, step) {
+  const card = await rect(page, ".r1-card"), v = await rect(page, ".scr-video-wrap"), strip = await rect(page, ".r1-strip"), under = await rect(page, "#r1Under .rec-meter-track");
+  const labels = await page.evaluate(() => [...document.querySelectorAll(".r1-card > .r1-col > .r1-label")].map((e) => { const r = e.getBoundingClientRect(); return { y: r.y, b: r.bottom }; }));
+  assert(card.y >= 52 && card.b <= h && card.x >= 0 && card.r <= w, `${step}: the card is whole on screen (${JSON.stringify(card)})`);
+  assert(near(card.x + card.w / 2, w / 2, 2), `${step}: the card is centred`);
+  assert(card.w >= w * 0.85 && card.h >= h * 0.55, `${step}: the card uses the window, no empty void (${Math.round(card.w)}x${Math.round(card.h)} in ${w}x${h})`);
+  const above = card.y - 52, below = h - card.b;
+  assert(above <= below + 2, `${step}: the card sits in the upper middle (${Math.round(above)} above, ${Math.round(below)} below)`);
+  assert(labels.length === 2 && near(labels[0].y, labels[1].y) && near(labels[0].b, labels[1].b), `${step}: both columns start on one line under their labels`);
+  assert(near(v.w / v.h, 16 / 9, 0.01), `${step}: the video is 16:9`);
+  assert(near(strip.b, v.y, 1.5) && near(strip.x, v.x, 1.5) && near(strip.w, v.w, 2), `${step}: the control strip is attached to the top of the video, the same width`);
+  assert(under.y - v.b <= 30 && under.r <= v.r + 2 && under.r >= v.r - 3, `${step}: the microphone level sits directly under the video`);
+  assert(strip.y - labels[1].b <= 40, `${step}: the strip sits right under the label`);
+  return { card, v, strip };
+}
+
 async function layoutRun(browser, w, h, theme) {
   SHOT_TAG = `${w}x${h}-${theme}`;
   const counts = {};
   const { ctx, page } = await open(browser, { w, h, theme, multi: true });
-  // The landing and the notice are ordinary pages: the app's chrome stays.
-  assert(await shown(page, ".sidebar") && await shown(page, "#view-prep > .page-head"), "the landing keeps the side menu and the page title");
-  await toCheck(page);
-  // Focus mode: only the stage.
-  for (const sel of [".sidebar", "#view-prep > .page-head", "#prepScreen > .mock-top", ".privacy-line", ".panel-rail", "#prepProgress"])
-    assert(!(await shown(page, sel)), `${sel} is hidden while a session runs`);
+  // The welcome and the notice are the same stage: only the card, the app's chrome hidden.
+  const chrome = [".sidebar", "#view-prep > .page-head", "#prepScreen > .mock-top", ".privacy-line", ".panel-rail", "#prepProgress"];
+  for (const sel of chrome) assert(!(await shown(page, sel)), `${sel} is hidden on the welcome`);
+  const solo = await rect(page, ".r1-card");
+  assert(near(solo.x + solo.w / 2, w / 2, 2) && solo.y >= 52 && solo.b <= h, "the welcome card is centred and whole");
+  counts.welcome = await strings(page);
+  await shot(page, "0a-welcome");
+  await page.click("#scrBegin");
+  counts.notice = await strings(page);
+  await shot(page, "0b-notice");
+  await page.click("#scrNoticeGo"); await page.waitForSelector('#r1Stage[data-step="check"]'); await page.waitForTimeout(700);
+  for (const sel of chrome) assert(!(await shown(page, sel)), `${sel} is hidden while a session runs`);
   const stage = await rect(page, "#r1Stage");
   assert(near(stage.x, 0) && near(stage.y, 0) && near(stage.w, w) && near(stage.h, h), `the stage fills the window (${JSON.stringify(stage)})`);
-  const vCheck = await rect(page, ".scr-video-wrap"), bCheck = await rect(page, "#r1Acts .r1-btn-primary");
-  assert(near(vCheck.w / vCheck.h, 16 / 9, 0.01), "the video is 16:9");
-  assert(vCheck.w >= w * 0.4, `the video uses the space: ${Math.round(vCheck.w)} of ${w}`);
-  const text = await rect(page, ".r1-text");
-  assert(text.r <= vCheck.x, "the words sit to the left of the video");
-  assert(near(text.y + text.h / 2, vCheck.y + (bCheck.b - vCheck.y) / 2, h * 0.2), "both panes are centred as one group");
-  assert(vCheck.y > 56 && bCheck.b < h, "nothing is cut off");
+  const c0 = await composed(page, w, h, "device check");
+  const vCheck = c0.v, bCheck = await rect(page, "#r1Acts .r1-btn-primary");
+  assert((await rect(page, ".r1-col-q")).r <= vCheck.x, "the words sit to the left of the video");
   // The meter visibly moves (the fake microphone beeps).
   let peak = 0;
   for (let i = 0; i < 30 && peak < 8; i++) { peak = Math.max(peak, await page.evaluate(() => parseFloat(document.querySelector("#r1Stage .rec-meter-fill").style.width) || 0)); await page.waitForTimeout(100); }
@@ -171,29 +193,43 @@ async function layoutRun(browser, w, h, theme) {
   // Practice, prep.
   await page.click("#scrToPractice");
   await page.waitForSelector("#r1Start");
-  const stPrep = await rect(page, "#r1Status"), ckPrep = await rect(page, "#r1ClockT"), vPrep = await rect(page, ".scr-video-wrap"), bPrep = await rect(page, "#r1Start");
+  const c1 = await composed(page, w, h, "prep");
+  const stPrep = await rect(page, "#r1Status"), ckPrep = await rect(page, "#r1ClockT"), pgPrep = await rect(page, ".r1-prog"), vPrep = c1.v, bPrep = await rect(page, "#r1Start");
   assert(near(vPrep.x, vCheck.x) && near(vPrep.y, vCheck.y) && near(vPrep.w, vCheck.w), "the video does not move between steps");
-  assert(near(bPrep.y, bCheck.y) && near(bPrep.x + bPrep.w / 2, bCheck.x + bCheck.w / 2), "the action button is in the same spot as on the device check");
+  assert(near(c1.card.y, c0.card.y) && near(c1.card.h, c0.card.h, 2), "the card does not move or resize between steps");
+  assert(near(bPrep.y, bCheck.y) && near(bPrep.r, bCheck.r), "the action button is in the same spot as on the device check");
   assert((await page.textContent("#r1StatusT")) === "Not recording", "status is sentence case");
+  // The question is top aligned, right under its label.
+  const lab = await rect(page, ".r1-col-q .r1-label"), qr = await rect(page, "#r1Q");
+  assert(qr.y - lab.b <= 40 && near(qr.x, lab.x), `the question starts right under its label (${Math.round(qr.y - lab.b)}px)`);
+  const gearR = await rect(page, "#r1Gear");
+  assert(near(gearR.x, lab.x, 8) && gearR.y > qr.b && gearR.b <= c1.card.b, "Settings sits at the bottom left of the words column");
   counts.prep = await strings(page);
+  await page.waitForTimeout(2200);
   await shot(page, "3-practice-prep");
   await page.click("#r1Gear");
-  assert(await shown(page, "#r1Pop .r1-menu"), "the gear opens the same two menus");
-  await shot(page, "4-practice-gear-open");
+  assert(await shown(page, "#r1Pop .r1-menu"), "Settings opens the same two menus");
+  await shot(page, "4-practice-settings-open");
   await page.keyboard.press("Escape");
-  assert(!(await shown(page, "#r1Pop")), "Escape closes the gear menus");
+  assert(!(await shown(page, "#r1Pop")), "Escape closes the menus");
   // Countdown, then recording.
   await page.click("#r1Start");
   await page.waitForSelector("#r1Count:not([hidden])");
   await shot(page, "5-countdown");
   await page.waitForSelector("#r1Stop", { timeout: 8000 });
-  const stRec = await rect(page, "#r1Status"), ckRec = await rect(page, "#r1ClockT"), bRec = await rect(page, "#r1Stop");
+  await composed(page, w, h, "recording");
+  const stRec = await rect(page, "#r1Status"), ckRec = await rect(page, "#r1ClockT"), pgRec = await rect(page, ".r1-prog"), bRec = await rect(page, "#r1Stop");
   assert(near(stRec.x, stPrep.x) && near(stRec.y, stPrep.y) && near(stRec.w, stPrep.w), `the status pill does not move when recording starts (${JSON.stringify([stPrep, stRec])})`);
-  assert(near(ckRec.x, ckPrep.x) && near(ckRec.y, ckPrep.y) && near(ckRec.h, ckPrep.h), `the answer clock sits exactly where the prep clock sat (${ckPrep.x} then ${ckRec.x})`);
-  assert(near(bRec.y, bPrep.y) && near(bRec.x + bRec.w / 2, bPrep.x + bPrep.w / 2), "Stop recording is where Start recording was");
-  assert((await page.evaluate(() => getComputedStyle(document.querySelector("#r1ClockT")).fontVariantNumeric)).includes("tabular-nums"), "the clock uses tabular numbers");
-  assert(await page.evaluate(() => document.querySelector("#r1Gear").disabled && !!document.querySelector("#r1Gear").title), "the gear is locked, with a reason, while recording");
+  assert(near(ckRec.x, ckPrep.x) && near(ckRec.y, ckPrep.y) && near(ckRec.h, ckPrep.h), `the response clock sits exactly where the prep clock sat (${ckPrep.x} then ${ckRec.x})`);
+  assert(near(pgRec.x, pgPrep.x) && near(pgRec.y, pgPrep.y), "and so does its progress bar");
+  assert(near(bRec.y, bPrep.y) && near(bRec.r, bPrep.r), "Done answering is where Start recording was");
+  assert((await page.textContent("#r1Stop")) === "Done answering", "the stop button reads Done answering");
+  assert((await page.evaluate(() => getComputedStyle(document.querySelector("#r1Clock")).fontVariantNumeric)).includes("tabular-nums"), "the clock uses tabular numbers");
+  assert(await page.evaluate(() => document.querySelector("#r1Gear").disabled && !!document.querySelector("#r1Gear").title), "Settings is locked, with a reason, while recording");
   counts.recording = await strings(page);
+  await page.waitForTimeout(1600);
+  const drained = await page.evaluate(() => parseFloat(document.querySelector("#r1Prog").style.width));
+  assert(drained < 100 && drained > 90, `the progress bar drains with the clock (${drained}%)`);
   await shot(page, "6-recording");
   // Escape asks; it never ends the recording.
   await page.keyboard.press("Escape");
@@ -206,21 +242,23 @@ async function layoutRun(browser, w, h, theme) {
   await page.waitForSelector("#r1StartReal");
   const stRev = await rect(page, "#r1Status"), bRev = await rect(page, "#r1StartReal");
   assert(near(stRev.x, stPrep.x) && near(stRev.w, stPrep.w), "the status pill is back where it was");
-  assert(near(bRev.y, bPrep.y), "the review actions sit on the same line");
+  assert(near(bRev.y, bPrep.y) && near(bRev.r, bPrep.r), "the review actions end at the same spot");
   assert(await page.evaluate(() => { const v = document.querySelector("#scrVideo"); return v.controls && !v.muted && v.src.startsWith("blob:"); }), "a practice answer can be played back with sound");
   counts.review = await strings(page);
   await shot(page, "8-practice-playback");
   // The real questions.
   await page.click("#r1StartReal");
   await page.waitForSelector("#r1Start");
-  assert((await page.textContent("#r1Step")) === "Question 1 of 2", "progress in the bar");
+  assert((await page.textContent("#r1Step")) === "Question 1 of 2", "progress is the words column's label");
   counts.question = await strings(page);
   await shot(page, "9-question-prep");
   await record(page);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(2600);
+  await shot(page, "9b-question-recording");
   await page.click("#r1Stop");
   await page.waitForSelector("#r1Next");
-  assert(near((await rect(page, "#r1Next")).y, bPrep.y), "Next question sits on the same line");
+  const bNext = await rect(page, "#r1Next");
+  assert(near(bNext.y, bPrep.y) && near(bNext.r, bPrep.r), "Next question ends at the same spot");
   counts.saved = await strings(page);
   await shot(page, "10-question-saved");
   // Exit with answers recorded asks first; Leave brings the app's chrome back.
@@ -230,7 +268,7 @@ async function layoutRun(browser, w, h, theme) {
   await page.waitForSelector("#r1Next");
   await page.click("#r1Next");
   await page.waitForSelector('#r1Stage[data-step="done"]');
-  const done = await rect(page, ".r1-done");
+  const done = await rect(page, ".r1-card");
   assert(near(done.x + done.w / 2, w / 2, 2), "All done is centred");
   counts.done = await strings(page);
   await shot(page, "11-all-done");
@@ -253,34 +291,52 @@ async function questionRun(browser, w, h) {
     await page.waitForTimeout(200);
     const q = seen[name] = await question(page);
     assert(q.shownText === text && !q.cut, `${name} question at ${w}: shown whole, never cut (${JSON.stringify(q)})`);
-    assert(q.weight === "600" && (q.align === "left" || q.align === "start"), `${name}: 600 weight, left aligned`);
-    // Large text keeps to about 30 characters a line; the smaller tiers may run to a normal reading line.
-    const cap = { l: 34, m: 38, s: 50, xs: 62 }[q.tier];
+    assert(q.weight === "500" && (q.align === "left" || q.align === "start"), `${name}: medium weight, left aligned`);
+    // About 38 characters a line at the normal size; the small size may run to a normal reading line.
+    const cap = { m: 44, s: 58 }[q.tier];
     assert(q.lines.every((l) => l.chars <= cap), `${name} at ${w}: no very long line for tier ${q.tier} (${JSON.stringify(q.lines)})`);
     if (q.lines.length > 1) assert(q.lines[q.lines.length - 1].words >= 2, `${name} at ${w}: no orphan word (${JSON.stringify(q.lines)})`);
+    const card = await rect(page, ".r1-card");
+    assert(card.b <= h, `${name} at ${w}: the card still fits`);
     await shot(page, `question-${name}`);
     await ctx.close();
   }
-  assert(seen.short.lines.length <= 2, `a short question is one or two lines (${seen.short.lines.length})`);
+  assert(seen.short.lines.length === 1, `a short question is one line (${seen.short.lines.length})`);
   assert(seen.typical.lines.length >= 2 && seen.typical.lines.length <= 3, `a typical question sits on two or three lines (${seen.typical.lines.length})`);
-  assert(seen.short.size >= seen.typical.size && seen.typical.size > seen.long.size, `long questions step the size down (${seen.short.size}, ${seen.typical.size}, ${seen.long.size})`);
-  assert(seen.typical.size >= 22, `the question is large (${seen.typical.size}px)`);
+  assert(seen.short.size === seen.typical.size && seen.typical.size > seen.long.size, `only a very long question steps the size down (${seen.short.size}, ${seen.typical.size}, ${seen.long.size})`);
+  const zoomed = w > 2000;
+  assert(seen.typical.size >= (zoomed ? 28 : 20) && seen.typical.size <= (zoomed ? 34 : 26), `the question is medium, not a headline (${seen.typical.size}px at ${w})`);
   return seen;
 }
 
 async function narrowRun(browser) {
+  // 900 wide still holds two columns; below 820 the columns stack.
   SHOT_TAG = "900x806-light";
-  const { ctx, page } = await open(browser, { w: 900, h: 806, multi: true });
+  let { ctx, page } = await open(browser, { w: 900, h: 806, multi: true });
   await toCheck(page);
-  await shot(page, "narrow-device-check");
+  await shot(page, "two-column-device-check");
   await page.click("#scrToPractice"); await page.waitForSelector("#r1Q");
-  const q = await rect(page, "#r1Q"), v = await rect(page, ".scr-video-wrap"), b = await rect(page, "#r1Start");
+  await composed(page, 900, 806, "900 wide").catch((e) => { if (!/no empty void/.test(e.message)) throw e; });
+  assert(!(await question(page)).cut, "900 wide: the question is not cut");
+  await page.waitForTimeout(1200);
+  await shot(page, "two-column-practice-prep");
+  await ctx.close();
+
+  SHOT_TAG = "700x806-light";
+  // Opened wider, then narrowed: this is the Browser pane opening beside a running session (the
+  // app's own navigation is not laid out for a 700px window).
+  ({ ctx, page } = await open(browser, { w: 1000, h: 806, multi: true }));
+  await page.setViewportSize({ width: 700, height: 806 });
+  await toCheck(page);
+  await shot(page, "stacked-device-check");
+  await page.click("#scrToPractice"); await page.waitForSelector("#r1Q");
+  const q = await rect(page, "#r1Q"), v = await rect(page, ".scr-video-wrap"), b = await rect(page, "#r1Start"), card = await rect(page, ".r1-card");
   assert(q.b <= v.y, "narrow: the question is above the video");
-  assert(parseFloat(await page.evaluate(() => getComputedStyle(document.querySelector("#r1Q")).fontSize)) <= 32, "narrow: the question steps down so the video keeps its room");
-  assert(near(v.w / v.h, 16 / 9, 0.01) && b.b <= 806, "narrow: the video stays 16:9 and the button stays on screen");
+  assert(near(v.w / v.h, 16 / 9, 0.01) && b.b <= 806 && card.b <= 806, `narrow: the video stays 16:9 and the whole card stays on screen (${JSON.stringify(card)})`);
   assert(!(await question(page)).cut, "narrow: the question is not cut");
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "narrow: no sideways scroll");
-  await shot(page, "narrow-practice-prep");
+  await page.waitForTimeout(1200);
+  await shot(page, "stacked-practice-prep");
   await ctx.close();
 }
 
@@ -289,7 +345,7 @@ async function deviceRun(browser) {
   // Several devices: menus, live switching, memory, an unplugged headset.
   let { ctx, page } = await open(browser, { w: 1440, h: 806, multi: true });
   await toCheck(page);
-  const names = (kind) => page.evaluate((k) => [...document.querySelectorAll(`.r1-text .r1-menu[data-kind="${k}"] [data-r1-opt]`)].map((o) => o.textContent), kind);
+  const names = (kind) => page.evaluate((k) => [...document.querySelectorAll(`.r1-col-q .r1-menu[data-kind="${k}"] [data-r1-opt]`)].map((o) => o.textContent), kind);
   assert(JSON.stringify(await names("cam")) === JSON.stringify(["Built-in Camera", "USB Webcam"]), "the camera menu lists the real cameras");
   assert(JSON.stringify(await names("mic")) === JSON.stringify(["Built-in Microphone", "Headset Microphone"]), "the microphone menu lists the real microphones, default first, nothing twice");
   await page.click('.r1-menu[data-kind="cam"] [data-r1-menu]');
@@ -305,8 +361,8 @@ async function deviceRun(browser) {
   assert(JSON.parse(await page.evaluate(() => localStorage.getItem("sj.r1.mic"))).id === "mic-head", "the choice is remembered");
   // The headset is unplugged mid-check: back to the default, one quiet line.
   await page.evaluate(() => window.__unplug("mic-head"));
-  await page.waitForFunction(() => /disconnected/i.test(document.querySelector(".r1-text .r1-dev-note")?.textContent || ""));
-  assert(await page.evaluate(() => document.querySelector(".r1-text .r1-dev")?.parentElement.querySelectorAll(".r1-dev-name").length === 1), "with one microphone left its name is plain text, no menu");
+  await page.waitForFunction(() => /disconnected/i.test(document.querySelector(".r1-col-q .r1-dev-note")?.textContent || ""));
+  assert(await page.evaluate(() => document.querySelector(".r1-col-q .r1-devs").querySelectorAll(".r1-dev-name").length === 1), "with one microphone left its name is plain text, no menu");
   assert(await page.evaluate(() => document.querySelector("#scrVideo").srcObject.getAudioTracks()[0].readyState === "live"), "and the default microphone is live");
   await shot(page, "device-check-headset-unplugged");
   // The session keeps the choice: the question records from the chosen camera.
@@ -330,8 +386,8 @@ async function deviceRun(browser) {
   // Chromium's own fake devices, nothing stubbed: the lists come from the real enumerateDevices.
   ({ ctx, page } = await open(browser, { w: 1440, h: 806 }));
   await toCheck(page);
-  const real = await page.evaluate(() => ({ rows: document.querySelectorAll(".r1-text .r1-dev:not(.r1-dev-level)").length,
-    named: [...document.querySelectorAll(".r1-text .r1-menu-v, .r1-text .r1-dev-name")].map((e) => e.textContent) }));
+  const real = await page.evaluate(() => ({ rows: document.querySelectorAll(".r1-col-q .r1-dev").length,
+    named: [...document.querySelectorAll(".r1-col-q .r1-menu-v, .r1-col-q .r1-dev-name")].map((e) => e.textContent) }));
   assert(real.rows === 2 && real.named.length === 2 && real.named.every((n) => n && !/^No /.test(n)), `real devices are listed with their names (${JSON.stringify(real)})`);
   await ctx.close();
   return real;

@@ -1,10 +1,13 @@
-"""The recorded interview runs on one full-window stage.
+"""The recorded interview runs on one stage: a composed card, like the real product's screen.
 
 What the stage promises, and where each promise is pinned:
 
 * focus mode: the app's own chrome (side menu, page title, footer line) is hidden only while a
-  session runs, and Escape never ends a recording;
-* the question is the largest text, set on balanced lines, stepped down when long, never cut;
+  session runs (from the welcome to All done), and Escape never ends a recording;
+* one card with two columns that start on one line under small labels; the controls are attached
+  to the video (a strip with the clock, a progress bar and the one action on top, the microphone
+  level directly under), and the action never moves;
+* the question is calm and medium, top aligned under its label, on balanced lines, never cut;
 * the recording status and the clock each keep one fixed place;
 * a person can choose the camera and the microphone, the choice is remembered, and an unplugged
   device falls back to the default;
@@ -111,7 +114,7 @@ def test_the_choice_is_remembered_and_storage_failures_are_harmless():
 
 def test_every_text_earns_its_place():
     src = _stage_src()
-    stage = src.split("// ---- The stage (screens 3 to 6)", 1)[1].split("function uploadTake", 1)[0]
+    stage = src.split("// Screen 1: the welcome.", 1)[1].split("function uploadTake", 1)[0]
     assert "&#127908;" not in src and "\U0001F3A4" not in src, "no emoji icons: the microphone is an inline SVG"
     for gone in ("r1.practiceTag", "r1.tip3", "r1.devicesSub", "r1.connOk", "r1.getReady", "r1.answerHelp", "r1.retakesNote"):
         assert gone not in src, f"{gone} was cut and must not come back"
@@ -122,9 +125,12 @@ def test_every_text_earns_its_place():
     assert "navigator.onLine === false ?" in conn and conn.rstrip().endswith(': "";')
     en = json.loads((LOCALES / "en.json").read_text(encoding="utf-8"))
     assert en["r1.notRecording"] == "Not recording" and en["r1.startRecording"] == "Start recording"   # sentence case
-    assert en["r1.practiceLabel"] == "Practice · not saved"
+    assert en["r1.practiceLabel"] == "Practice question \u00b7 not saved"
+    assert en["r1.stopRecording"] == "Done answering"
+    assert "r1.notNow" not in stage, "Exit is the way out of the welcome; no second button says the same"
     assert en["r1.micSilent"] == "No sound from this microphone. Pick another one or check it is not muted."
-    for key in ("r1.tip1", "r1.tip2", "r1.qHelp", "r1.practiceDone", "r1.doneSub"):
+    for key in ("r1.tip1", "r1.tip2", "r1.qHelp", "r1.practiceDone", "r1.doneSub",
+                "r1.notice1", "r1.notice2", "r1.notice3", "r1.extraTimeD"):
         assert len(en[key].split()) <= 9, f"{key} is one short line: {en[key]!r}"
 
 
@@ -133,27 +139,51 @@ def test_the_question_size_rule_lives_in_code_and_css():
     assert 'data-size="${SJStage.questionTier(text)}"' in src
     css = CSS.read_text(encoding="utf-8")
     sizes = {}
-    for tier in ("l", "m", "s", "xs"):
+    for tier in ("m", "s"):
         m = re.search(r'\.r1-q\[data-size="%s"\] \{ font-size: clamp\((\d+)px, [\d.]+cqi, (\d+)px\);[^}]*max-inline-size: (\d+)ch' % tier, css)
         assert m, f"no size rule for tier {tier}"
         sizes[tier] = tuple(int(x) for x in m.groups())
-    order = [sizes[t] for t in ("l", "m", "s", "xs")]
-    assert all(a[0] > b[0] and a[1] > b[1] for a, b in zip(order, order[1:])), "each tier is smaller than the one before"
-    assert all(a[2] <= b[2] for a, b in zip(order, order[1:])), "smaller text may run longer lines, never shorter"
+    assert sizes["m"][0] > sizes["s"][0] and sizes["m"][1] > sizes["s"][1], "the long tier is smaller"
+    assert 20 <= sizes["m"][0] <= 26, "the question is medium at a normal window, not a headline"
+    assert sizes["m"][2] <= sizes["s"][2], "smaller text may run longer lines, never shorter"
     rule = css.split(".r1-q {", 1)[1].split("}", 1)[0]
-    assert "text-wrap: balance" in rule and "font-weight: 600" in rule
+    assert "text-wrap: balance" in rule and "font-weight: 500" in rule
     assert "text-overflow" not in rule and "line-clamp" not in rule, "a question is never truncated"
 
 
 def test_the_status_and_the_clock_have_one_place_each():
-    stage = _stage_src().split("function r1Stage(step, o)", 1)[1].split("\n  }\n", 1)[0]
-    assert stage.count('id="r1Status"') == 1 and stage.count('id="r1Clock"') == 1
-    assert stage.index('id="r1Exit"') < stage.index('id="r1Clock"') < stage.index('id="r1Status"'), "Exit, then the clock, then the status"
+    src = _stage_src()
+    assert src.count('id="r1Status"') == 1 and src.count('id="r1Clock"') == 1
     css = CSS.read_text(encoding="utf-8")
-    assert re.search(r"\.r1-status \{[^}]*min-width: \d+px", css), "the pill keeps its width when the word changes"
+    assert re.search(r"\.r1-status \{[^}]*min-width: [\d.]+(px|em)", css), "the pill keeps its width when the word changes"
     assert re.search(r"\.r1-clock \{[^}]*tabular-nums", css)
-    # No second clock on the video any more.
-    assert "r1-answer-clock" not in css and "r1Answer" not in _stage_src()
+    # Both clock labels share one cell, so the digits do not shift when the label changes.
+    assert ".r1-clock-l > span { grid-area: 1 / 1; visibility: hidden; }" in css
+    # No second clock on the video.
+    assert "r1-answer-clock" not in css and "r1Answer" not in src
+
+
+def test_the_controls_are_attached_to_the_video():
+    """One frame holds the strip (clock, bar, action) and the video; the level sits right under."""
+    src = _stage_src()
+    for fn in ("function renderR1Devices()", "function renderR1Question(opts)"):
+        body = src.split(fn, 1)[1].split("\n  }\n", 1)[0]
+        frame = body.split('<div class="r1-frame" id="r1Frame">', 1)[1]
+        assert frame.index("${r1Strip(") < frame.index('class="scr-video-wrap"') < frame.index('id="r1Under"'), fn
+        assert body.count("r1Label(") == 2, f"{fn}: each column has its label"
+    strip = src.split("const r1Strip = ", 1)[1].split("`;", 1)[0]
+    assert strip.index('id="r1Clock"') < strip.index('id="r1Prog"') < strip.index('id="r1Acts"'), "clock, bar, then the action at the end"
+    css = CSS.read_text(encoding="utf-8")
+    assert re.search(r"\.r1-frame \{[^}]*border-radius: 12px; overflow: hidden", css)
+    assert ".r1-frame.is-rec" in css, "the frame is outlined only while recording"
+
+
+def test_the_welcome_and_the_notice_are_the_same_stage():
+    src = _stage_src()
+    for fn, step in (("function renderR1Landing()", "welcome"), ("function renderR1Notice()", "notice")):
+        body = src.split(fn, 1)[1].split("\n  }\n", 1)[0]
+        assert f'r1Stage("{step}", {{ solo: true' in body, f"{fn} must render in the stage card"
+        assert "scr-intro" not in body and "scr-welcome" not in body
 
 
 def test_media_permission_is_still_limited_to_the_apps_own_origin():

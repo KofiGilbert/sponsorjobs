@@ -73,11 +73,11 @@
   // A menu is a choice; with one device there is nothing to choose, so it is shown as plain text.
   function menuMode(list) { return !list || !list.length ? "none" : list.length === 1 ? "text" : "menu"; }
 
-  // The question is the most important text on the screen. It is set large and broken into two or
-  // three balanced lines; a longer question steps the size down instead of running long or being
+  // The question is set calm and medium, right under its label, on balanced lines of about 38
+  // characters. A very long question steps down one size instead of crowding the column or being
   // cut. Tiers by length (characters, spaces included); the sizes and line lengths live in CSS
   // (.r1-q[data-size]).
-  const QUESTION_TIERS = [["l", 48], ["m", 110], ["s", 190], ["xs", Infinity]];
+  const QUESTION_TIERS = [["m", 150], ["s", Infinity]];
   function questionTier(text) {
     const n = String(text || "").trim().replace(/\s+/g, " ").length;
     return QUESTION_TIERS.find(([, max]) => n <= max)[0];

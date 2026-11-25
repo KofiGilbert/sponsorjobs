@@ -51,15 +51,14 @@ const dev = (kind, deviceId, label, groupId) => ({ kind, deviceId, label, groupI
   eq(S.streamConstraints("c", "m"), { video: { deviceId: { exact: "c" } }, audio: { deviceId: { exact: "m" } } }, "exact device ids");
   eq(S.streamConstraints(null, ""), { video: true, audio: true }, "no choice means the system default");
 
-  // The question size rule: short, typical and long questions land on different tiers, in order.
+  // The question size rule: one calm size, and a smaller one for a very long question.
   const words = (n) => Array.from({ length: n }, (_, i) => ["tell", "me", "about", "something", "you", "learned", "recently"][i % 7]).join(" ") + "?";
   eq([S.questionTier("Why do you want this?"), S.questionTier("Tell me about a time you had to learn something quickly at work."), S.questionTier(words(35))],
-     ["l", "m", "xs"], "5, 12 and 35 words");
-  eq(S.questionTier("x".repeat(48)), "l", "48 characters is still large");
-  eq(S.questionTier("x".repeat(49)), "m", "49 steps down");
-  eq(S.questionTier("x".repeat(150)), "s", "150 is small");
-  eq(S.questionTier("  spaced \n  out  "), "l", "whitespace is not length");
-  eq(S.questionTier(""), "l", "an empty question does not throw");
+     ["m", "m", "s"], "5, 12 and 35 words");
+  eq(S.questionTier("x".repeat(150)), "m", "150 characters keeps the normal size");
+  eq(S.questionTier("x".repeat(151)), "s", "151 steps down");
+  eq(S.questionTier("  spaced \n  out  "), "m", "whitespace is not length");
+  eq(S.questionTier(""), "m", "an empty question does not throw");
   const order = S.QUESTION_TIERS.map(([, max]) => max);
   assert(order.every((v, i) => i === 0 || v > order[i - 1]), "tiers only ever step down as the text grows");
 

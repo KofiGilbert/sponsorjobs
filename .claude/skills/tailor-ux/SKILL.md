@@ -68,47 +68,55 @@ practice or typed mock; those were removed.
 a feature name, icon or heading; the only mention is the one-line disclaimer on the landing
 ("Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc.").
 Our Round 1 tracks the real candidate flow screen by screen:
-1. **Landing**: company + role, "5 questions, about 20 minutes", the kinds of questions, one
-   primary action ("Get started"), the disclaimer.
+1. **Welcome**: company + role, "5 questions, about 20 minutes", the kinds of questions, one
+   primary action ("Get started"), the disclaimer. Exit (in the bar) is the way out.
 2. **Notice**: recordings stay on this computer, can be deleted from the report, no facial
-   analysis. An "I need extra time" accessibility checkbox doubles both clocks. This replaced
-   the old Realistic/Relaxed switch.
-3. **Device check**: the heading, a Camera menu and a Microphone menu with the level meter (real
-   devices, switched live, remembered), two short tips ("Light in front of you.", "Somewhere quiet."),
-   the camera preview, one action ("Try a practice question"). A good connection says nothing.
+   analysis, one short line each. An "I need extra time" accessibility checkbox doubles both
+   clocks. This replaced the old Realistic/Relaxed switch.
+3. **Device check**: left "SET UP", the one-line heading, a Camera menu and a Microphone menu (real
+   devices, switched live, remembered); right "CAMERA PREVIEW", the strip with the two tips ("Light
+   in front of you. Somewhere quiet.") and the action ("Try a practice question"), the video, the
+   microphone level under it. A good connection says nothing.
 4. **Practice**: unlimited practice questions in the exact real format, unscored, never saved. The
    take can be played back to check picture and sound, then "Another practice question" or "Start
    the interview".
-5. **Each question**: question text on the LEFT, the self view on the RIGHT, and one bar on top:
-   "Exit" (left), the step and the clock in the centre ("Practice · not saved" or "Question 2 of 5",
-   then "Prep 0:30" / "Time left 2:00"), the "Not recording" / red-dot "Recording" status and the
-   device gear (right). "Start recording" (or auto-start when prep ends), a 3-2-1 overlay, "Stop
-   recording", auto-submit at time-out, "Retake (1 left)" once per question, then "Next question".
-   No back button.
+5. **Each question**: left the label ("QUESTION 2 OF 5" or "PRACTICE QUESTION · NOT SAVED"), the
+   question right under it, one hint line during prep, "Settings" at the bottom; right "YOUR
+   RESPONSE" with the "Not recording" / red-dot "Recording" pill at the end of its line, then the
+   strip ("Prep time 0:27" or "Response time 1:57", a draining bar, "Start recording" or "Done
+   answering"), the video, the microphone level. Auto-start when prep ends, a 3-2-1 overlay,
+   auto-submit at time-out, "Retake (1 left)" once per question, then "Next question". No back button.
 6. **All done** while answers save, transcribe and score (a typed fallback appears here only
    if this computer cannot transcribe).
 7. **Report**: score/100, passed at 70, why, do this next, competency bars, per-answer feedback
    with fillers and hedges highlighted, "See a stronger version", .docx, delete recordings,
    and the API's `disclaimer`.
-Screens 3 to 6 are **one full-window stage** (`.r1-stage`, tokens `--r1-*`): white in the light
-theme like the real thing (owner's choice), the app's dark palette in the dark theme. Rules for it
-(2026-11-25, all pinned by `tests/test_interview_stage.py`):
+Screens 1 to 6 are **one stage** (`.r1-stage`, tokens `--r1-*`): a very light page with ONE
+composed card on it (white card in the light theme, the app's dark surfaces in the dark theme), laid
+out like the real product's recording screen. We take the layout and the hierarchy, never the
+brand: the app's own fonts and neutral palette, red only while recording. Rules (2026-11-25, pinned
+by `tests/test_interview_stage.py`):
 - **Focus mode.** While a stage is on screen the side menu, page title, round tracker, footer line
   and the closed panel rail are hidden (pure CSS `:has(.r1-stage)`, so nothing can leave it stuck).
-  Exit asks before a recording or saved answers are left; Escape asks too and never ends a recording.
-- **Two panes that scale.** Words about 42%, video 58%, 16:9, as large as the height allows, centred
-  as one group; the action sits under the video in the same spot on every step. Under 1000px wide
-  the words stack above the video.
-- **The question is the biggest text.** 600, left aligned, `text-wrap: balance`, about 30 characters
-  a line so a normal question takes two or three lines; `SJStage.questionTier` steps long questions
-  down (`.r1-q[data-size]`); never truncated.
-- **One place per thing.** The status pill and the clock never move between states; one clock, no
-  second timer on the video.
-- **Every text earns its place.** Say a thing once, one short helper line or none, a status only
+  A slim bar holds only Exit, which asks before a recording or saved answers are left; Escape asks
+  too and never ends a recording.
+- **A composed card, not things floating.** The card sits in the upper middle and follows the
+  window (width from the height too, so it always fits whole); its type and video scale with it
+  through container units. Two columns, about 40/60, that START ON ONE LINE, each under a small
+  uppercase tracked label with a hairline. Below 820px wide the columns stack.
+- **Controls attached to the video.** One rounded frame holds the strip (clock, progress bar, the
+  action at its right end) and the video; the microphone level is directly under it, the same
+  width. The action is in the same spot on every step. Nothing sits on its own below the video.
+- **The question is calm.** About 22 to 26px at a normal window, weight 500, line height about 1.36,
+  about 38 characters a line, `text-wrap: balance`, top aligned right under its label. Only a very
+  long question steps down (`SJStage.questionTier`, `.r1-q[data-size]`); never truncated. A big
+  bold question centred in an empty pane was the rejected look.
+- **One place per thing.** The status pill and the clock never move between states; one clock.
+- **Every text earns its place.** Say a thing once, one short hint line or none, a status only
   when there is a problem, sentence case, inline SVG icons (no emoji).
 - **Device choice.** `ui/static/interview_stage.js` holds the rules (default first, pseudo devices
   folded, one device shown as plain text, exact device ids, fallback to the default with one quiet
-  line, "No sound from this microphone..." after five quiet seconds on the check). The gear is
+  line, "No sound from this microphone..." after five quiet seconds on the check). Settings is
   locked while recording.
 
 **Round 2 is one live interview with the Tavus interviewer (15 minutes)** in the Electron
@@ -687,3 +695,14 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   counting down and recording; the retakes footnote (the Retake button says it); the timer on the
   video. Added on purpose: playback of a practice take. The stage now follows the dark theme
   (a full window of white inside a dark app is a flash); the light theme keeps the white stage.
+- 2026-11-25 (later the same day, supersedes the floating two-pane stage): the owner rejected the
+  first full-window stage ("not there yet, do your homework well") and sent the real product's
+  recording screen. What was wrong: a very large bold question floating in the vertical centre of
+  an empty pane, a bar carrying the step, clock and status far from the video, and the button on
+  its own below the video. What the reference does, and we now do: one contained card; two columns
+  starting on one line under small labels; a medium, regular-weight question top aligned under
+  "Question 2 of 6"; the clock, a progress bar and "Done Answering" in a strip attached to the top
+  of the video; the microphone level directly under it; quiet Settings at the bottom left. The
+  welcome and "Before you begin" moved into the same card and focus mode. Lesson: when a screen
+  mirrors a real product, get the product's actual screen in front of you before designing; a help
+  article's description of it is not enough.
