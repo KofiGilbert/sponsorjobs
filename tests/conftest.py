@@ -190,3 +190,40 @@ def apply_agent_on(monkeypatch):
     ``pytestmark = pytest.mark.usefixtures("apply_agent_on")``; never by changing the default."""
     monkeypatch.setenv("SJ_APPLY_AGENT", "1")
     yield
+
+
+@pytest.fixture
+def hear(monkeypatch):
+    """The recorded interview's answers, heard the way the app hears them, with no model.
+
+    ``hear(client, sid, i, text, seconds=None, upload=True)`` uploads a small recording for answer
+    ``i`` (unless ``upload=False``, for an answer already uploaded) and transcribes it through the
+    real ``/transcribe`` endpoint, with the on-device engine swapped for one that "hears" ``text``.
+    An empty ``text`` is an answer the engine could not hear. There is no typed-transcript path in
+    the app any more, so this is how a test gives an answer its words. Returns the endpoint's JSON."""
+    import io as _io
+    import interview.transcribe as T
+
+    words: dict = {}
+
+    def detail(path):
+        p = Path(path)
+        t = words.get(f"{p.parent.name}/{p.stem}", "")
+        return {"text": t, "status": "ok" if t else "silent", "error": "", "seconds": None, "language": "en"}
+
+    monkeypatch.setattr(T, "available", lambda: True)
+    monkeypatch.setattr(T, "transcribe_detail", detail)
+
+    def say(c, sid, i, text, seconds=None, upload=True):
+        if upload:
+            data = {"file": (_io.BytesIO(b"\x1aE\xdf\xa3 recorded answer"), "answer.webm", "video/webm")}
+            if seconds:
+                data["seconds"] = str(seconds)
+            r = c.post(f"/api/screens/{sid}/answers/{i}", data=data, content_type="multipart/form-data")
+            assert r.status_code == 200, r.get_json()
+        words[f"{sid}/answer_{i}"] = text
+        r = c.post(f"/api/screens/{sid}/answers/{i}/transcribe")
+        assert r.status_code == 200, r.get_json()
+        return r.get_json()
+
+    return say

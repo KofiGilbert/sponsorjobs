@@ -105,8 +105,9 @@ jobs:
       - name: Check the PDF tools are really there
         run: pdflatex --version | head -1 && pdftocairo -v 2>&1 | head -1
 
+      # [interview] so the speech-to-text decoder tests run (no model is ever downloaded in tests).
       - name: Install SponsorJobs
-        run: pip install -e ".[dev,llm]"
+        run: pip install -e ".[dev,llm,interview]"
 
       # Four at a time (pytest-xdist): about 11 minutes became about 2. --dist loadfile keeps each
       # test file on one worker, because several files write a fixed-name helper script.

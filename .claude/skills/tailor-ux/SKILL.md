@@ -101,11 +101,17 @@ Our Round 1 tracks the real candidate flow screen by screen:
    strip ("Prep time 0:27" or "Response time 1:57", a draining bar, "Start recording" or "Done
    answering"), the video, the microphone level. Auto-start when prep ends, a 3-2-1 overlay,
    auto-submit at time-out, "Retake (1 left)" once per question, then "Next question". No back button.
-6. **All done** while answers save, transcribe and score (a typed fallback appears here only
-   if this computer cannot transcribe).
+6. **All done** with a spinner while answers save, transcribe (on this computer) and score, then
+   straight to the report. **Never ask the person to type or paste their answers** (owner,
+   2026-11-25: they could paste an AI answer, and it teaches nothing about thinking on your feet).
+   An answer that could not be heard is scored as not answered and the report says "We couldn't
+   hear this answer." with the tip "Check your microphone in Settings next time." If speech to
+   text is not ready at all, this screen says so in one line and offers "Try transcribing again",
+   never a text box. The intro shows the one-time speech model download as one quiet line
+   ("Getting the speech model ready, 140 MB, one time.") and says nothing once it is ready.
 7. **Report**: score/100, passed at 70, why, do this next, competency bars, per-answer feedback
-   with fillers and hedges highlighted, "See a stronger version", .docx, delete recordings,
-   and the API's `disclaimer`.
+   with fillers and hedges highlighted, "See a stronger version" (not on an unheard answer), .docx,
+   delete recordings, and the API's `disclaimer`.
 Screens 1 to 6 are **one stage** (`.r1-stage`, tokens `--r1-*`): a very light page with ONE
 composed card on it (white card in the light theme, the app's dark surfaces in the dark theme), laid
 out like the real product's recording screen. We take the layout and the hierarchy, never the

@@ -39,10 +39,10 @@ def _prep(c):
                                       "jd": "SQL and Tableau dashboards for ops reporting."}).get_json()["prep"]
 
 
-def _passed_screen(c, prep):
+def _passed_screen(c, prep, hear):
     s = c.post("/api/screens", json={"prep_id": prep["id"]}).get_json()
     for q in s["questions"]:
-        c.post(f"/api/screens/{s['id']}/answers/{q['i']}/transcript", json={"transcript": _GOOD})
+        hear(c, s['id'], q['i'], _GOOD)
     assert c.post(f"/api/screens/{s['id']}/score").get_json()["screen"]["passed"] is True
     return s["id"]
 

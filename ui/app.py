@@ -11759,6 +11759,11 @@ def interview_history():
 _SCREENS_FILE = _DATA / "screens.json"
 _RECORDINGS_DIR = _DATA / "recordings"       # under data/ (git-ignored); raw video, local only
 _RECORDING_MAX = 32 * 1024 * 1024            # per-recording cap (matches the app-wide upload cap)
+# screens.json is read, changed and written by several requests at once (an answer uploads while
+# the one before it is still transcribing), so every read-modify-write holds this lock. Long work
+# (transcription, scoring) runs OUTSIDE it and re-reads before writing, so it never writes back a
+# stale copy over an upload that landed meanwhile.
+_SCREENS_LOCK = threading.RLock()
 
 ROUND1_DISCLAIMER = ("Practice for a HireVue-style one-way video interview. Not affiliated with "
                      "HireVue, Inc. This score is ours, not theirs.")
@@ -12036,6 +12041,8 @@ def _screen_public(s: dict, include_video: bool = False) -> dict:
                               "score": (a["per_answer_feedback"] or {}).get("score"),
                               "feedback": (a["per_answer_feedback"] or {}).get("feedback", ""),
                               "delivery_note": (a["per_answer_feedback"] or {}).get("delivery_note", ""),
+                              "unheard": bool((a["per_answer_feedback"] or {}).get("unheard")),
+                              "tip": (a["per_answer_feedback"] or {}).get("tip", ""),
                               "delivery_metrics": a["delivery_metrics"]}
                              for a in ans if a["per_answer_feedback"]]
     return {"id": s.get("id"), "prep_id": s.get("prep_id"), "role": s.get("role", ""),
@@ -12159,6 +12166,15 @@ def screens_upload_answer(sid, idx):
         return jsonify({"error": "No such question."}), 404
     if request.content_length and request.content_length > _RECORDING_MAX:
         return jsonify({"error": "That recording is too large."}), 413
+    with _SCREENS_LOCK:
+        return _save_answer_upload(sid, idx)
+
+
+def _save_answer_upload(sid, idx):
+    screens = _load_screens()
+    s = next((x for x in screens if x.get("id") == sid), None)
+    if not s or not (0 <= idx < len(s.get("answers") or [])):
+        return jsonify({"error": "Screen not found."}), 404
     f = request.files.get("file")
     if f is None or not f.filename:
         return jsonify({"error": "No recording uploaded."}), 400
@@ -12184,53 +12200,84 @@ def screens_upload_answer(sid, idx):
     ans["seconds"] = _measured_seconds(request.form.get("seconds"))
     # A retake replaces the earlier take: its transcript and feedback no longer apply.
     ans["transcript"], ans["per_answer_feedback"], ans["delivery_metrics"] = "", None, None
+    ans.pop("stt_status", None)
     _save_screens(screens)
     return jsonify({"ok": True, "recorded": True, "takes": ans["takes"],
                     "takes_left": max(0, max_uploads - ans["takes"])})
 
 
+def _transcribe_answer(sid: str, idx: int, tries: int = 2) -> dict:
+    """Transcribe one recorded answer LOCALLY (never cloud) and store the words, their delivery
+    metrics and how it went (``stt_status``: ok, silent, failed, unavailable). A failed attempt is
+    tried once more. Runs outside the screens lock and re-reads before writing, so an upload that
+    landed meanwhile is never overwritten; if the answer was retaken meanwhile, this older take's
+    words are dropped. Returns {status, transcript, delivery_metrics, error}."""
+    from interview.transcribe import delivery_metrics, transcribe_detail
+    with _SCREENS_LOCK:
+        s = next((x for x in _load_screens() if x.get("id") == sid), None)
+        ans = (s.get("answers") or [])[idx] if s and 0 <= idx < len(s.get("answers") or []) else None
+        path = (ans or {}).get("video_path") or ""
+        take = (ans or {}).get("takes")           # a retake reuses the file name, so compare takes
+    if not ans:
+        return {"status": "missing", "transcript": "", "delivery_metrics": None, "error": "No such question."}
+    if not path or not Path(path).exists():
+        return {"status": "missing", "transcript": "", "delivery_metrics": None, "error": "No recording."}
+    det = transcribe_detail(path)
+    for _ in range(max(0, tries - 1)):
+        if det["status"] != "failed":
+            break
+        det = transcribe_detail(path)
+    with _SCREENS_LOCK:
+        screens = _load_screens()
+        s = next((x for x in screens if x.get("id") == sid), None)
+        ans = (s.get("answers") or [])[idx] if s and 0 <= idx < len(s.get("answers") or []) else None
+        if not ans or ans.get("video_path") != path or ans.get("takes") != take:
+            return {"status": "stale", "transcript": "", "delivery_metrics": None, "error": ""}
+        text = det["text"]
+        ans["transcript"] = text
+        ans["stt_status"] = det["status"]
+        if not ans.get("seconds") and det.get("seconds"):
+            ans["seconds"] = _measured_seconds(det["seconds"])
+        ans["delivery_metrics"] = delivery_metrics(text, ans.get("seconds")) if text else None
+        _save_screens(screens)
+        return {"status": det["status"], "transcript": text, "delivery_metrics": ans["delivery_metrics"],
+                "error": det.get("error", "")}
+
+
 @app.post("/api/screens/<sid>/answers/<int:idx>/transcribe")
 @_guard
 def screens_transcribe(sid, idx):
-    """Transcribe the recorded answer LOCALLY (never cloud). If the local engine isn't installed,
-    returns available:false so the UI shows the type/paste fallback instead."""
-    screens = _load_screens()
-    s = next((x for x in screens if x.get("id") == sid), None)
+    """Transcribe the recorded answer LOCALLY (never cloud), right after it uploads, so the words
+    are ready when the interview ends. There is no typed fallback: an answer that cannot be heard
+    is scored as not answered, and the report says so."""
+    s = next((x for x in _load_screens() if x.get("id") == sid), None)
     if not s or not (0 <= idx < len(s.get("answers") or [])):
         return jsonify({"error": "Screen or question not found."}), 404
-    from interview.transcribe import available, delivery_metrics, transcribe
+    from interview.transcribe import available
     if not available():
-        return jsonify({"available": False,
-                        "message": "Local transcription isn't installed. Type or paste your answer instead."})
-    ans = s["answers"][idx]
-    path = ans.get("video_path")
-    if not path or not Path(path).exists():
+        return jsonify({"available": False, "status": "unavailable"})
+    out = _transcribe_answer(sid, idx)
+    if out["status"] == "missing":
         return jsonify({"error": "No recording to transcribe."}), 400
-    text = transcribe(path)
-    ans["transcript"] = text
-    ans["delivery_metrics"] = delivery_metrics(text, ans.get("seconds"))
-    _save_screens(screens)
-    return jsonify({"available": True, "transcript": text, "delivery_metrics": ans["delivery_metrics"]})
+    return jsonify({"available": out["status"] != "unavailable", **out})
 
 
-@app.post("/api/screens/<sid>/answers/<int:idx>/transcript")
+@app.get("/api/interview/stt")
 @_guard
-def screens_set_transcript(sid, idx):
-    """Fallback path: set the transcript by typing / pasting (used when local STT isn't installed)."""
-    screens = _load_screens()
-    s = next((x for x in screens if x.get("id") == sid), None)
-    if not s or not (0 <= idx < len(s.get("answers") or [])):
-        return jsonify({"error": "Screen or question not found."}), 404
-    from interview.transcribe import delivery_metrics
-    body = request.json or {}
-    text = str(body.get("transcript") or "").strip()
-    ans = s["answers"][idx]
-    ans["transcript"] = text
-    if body.get("seconds") is not None:              # the UI may still know how long the take ran
-        ans["seconds"] = _measured_seconds(body.get("seconds"))
-    ans["delivery_metrics"] = delivery_metrics(text, ans.get("seconds"))
-    _save_screens(screens)
-    return jsonify({"ok": True, "delivery_metrics": ans["delivery_metrics"]})
+def interview_stt_status():
+    """Is speech to text ready on this computer: {engine, model: ready|downloading|missing|error|
+    unavailable, done_mb, total_mb, error}. The Interview intro shows the one-time model download."""
+    from interview.transcribe import model_status
+    return jsonify(model_status())
+
+
+@app.post("/api/interview/stt/prepare")
+@_guard
+def interview_stt_prepare():
+    """Start the one-time speech model download in the background when it is missing (the
+    Interview intro calls this so it is ready before the first answer). Idempotent."""
+    from interview.transcribe import prepare
+    return jsonify(prepare())
 
 
 @app.post("/api/screens/<sid>/answers/<int:idx>/coach")
@@ -12245,7 +12292,7 @@ def screens_coach_answer(sid, idx):
     ans = s["answers"][idx]
     transcript = str(ans.get("transcript") or "").strip()
     if not transcript:
-        return jsonify({"error": "Record or type an answer first, then it can be strengthened."}), 400
+        return jsonify({"error": "Record an answer first, then it can be strengthened."}), 400
     profile = (_memory().load("default") or {}).get("profile") or {}
     coaching = _make_llm().coach_interview_answer(profile, ans.get("q", ""), transcript)
     return jsonify({"ok": True, "coaching": coaching})
@@ -12315,6 +12362,16 @@ def _interview_readiness_overview(screens: list, interviews: list | None = None)
     }
 
 
+_UNHEARD_FEEDBACK = {"score": 0, "unheard": True, "feedback": "We couldn't hear this answer.",
+                     "tip": "Check your microphone in Settings next time.", "delivery_note": ""}
+_NOTHING_HEARD_RESULT = {
+    "score": 0, "passed": False, "threshold": 70,
+    "why": "We couldn't hear any of your answers, so there was nothing to score.",
+    "improvements": ["Check your microphone in Settings, then take the interview again."],
+    "assessment_disclaimer": "This is practice feedback to help you improve, not a real hiring "
+                             "decision or an employer's assessment."}
+
+
 def _score_answer_set(role: str, company: str, answers: list, profile: dict,
                       round_no: int = 1) -> dict:
     """Shared scoring for a Round-1 recorded screen AND the Round-2 live dialogue: per-answer
@@ -12330,6 +12387,12 @@ def _score_answer_set(role: str, company: str, answers: list, profile: dict,
     scored = []
     for a in answers:
         if not str(a.get("transcript") or "").strip():
+            # A Round-1 answer that was recorded but could not be heard counts as not answered.
+            # The report says so, with a tip; nobody is ever asked to type what they said.
+            if a.get("video_path"):
+                a["per_answer_feedback"] = dict(_UNHEARD_FEEDBACK)
+                a["delivery_metrics"] = None
+                scored.append({"q": a.get("q", ""), "transcript": "(no answer heard)", "score": 0})
             continue
         d = a.get("delivery_metrics") or delivery_metrics(a.get("transcript", ""), a.get("seconds"))
         fb = llm.score_interview_answer(profile, a.get("q", ""), a.get("transcript", ""), d)
@@ -12337,7 +12400,11 @@ def _score_answer_set(role: str, company: str, answers: list, profile: dict,
         a["delivery_metrics"] = d
         scored.append({"q": a.get("q", ""), "transcript": a.get("transcript", ""),
                        "score": fb.get("score", 0)})
-    result = llm.score_interview_screen(role, company, scored)
+    if scored and all(x["score"] == 0 and x["transcript"] == "(no answer heard)" for x in scored):
+        result = dict(_NOTHING_HEARD_RESULT)      # nothing to judge: no model call, a plain result
+        result["improvements"] = list(_NOTHING_HEARD_RESULT["improvements"])
+    else:
+        result = llm.score_interview_screen(role, company, scored)
     result["is_practice"] = True          # honesty: a practice assessment, not a hiring outcome
     result["competencies"] = _competency_breakdown(answers)   # where they're strong vs weak
     try:
@@ -12348,32 +12415,84 @@ def _score_answer_set(role: str, company: str, answers: list, profile: dict,
     return result
 
 
+def _score_screen(sid: str):
+    """Score a screen and store the report: per-answer feedback plus the overall PRACTICE result.
+    Answers recorded but not heard are scored as not answered. The model calls run outside the
+    screens lock; the result is written onto a fresh read. Returns (public screen, None) or
+    (None, (error response, status))."""
+    s = next((x for x in _load_screens() if x.get("id") == sid), None)
+    if not s:
+        return None, (jsonify({"error": "Screen not found."}), 404)
+    answers = s.get("answers") or []
+    if not any(str(a.get("transcript") or "").strip() or a.get("video_path") for a in answers):
+        return None, (jsonify({"error": "Record at least one answer first."}), 400)
+    profile = (_memory().load("default") or {}).get("profile") or {}
+    result = _score_answer_set(s.get("role", ""), s.get("company", ""), answers, profile)
+    result["disclaimer"] = ROUND1_DISCLAIMER
+    with _SCREENS_LOCK:
+        screens = _load_screens()
+        cur = next((x for x in screens if x.get("id") == sid), None)
+        if not cur:
+            return None, (jsonify({"error": "Screen not found."}), 404)
+        for i, a in enumerate(cur.get("answers") or []):
+            if i < len(answers):
+                for k in ("per_answer_feedback", "delivery_metrics"):
+                    a[k] = answers[i].get(k)
+        cur["result"] = result
+        cur["passed"] = bool(result.get("passed"))   # the Round-2 gate marker
+        _save_screens(screens)
+    try:   # optional: a short note in the Annalisa diary (P1 memory), best-effort
+        _palace().remember_summary(
+            f"Recorded practice interview screen for {cur.get('role', 'a role')}: scored "
+            f"{result.get('score')}/100, {'passed' if cur['passed'] else 'below'} the practice bar.")
+    except Exception:
+        pass
+    return _screen_public(cur), None
+
+
 @app.post("/api/screens/<sid>/score")
 @_guard
 def screens_score(sid):
     """Score the whole screen: per-answer feedback + an overall PRACTICE result (score, pass/fail
     at 70, why, ranked improvements, competencies, answers, disclaimer). Never a real hiring
     decision. Persists the report and the Round-2 `passed` gate flag."""
-    screens = _load_screens()
-    s = next((x for x in screens if x.get("id") == sid), None)
+    pub, err = _score_screen(sid)
+    if err:
+        return err
+    return jsonify({"screen": pub, "result": pub["result"]})
+
+
+@app.post("/api/screens/<sid>/finish")
+@_guard
+def screens_finish(sid):
+    """End of the interview, and the way to rescue an older one: transcribe every recorded answer
+    that has no words yet (on this computer, a failed one tried again), then score and return the
+    report. Body {retry: true} also re-runs answers that were heard as silent. When speech to text
+    is not ready here at all and nothing was heard, nothing is scored: the reply says so plainly
+    ({stt_unavailable: true, message}) and the person can run it again. Nobody is asked to type."""
+    from interview.transcribe import available, model_status
+    s = next((x for x in _load_screens() if x.get("id") == sid), None)
     if not s:
         return jsonify({"error": "Screen not found."}), 404
-    answered = [a for a in (s.get("answers") or []) if str(a.get("transcript") or "").strip()]
-    if not answered:
-        return jsonify({"error": "Record or type at least one answer first."}), 400
-    profile = (_memory().load("default") or {}).get("profile") or {}
-    result = _score_answer_set(s.get("role", ""), s.get("company", ""), s["answers"], profile)
-    result["disclaimer"] = ROUND1_DISCLAIMER
-    s["result"] = result
-    s["passed"] = bool(result.get("passed"))   # the Round-2 gate marker
-    _save_screens(screens)
-    try:   # optional: a short note in the Annalisa diary (P1 memory), best-effort
-        _palace().remember_summary(
-            f"Recorded practice interview screen for {s.get('role', 'a role')}: scored "
-            f"{result.get('score')}/100, {'passed' if s['passed'] else 'below'} the practice bar.")
-    except Exception:
-        pass
-    pub = _screen_public(s)
+    retry = bool((request.get_json(silent=True) or {}).get("retry"))
+    redo = ("ok",) if retry else ("ok", "silent")
+    todo = [i for i, a in enumerate(s.get("answers") or [])
+            if a.get("video_path") and not str(a.get("transcript") or "").strip()
+            and a.get("stt_status") not in redo]
+    statuses = []
+    if todo and available():
+        for i in todo:
+            statuses.append(_transcribe_answer(sid, i)["status"])
+    s = next((x for x in _load_screens() if x.get("id") == sid), None) or s
+    heard = any(str(a.get("transcript") or "").strip() for a in (s.get("answers") or []))
+    if todo and not heard and (not available() or all(st == "unavailable" for st in statuses)):
+        st = model_status()
+        return jsonify({"stt_unavailable": True, "model": st, "screen": _screen_public(s),
+                        "message": "Speech to text isn't ready on this computer, so your answers "
+                                   "weren't scored yet. Your recordings are saved."})
+    pub, err = _score_screen(sid)
+    if err:
+        return err
     return jsonify({"screen": pub, "result": pub["result"]})
 
 

@@ -9764,6 +9764,28 @@
     if (window.ResizeObserver) new ResizeObserver(r1FitTitles).observe($("#scrStage"));
     try { document.fonts?.ready?.then(r1FitTitles); } catch (e) {}
   }
+  // Speech to text runs on this computer. Its model (about 140 MB) downloads once, on first use:
+  // the intro starts that download and shows its progress in one quiet line, so it is ready
+  // before the first answer. Ready says nothing. The line stops updating once the intro is gone.
+  let SCR_STT_T = null;
+  async function r1SttWatch(first) {
+    clearTimeout(SCR_STT_T);
+    let st = null;
+    try { st = first === false ? await api("/api/interview/stt") : await api("/api/interview/stt/prepare", {}); } catch (e) { return; }
+    const el = $("#r1Stt"); if (!el || !st) return;
+    const mb = Number(st.total_mb) || 140;
+    let line = "";
+    if (st.model === "downloading" || st.model === "missing") {
+      const pct = Math.max(0, Math.min(99, Math.round((Number(st.done_mb) || 0) / mb * 100)));
+      line = T("r1.sttGetting", "Getting the speech model ready, {mb} MB, one time.").replace("{mb}", String(mb)) + (pct ? ` ${pct}%` : "");
+      SCR_STT_T = setTimeout(() => r1SttWatch(false), 1000);
+    } else if (st.model === "error") {
+      line = T("r1.sttFailed", "Couldn't get the speech model. We'll try again when you finish.");
+    } else if (st.model === "unavailable") {
+      line = T("r1.sttMissing", "Speech to text isn't installed, so answers can't be scored.");
+    }
+    el.textContent = line; el.hidden = !line;
+  }
   function renderR1Intro() {
     const p = SCR_PREP;
     scrHead("", ""); SCR_PHASE = "idle";
@@ -9780,6 +9802,7 @@
       </div>
       <div class="r1-stats" id="r1Facts" data-n="${f.stats.length}">${r1StatsHtml(f)}</div>
       <p class="r1-retake" id="r1Retake">${esc(f.retake)}</p>
+      <p class="r1-stt" id="r1Stt" role="status" hidden></p>
       ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : ""}
       <ul class="r1-points">
         ${point("lock", "r1.notice1", "Recordings stay on this computer.")}
@@ -9795,6 +9818,7 @@
         <span class="r1-solo-msg" id="scrBeginMsg" role="alert" hidden></span>
       </div>` });
     $("#scrExtra")?.addEventListener("change", (e) => { SCR_EXTRA = !!e.target.checked; r1FactsPaint(); });
+    r1SttWatch();
     $("#scrBegin")?.addEventListener("click", async () => {
       const btn = $("#scrBegin"), msg = $("#scrBeginMsg");
       if (btn.classList.contains("is-busy")) return;
@@ -10240,11 +10264,15 @@
       return r.json().catch(() => ({}));
     });
     SCR_UPLOADS[idx] = up;
-    SCR_TR[idx] = up.then(() => fetch(`/api/screens/${SCREEN.id}/answers/${idx}/transcribe`, { method: "POST" }).then(r => r.json()).catch(() => ({ available: false })));
+    // The words are worked out on this computer while the next question runs. Whatever happens
+    // here, the end of the interview (/finish) transcribes any answer still without words.
+    SCR_TR[idx] = up.then(() => fetch(`/api/screens/${SCREEN.id}/answers/${idx}/transcribe`, { method: "POST" }).then(r => r.json()).catch(() => ({})));
     up.catch((e) => toast(e.message));
   }
-  // Screen 6: "All done". Wait for the uploads and transcripts, then score. If this computer can't
-  // transcribe, ask for the words of each answer here (the question screens stay pure).
+  // Screen 6: "All done". Wait for the uploads and the transcripts already running, then finish:
+  // the engine transcribes anything still without words (a failed one is tried again), scores,
+  // and the report follows. Nobody is asked to type what they said: an answer that could not be
+  // heard is scored as not answered and the report says so.
   async function renderR1Done() {
     stopPrepClock(); stopAnswerClock(); stopMicMeter(); stopScrStream();
     scrHead("", "");
@@ -10257,31 +10285,36 @@
         <div id="r1DoneBody"></div>
       </div>` });
     const n = (SCREEN.questions || []).length;
-    const results = await Promise.all(Array.from({ length: n }, (_, i) => (SCR_TR[i] || Promise.resolve({ available: false })).then(x => x, () => ({ available: false }))));
-    const need = results.map((tr, i) => ({ i, tr })).filter(({ tr }) => !tr || tr.available === false || !(tr.transcript || tr.text));
-    if (!need.length) return scoreR1();
-    const spin = $("#r1Spin"); if (spin) spin.hidden = true;
-    const sub = $("#r1DoneSub"); if (sub) sub.textContent = T("r1.typeSub", "This computer couldn't transcribe some answers. Type what you said so they can be scored.");
-    $("#r1DoneBody").innerHTML = need.map(({ i }) => `
-      <div class="r1-type">
-        <div class="r1-type-q">${i + 1}. ${esc((SCREEN.questions[i] || {}).text || "")}</div>
-        <textarea class="fld r1-ta" data-i="${i}" rows="3" placeholder="${esc(T("r1.typePh", "Your answer, in words"))}"></textarea>
-      </div>`).join("") + `<div class="r1-solo-acts"><button class="r1-btn r1-btn-primary" id="r1Score" type="button">${esc(T("r1.scoreBtn", "Score my interview"))}</button></div>`;
-    $("#r1Score")?.addEventListener("click", async () => {
-      const tas = [...document.querySelectorAll(".r1-ta")];
-      if (tas.some(t => !t.value.trim())) { toast(T("r1.typeAll", "Add the words for every answer first.")); return; }
-      $("#r1Score").disabled = true;
-      try { for (const t of tas) await api(`/api/screens/${SCREEN.id}/answers/${t.dataset.i}/transcript`, { transcript: t.value.trim(), seconds: SCR_SECS[t.dataset.i] || null }); }
-      catch (err) { toast(err.message || T("r1.cantSave", "Couldn't save.")); $("#r1Score").disabled = false; return; }
-      scoreR1();
-    });
+    await Promise.all(Array.from({ length: n }, (_, i) => Promise.resolve(SCR_UPLOADS[i]).catch(() => null)));
+    await Promise.all(Array.from({ length: n }, (_, i) => Promise.resolve(SCR_TR[i]).catch(() => null)));
+    finishR1(false);
   }
-  async function scoreR1() {
-    const sub = $("#r1DoneSub"); if (sub) sub.textContent = T("r1.scoring", "Scoring...");
+  async function finishR1(retry) {
+    const sub = $("#r1DoneSub"); if (sub) sub.textContent = T("r1.doneSub", "Scoring your answers. This takes a minute.");
     const spin = $("#r1Spin"); if (spin) spin.hidden = false;
     const body = $("#r1DoneBody"); if (body) body.innerHTML = "";
-    try { const d = await api(`/api/screens/${SCREEN.id}/score`, {}); const r = (d && d.result) || d; SCREEN.result = r; renderR1Report(r); }
-    catch (err) { if (spin) spin.hidden = true; if (sub) sub.textContent = err.message || T("r1.cantScore", "Couldn't score this interview."); }
+    try {
+      const d = await api(`/api/screens/${SCREEN.id}/finish`, retry ? { retry: true } : {});
+      if (d && d.stt_unavailable) return renderR1NoStt(d);
+      const r = (d && d.result) || d; SCREEN.result = r; renderR1Report(r);
+    } catch (err) {
+      if (spin) spin.hidden = true;
+      if (sub) sub.textContent = err.message || T("r1.cantScore", "Couldn't score this interview.");
+      if (body) { body.innerHTML = `<div class="r1-solo-acts"><button class="r1-btn r1-btn-primary" id="r1Retry" type="button">${esc(T("r1.tryAgainScore", "Try again"))}</button></div>`;
+        $("#r1Retry")?.addEventListener("click", () => finishR1(true)); }
+    }
+  }
+  // Speech to text is not ready on this computer (it ships in the app, so this should not
+  // happen): say so plainly, keep the recordings, and offer to run it again. Never a typing box.
+  function renderR1NoStt(d) {
+    const spin = $("#r1Spin"); if (spin) spin.hidden = true;
+    const sub = $("#r1DoneSub"); if (sub) sub.textContent = T("r1.noStt", "Speech to text isn't ready on this computer, so your answers weren't scored yet. Your recordings are saved.");
+    const body = $("#r1DoneBody"); if (!body) return;
+    body.innerHTML = `<div class="r1-solo-acts"><button class="r1-btn r1-btn-primary" id="r1Retry" type="button">${esc(T("r1.retryStt", "Try transcribing again"))}</button></div>`;
+    $("#r1Retry")?.addEventListener("click", async () => {
+      try { await api("/api/interview/stt/prepare", {}); } catch (e) { /* finish says what is wrong */ }
+      finishR1(true);
+    });
   }
   // Screen 7: the report. Back on the app theme.
   function renderR1Report(r) {
@@ -10291,9 +10324,11 @@
     const items = (r.answers || []).map((a, k) => {
       const i = a.i ?? k, paf = a.per_answer_feedback || {};
       return { i, q: a.text || a.q || a.question || ((SCREEN.questions || [])[i] || {}).text || "",
-        said: a.transcript ? highlightDisfluencies(a.transcript) : "", competency: a.competency || "",
-        score: a.score ?? paf.score, feedback: a.feedback || paf.feedback || "",
-        extra: deliveryReadout(a.delivery_metrics || a.delivery), coach: true };
+        said: a.unheard ? `<em class="a2-unheard">${esc(T("r1.unheard", "We couldn't hear this answer."))}</em>`
+          : a.transcript ? highlightDisfluencies(a.transcript) : "", competency: a.competency || "",
+        score: a.score ?? paf.score,
+        feedback: a.unheard ? T("r1.unheardTip", "Check your microphone in Settings next time.") : (a.feedback || paf.feedback || ""),
+        extra: a.unheard ? "" : deliveryReadout(a.delivery_metrics || a.delivery), coach: !a.unheard };
     });
     $("#prepScreen").classList.add("is-report");
     $("#scrStage").innerHTML = reportA2Html(r, {

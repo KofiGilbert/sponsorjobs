@@ -172,19 +172,18 @@ def _screen(c, prep, **body):
     return r.get_json()
 
 
-def test_round1_score_carries_the_card_with_measured_seconds(client):
+def test_round1_score_carries_the_card_with_measured_seconds(client, hear):
     A, c = client
     s = _screen(c, _prep(c))
     sid = s["id"]
-    # the first take is uploaded with its measured length; the rest are typed with a length
+    # the first take is uploaded with its measured length; the rest are heard with a length
     up = c.post(f"/api/screens/{sid}/answers/0",
                 data={"file": (io.BytesIO(b"\x1aE\xdf\xa3 bytes"), "a.webm", "video/webm"), "seconds": "45.4"},
                 content_type="multipart/form-data")
     assert up.status_code == 200
-    c.post(f"/api/screens/{sid}/answers/0/transcript", json={"transcript": _GOOD})
+    hear(c, sid, 0, _GOOD, upload=False)
     for q in s["questions"][1:]:
-        c.post(f"/api/screens/{sid}/answers/{q['i']}/transcript",
-               json={"transcript": _GOOD if q["i"] < 4 else _UM, "seconds": 30 if q["i"] < 4 else None})
+        hear(c, sid, q['i'], _GOOD if q["i"] < 4 else _UM, seconds=30 if q["i"] < 4 else None)
     out = c.post(f"/api/screens/{sid}/score").get_json()
     res = out["result"]
     assert isinstance(res["score"], int) and res["passed"] in (True, False)   # the old score, untouched
@@ -304,7 +303,7 @@ def test_goals_for_a_saved_application_use_the_tailored_cv(client, monkeypatch):
 
 
 # ---- re-drill: a Round-1 screen with just the three questions, through the normal start flow --------
-def test_redrill_starts_a_round1_screen_with_just_those_questions(client):
+def test_redrill_starts_a_round1_screen_with_just_those_questions(client, hear):
     A, c = client
     prep = _prep(c)
     drill = [{"q": "Tell me about a time you had to work with someone who disagreed with you.",
@@ -319,7 +318,7 @@ def test_redrill_starts_a_round1_screen_with_just_those_questions(client):
     assert s["config"]["prep_s"] == 30 and s["config"]["answer_s"] == 120 and s["practice"]["text"]
     # the same clocks, uploads and scoring as any Round-1 screen; the result carries its own card
     for q in s["questions"]:
-        c.post(f"/api/screens/{s['id']}/answers/{q['i']}/transcript", json={"transcript": _GOOD, "seconds": 50})
+        hear(c, s['id'], q['i'], _GOOD, seconds=50)
     res = c.post(f"/api/screens/{s['id']}/score").get_json()["result"]
     assert len(res["report_card"]["answers"]) == 3 and len(res["report_card"]["weakest"]) == 3
     # a drill with extra time still doubles the clocks; one question is enough; six is capped at five
@@ -332,7 +331,7 @@ def test_redrill_starts_a_round1_screen_with_just_those_questions(client):
 
 
 # ---- history per job with the overall-score trend ------------------------------------------------------
-def test_history_lists_both_rounds_for_the_same_job_oldest_first(client, monkeypatch):
+def test_history_lists_both_rounds_for_the_same_job_oldest_first(client, monkeypatch, hear):
     A, c = client
     prep = _prep(c)
     empty = c.get(f"/api/interview/history?prep_id={prep['id']}").get_json()
@@ -340,11 +339,11 @@ def test_history_lists_both_rounds_for_the_same_job_oldest_first(client, monkeyp
     # attempt 1: a weak screen; attempt 2: a drill that goes better; attempt 3: a live interview
     s1 = _screen(c, prep)
     for q in s1["questions"]:
-        c.post(f"/api/screens/{s1['id']}/answers/{q['i']}/transcript", json={"transcript": "Too short."})
+        hear(c, s1['id'], q['i'], "Too short.")
     c.post(f"/api/screens/{s1['id']}/score")
     s2 = _screen(c, prep, drill=["Why us?", "A hard problem?"])
     for q in s2["questions"]:
-        c.post(f"/api/screens/{s2['id']}/answers/{q['i']}/transcript", json={"transcript": _GOOD})
+        hear(c, s2['id'], q['i'], _GOOD)
     c.post(f"/api/screens/{s2['id']}/score")
     from tests.test_round2_cvi import _on_a_pass
     _on_a_pass(A, monkeypatch)
@@ -353,7 +352,7 @@ def test_history_lists_both_rounds_for_the_same_job_oldest_first(client, monkeyp
     # an unrelated job's screen never shows up here
     other = _prep(c, role="Product Manager", company="Beta Co", jd="Roadmaps.")
     s3 = _screen(c, other)
-    c.post(f"/api/screens/{s3['id']}/answers/0/transcript", json={"transcript": _GOOD})
+    hear(c, s3['id'], 0, _GOOD)
     c.post(f"/api/screens/{s3['id']}/score")
     h = c.get(f"/api/interview/history?prep_id={prep['id']}").get_json()
     assert [x["kind"] for x in h["cards"]] == ["screen", "screen", "interview"]

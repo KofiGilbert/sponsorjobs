@@ -1,14 +1,17 @@
 """Round 1: the HireVue-style ONE-WAY recorded video screen (decision of 2026-10-02).
 
-Offline and deterministic: FakeLLM, no key, no network, no camera. Local transcription is forced
-OFF (RESUME_AGENT_DISABLE_STT=1) so the type-transcript fallback is exercised and no Whisper model
-is ever loaded. Recordings are attached as plain blobs / transcripts, bypassing the browser camera.
+Offline and deterministic: FakeLLM, no key, no network, no camera, no Whisper model. Local
+transcription is OFF by default (RESUME_AGENT_DISABLE_STT=1); a test that needs answers with words
+uses the ``hear`` fixture (tests/conftest.py), which uploads a small recording and runs the real
+transcribe endpoint with the engine swapped for one that hears the given text. There is no typed
+transcript anywhere: an answer that cannot be heard is scored as not answered.
 """
 
 from __future__ import annotations
 
 import importlib
 import io
+from pathlib import Path
 
 import pytest
 
@@ -119,14 +122,14 @@ def test_practice_prompts_are_unlimited_and_never_stored(client):
     assert c.get("/api/screens/nope/practice").status_code == 404
 
 
-# ---- lifecycle: transcripts -> score -> report with the disclaimer -------------------------------
-def test_lifecycle_type_transcripts_then_score_with_disclaimer(client):
+# ---- lifecycle: heard answers -> score -> report with the disclaimer -----------------------------
+def test_lifecycle_heard_answers_then_score_with_disclaimer(client, hear):
     A, c = client
     s = _screen(c, _prep(c))
     sid = s["id"]
     for q in s["questions"]:
-        r = c.post(f"/api/screens/{sid}/answers/{q['i']}/transcript", json={"transcript": _GOOD})
-        assert r.status_code == 200 and r.get_json()["delivery_metrics"]["words"] > 0
+        r = hear(c, sid, q['i'], _GOOD)
+        assert r["status"] == "ok" and r["delivery_metrics"]["words"] > 0
     out = c.post(f"/api/screens/{sid}/score").get_json()
     res = out["result"]
     assert out["screen"]["result"]["score"] == res["score"]
@@ -138,11 +141,11 @@ def test_lifecycle_type_transcripts_then_score_with_disclaimer(client):
     assert res["is_practice"] is True and out["screen"]["passed"] is True
 
 
-def test_score_needs_at_least_one_answer_and_thin_answers_fail(client):
+def test_score_needs_at_least_one_answer_and_thin_answers_fail(client, hear):
     A, c = client
     s = _screen(c, _prep(c))
     assert c.post(f"/api/screens/{s['id']}/score").status_code == 400
-    c.post(f"/api/screens/{s['id']}/answers/0/transcript", json={"transcript": "I did some stuff."})
+    hear(c, s['id'], 0, "I did some stuff.")
     res = c.post(f"/api/screens/{s['id']}/score").get_json()["result"]
     assert res["passed"] is False and res["score"] < 70
 
@@ -165,32 +168,166 @@ def test_upload_stores_blob_and_rejects_bad_input(client, monkeypatch):
     assert c.post(f"/api/screens/{sid}/answers/9", data=_blob(), content_type="multipart/form-data").status_code == 404
 
 
-def test_one_retake_per_question_third_upload_is_409(client):
+def test_one_retake_per_question_third_upload_is_409(client, hear):
     A, c = client
     sid = _screen(c, _prep(c))["id"]
-    c.post(f"/api/screens/{sid}/answers/1/transcript", json={"transcript": _GOOD})
-    r1 = c.post(f"/api/screens/{sid}/answers/1", data=_blob(), content_type="multipart/form-data")
-    assert r1.status_code == 200 and r1.get_json()["takes_left"] == 1
-    # a new take replaces the earlier one: its transcript no longer applies
-    assert c.get(f"/api/screens/{sid}").get_json()["answers"][1]["transcript"] == ""
+    hear(c, sid, 1, _GOOD)                                              # the first take, heard
+    assert c.get(f"/api/screens/{sid}").get_json()["answers"][1]["takes_left"] == 1
     r2 = c.post(f"/api/screens/{sid}/answers/1", data=_blob(), content_type="multipart/form-data")
     assert r2.status_code == 200 and r2.get_json()["takes_left"] == 0
+    # a new take replaces the earlier one: its transcript no longer applies
+    assert c.get(f"/api/screens/{sid}").get_json()["answers"][1]["transcript"] == ""
     r3 = c.post(f"/api/screens/{sid}/answers/1", data=_blob(), content_type="multipart/form-data")
     assert r3.status_code == 409 and r3.get_json()["no_takes_left"] is True and r3.get_json()["retakes"] == 1
     # the limit is per question
     assert c.post(f"/api/screens/{sid}/answers/2", data=_blob(), content_type="multipart/form-data").status_code == 200
 
 
-# ---- local transcription self-skips; typed fallback works without it ------------------------------
-def test_transcription_self_skips_and_typed_fallback_works(client):
+# ---- no typed answers, ever: unheard answers are scored as not answered --------------------------
+def test_there_is_no_typed_transcript_endpoint(client):
+    A, c = client
+    sid = _screen(c, _prep(c))["id"]
+    c.post(f"/api/screens/{sid}/answers/0", data=_blob(), content_type="multipart/form-data")
+    r = c.post(f"/api/screens/{sid}/answers/0/transcript", json={"transcript": "copied from somewhere"})
+    assert r.status_code in (404, 405)
+    assert c.get(f"/api/screens/{sid}").get_json()["answers"][0]["transcript"] == ""
+    assert not any(str(rule) .endswith("/transcript") for rule in A.app.url_map.iter_rules()
+                   if "/api/screens/" in str(rule))
+
+
+def test_transcribe_without_an_engine_says_so_and_never_asks_to_type(client):
     A, c = client
     sid = _screen(c, _prep(c))["id"]
     c.post(f"/api/screens/{sid}/answers/0", data=_blob(), content_type="multipart/form-data")
     t = c.post(f"/api/screens/{sid}/answers/0/transcribe").get_json()
-    assert t["available"] is False and t.get("message")
-    r = c.post(f"/api/screens/{sid}/answers/0/transcript", json={"transcript": "typed answer here"})
-    assert r.status_code == 200
-    assert c.get(f"/api/screens/{sid}").get_json()["answers"][0]["transcript"] == "typed answer here"
+    assert t["available"] is False and t["status"] == "unavailable"
+    assert "type" not in str(t).lower() and "paste" not in str(t).lower()
+
+
+def test_finish_scores_unheard_answers_as_not_answered(client, hear):
+    A, c = client
+    s = _screen(c, _prep(c))
+    sid = s["id"]
+    for q in s["questions"]:
+        hear(c, sid, q["i"], _GOOD if q["i"] < 3 else "")              # the last two are not heard
+    out = c.post(f"/api/screens/{sid}/finish", json={}).get_json()
+    res = out["result"]
+    assert len(res["answers"]) == 5
+    heard = [a for a in res["answers"] if not a["unheard"]]
+    unheard = [a for a in res["answers"] if a["unheard"]]
+    assert len(heard) == 3 and [a["i"] for a in unheard] == [3, 4]
+    assert all(a["score"] == 0 and a["feedback"] == "We couldn't hear this answer."
+               and "microphone" in a["tip"] and a["transcript"] == "" for a in unheard)
+    # scored as not answered: the zeros count, so the result is below the all-heard average
+    assert res["score"] < 82 and res["passed"] is False and out["screen"]["result"]["score"] == res["score"]
+
+
+def test_finish_with_nothing_heard_gives_a_plain_result_without_a_model_call(client, hear, monkeypatch):
+    A, c = client
+    s = _screen(c, _prep(c), questions=3)
+    for q in s["questions"]:
+        hear(c, s["id"], q["i"], "")
+    from llm.base import FakeLLM
+    monkeypatch.setattr(FakeLLM, "score_interview_screen",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no model call")))
+    res = c.post(f"/api/screens/{s['id']}/finish", json={}).get_json()["result"]
+    assert res["score"] == 0 and res["passed"] is False and "couldn't hear" in res["why"]
+    assert all(a["unheard"] for a in res["answers"])
+
+
+def test_finish_transcribes_answers_that_were_never_transcribed_and_retries_a_failure(client, monkeypatch):
+    """The rescue path: an interview whose recordings never got words (the old silent failure)
+    is transcribed at the end, a failed attempt is tried once more, then it is scored."""
+    A, c = client
+    s = _screen(c, _prep(c), questions=3)
+    sid = s["id"]
+    for q in s["questions"]:
+        c.post(f"/api/screens/{sid}/answers/{q['i']}", data=_blob(), content_type="multipart/form-data")
+    import interview.transcribe as T
+    calls = []
+
+    def detail(path):
+        calls.append(Path(path).name)
+        if Path(path).name == "answer_1.webm" and calls.count("answer_1.webm") == 1:
+            return {"text": "", "status": "failed", "error": "TypeError: boom", "seconds": None, "language": ""}
+        return {"text": _GOOD, "status": "ok", "error": "", "seconds": 42.0, "language": "en"}
+
+    monkeypatch.setattr(T, "available", lambda: True)
+    monkeypatch.setattr(T, "transcribe_detail", detail)
+    out = c.post(f"/api/screens/{sid}/finish", json={}).get_json()
+    assert calls == ["answer_0.webm", "answer_1.webm", "answer_1.webm", "answer_2.webm"]
+    res = out["result"]
+    assert len(res["answers"]) == 3 and not any(a["unheard"] for a in res["answers"])
+    assert res["passed"] is True
+    stored = A._load_screens()[0]["answers"]
+    assert all(a["stt_status"] == "ok" and a["seconds"] == 42.0 for a in stored)   # real length kept
+    # finishing again does not transcribe again
+    c.post(f"/api/screens/{sid}/finish", json={})
+    assert len(calls) == 4
+
+
+def test_finish_without_speech_to_text_says_so_and_scores_nothing(client, monkeypatch):
+    A, c = client
+    s = _screen(c, _prep(c), questions=3)
+    for q in s["questions"]:
+        c.post(f"/api/screens/{s['id']}/answers/{q['i']}", data=_blob(), content_type="multipart/form-data")
+    out = c.post(f"/api/screens/{s['id']}/finish", json={}).get_json()     # DISABLE_STT=1 here
+    assert out["stt_unavailable"] is True and "isn't ready" in out["message"]
+    assert "type" not in out["message"].lower()
+    assert out["screen"]["result"] is None and A._load_screens()[0]["result"] is None
+    # once speech to text is there, Try again (retry) transcribes and scores
+    import interview.transcribe as T
+    monkeypatch.setattr(T, "available", lambda: True)
+    monkeypatch.setattr(T, "transcribe_detail", lambda p: {"text": _GOOD, "status": "ok", "error": "",
+                                                           "seconds": None, "language": "en"})
+    again = c.post(f"/api/screens/{s['id']}/finish", json={"retry": True}).get_json()
+    assert again["result"]["score"] > 0 and len(again["result"]["answers"]) == 3
+
+
+def test_a_slow_transcription_never_writes_back_over_an_upload_that_landed_meanwhile(client, monkeypatch):
+    A, c = client
+    s = _screen(c, _prep(c), questions=3)
+    sid = s["id"]
+    c.post(f"/api/screens/{sid}/answers/0", data=_blob(), content_type="multipart/form-data")
+    import interview.transcribe as T
+
+    def detail(path):          # while answer 0 is being transcribed, answer 1 uploads
+        c.post(f"/api/screens/{sid}/answers/1", data=_blob(), content_type="multipart/form-data")
+        return {"text": _GOOD, "status": "ok", "error": "", "seconds": None, "language": "en"}
+
+    monkeypatch.setattr(T, "available", lambda: True)
+    monkeypatch.setattr(T, "transcribe_detail", detail)
+    assert c.post(f"/api/screens/{sid}/answers/0/transcribe").get_json()["status"] == "ok"
+    got = c.get(f"/api/screens/{sid}").get_json()["answers"]
+    assert got[0]["transcript"] == _GOOD
+    assert got[1]["recorded"] is True and got[1]["takes"] == 1          # the upload was not lost
+
+
+def test_words_from_an_older_take_are_dropped_after_a_retake(client, monkeypatch):
+    A, c = client
+    sid = _screen(c, _prep(c), questions=3)["id"]
+    c.post(f"/api/screens/{sid}/answers/0", data=_blob(), content_type="multipart/form-data")
+    import interview.transcribe as T
+
+    def detail(path):          # the person retakes while the first take is still transcribing
+        c.post(f"/api/screens/{sid}/answers/0", data=_blob(), content_type="multipart/form-data")
+        return {"text": "the first take", "status": "ok", "error": "", "seconds": None, "language": "en"}
+
+    monkeypatch.setattr(T, "available", lambda: True)
+    monkeypatch.setattr(T, "transcribe_detail", detail)
+    assert c.post(f"/api/screens/{sid}/answers/0/transcribe").get_json()["status"] == "stale"
+    a = c.get(f"/api/screens/{sid}").get_json()["answers"][0]
+    assert a["transcript"] == "" and a["takes"] == 2
+
+
+def test_speech_model_status_and_prepare_endpoints(client, monkeypatch):
+    A, c = client
+    st = c.get("/api/interview/stt").get_json()
+    assert st["engine"] is False and st["model"] == "unavailable"        # DISABLE_STT=1 here
+    import interview.transcribe as T
+    monkeypatch.setattr(T, "prepare", lambda: {"engine": True, "model": "downloading", "done_mb": 12,
+                                               "total_mb": 140, "error": ""})
+    assert c.post("/api/interview/stt/prepare", json={}).get_json()["model"] == "downloading"
 
 
 def test_transcribe_module_degrades_gracefully(monkeypatch, tmp_path):
@@ -205,11 +342,11 @@ def test_transcribe_module_degrades_gracefully(monkeypatch, tmp_path):
 
 
 # ---- privacy + user control: no raw video in the report; delete removes record + recordings ------
-def test_report_hides_raw_video_and_delete_removes_everything(client):
+def test_report_hides_raw_video_and_delete_removes_everything(client, hear):
     A, c = client
     sid = _screen(c, _prep(c))["id"]
     c.post(f"/api/screens/{sid}/answers/1", data=_blob(), content_type="multipart/form-data")
-    c.post(f"/api/screens/{sid}/answers/1/transcript", json={"transcript": _GOOD})
+    hear(c, sid, 1, _GOOD, upload=False)
     report = c.post(f"/api/screens/{sid}/score").get_json()["screen"]
     assert "video_path" not in report["answers"][1] and report["answers"][1]["recorded"] is True
     rec_dir = A._RECORDINGS_DIR / sid
@@ -220,11 +357,11 @@ def test_report_hides_raw_video_and_delete_removes_everything(client):
 
 
 # ---- competency breakdown: what a one-way screen grades but never shows the candidate -------------
-def test_score_report_breaks_results_down_by_competency(client):
+def test_score_report_breaks_results_down_by_competency(client, hear):
     A, c = client
     s = _screen(c, _prep(c))
     for q in s["questions"]:
-        c.post(f"/api/screens/{s['id']}/answers/{q['i']}/transcript", json={"transcript": _GOOD})
+        hear(c, s['id'], q['i'], _GOOD)
     comps = c.post(f"/api/screens/{s['id']}/score").get_json()["result"]["competencies"]
     assert comps and all({"name", "score", "count"} <= set(cb) for cb in comps)
     assert {cb["name"] for cb in comps} <= {q["competency"] for q in s["questions"]}
@@ -245,12 +382,11 @@ def test_competency_breakdown_helper_averages_and_skips_unscored():
 
 
 # ---- 'See a stronger version': STAR coaching for one answer ---------------------------------------
-def test_coach_one_answer_into_a_stronger_star_version(client):
+def test_coach_one_answer_into_a_stronger_star_version(client, hear):
     A, c = client
     sid = _screen(c, _prep(c))["id"]
     assert c.post(f"/api/screens/{sid}/answers/1/coach").status_code == 400   # no transcript yet
-    c.post(f"/api/screens/{sid}/answers/1/transcript",
-           json={"transcript": "At Acme I built a dashboard and it helped the team."})
+    hear(c, sid, 1, "At Acme I built a dashboard and it helped the team.")
     r = c.post(f"/api/screens/{sid}/answers/1/coach")
     assert r.status_code == 200
     coaching = r.get_json()["coaching"]
@@ -258,11 +394,10 @@ def test_coach_one_answer_into_a_stronger_star_version(client):
 
 
 # ---- delivery readout: pace / length / fillers -----------------------------------------------------
-def test_scored_answer_carries_delivery_metrics_for_the_readout(client):
+def test_scored_answer_carries_delivery_metrics_for_the_readout(client, hear):
     A, c = client
     sid = _screen(c, _prep(c))["id"]
-    c.post(f"/api/screens/{sid}/answers/1/transcript",
-           json={"transcript": "um so I basically built a dashboard you know and it helped a lot " * 3})
+    hear(c, sid, 1, "um so I basically built a dashboard you know and it helped a lot " * 3)
     report = c.post(f"/api/screens/{sid}/score").get_json()["screen"]
     dm = report["answers"][1]["delivery_metrics"]
     assert {"wpm", "words", "speak_sec", "fillers"} <= set(dm)
@@ -270,11 +405,11 @@ def test_scored_answer_carries_delivery_metrics_for_the_readout(client):
 
 
 # ---- export: the practice report as a .docx -------------------------------------------------------
-def test_download_report_docx_after_scoring(client):
+def test_download_report_docx_after_scoring(client, hear):
     A, c = client
     sid = _screen(c, _prep(c))["id"]
     assert c.get(f"/api/screens/{sid}/report.docx").status_code == 400
-    c.post(f"/api/screens/{sid}/answers/1/transcript", json={"transcript": _GOOD})
+    hear(c, sid, 1, _GOOD)
     c.post(f"/api/screens/{sid}/score")
     r = c.get(f"/api/screens/{sid}/report.docx")
     assert r.status_code == 200
@@ -309,14 +444,14 @@ def test_screen_carries_a_creation_timestamp_for_history(client):
     assert any(x["id"] == s["id"] and x["created"] == s["created"] for x in listed)
 
 
-def test_readiness_overview_synthesizes_all_attempts(client):
+def test_readiness_overview_synthesizes_all_attempts(client, hear):
     A, c = client
     prep = _prep(c)
 
     def _attempt(text):
         s = _screen(c, prep)
         for q in s["questions"]:
-            c.post(f"/api/screens/{s['id']}/answers/{q['i']}/transcript", json={"transcript": text})
+            hear(c, s['id'], q['i'], text)
         return c.post(f"/api/screens/{s['id']}/score").get_json()["result"]["score"]
 
     assert c.get("/api/interview/readiness").get_json()["verdict"] is None
