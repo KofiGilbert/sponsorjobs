@@ -3,7 +3,7 @@
 // picker's title focus) answer for ~70 facet mixes, in order. The Worker must answer the same IDs
 // in the same order, walking every page through its cursors, with the same clock.
 import { beforeAll, describe, expect, it } from "vitest";
-import { forgetIndexVersion, handleSearch, parseParams, searchPage, type IndexInfo } from "../src/search";
+import { forgetIndexVersion, handleSearch, histograms, parseParams, searchPage, type IndexInfo } from "../src/search";
 import fixture from "./fixtures/search-parity.json";
 import { env } from "./helpers";
 
@@ -44,7 +44,7 @@ async function info(): Promise<IndexInfo> {
     .results.map((r) => [r.k, r.v]));
   return { v: m.index_version!, g: m.generated_at!, rows: Number(m.rows), sponsorRows: Number(m.sponsor_rows),
            fields: JSON.parse(m.fields!), tags: JSON.parse(m.tags!),
-           visaBits: new Map((JSON.parse(m.visa!) as string[]).map((c, i) => [c, i])) };
+           visaBits: new Map((JSON.parse(m.visa!) as string[]).map((c, i) => [c, i])), ...histograms(m) };
 }
 
 /** The same walk straight through searchPage with a plan forced or a tiny scan cap, so the
@@ -88,6 +88,7 @@ describe("parity with sourcing/filters.apply_facets", () => {
       // A tiny scan cap cuts most pages short: the cursor must carry on with no gap or repeat.
       expect(await walkWith(c, { cap: 7 })).toEqual(c.ids);
       expect(await walkWith(c, { cap: 7, noFts: true, noSort: true })).toEqual(c.ids);
+      expect(await walkWith(c, { cap: 1 })).toEqual(c.ids);
     });
   }
 

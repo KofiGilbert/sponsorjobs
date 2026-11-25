@@ -174,7 +174,10 @@ def build() -> dict:
             + [sql for sql, _ in L.upsert_statements(first, dicts)]
             + [L.meta_statement({**dicts.as_meta(), "index_version": INDEX_VERSION, "ready": "1",
                                  "generated_at": NOW.isoformat(), "rows": str(len(rs)),
-                                 "sponsor_rows": str(sum(1 for r in rs if filters.in_sponsor_scope(r)))})])
+                                 "sponsor_rows": str(sum(1 for r in rs if filters.in_sponsor_scope(r))),
+                                 # Fine steps, so the tests' tiny scan caps cross many bounds.
+                                 **L.histograms({sid: v[1] for sid, v in plan.target.items()},
+                                                plan.feed, payq_step=5)})])
     # The order the index holds (ORDER BY id DESC) must be the feed's own.
     by_id = sorted(plan.target, key=lambda sid: -plan.target[sid][1])
     assert by_id == [r["source_id"] for r in rs], "assign_ids does not keep the feed's order"

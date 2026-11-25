@@ -47,6 +47,7 @@ const LABEL_SPAN = 2 ** 24;
 const DATED = 2 ** 40;
 const DAY_MAX = 65535;
 const ID_END = Number.MAX_SAFE_INTEGER;
+const STRIDE = 64;                     // the loader's usual gap between neighbouring labels
 
 type Mode = "search" | "candidates";
 
@@ -58,7 +59,8 @@ export interface Facets {
 interface Parsed { facets: Facets; limit: number; cursor: string }
 
 export class BadParam extends Error {
-  constructor(readonly param: string, message: string) { super(message); }
+  readonly param: string;
+  constructor(param: string, message: string) { super(message); this.param = param; }
 }
 
 // ---- Python's str.strip() and int() -------------------------------------------------------- //
@@ -300,6 +302,8 @@ export interface IndexInfo {
   g: string;              // generated_at of the feed build it holds
   rows: number; sponsorRows: number;
   fields: string[]; tags: string[]; visaBits: Map<string, number>;
+  hist: Array<[number, number]>;   // [day key (id / 2^24), rows], highest key first
+  payq: number[]; payqStep: number;
 }
 let metaCache: (IndexInfo & { at: number }) | null = null;
 
@@ -313,6 +317,17 @@ function list(raw: string | undefined): string[] {
     const v = JSON.parse(raw ?? "[]");
     return Array.isArray(v) ? v.map(String) : [];
   } catch { return []; }
+}
+
+/** The loader's histograms out of search_meta (empty when absent: the walks are then unbounded). */
+export function histograms(m: Record<string, string | undefined>): Pick<IndexInfo, "hist" | "payq" | "payqStep"> {
+  const nums = (raw: string | undefined): unknown[] => {
+    try { const v = JSON.parse(raw ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+  };
+  const hist = nums(m.hist).filter((e): e is [number, number] =>
+    Array.isArray(e) && Number.isFinite(e[0]) && Number.isFinite(e[1])).sort((a, b) => b[0] - a[0]);
+  const payq = nums(m.payq).filter((v): v is number => Number.isFinite(v));
+  return { hist, payq, payqStep: Math.max(1, Number.parseInt(m.payq_step ?? "500", 10) || 500) };
 }
 
 /** The loaded index's version, sizes and lists, and today's usage, re-read at most every 30 s
@@ -336,6 +351,7 @@ async function indexInfo(db: D1Database, nowMs: number): Promise<IndexInfo> {
     sponsorRows: Number.parseInt(m.sponsor_rows ?? "0", 10) || 0,
     fields: list(m.fields), tags: list(m.tags),
     visaBits: new Map(list(m.visa).map((c, i) => [c, i])),
+    ...histograms(m),
   };
   return metaCache;
 }
@@ -428,6 +444,36 @@ function toRow(h: Hit, info: IndexInfo): Record<string, unknown> {
   return out;
 }
 
+/** The lowest id a walk from `below` down needs to cover about `span` rows of the table, from
+ * the loader's per-day row counts (search_meta 'hist'). Labels inside a day are about STRIDE
+ * apart, so a position inside a day is read off its label. 0 (no bound) without a histogram. */
+export function idBound(info: IndexInfo, below: number, span: number): number {
+  if (!info.hist.length) return 0;
+  let need = Math.max(1, span);
+  const top = Math.floor((below - 1) / LABEL_SPAN);
+  for (const [k, n] of info.hist) {
+    if (k > top) continue;
+    const base = k * LABEL_SPAN;
+    const avail = k === top ? Math.min(n, Math.floor((below - base) / STRIDE)) : n;
+    if (avail >= need) return base + STRIDE * (avail - need);
+    need -= avail;
+  }
+  return 0;
+}
+
+/** The lowest pay a walk of the pay index from `pay` down needs to cover about `span` rows, from
+ * the loader's pay quantiles (search_meta 'payq': every payq_step-th pay, highest first). */
+export function payBound(info: IndexInfo, pay: number, span: number): number {
+  const qs = info.payq;
+  if (!qs.length) return 1;
+  // Always strictly below `pay`, so every range makes progress; the rows AT `pay` (a tie, and
+  // salaries tie a lot) are read whole in the same range.
+  let i = 0;
+  while (i < qs.length && qs[i]! >= pay) i++;
+  const j = i + Math.max(1, Math.ceil(span / info.payqStep)) - 1;
+  return j < qs.length ? qs[j]! : 1;
+}
+
 /** One page of results for parsed facets. `after` is a decoded, already-checked cursor.
  *
  * Plans, all answering the same rows in the same order (search-parity.test.ts runs each):
@@ -438,7 +484,8 @@ function toRow(h: Hit, info: IndexInfo): Record<string, unknown> {
  * W, P and Z stop after `cap` index rows; the page is then short and the cursor carries on. */
 export async function searchPage(env: Env, f: Facets, limit: number, after: CursorBody | null,
                                  info: IndexInfo, nowMs: number,
-                                 opts: { cap?: number; noFts?: boolean; noSort?: boolean } = {}): Promise<Page> {
+                                 opts: { cap?: number; noFts?: boolean; noSort?: boolean;
+                                         trace?: Array<{ sql: string; binds: unknown[]; read: number }> } = {}): Promise<Page> {
   const db = env.SEARCH_DB!;
   const version = info.v ?? "";
   const served = after?.n ?? 0;
@@ -446,13 +493,14 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
   const q = buildQuery(f, nowMs, info.visaBits);
   const match = opts.noFts ? null : q.match;
   const segs = ranges(f, nowMs);
-  let cap = opts.cap ?? SCAN_CAP;
+  const cap = opts.cap ?? SCAN_CAP;
   let read = 0, queries = 0;
 
   const run = async <T>(sql: string, binds: unknown[]) => {
     const r = await db.prepare(sql).bind(...binds).all<T>();
     read += r.meta?.rows_read ?? 0;
     queries += 1;
+    opts.trace?.push({ sql: sql.replace(/\s+/g, " "), binds, read: r.meta?.rows_read ?? 0 });
     return { rows: r.results, read: r.meta?.rows_read ?? 0 };
   };
   const and = (conds: string[]) => (conds.length ? ` WHERE ${conds.join(" AND ")}` : "");
@@ -474,29 +522,22 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
   }
 
   // ---- the scan -------------------------------------------------------------------------- //
+  // Every query is a plain ordered walk (the table by id, the keyword index by rowid, or the pay
+  // index) that SQLite stops as soon as the page is full, so a common search reads about a page
+  // of rows. A rare filter mix could walk far, so each query also gets a lower bound from the
+  // loader's histograms: about `budget` rows of the index, no more. When a range runs out before
+  // the page is full, the next range starts below it, until the request has read SCAN_CAP rows;
+  // then the page goes back short and the cursor carries on from that bound.
   const hits: Hit[] = [];
   let ended = false;        // nothing is left below `pos`
-  let scanned = 0;          // index rows walked this request (for the estimate)
+  let scanned = 0;          // table rows walked this request without a keyword (for the estimate)
   let matchedAll = 0;       // rows found this request, including one past the page
   const want = () => take + 1 - hits.length;
+  let budget = cap;
 
-  /** One range of one walk. `sql(limit)` reads matching rows from `pos` down; `edge()` answers
-   * the last index row the capped window reaches, or null when the range ends inside it. */
-  const step = async (sql: () => { text: string; binds: unknown[] },
-                      edge: () => { text: string; binds: unknown[] },
-                      at: (h: { id: number; pay: number }) => void): Promise<"full" | "cap" | "end"> => {
-    const s = sql();
-    const got = await run<Hit>(s.text, s.binds);
-    for (const h of got.rows) { at(h); h.at = { ...pos }; hits.push(h); }
-    matchedAll += got.rows.length;
-    const walked = Math.max(got.rows.length, Math.floor((got.read - got.rows.length) / 2));
-    if (want() <= 0) { scanned += walked; return "full"; }
-    const e = edge();
-    const last = (await run<{ id: number; pay: number }>(e.text, e.binds)).rows[0];
-    if (last) { scanned += cap; at(last); cap = 0; return "cap"; }
-    scanned += walked;
-    cap = Math.max(0, cap - Math.max(1, walked));
-    return "end";
+  const collect = (rows: Hit[], at: (h: Hit) => void) => {
+    for (const h of rows) { at(h); h.at = { ...pos }; hits.push(h); }
+    matchedAll += rows.length;
   };
 
   if (pos.p === "S") {
@@ -507,63 +548,78 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
        CROSS JOIN jobs j ON j.id = c.id ${EXTRAS}${and(where)}
        ORDER BY j.pay DESC, j.id DESC LIMIT ?`,
       [match, ...q.binds, pos.k, pos.b, want()]);
-    for (const h of got.rows) { h.at = { p: "S", s: 0, b: h.id, k: h.pay }; hits.push(h); }
-    matchedAll += got.rows.length;
+    collect(got.rows, (h) => { pos.k = h.pay; pos.b = h.id; });
     if (want() > 0) ended = true;
   }
 
-  while (pos.p === "P" && want() > 0 && cap > 0 && !ended) {
-    // The pay index, highest first. A minimum-pay facet ends the walk where pay drops below it.
-    const lo = f.pay > 0 ? "j.pay > 0 AND j.pay >= ?" : "j.pay > 0";
-    const loBind = f.pay > 0 ? [f.pay] : [];
-    const window = `SELECT id, pay FROM jobs j INDEXED BY jobs_pay WHERE ${lo} AND (j.pay, j.id) < (?, ?)
-                    ORDER BY j.pay DESC, j.id DESC LIMIT ?`;
-    const k = pos.k, b = pos.b, c = cap;
-    const r = await step(
-      () => ({ text: `SELECT ${COLS} FROM (${window}) c CROSS JOIN jobs j ON j.id = c.id ${EXTRAS}${and(q.where)}
-                      ORDER BY j.pay DESC, j.id DESC LIMIT ?`,
-               binds: [...loBind, k, b, c, ...q.binds, want()] }),
-      () => ({ text: `SELECT id, pay FROM jobs j INDEXED BY jobs_pay WHERE ${lo} AND (j.pay, j.id) < (?, ?)
-                      ORDER BY j.pay DESC, j.id DESC LIMIT 1 OFFSET ?`,
-               binds: [...loBind, k, b, c - 1] }),
-      (h) => { pos.k = h.pay; pos.b = h.id; });
-    if (r === "end") {
-      if (f.pay > 0) ended = true;                      // rows with no pay cannot clear a minimum
-      else pos = { p: "Z", s: 0, b: ID_END, k: 0 };
+  const floor = Math.max(1, f.pay);           // the pay index holds pay > 0; a minimum cuts it
+  while (pos.p === "P" && want() > 0 && budget > 0 && !ended) {
+    // The pay index, highest first, down to a pay about `budget` rows below where it stands.
+    // Term order matters: with `pay >= ?` first SQLite bounds the index range by it (measured:
+    // 48,965 rows read for a pay floor of 150,000, against 172,150 with `pay > 0` first). The
+    // `pay > 0` term is what lets SQLite use the partial index at all.
+    const lo = Math.min(pos.k, Math.max(floor, payBound(info, pos.k, budget)));
+    if (pos.k <= lo && pos.b === 0) { pos = { p: "Z", s: 0, b: ID_END, k: 0 }; if (f.pay > 0) ended = true; continue; }
+    const got = await run<Hit>(
+      `SELECT ${COLS} FROM jobs j INDEXED BY jobs_pay ${EXTRAS}
+       WHERE j.pay >= ? AND j.pay > 0 AND (j.pay, j.id) < (?, ?)${q.where.length ? " AND " + q.where.join(" AND ") : ""}
+       ORDER BY j.pay DESC, j.id DESC LIMIT ?`,
+      [lo, pos.k, pos.b, ...q.binds, want()]);
+    collect(got.rows, (h) => { pos.k = h.pay; pos.b = h.id; });
+    budget -= Math.max(1, got.read);
+    scanned += Math.max(0, got.read - 2 * got.rows.length);
+    if (want() > 0) {
+      if (lo <= floor) {                        // the pay index is done
+        if (f.pay > 0) ended = true;            // rows with no pay cannot clear a minimum
+        else pos = { p: "Z", s: 0, b: ID_END, k: 0 };
+      } else {
+        pos = { ...pos, k: lo, b: 0 };          // every row at pay `lo` was read: below it next
+      }
     }
   }
 
-  while ((pos.p === "W" || pos.p === "Z") && want() > 0 && cap > 0 && !ended) {
+  let span = budget;                            // index rows the next W / Z range should cover
+  while ((pos.p === "W" || pos.p === "Z") && want() > 0 && budget > 0 && !ended) {
     const seg = segs[pos.s];
     if (!seg) { ended = true; break; }
     const [low, high] = seg;
     const below = Math.min(pos.b, high + 1);
-    const c = cap;
-    const extra = pos.p === "Z" ? ["j.pay = 0"] : [];
-    let from: string, edgeSql: string, head: unknown[];
-    if (match && pos.p === "W") {
-      const window = "SELECT rowid AS id FROM jobs_fts WHERE jobs_fts MATCH ? AND rowid < ? AND rowid >= ? "
-        + "ORDER BY rowid DESC LIMIT ?";
-      from = `(${window}) c CROSS JOIN jobs j ON j.id = c.id`;
-      edgeSql = `SELECT id, 0 AS pay FROM (${window.replace("LIMIT ?", "LIMIT 1 OFFSET ?")})`;
-      head = [match, below, low];
-    } else {
-      // "Ad offers sponsorship" is under 1% of rows and has its own small index.
-      const src = f.sponsored && pos.p === "W"
-        ? `jobs INDEXED BY jobs_offered WHERE (f & ${F_OFFERED}) != 0 AND` : "jobs WHERE";
-      const window = `SELECT id FROM ${src} id < ? AND id >= ? ORDER BY id DESC LIMIT ?`;
-      from = `(${window}) c CROSS JOIN jobs j ON j.id = c.id`;
-      edgeSql = `SELECT id, 0 AS pay FROM (${window.replace("LIMIT ?", "LIMIT 1 OFFSET ?")})`;
-      head = [below, low];
-    }
-    const r = await step(
-      () => ({ text: `SELECT ${COLS} FROM ${from} ${EXTRAS}${and([...extra, ...q.where])} ORDER BY j.id DESC LIMIT ?`,
-               binds: [...head, c, ...q.binds, want()] }),
-      () => ({ text: edgeSql, binds: [...head, c - 1] }),
-      (h) => { pos.b = h.id; });
-    if (r === "end") {
+    const nextSeg = () => {
       pos = { ...pos, s: pos.s + 1, b: ID_END };
       if (!segs[pos.s]) ended = true;
+    };
+    if (below <= low) { nextSeg(); continue; }
+    const fts = Boolean(match) && pos.p === "W";
+    // "Ad offers sponsorship" walks its own small index (under 1% of rows) to the end.
+    const offered = f.sponsored && pos.p === "W" && !fts;
+    let bound = offered ? low : Math.max(low, idBound(info, below, span));
+    if (bound >= below) bound = Math.max(low, below - 1);
+    const conds = [...(pos.p === "Z" ? ["j.pay = 0"] : []), ...q.where];
+    const tail = conds.length ? " AND " + conds.join(" AND ") : "";
+    // D1 binds a JavaScript number as REAL, and FTS5 then ignores a rowid bound (measured: every
+    // match read, 36,892 rows, instead of 306): the casts keep the bounds INTEGER.
+    const got = fts
+      ? await run<Hit>(
+        `SELECT ${COLS} FROM jobs_fts c CROSS JOIN jobs j ON j.id = c.rowid ${EXTRAS}
+         WHERE jobs_fts MATCH ? AND c.rowid < CAST(? AS INTEGER) AND c.rowid >= CAST(? AS INTEGER)${tail}
+         ORDER BY c.rowid DESC LIMIT ?`,
+        [match, below, bound, ...q.binds, want()])
+      : await run<Hit>(
+        `SELECT ${COLS} FROM jobs j ${offered ? "INDEXED BY jobs_offered " : ""}${EXTRAS}
+         WHERE j.id < ? AND j.id >= ?${tail} ORDER BY j.id DESC LIMIT ?`,
+        [below, bound, ...q.binds, want()]);
+    collect(got.rows, (h) => { pos.b = h.id; });
+    budget -= Math.max(1, got.read);
+    if (!fts) scanned += Math.max(0, got.read - 2 * got.rows.length);
+    if (want() > 0) {
+      if (bound <= low) { nextSeg(); continue; }
+      pos = { ...pos, b: bound };
+      // A keyword reads only its matches: widen the next range by how sparse they were.
+      // At most 4 times wider each step, so a stretch where matches crowd together cannot make
+      // one query read far past the budget.
+      span = fts ? Math.min(span * 4, Math.max(info.rows, 1),
+                            Math.round(Math.max(1, budget) * span / Math.max(1, got.read)))
+                 : budget;
     }
   }
 
@@ -598,6 +654,7 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
     } else if (probe !== null && onlyText) {
       // The keyword index's own count: the rows holding the text's trigrams, a close upper bound.
       if (probe <= FTS_COUNT_CAP) estimate = Math.max(probe, count);
+      else count = Math.max(count, FTS_COUNT_CAP);   // "250+": the probe found at least that many
     } else if (probe === null && !match && scanned >= 50 && !(f.days > 0)) {
       // The share of the rows walked that matched, applied to the whole list: "about N".
       const total = f.sponsored ? 0 : info.rows;

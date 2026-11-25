@@ -474,6 +474,23 @@ def waves(plan: "Plan", first_load: bool, fits):
             pos += take
 
 
+PAYQ_STEP = 500
+
+
+def histograms(ids: dict[str, int], feed: dict[str, dict], payq_step: int = PAYQ_STEP) -> dict[str, str]:
+    """What lets the Worker bound a walk without counting rows (search.ts idBound / payBound):
+    `hist`, the rows per day key (id >> LABEL_BITS), highest first; `payq`, every payq_step-th
+    pay of the rows that state one, highest first. A few KB in search_meta."""
+    days: dict[int, int] = {}
+    for jid in ids.values():
+        k = int(jid) >> LABEL_BITS
+        days[k] = days.get(k, 0) + 1
+    pays = sorted((p for p in (salary_value(feed[sid].get("salary")) for sid in ids if sid in feed) if p > 0),
+                  reverse=True)
+    return {"hist": json.dumps(sorted(([k, n] for k, n in days.items()), reverse=True), separators=(",", ":")),
+            "payq": json.dumps(pays[::payq_step], separators=(",", ":")), "payq_step": str(payq_step)}
+
+
 def meta_statement(values: dict[str, str]) -> str:
     return ("INSERT INTO search_meta (k, v) VALUES "
             + ", ".join("(" + lit(k) + ", " + lit(str(v)) + ")" for k, v in values.items())
@@ -713,6 +730,7 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client=None,
                 "sponsor_rows": str(sum(1 for sid in live
                                         if sid in plan.feed and in_sponsor_scope(plan.feed[sid]))),
                 "pending": str(plan.pending - done_deletes - done_upserts),
+                **histograms({sid: v[1] for sid, v in live.items()}, plan.feed),
                 "loaded_at": _utc(now).strftime("%Y-%m-%dT%H:%M:%SZ"),
             })
             if complete:
