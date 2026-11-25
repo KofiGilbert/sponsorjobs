@@ -9699,64 +9699,88 @@
     SCR_PREP = prep; SCREEN = null; SCR_EXTRA = false; SCR_UPLOADS = {}; SCR_TR = {}; SCR_RETAKES = {}; SCR_PRACTICE = null;
     SCR_DRILL = (opts && Array.isArray(opts.drill) && opts.drill.length) ? opts.drill : null; SCR_SECS = {};
     $("#prepList").hidden = true; $("#prepScreen").hidden = false;
-    renderR1Landing();
+    renderR1Intro(); r1LoadDefaults();
   }
   // Internal resume-variant labels ("Area Manager, A: experience-first") never belong in
   // the interview UI; the person is interviewing for the role, not one of our CV variants.
   function prepRole(p) { return String((p && p.role) || "").replace(/,\s*[A-Za-z0-9]+:\s.+$/, "").trim(); }
   function scrHead(count, timer) { $("#scrCount").textContent = count || ""; $("#scrTimer").textContent = timer || ""; }
   function r1Title(p) { return esc(prepRole(p)) + (p.company ? " " + esc(T("r1.at", "at")) + " " + esc(p.company) : ""); }
-  function r1Kinds(p) {
-    const kinds = [...new Set((p.questions || []).map(q => String(q.type || q.kind || "").trim()).filter(Boolean))];
-    return kinds.length ? kinds.join(", ") : T("r1.kindsDefault", "Behavioral and role-specific questions");
+  // Screen 1: the intro. ONE screen before the camera turns on (the real product also opens on a
+  // single page that walks through the interview's requirements): who it is for, what to expect in
+  // the real configured numbers, where recordings go, the extra-time option (it multiplies both
+  // clocks, and replaced the old Realistic/Relaxed switch), and one action. Exit (in the bar) is
+  // the way out, so there is no Back or "Not now".
+  let SCR_DEFAULTS = null;
+  async function r1LoadDefaults() {
+    if (!SCR_DEFAULTS) { try { const d = await api("/api/screens/config"); if (d && d.prep_s) SCR_DEFAULTS = d; } catch (e) { /* the line then says only how many questions */ } }
+    r1FactsPaint();
   }
-  // Screen 1: the welcome. Company and role, what to expect, one action. Exit (in the bar) is
-  // the way out, so there is no second "Not now" button.
-  function renderR1Landing() {
+  // "30 seconds", "2 minutes": whole minutes are said as minutes.
+  function r1Dur(secs) {
+    if (secs % 60) return T("r1.secs", "{n} seconds").replace("{n}", String(secs));
+    const m = secs / 60;
+    return m === 1 ? T("r1.min1", "1 minute") : T("r1.mins", "{n} minutes").replace("{n}", String(m));
+  }
+  // What to expect, from the numbers the interview will really run on.
+  function r1Facts() {
+    const n = SCR_DRILL ? SCR_DRILL.length : R1_QUESTIONS, d = SCR_DEFAULTS;
+    const parts = [n === 1 ? T("r1.factQuestion", "1 question") : T("r1.factQuestions", "{n} questions").replace("{n}", String(n))];
+    if (d) {
+      const f = SCR_EXTRA ? Number(d.extra_time_factor || 2) : 1, prep = d.prep_s * f, answer = d.answer_s * f, re = Number(d.retakes || 0);
+      const mins = Math.max(5, Math.round((n * (prep + answer) * (1 + re * 0.5)) / 60 / 5) * 5);
+      parts.push(T("r1.factAbout", "about {n} minutes").replace("{n}", String(mins)));
+      parts.push(T("r1.factClocks", "{prep} to prepare, {answer} to answer").replace("{prep}", r1Dur(prep)).replace("{answer}", r1Dur(answer)));
+      parts.push(re === 0 ? T("r1.factNoRetake", "no retakes") : re === 1 ? T("r1.factRetake", "1 retake") : T("r1.factRetakes", "{n} retakes").replace("{n}", String(re)));
+    }
+    return parts;
+  }
+  // Each fact stays whole when the line wraps: it breaks at a dot, never inside "30 seconds to prepare".
+  const r1FactsHtml = () => r1Facts().map(x => `<span>${esc(x)}</span>`).join(" \u00b7 ");
+  function r1FactsPaint() { const el = $("#r1Facts"); if (el) el.innerHTML = r1FactsHtml(); }
+  function renderR1Intro() {
     const p = SCR_PREP;
     scrHead("", ""); SCR_PHASE = "idle";
-    $("#scrStage").innerHTML = r1Stage("welcome", { solo: true, body: `
-      <div class="r1-label"><span>${esc(T("r1.eyebrow", "Round 1, recorded interview"))}</span></div>
+    const point = (ic, key, text) => `<li>${R1_IC[ic]}<span>${esc(T(key, text))}</span></li>`;
+    $("#scrStage").innerHTML = r1Stage("intro", { solo: true, body: `
+      <div class="r1-label"><span>${esc(T("r1.eyebrow", "Round 1 \u00b7 recorded interview"))}</span></div>
       <h2 class="r1-h">${r1Title(p)}</h2>
-      <p class="r1-sub">${SCR_DRILL
-        ? esc(T("rc.drillFacts", "Re-drill: {n} questions from your report card.").replace("{n}", String(SCR_DRILL.length)))
-        : esc(T("r1.landingFacts", "5 questions, about 20 minutes.")) + " " + esc((k => k ? k.charAt(0).toUpperCase() + k.slice(1) : "")(r1Kinds(p))) + "."}</p>
+      <p class="r1-facts" id="r1Facts">${r1FactsHtml()}</p>
       ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : ""}
-      <div class="r1-solo-acts">
-        <button class="r1-btn r1-btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
-      </div>
-      <p class="r1-fine">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>` });
-    $("#scrBegin")?.addEventListener("click", renderR1Notice);
-  }
-  // Screen 2: the notice. Where recordings go, how to delete them, no facial analysis, and the
-  // extra-time option (doubles the clocks), which replaced the old Realistic/Relaxed switch.
-  function renderR1Notice() {
-    scrHead("", ""); SCR_PHASE = "idle";
-    $("#scrStage").innerHTML = r1Stage("notice", { solo: true, body: `
-      <div class="r1-label"><span>${esc(T("r1.noticeH", "Before you begin"))}</span></div>
-      <ul class="r1-notice">
-        <li>${esc(T("r1.notice1", "Recordings stay on this computer."))}</li>
-        <li>${esc(T("r1.notice2", "Delete them any time from the report."))}</li>
-        <li>${esc(T("r1.notice3", "No facial analysis. Only your words are scored."))}</li>
+      <ul class="r1-points">
+        ${point("lock", "r1.notice1", "Recordings stay on this computer.")}
+        ${point("trash", "r1.notice2", "Delete them any time.")}
+        ${point("eyeOff", "r1.notice3", "No facial analysis. Only your words are scored.")}
       </ul>
       <label class="r1-check"><input type="checkbox" id="scrExtra" ${SCR_EXTRA ? "checked" : ""}>
         <span><b>${esc(T("r1.extraTime", "I need extra time"))}</b> <span class="r1-check-d">${esc(T("r1.extraTimeD", "Doubles the prep and answer time."))}</span></span></label>
       <div class="r1-solo-acts">
-        <button class="r1-btn r1-btn-primary" id="scrNoticeGo" type="button">${esc(T("r1.continue", "Continue"))}</button>
-        <button class="r1-btn r1-btn-ghost" id="scrNoticeBack" type="button">${esc(T("r1.back", "Back"))}</button>
-        <span class="r1-solo-msg" id="scrNoticeMsg" hidden></span>
-      </div>` });
-    $("#scrExtra")?.addEventListener("change", (e) => { SCR_EXTRA = !!e.target.checked; });
-    $("#scrNoticeBack")?.addEventListener("click", renderR1Landing);
-    $("#scrNoticeGo")?.addEventListener("click", async () => {
-      const btn = $("#scrNoticeGo"), msg = $("#scrNoticeMsg");
-      if (SCREEN && SCREEN.config && !!SCREEN.config.extra_time === SCR_EXTRA && SCREEN.i == null) { goDevices(); return; }   // back from the device check: same screen
-      btn.disabled = true;
+        <button class="r1-btn r1-btn-primary" id="scrBegin" type="button"><i class="r1-btn-spin" aria-hidden="true"></i><span id="scrBeginT">${esc(T("r1.getStarted", "Get started"))}</span></button>
+        <span class="r1-solo-msg" id="scrBeginMsg" role="alert" hidden></span>
+      </div>
+      <p class="r1-fine">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>` });
+    $("#scrExtra")?.addEventListener("change", (e) => { SCR_EXTRA = !!e.target.checked; r1FactsPaint(); });
+    $("#scrBegin")?.addEventListener("click", async () => {
+      const btn = $("#scrBegin"), msg = $("#scrBeginMsg");
+      if (btn.classList.contains("is-busy")) return;
+      if (msg) msg.hidden = true;
+      // Back here after the camera was refused: the interview already exists, do not make another.
+      if (SCREEN && SCREEN.config && !!SCREEN.config.extra_time === SCR_EXTRA && SCREEN.i == null) { goDevices(); return; }
+      // In flight the button keeps its colour (a greyed primary reads as "you can't"); if the start
+      // takes more than a moment it says so, with a spinner.
+      btn.classList.add("is-busy"); btn.setAttribute("aria-busy", "true");
+      const slow = setTimeout(() => { btn.classList.add("is-slow"); const t = $("#scrBeginT"); if (t) t.textContent = T("r1.starting", "Starting..."); }, 300);
       const body = { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS, ...(SCR_DRILL ? { drill: SCR_DRILL } : {}) };
       try { SCREEN = await api("/api/screens", body); }
-      catch (err) { btn.disabled = false; if (msg) { msg.textContent = err.message || T("r1.cantStart", "Couldn't start the interview."); msg.hidden = false; } return; }
+      catch (err) {
+        clearTimeout(slow); btn.classList.remove("is-busy", "is-slow"); btn.removeAttribute("aria-busy");
+        const t = $("#scrBeginT"); if (t) t.textContent = T("r1.getStarted", "Get started");
+        if (msg) { msg.textContent = err.message || T("r1.cantStart", "Couldn't start the interview."); msg.hidden = false; }
+        return;
+      }
       SCR_PRACTICE = SCREEN.practice || null;
-      goDevices();
+      await goDevices();
+      clearTimeout(slow);
     });
   }
   // ---- The stage (the whole of Round 1 up to the report): one composed card, the same on every
@@ -9773,6 +9797,9 @@
     cam: `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="1.8" y="4" width="8.6" height="8" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.4 7.2l3.8-2v5.6l-3.8-2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
     mic: `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="5.8" y="1.8" width="4.4" height="7.6" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0M8 12v2.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`,
     chev: `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    lock: `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.6"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></svg>`,
+    trash: `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.3h10.4M6.2 4.3V2.8h3.6v1.5M4.2 4.3l.6 9h6.4l.6-9M6.7 7v4M9.3 7v4"/></svg>`,
+    eyeOff: `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.9A6.3 6.3 0 0 1 8 3.7c3.6 0 5.8 4.3 5.8 4.3a10 10 0 0 1-1.6 2.1M10.2 11.7A5.7 5.7 0 0 1 8 12.3C4.4 12.3 2.2 8 2.2 8a10.2 10.2 0 0 1 2.6-3M6.7 6.8a1.8 1.8 0 0 0 2.5 2.5M2.5 2.5l11 11"/></svg>`,
     gear: `<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   };
   const r1Meter = () => `<span class="rec-meter" title="${esc(T("r1.micLevel", "Mic level"))}"><span class="rec-meter-ic" aria-hidden="true">${R1_IC.mic}</span><span class="rec-meter-track"><i class="rec-meter-fill"></i></span></span>`;
@@ -9987,10 +10014,10 @@
   // Screen 3: device check. Camera and mic turn on here; the person confirms they can see and
   // hear themselves, and can pick another camera or microphone.
   async function goDevices() {
-    if (!navigator.mediaDevices?.getUserMedia) { toast(T("r1.noCamera", "This browser can't reach your camera. Try Chrome or Edge.")); renderR1Notice(); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { toast(T("r1.noCamera", "This browser can't reach your camera. Try Chrome or Edge.")); renderR1Intro(); return; }
     if (!SCR_STREAM) {
       try { SCR_STREAM = await r1OpenStream(); }
-      catch { toast(T("r1.allowCamera", "Camera and mic access is needed. Please allow them and try again.")); renderR1Notice(); return; }
+      catch { toast(T("r1.allowCamera", "Camera and mic access is needed. Please allow them and try again.")); renderR1Intro(); return; }
       try { navigator.mediaDevices.addEventListener("devicechange", r1DevChanged); } catch (e) {}
     }
     SCR_DEV_NOTE = ""; SCR_SILENT = false;

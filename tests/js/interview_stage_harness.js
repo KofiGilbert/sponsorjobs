@@ -1,6 +1,6 @@
 // The recorded interview stage in a real Chromium, with a fake camera and microphone.
 //
-// Walks the real app.js through the session (welcome, notice, device check, practice, countdown,
+// Walks the real app.js through the session (the intro, device check, practice, countdown,
 // recording, playback, a real question, All done) with every /api answer stubbed here, so nothing
 // depends on a model or a saved profile. It checks the rules the stage promises:
 //   - focus mode: the app's chrome is hidden only while a session runs, and comes back on Exit;
@@ -72,21 +72,26 @@ async function stub(page, questions, opts) {
                    questions: questions.map((text) => ({ text, q: text, kind: "behavioral" })) };
   await page.route("**/api/preps", (r) => r.request().method() === "POST"
     ? json(r, { prep: { id: "p1", role: "Data Analyst", company: "Acme Robotics", questions: [] } }) : r.continue());
-  await page.route("**/api/screens", (r) => json(r, { ...screen, practice: { text: (opts && opts.practice) || Q.typical, kind: "practice" }, screen }));
+  await page.route("**/api/screens", async (r) => {
+    if (opts) opts.sent = r.request().postDataJSON();          // what Get started really asked for
+    if (opts && opts.slowStart) await new Promise((ok) => setTimeout(ok, opts.slowStart));
+    const cfg = opts && opts.sent && opts.sent.extra_time ? { ...screen.config, prep_s: 60, answer_s: 240, extra_time: true } : screen.config;
+    await json(r, { ...screen, config: cfg, practice: { text: (opts && opts.practice) || Q.typical, kind: "practice" }, screen: { ...screen, config: cfg } });
+  });
   await page.route("**/api/screens/s1/practice*", (r) => json(r, { text: Q.short, kind: "practice" }));
   await page.route("**/api/screens/s1/answers/*", (r) => json(r, r.request().url().endsWith("/transcribe")
     ? { available: true, transcript: "I learned it by doing it." } : { ok: true, takes_left: 0 }));
   await page.route("**/api/screens/s1/score", () => { /* never answers: the All done screen stays up */ });
 }
 
-async function open(browser, { w, h, theme, questions, multi, practice }) {
+async function open(browser, { w, h, theme, questions, multi, practice, net }) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h } });
   const page = await ctx.newPage();
   // "tailor_onboarded_v1": a brand-new install jumps to Jobs once its profile has loaded, which
   // would pull the walk off the Interview view a few seconds in. This is not a first launch.
   await page.addInitScript((t) => { try { localStorage.setItem("tailor-theme", t); localStorage.setItem("tailor_onboarded_v1", "1"); } catch (e) {} }, theme || "light");
   if (multi) await page.addInitScript(MULTI);
-  await stub(page, questions || [Q.typical, Q.short], { practice });
+  await stub(page, questions || [Q.typical, Q.short], Object.assign(net || {}, { practice }));
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await settle(page);
   await page.click('[data-nav="prep"]');
@@ -98,7 +103,7 @@ async function open(browser, { w, h, theme, questions, multi, practice }) {
   return { ctx, page };
 }
 const settle = async (page) => { await page.waitForLoadState("load"); await page.waitForTimeout(300); };
-const toCheck = async (page) => { await page.click("#scrBegin"); await page.click("#scrNoticeGo", { timeout: 5000 }).catch(async (e) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "fail.png") }); throw e; }); await page.waitForSelector('#r1Stage[data-step="check"]'); await page.waitForTimeout(700); };
+const toCheck = async (page) => { await page.click("#scrBegin"); await page.waitForSelector('#r1Stage[data-step="check"]'); await page.waitForTimeout(700); };
 const record = async (page) => { await page.click("#r1Start"); await page.waitForSelector("#r1Stop", { timeout: 8000 }); };
 const rect = (page, sel) => page.evaluate((s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, r: r.right, b: r.bottom }; }, sel);
 const shown = (page, sel) => page.evaluate((s) => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect(); return getComputedStyle(e).display !== "none" && r.width > 0 && r.height > 0; }, sel);
@@ -158,17 +163,30 @@ async function layoutRun(browser, w, h, theme) {
   SHOT_TAG = `${w}x${h}-${theme}`;
   const counts = {};
   const { ctx, page } = await open(browser, { w, h, theme, multi: true });
-  // The welcome and the notice are the same stage: only the card, the app's chrome hidden.
+  // The intro is the same stage: only the card, the app's chrome hidden. One screen, one action.
   const chrome = [".sidebar", "#view-prep > .page-head", "#prepScreen > .mock-top", ".privacy-line", ".panel-rail", "#prepProgress"];
-  for (const sel of chrome) assert(!(await shown(page, sel)), `${sel} is hidden on the welcome`);
+  for (const sel of chrome) assert(!(await shown(page, sel)), `${sel} is hidden on the intro`);
+  await page.waitForFunction(() => /retake/.test(document.querySelector("#r1Facts")?.textContent || ""));
   const solo = await rect(page, ".r1-card");
-  assert(near(solo.x + solo.w / 2, w / 2, 2) && solo.y >= 52 && solo.b <= h, "the welcome card is centred and whole");
-  counts.welcome = await strings(page);
-  await shot(page, "0a-welcome");
-  await page.click("#scrBegin");
-  counts.notice = await strings(page);
-  await shot(page, "0b-notice");
-  await page.click("#scrNoticeGo"); await page.waitForSelector('#r1Stage[data-step="check"]'); await page.waitForTimeout(700);
+  assert(near(solo.x + solo.w / 2, w / 2, 2) && solo.y >= 52 && solo.b <= h, "the intro card is centred and whole");
+  assert(solo.w >= 720 && solo.w >= w * 0.49, `the intro card is a proper size for the window (${Math.round(solo.w)} of ${w})`);
+  assert(solo.y - 52 <= h - solo.b + 2, "the intro card sits in the upper middle");
+  const type = await page.evaluate(() => { const px = (sel) => parseFloat(getComputedStyle(document.querySelector(sel)).fontSize);
+    return { h: px(".r1-card .r1-h"), facts: px("#r1Facts"), point: px(".r1-points li"), check: px(".r1-check"), btn: px("#scrBegin") }; });
+  assert(type.h >= 26 && type.facts >= 16 && type.point >= 16 && type.check >= 16, `the intro is set at the stage's scale (${JSON.stringify(type)})`);
+  const tick = await rect(page, "#scrExtra"), ic = await rect(page, ".r1-points li svg");
+  assert(near(tick.w, ic.w, 2) && near(tick.x, ic.x, 1.5), `the tick box is the size of the icons and lines up with them (${tick.w} and ${ic.w})`);
+  if (w > 2000) assert(type.h >= 40 && type.point >= 24, `and scales up in a large window (${JSON.stringify(type)})`);
+  assert((await page.textContent("#r1Facts")) === "5 questions · about 20 minutes · 30 seconds to prepare, 2 minutes to answer · 1 retake", `what to expect, in the real numbers (${await page.textContent("#r1Facts")})`);
+  assert(await page.evaluate(() => document.querySelectorAll(".r1-points li svg").length === 3 && document.querySelectorAll(".r1-card .r1-btn").length === 1), "three points with icons, one button");
+  // Enabled means the solid primary, at full strength.
+  const btn = await page.evaluate(() => { const b = document.querySelector("#scrBegin"), cs = getComputedStyle(b), probe = document.createElement("i");
+    probe.style.color = "var(--r1-primary)"; b.parentElement.appendChild(probe); const want = getComputedStyle(probe).color; probe.remove();
+    return { bg: cs.backgroundColor, want, opacity: cs.opacity, disabled: b.disabled }; });
+  assert(btn.bg === btn.want && btn.opacity === "1" && !btn.disabled, `Get started is the solid primary when enabled (${JSON.stringify(btn)})`);
+  counts.intro = await strings(page);
+  await shot(page, "0-intro");
+  await page.click("#scrBegin"); await page.waitForSelector('#r1Stage[data-step="check"]'); await page.waitForTimeout(700);
   for (const sel of chrome) assert(!(await shown(page, sel)), `${sel} is hidden while a session runs`);
   const stage = await rect(page, "#r1Stage");
   assert(near(stage.x, 0) && near(stage.y, 0) && near(stage.w, w) && near(stage.h, h), `the stage fills the window (${JSON.stringify(stage)})`);
@@ -340,6 +358,53 @@ async function narrowRun(browser) {
   await ctx.close();
 }
 
+// The intro: extra time is said and sent, a slow start says so without greying the button, a
+// failed start can be tried again, and it holds at 700 wide.
+async function introRun(browser) {
+  SHOT_TAG = "1440x806-light";
+  const net = { slowStart: 1500 };
+  let { ctx, page } = await open(browser, { w: 1440, h: 806, net });
+  await page.waitForFunction(() => /retake/.test(document.querySelector("#r1Facts")?.textContent || ""));
+  await page.check("#scrExtra");
+  assert((await page.textContent("#r1Facts")) === "5 questions · about 40 minutes · 1 minute to prepare, 4 minutes to answer · 1 retake", `extra time doubles the clocks in the line (${await page.textContent("#r1Facts")})`);
+  await shot(page, "0-intro-extra-time");
+  await page.click("#scrBegin");
+  assert((await page.textContent("#scrBeginT")) === "Get started", "a quick start does not flash a second label");
+  await page.waitForTimeout(600);
+  const busy = await page.evaluate(() => { const b = document.querySelector("#scrBegin"), cs = getComputedStyle(b);
+    return { text: b.textContent.trim(), disabled: b.disabled, opacity: cs.opacity, spin: getComputedStyle(b.querySelector(".r1-btn-spin")).display, busy: b.getAttribute("aria-busy") }; });
+  assert(busy.text === "Starting..." && busy.spin !== "none" && busy.busy === "true", `a slow start says Starting with a spinner (${JSON.stringify(busy)})`);
+  assert(!busy.disabled && busy.opacity === "1", "and the button is not greyed while it starts");
+  await shot(page, "0-intro-starting");
+  await page.click("#scrBegin", { force: true }).catch(() => {});      // a second press does nothing
+  await page.waitForSelector('#r1Stage[data-step="check"]');
+  assert(net.sent && net.sent.extra_time === true && net.sent.questions === 5 && net.sent.prep_id === "p1", `the extra-time choice is sent with the start call (${JSON.stringify(net.sent)})`);
+  await page.click("#scrToPractice"); await page.waitForSelector("#r1Start");
+  assert((await page.textContent("#r1ClockT")) === "1:00", "and the doubled prep clock is the one that runs");
+  await ctx.close();
+
+  // A start that fails: one line, the button back to normal, and it can be pressed again.
+  ({ ctx, page } = await open(browser, { w: 1440, h: 806 }));
+  let fail = true;
+  await page.route("**/api/screens", (r) => { if (fail) { fail = false; return r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "No model." }) }); } return r.fallback(); });
+  await page.click("#scrBegin");
+  await page.waitForSelector("#scrBeginMsg:not([hidden])");
+  assert(await page.evaluate(() => !document.querySelector("#scrBegin").classList.contains("is-busy") && document.querySelector("#scrBeginT").textContent === "Get started"), "a failed start gives the button back");
+  await page.click("#scrBegin"); await page.waitForSelector('#r1Stage[data-step="check"]');
+  await ctx.close();
+
+  // Narrow: the Browser pane open beside the intro.
+  SHOT_TAG = "700x806-light";
+  ({ ctx, page } = await open(browser, { w: 1000, h: 806 }));
+  await page.setViewportSize({ width: 700, height: 806 });
+  await page.waitForFunction(() => /retake/.test(document.querySelector("#r1Facts")?.textContent || ""));
+  const card = await rect(page, ".r1-card"), b = await rect(page, "#scrBegin");
+  assert(card.x >= 0 && card.r <= 700 && card.b <= 806 && b.b <= card.b, `narrow: the intro card is whole (${JSON.stringify(card)})`);
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "narrow: no sideways scroll");
+  await shot(page, "0-intro");
+  await ctx.close();
+}
+
 async function deviceRun(browser) {
   SHOT_TAG = "1440x806-light";
   // Several devices: menus, live switching, memory, an unplugged headset.
@@ -404,6 +469,7 @@ async function deviceRun(browser) {
     report.q1440 = await questionRun(browser, 1440, 806);
     report.q2491 = await questionRun(browser, 2491, 1557);
     await narrowRun(browser);
+    await introRun(browser);
     report.realDevices = await deviceRun(browser);
   } finally { await browser.close(); }
   if (SHOTS) fs.writeFileSync(path.join(SHOTS, "report.json"), JSON.stringify(report, null, 2));

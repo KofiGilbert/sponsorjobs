@@ -68,11 +68,14 @@ practice or typed mock; those were removed.
 a feature name, icon or heading; the only mention is the one-line disclaimer on the landing
 ("Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc.").
 Our Round 1 tracks the real candidate flow screen by screen:
-1. **Welcome**: company + role, "5 questions, about 20 minutes", the kinds of questions, one
-   primary action ("Get started"), the disclaimer. Exit (in the bar) is the way out.
-2. **Notice**: recordings stay on this computer, can be deleted from the report, no facial
-   analysis, one short line each. An "I need extra time" accessibility checkbox doubles both
-   clocks. This replaced the old Realistic/Relaxed switch.
+1. **Intro** (ONE screen, the old welcome and "Before you begin" merged; the real product also
+   opens on a single page that walks through the interview's requirements): the label ("ROUND 1 ·
+   RECORDED INTERVIEW"), the role as the heading, one line of what to expect in the REAL numbers
+   ("5 questions · about 20 minutes · 30 seconds to prepare, 2 minutes to answer · 1 retake", from
+   `GET /api/screens/config`, never typed into the copy), three privacy points with small icons (lock,
+   trash, eye-off), the "I need extra time" tick (it multiplies both clocks and updates the line),
+   ONE button ("Get started"), the disclaimer. Exit (in the bar) is the way out: no Back, no "Not now".
+2. (merged into 1.)
 3. **Device check**: left "SET UP", the one-line heading, a Camera menu and a Microphone menu (real
    devices, switched live, remembered); right "CAMERA PREVIEW", the strip with the two tips ("Light
    in front of you. Somewhere quiet.") and the action ("Try a practice question"), the video, the
@@ -706,3 +709,10 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   welcome and "Before you begin" moved into the same card and focus mode. Lesson: when a screen
   mirrors a real product, get the product's actual screen in front of you before designing; a help
   article's description of it is not enough.
+- 2026-11-25 (intro): the owner asked whether "Before you begin" was presented well and whether the
+  real product has such a screen. It does (one requirements page, then terms, then attempts), but
+  ours was a second click-through for three lines and a tick box, in a 640px card with 14px text
+  lost in the window. Now ONE intro screen, at the stage's scale: card about 740 to 780px at a
+  normal window and growing with it (never a small box on a big screen), heading 26px and up, body
+  16px and up. A primary button never looks disabled while enabled: in flight it keeps its colour
+  (`is-busy`), and only after about 300 ms shows a spinner and "Starting...".

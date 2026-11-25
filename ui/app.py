@@ -11765,6 +11765,7 @@ ROUND1_DISCLAIMER = ("Practice for a HireVue-style one-way video interview. Not 
 # The HireVue-style clocks. `extra_time` (an accessibility accommodation, the way HireVue grants
 # extended time) doubles both; nothing else about the screen changes.
 _SCREEN_PREP_S, _SCREEN_ANSWER_S, _SCREEN_RETAKES = 30, 120, 1
+_SCREEN_EXTRA_FACTOR = 2          # "I need extra time" multiplies both clocks by this
 _SCREEN_MIN_Q, _SCREEN_MAX_Q, _SCREEN_DEFAULT_Q = 3, 5, 5
 _SCREEN_KINDS = ("motivation", "behavioural", "situational", "technical")
 _KIND_ALIASES = {"behavioral": "behavioural", "motivational": "motivation", "star": "behavioural",
@@ -12095,7 +12096,7 @@ def screens_create():
     answers = [{"q": q["q"], "kind": q["kind"], "competency": q["competency"], "why": q["why"],
                 "video_path": "", "transcript": "", "per_answer_feedback": None,
                 "delivery_metrics": None, "takes": 0} for q in qs]
-    mult = 2 if extra else 1
+    mult = _SCREEN_EXTRA_FACTOR if extra else 1
     s = {"id": uuid.uuid4().hex[:12], "prep_id": prep_id, "role": prep.get("role", ""),
          "company": prep.get("company", ""), "answers": answers, "result": None, "passed": False,
          "created": int(time.time()), "extra_time": extra, "drill": bool(drill),
@@ -12107,6 +12108,15 @@ def screens_create():
     pub = _screen_public(s)
     practice = _practice_question(s["role"])
     return jsonify({**pub, "practice": practice, "screen": {**pub, "practice": practice}})
+
+
+@app.get("/api/screens/config")
+@_guard
+def screens_config():
+    """The clocks a new recorded interview runs on, so the intro can state them before it starts
+    (the screen itself, and its own config, only exists once the person presses Get started)."""
+    return jsonify({"prep_s": _SCREEN_PREP_S, "answer_s": _SCREEN_ANSWER_S, "retakes": _SCREEN_RETAKES,
+                    "questions": _SCREEN_DEFAULT_Q, "extra_time_factor": _SCREEN_EXTRA_FACTOR})
 
 
 @app.get("/api/screens/<sid>")

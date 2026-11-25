@@ -3,7 +3,7 @@
 What the stage promises, and where each promise is pinned:
 
 * focus mode: the app's own chrome (side menu, page title, footer line) is hidden only while a
-  session runs (from the welcome to All done), and Escape never ends a recording;
+  session runs (from the intro to All done), and Escape never ends a recording;
 * one card with two columns that start on one line under small labels; the controls are attached
   to the video (a strip with the clock, a progress bar and the one action on top, the microphone
   level directly under), and the action never moves;
@@ -114,7 +114,7 @@ def test_the_choice_is_remembered_and_storage_failures_are_harmless():
 
 def test_every_text_earns_its_place():
     src = _stage_src()
-    stage = src.split("// Screen 1: the welcome.", 1)[1].split("function uploadTake", 1)[0]
+    stage = src.split("// Screen 1: the intro.", 1)[1].split("function uploadTake", 1)[0]
     assert "&#127908;" not in src and "\U0001F3A4" not in src, "no emoji icons: the microphone is an inline SVG"
     for gone in ("r1.practiceTag", "r1.tip3", "r1.devicesSub", "r1.connOk", "r1.getReady", "r1.answerHelp", "r1.retakesNote"):
         assert gone not in src, f"{gone} was cut and must not come back"
@@ -127,10 +127,10 @@ def test_every_text_earns_its_place():
     assert en["r1.notRecording"] == "Not recording" and en["r1.startRecording"] == "Start recording"   # sentence case
     assert en["r1.practiceLabel"] == "Practice question \u00b7 not saved"
     assert en["r1.stopRecording"] == "Done answering"
-    assert "r1.notNow" not in stage, "Exit is the way out of the welcome; no second button says the same"
+    assert "r1.notNow" not in stage and '"r1.back"' not in stage, "Exit is the way out of the intro; no second button says the same"
     assert en["r1.micSilent"] == "No sound from this microphone. Pick another one or check it is not muted."
     for key in ("r1.tip1", "r1.tip2", "r1.qHelp", "r1.practiceDone", "r1.doneSub",
-                "r1.notice1", "r1.notice2", "r1.notice3", "r1.extraTimeD"):
+                "r1.notice1", "r1.notice2", "r1.notice3", "r1.extraTimeD", "r1.factClocks"):
         assert len(en[key].split()) <= 9, f"{key} is one short line: {en[key]!r}"
 
 
@@ -178,12 +178,49 @@ def test_the_controls_are_attached_to_the_video():
     assert ".r1-frame.is-rec" in css, "the frame is outlined only while recording"
 
 
-def test_the_welcome_and_the_notice_are_the_same_stage():
+def test_one_intro_screen_before_the_camera():
+    """The welcome and "Before you begin" are one screen with one action (one click fewer)."""
     src = _stage_src()
-    for fn, step in (("function renderR1Landing()", "welcome"), ("function renderR1Notice()", "notice")):
-        body = src.split(fn, 1)[1].split("\n  }\n", 1)[0]
-        assert f'r1Stage("{step}", {{ solo: true' in body, f"{fn} must render in the stage card"
-        assert "scr-intro" not in body and "scr-welcome" not in body
+    assert "renderR1Notice" not in src and "renderR1Landing" not in src
+    body = src.split("function renderR1Intro()", 1)[1].split("\n  }\n", 1)[0]
+    assert 'r1Stage("intro", { solo: true' in body
+    assert "scr-intro" not in body and "scr-welcome" not in body
+    assert body.count('<button class="r1-btn') == 1 and 'id="scrBegin"' in body, "one button: Get started"
+    assert body.count("${point(") == 3, "three privacy points, each with an icon"
+    for ic in ("lock", "trash", "eyeOff"):
+        assert f'point("{ic}"' in body and f"    {ic}: `<svg" in src, f"{ic} is an inline SVG"
+    assert 'id="scrExtra"' in body and "extra_time: SCR_EXTRA" in body, "the extra-time choice rides on the start call"
+    assert "drill: SCR_DRILL" in body, "a re-drill still hands its questions over"
+    # Back here after the camera was refused: the interview that exists is reused, not made twice.
+    assert "SCREEN.i == null) { goDevices(); return; }" in body
+    assert src.count("renderR1Intro(); return; }") == 2, "both camera failures come back to the intro"
+
+
+def test_the_intro_states_the_real_clocks():
+    """The numbers come from the engine's own settings, not from a sentence somebody typed."""
+    import ui.app as app
+    c = app.app.test_client()
+    d = c.get("/api/screens/config").get_json()
+    assert d == {"prep_s": app._SCREEN_PREP_S, "answer_s": app._SCREEN_ANSWER_S, "retakes": app._SCREEN_RETAKES,
+                 "questions": app._SCREEN_DEFAULT_Q, "extra_time_factor": app._SCREEN_EXTRA_FACTOR}
+    src = _stage_src()
+    facts = src.split("function r1Facts()", 1)[1].split("\n  }\n", 1)[0]
+    assert "SCR_DEFAULTS" in facts and "extra_time_factor" in facts
+    assert not re.search(r'"[^"]*\b(30 seconds|2 minutes|20 minutes)\b', facts), "no clock is hard-coded in the copy"
+    for lang in ("en", "de", "es", "fr", "pt"):
+        loc = json.loads((LOCALES / f"{lang}.json").read_text(encoding="utf-8"))
+        assert "{prep}" in loc["r1.factClocks"] and "{answer}" in loc["r1.factClocks"]
+        assert "r1.landingFacts" not in loc, "the hand-written '5 questions, about 20 minutes' is gone"
+
+
+def test_starting_never_greys_the_primary_button():
+    body = _stage_src().split("function renderR1Intro()", 1)[1].split("\n  }\n", 1)[0]
+    click = body.split('$("#scrBegin")?.addEventListener("click"', 1)[1]
+    assert ".disabled = true" not in click, "a disabled primary reads as 'you can't'; the in-flight state is is-busy"
+    assert 'classList.add("is-busy")' in click and "}, 300);" in click and 'T("r1.starting", "Starting...")' in click
+    css = CSS.read_text(encoding="utf-8")
+    assert ".r1-btn.is-busy { pointer-events: none; }" in css
+    assert ".r1-btn.is-slow .r1-btn-spin { display: inline-block; }" in css
 
 
 def test_media_permission_is_still_limited_to_the_apps_own_origin():
