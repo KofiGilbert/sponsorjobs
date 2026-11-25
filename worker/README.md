@@ -42,6 +42,7 @@ implementation; it does not replace or change anything in `backend/`.
 | `GET /mail/messages?after=<cursor>&limit=<n>` | whole messages for the in-app Inbox, oldest first, at most 25, `{messages, cursor, more}`; `after` acknowledges and deletes; kept until downloaded, 30 days at most |
 | `POST /agent/sign` `{method, authority, path}` | Web Bot Auth headers for one page request the apply agent makes: `{signature_input, signature, signature_agent, expires}` (60 s; 120 per account per minute, `429 rate_limited`; `503 not_configured` without `AGENT_SIGNING_KEY`) |
 | `GET /.well-known/http-message-signatures-directory` | the agent's public key (a signed JWKS); routed here from sponsorjobs.ai as well, the registered Signature-Agent |
+| `GET /v1/jobs/search`, `GET /v1/jobs/candidates` | server-side job search (`src/search.ts`, docs/server-search-plan.md): the board's facets plus `scope`, cursors, at most 50 / 500 rows a page and 1,000 deep. Its own D1 database (`SEARCH_DB`, `migrations-search/`), not bound until go-live, so it answers `503 no_index`; `503 daily_budget` once the day's free allowance for search is used. `scripts/local-d1.mjs` and `scripts/measure-search.mjs` try it locally |
 
 Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one plan or pass price;
 see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
