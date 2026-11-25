@@ -19,8 +19,8 @@ export default defineConfig(async () => {
           // (docs/server-search-plan.md); the tests bind their own.
           d1Databases: { SEARCH_DB: "sponsorjobs-search-test" },
           ratelimits: {
-            SEARCH_TOKEN_LIMITER: { simple: { limit: 60, period: 60 } },
-            SEARCH_IP_LIMITER: { simple: { limit: 300, period: 60 } },
+            SEARCH_TOKEN_LIMITER: { namespace_id: "7101", simple: { limit: 60, period: 60 } },
+            SEARCH_IP_LIMITER: { namespace_id: "7102", simple: { limit: 300, period: 60 } },
           },
         },
       }),

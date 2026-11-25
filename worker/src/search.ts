@@ -394,6 +394,7 @@ export interface Page {
 
 interface Hit {
   id: number; pay: number; title: string; company: string; location: string; r: string; xv: string | null;
+  at?: Pos;             // where a scan resumes right after this row (set as rows are found)
 }
 
 const COLS = "j.id AS id, j.pay AS pay, j.title AS title, j.company AS company, "
@@ -486,7 +487,7 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
                       at: (h: { id: number; pay: number }) => void): Promise<"full" | "cap" | "end"> => {
     const s = sql();
     const got = await run<Hit>(s.text, s.binds);
-    for (const h of got.rows) { hits.push(h); at(h); }
+    for (const h of got.rows) { at(h); h.at = { ...pos }; hits.push(h); }
     matchedAll += got.rows.length;
     const walked = Math.max(got.rows.length, Math.floor((got.read - got.rows.length) / 2));
     if (want() <= 0) { scanned += walked; return "full"; }
@@ -506,14 +507,14 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
        CROSS JOIN jobs j ON j.id = c.id ${EXTRAS}${and(where)}
        ORDER BY j.pay DESC, j.id DESC LIMIT ?`,
       [match, ...q.binds, pos.k, pos.b, want()]);
-    hits.push(...got.rows);
+    for (const h of got.rows) { h.at = { p: "S", s: 0, b: h.id, k: h.pay }; hits.push(h); }
     matchedAll += got.rows.length;
     if (want() > 0) ended = true;
   }
 
   while (pos.p === "P" && want() > 0 && cap > 0 && !ended) {
     // The pay index, highest first. A minimum-pay facet ends the walk where pay drops below it.
-    const lo = f.pay > 0 ? "j.pay >= ?" : "j.pay > 0";
+    const lo = f.pay > 0 ? "j.pay > 0 AND j.pay >= ?" : "j.pay > 0";
     const loBind = f.pay > 0 ? [f.pay] : [];
     const window = `SELECT id, pay FROM jobs j INDEXED BY jobs_pay WHERE ${lo} AND (j.pay, j.id) < (?, ?)
                     ORDER BY j.pay DESC, j.id DESC LIMIT ?`;
@@ -570,10 +571,10 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
   const page = hits.slice(0, take);
   const overflow = hits.length > take;
   const lastHit = page[page.length - 1];
-  if (overflow && lastHit) {               // carry on right after the last row served
-    pos.b = lastHit.id;
-    if (pos.p === "P" || pos.p === "S") pos.k = lastHit.pay;
-  }
+  // Carry on right after the last row served. The row past the page may come from a later
+  // stage of the walk (the rows with no pay after the pay index), so the resume point is the one
+  // recorded with the last row served, not where the scan itself stopped.
+  if (overflow && lastHit?.at) pos = { ...lastHit.at };
   const depthLeft = served + page.length < DEPTH_MAX;
   const more = (overflow || !ended) && depthLeft && take > 0;
 

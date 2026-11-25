@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.load_search_index import diff, meta_statement, statements  # noqa: E402
+from scripts import load_search_index as L  # noqa: E402
 from sourcing import filters  # noqa: E402
 from sourcing.feedfile import recency_key  # noqa: E402
 
@@ -97,7 +97,14 @@ def rows(n: int = 420) -> list[dict]:
         elif st < 0.15:
             r["ad_stance"], r["ad_sentence"] = "not_offered", "No sponsorship."
         if rnd.random() < 0.2:
-            r["sponsorship_stated"] = rnd.choice([True, False, None])
+            r["sponsorship_stated"] = rnd.choice([True, False])
+        # The sponsor board (filters.in_sponsor_scope): general rows say False; a row from a feed
+        # built before the flag has no key and counts as a sponsor row.
+        sr = rnd.random()
+        if sr < 0.25:
+            r["sponsor_relevant"] = False
+        elif sr < 0.85:
+            r["sponsor_relevant"] = True
         out.append(r)
     out.sort(key=recency_key, reverse=True)                      # the feed's own order
     return out
@@ -120,11 +127,16 @@ SEARCH_CASES = [
     {"loc": "remote", "remote": "remote", "pay": "90000"},
     {"q": "data", "sponsored": "1", "visa": "GREEN-CARD"},
     {"q": "eng", "loc": "san", "days": "30", "sort": "pay", "pay": "50000"},
+    {"scope": "sponsors"}, {"scope": "all"}, {"scope": "sponsors", "sort": "pay"},
+    {"scope": "sponsors", "q": "engineer"}, {"scope": "sponsors", "sponsored": "1"},
+    {"scope": "sponsors", "days": "7", "level": "entry"}, {"remote": "onsite", "sort": "pay"},
+    {"q": "ny", "sort": "pay"}, {"visa": "NOPE"}, {"remote": "anywhere"},
 ]
 CANDIDATE_CASES = [
     {"titles": "Data Analyst|BI Analyst"}, {"titles": "engineer"}, {"titles": "c++ developer"},
     {"titles": "an"}, {"titles": "Software Engineer", "visa": "H-1B", "sort": "pay"},
     {"titles": "data analyst", "loc": "ny"}, {"titles": "analyst|nurse (rn)", "days": "30"},
+    {"titles": "engineer", "scope": "sponsors"},
 ]
 
 
@@ -134,7 +146,8 @@ def _search_expected(rs: list[dict], params: dict) -> list[dict]:
     facets = dict(q=a.get("q", ""), loc=a.get("loc", ""), days=a.get("days", 0),
                   remote=a.get("remote", ""),
                   visa=[v for v in a.get("visa", "").split(",") if v], level=a.get("level", ""),
-                  pay=a.get("pay", 0), sort=a.get("sort", ""), sponsored=a.get("sponsored", ""))
+                  pay=a.get("pay", 0), sort=a.get("sort", ""), sponsored=a.get("sponsored", ""),
+                  scope=a.get("scope", "all"))
     return filters.apply_facets(rs, **facets)
 
 
@@ -153,8 +166,18 @@ class _FixedNow(datetime):
 
 def build() -> dict:
     rs = rows()
-    upserts, removed, _ = diff(rs, {})
-    sqls = statements(upserts, removed) + [meta_statement(INDEX_VERSION, NOW.isoformat(), len(rs))]
+    dicts = L.Dicts()
+    dicts.learn(rs)
+    plan = L.Plan(rs, {}, {})
+    first = sorted(plan.new, key=lambda t: t[2])
+    sqls = (L.extras_statements(plan.new_extras)
+            + [sql for sql, _ in L.upsert_statements(first, dicts)]
+            + [L.meta_statement({**dicts.as_meta(), "index_version": INDEX_VERSION, "ready": "1",
+                                 "generated_at": NOW.isoformat(), "rows": str(len(rs)),
+                                 "sponsor_rows": str(sum(1 for r in rs if filters.in_sponsor_scope(r)))})])
+    # The order the index holds (ORDER BY id DESC) must be the feed's own.
+    by_id = sorted(plan.target, key=lambda sid: -plan.target[sid][1])
+    assert by_id == [r["source_id"] for r in rs], "assign_ids does not keep the feed's order"
     cases = []
     with mock.patch.object(filters, "datetime", _FixedNow):
         for mode, group, fn in (("search", SEARCH_CASES, _search_expected),
@@ -165,7 +188,8 @@ def build() -> dict:
     return {"now_ms": int(NOW.timestamp() * 1000), "index_version": INDEX_VERSION,
             "row_count": len(rs), "statements": sqls, "cases": cases,
             # One whole row with employer fields: the Worker must hand it back unchanged.
-            "sample": next(r for r in rs if r.get("visa") and r.get("nationality_visas"))}
+            "sample": next(r for r in rs if r.get("visa") and r.get("nationality_visas")
+                           and r.get("tags") and r.get("ad_stance"))}
 
 
 def render() -> str:
