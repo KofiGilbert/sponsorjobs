@@ -49,8 +49,8 @@ def test_the_tiers_as_decided():
         "free":   (0, 0, 3, "claude-haiku-4-5", "", "", 0),
         "pass30": (30, 3, 60, "claude-sonnet-5-5", "$29", "", 0),
         "pass90": (90, 9, 150, "claude-sonnet-5-5", "$69", "", 0),
-        "student_monthly": (30, 3, 60, "claude-sonnet-5-5", "$29", "student", 1),
-        "student_quarterly": (90, 9, 150, "claude-sonnet-5-5", "$69", "student", 3),
+        "student_monthly": (30, 3, 40, "claude-sonnet-5-5", "$29", "student", 1),
+        "student_quarterly": (90, 9, 100, "claude-sonnet-5-5", "$69", "student", 3),
         "standard_monthly": (30, 3, 60, "claude-sonnet-5-5", "$49", "standard", 1),
         "standard_quarterly": (90, 9, 150, "claude-sonnet-5-5", "$119", "standard", 3),
     }
@@ -275,10 +275,13 @@ def test_only_the_monthly_plans_are_sold_unless_the_switch_is_on():
         "student_monthly", "student_quarterly", "standard_monthly", "standard_quarterly")
     assert sells_quarterly({}) is False and sells_passes({}) is False
     assert sells_passes({"SELL_PASSES": "1"}) is True
-    # Each sold plan: 60 tailored applications and 3 live interviews of 20 minutes a period.
-    for name, price in (("student_monthly", "$29"), ("standard_monthly", "$49")):
+    # Each sold plan: 3 live interviews of 20 minutes a period. Student includes 40 tailored
+    # applications a month, Standard 60 (owner decision 2026-11-25).
+    for name, price, packages in (("student_monthly", "$29", 40), ("standard_monthly", "$49", 60)):
         p = PLANS[name]
-        assert (p.price_label, p.packages, p.interviews, p.months) == (price, 60, 3, 1)
+        assert (p.price_label, p.packages, p.interviews, p.months) == (price, packages, 3, 1)
+    # The unsold every-3-months plans keep the same proportion.
+    assert (PLANS["student_quarterly"].packages, PLANS["standard_quarterly"].packages) == (100, 150)
     assert INTERVIEW_SECONDS == 20 * 60
 
 
@@ -286,7 +289,7 @@ def test_an_account_already_on_a_quarterly_plan_still_reads_correctly():
     m = _meter()
     m.grant_pass("u", "student_quarterly")
     st = m.status("u", P)
-    assert st["tier"] == "student_quarterly" and st["interviews_left"] == 9 and st["packages_left"] == 150
+    assert st["tier"] == "student_quarterly" and st["interviews_left"] == 9 and st["packages_left"] == 100
     assert st["recorded_left"] is None
 
 

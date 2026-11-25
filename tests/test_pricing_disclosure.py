@@ -93,7 +93,7 @@ def test_the_website_sells_only_the_monthly_plans_and_states_the_free_limits():
             assert gone not in page, (name, gone)
         assert not re.search(r"\$9(?!\d)", page), name
     assert _row("Price") == ["$0", "$29 a month", "$49 a month"]
-    assert _row("Tailored one-page resumes") == ["3 a month", "60 a month", "60 a month"]
+    assert _row("Tailored one-page resumes") == ["3 a month", "40 a month", "60 a month"]
     assert _row("Recorded practice interviews, scored") == ["1 a month", "Unlimited", "Unlimited"]
     assert _row("Live AI interviews, 20 minutes each") == ["No", "3 a month", "3 a month"]
     assert _row("Application tracker") == ["Yes", "Yes", "Yes"]
@@ -110,7 +110,11 @@ def test_the_plans_panel_sells_monthly_only_and_shows_the_switch_only_when_the_b
     paint = APP_JS[APP_JS.index("function paintPlans()"):APP_JS.index("function paintMine()")]
     assert 'p.interval === "quarterly"' in paint and "seg.hidden = !quarterlySold" in paint
     assert EN["upg.feat3"] == "3 live interviews of 20 minutes a month"
-    assert EN["upg.feat60"] == "60 tailored applications a month"
+    assert EN["upg.featApps"] == "{n} tailored applications a month"
+    # The number is the plan's own (Student 40, Standard 60), read from the broker's offers.
+    assert '.replace("{n}", planPackages(id))' in paint and "p.packages" in APP_JS
+    assert "student_monthly: 40" in APP_JS and "standard_monthly: 60" in APP_JS
+    assert "upg.feat60" not in APP_JS and "upg.feat60" not in EN
     assert EN["upg.featRecorded"] == "Unlimited recorded practice interviews"
     assert EN["upg.free"] == ("Free keeps every job with sponsorship marks, the tracker, autofill, "
                               "3 tailored resumes a month and 1 recorded practice interview a month.")
@@ -120,7 +124,7 @@ def test_the_plans_panel_sells_monthly_only_and_shows_the_switch_only_when_the_b
 def test_the_upgrade_lines_are_the_decided_words_and_carry_no_price():
     """Every upgrade moment opens the ONE plans panel, so no price is repeated in any of them."""
     lines = {
-        "upg.freeResumesUsed": "You've used your 3 free tailored resumes this month. Plans include 60 a month.",
+        "upg.freeResumesUsed": "You've used your 3 free tailored resumes this month. Plans include 40 or 60 a month.",
         "upg.recordedUsed": "You've used this month's practice interview. Plans include unlimited recorded practice.",
         "upg.practiseLive": "Practise live with an interviewer",
         "outage.upgrade.btn": "See plans",

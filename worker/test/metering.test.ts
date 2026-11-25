@@ -32,8 +32,8 @@ describe("plans", () => {
       free: [0, 0, 3, "claude-haiku-4-5", "", 400_000, 0],
       pass30: [30, 3, 60, "claude-sonnet-5-5", "$29", 8_000_000, 0],
       pass90: [90, 9, 150, "claude-sonnet-5-5", "$69", 8_000_000, 0],
-      student_monthly: [30, 3, 60, "claude-sonnet-5-5", "$29", 8_000_000, 1],
-      student_quarterly: [90, 9, 150, "claude-sonnet-5-5", "$69", 8_000_000, 3],
+      student_monthly: [30, 3, 40, "claude-sonnet-5-5", "$29", 8_000_000, 1],
+      student_quarterly: [90, 9, 100, "claude-sonnet-5-5", "$69", 8_000_000, 3],
       standard_monthly: [30, 3, 60, "claude-sonnet-5-5", "$49", 8_000_000, 1],
       standard_quarterly: [90, 9, 150, "claude-sonnet-5-5", "$119", 8_000_000, 3],
     });

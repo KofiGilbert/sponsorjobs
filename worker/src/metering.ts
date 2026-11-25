@@ -40,20 +40,22 @@ export const PLANS: Record<string, Plan> = {
   pass90: { name: "pass90", avatarSecondsIncluded: 9 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
             llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$69" },
   // WHAT IS SOLD (owner decision 2026-11-25): only the two MONTHLY plans, Student $29 and Standard
-  // $49, each with 60 tailored applications and 3 live interviews of 20 minutes a period. The
+  // $49, each with 3 live interviews of 20 minutes a period. Student includes 40 tailored
+  // applications a month, Standard 60 (owner decision 2026-11-25, later the same day). The
   // every-3-months plans stay defined here so a subscription already on one keeps working until it
   // ends, and so they can be sold again with one switch: SELL_QUARTERLY=1 (see sellsQuarterly).
   //
   // The plans that renew automatically (owner decision 2026-11-20), Stripe subscriptions. A plan
   // grants the same allowances as the pass it replaces, refilled at the start of every paid
   // period; the period end comes from Stripe (current_period_end), not from `days`. Student and
-  // Standard differ only in price; who may pay the student price is decided server-side
-  // (src/student.ts).
+  // Standard differ in price and in tailored applications (40 against 60 a month; the hidden
+  // every-3-months plans keep the same proportion, 100 against 150); who may pay the student
+  // price is decided server-side (src/student.ts).
   student_monthly: { name: "student_monthly", avatarSecondsIncluded: 3 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
-                     llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$29",
+                     llmTokenCap: 8_000_000, packages: 40, days: 30, priceLabel: "$29",
                      tier: "student", interval: "monthly", months: 1 },
   student_quarterly: { name: "student_quarterly", avatarSecondsIncluded: 9 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
-                       llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$69",
+                       llmTokenCap: 8_000_000, packages: 100, days: 90, priceLabel: "$69",
                        tier: "student", interval: "quarterly", months: 3 },
   standard_monthly: { name: "standard_monthly", avatarSecondsIncluded: 3 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
                       llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$49",

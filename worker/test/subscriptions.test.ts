@@ -119,7 +119,9 @@ describe("offers", () => {
     expect(o.plans.map((p: any) => p.id)).toEqual(["student_monthly", "standard_monthly"]);
     expect(o.plans.map((p: any) => p.price_label)).toEqual(["$29", "$49"]);
     expect(o.plans.every((p: any) => p.auto_renew === true)).toBe(true);
-    for (const p of o.plans) expect(p).toMatchObject({ interval: "monthly", months: 1, interviews: 3, packages: 60 });
+    for (const p of o.plans) expect(p).toMatchObject({ interval: "monthly", months: 1, interviews: 3 });
+    // Student includes 40 tailored applications a month, Standard 60 (owner decision 2026-11-25).
+    expect(o.plans.map((p: any) => p.packages)).toEqual([40, 60]);
     expect(o.price_tier).toBe("standard");
     expect(o.passes).toEqual([]);                          // the retired passes are not on sale
     await makeStudent(a.id, monthFromNow(10));
@@ -145,7 +147,8 @@ describe("the every-3-months plans are behind one switch", () => {
     const o = (await call("/billing/offers", { token: a.token, env: QUARTERLY })).data;
     expect(o.plans.map((p: any) => p.id)).toEqual(["student_monthly", "student_quarterly", "standard_monthly", "standard_quarterly"]);
     expect(o.plans.map((p: any) => p.price_label)).toEqual(["$29", "$69", "$49", "$119"]);
-    expect(o.plans[1]).toMatchObject({ tier: "student", interval: "quarterly", months: 3, interviews: 9, packages: 150 });
+    expect(o.plans[1]).toMatchObject({ tier: "student", interval: "quarterly", months: 3, interviews: 9, packages: 100 });
+    expect(o.plans[3]).toMatchObject({ tier: "standard", interval: "quarterly", packages: 150 });
     const r = await call("/billing/subscribe", { token: a.token, body: { interval: "quarterly", consent: true }, env: QUARTERLY });
     expect(r.status).toBe(200);
     expect(r.data.plan).toBe("standard_quarterly");
@@ -159,12 +162,12 @@ describe("the every-3-months plans are behind one switch", () => {
     const end = now() + 90 * DAY_SECONDS;
     await deliver(sessionCompleted(a.id, sub, "student_quarterly"));
     await deliver(invoicePaid(a.id, sub, "student_quarterly", now(), end));
-    expect(await usage(a.token)).toMatchObject({ tier: "student_quarterly", pass_until: end, interviews_left: 9, packages_left: 150 });
+    expect(await usage(a.token)).toMatchObject({ tier: "student_quarterly", pass_until: end, interviews_left: 9, packages_left: 100 });
     // The next period is paid: refilled, and the end moves out, all with the switch off.
     const next = end + 90 * DAY_SECONDS;
     await env.DB.prepare("UPDATE users SET pass_packages = 5 WHERE user = ?").bind(a.id).run();
     await deliver(invoicePaid(a.id, sub, "student_quarterly", end, next));
-    expect(await usage(a.token)).toMatchObject({ tier: "student_quarterly", pass_until: next, packages_left: 150 });
+    expect(await usage(a.token)).toMatchObject({ tier: "student_quarterly", pass_until: next, packages_left: 100 });
     const o = await offers(a.token);
     expect(o.subscription).toMatchObject({ plan: "student_quarterly", tier: "student", interval: "quarterly", price_label: "$69" });
     expect(o.plans.map((p: any) => p.id)).toEqual(["student_monthly", "standard_monthly"]);
@@ -255,7 +258,7 @@ describe("webhook: entitlement follows the paid period", () => {
     const paid = invoicePaid(a.id, sub, "student_monthly", now(), end);
     expect((await deliver(paid)).status).toBe(200);
     const u = await usage(a.token);
-    expect(u).toMatchObject({ tier: "student_monthly", pass_until: end, interviews_left: 3, packages_left: 60 });
+    expect(u).toMatchObject({ tier: "student_monthly", pass_until: end, interviews_left: 3, packages_left: 40 });
     expect(u.subscription).toMatchObject({ plan: "student_monthly", renews: true, renews_at: end, cancel_at_period_end: false });
     await deliver(paid);                                             // redelivered: no second grant
     await deliver({ ...paid, id: evtId() });

@@ -11,7 +11,8 @@ Pricing (decided by the owner 2026-11-25; plans renew automatically until cancel
                Unlimited tailoring stays available on the person's own key (that path never
                touches the broker).
   * ``student_monthly`` / ``standard_monthly``: $29 / $49 every month, 3 live interviews of 20
-               minutes + 60 packages a period, unlimited recorded practice, Sonnet. The student
+               minutes a period, unlimited recorded practice, Sonnet. Student includes 40
+               packages a period, Standard 60 (owner decision 2026-11-25). The student
                price needs a verified school e-mail (worker/src/student.ts). These are Stripe
                subscriptions, sold by the production broker (worker/src/subscriptions.ts); this
                Python reference knows the plans so it reads an account on one correctly.
@@ -19,7 +20,7 @@ Pricing (decided by the owner 2026-11-25; plans renew automatically until cancel
 NOT sold, kept so an account already on one reads correctly until it ends:
 
   * ``student_quarterly`` / ``standard_quarterly``: $69 / $119 every 3 months, 9 live interviews
-               + 150 packages a period. One switch sells them again: ``SELL_QUARTERLY=1``
+               + 100 (Student) or 150 (Standard) packages a period. One switch sells them again: ``SELL_QUARTERLY=1``
                (``sold_plans`` below; the Worker reads the same name).
   * ``pass30`` / ``pass90``: the retired one-time passes ($29 for 30 days, $69 for 90 days).
                ``SELL_PASSES=1`` would sell them again; anyone who bought one keeps it until it ends.
@@ -88,13 +89,14 @@ PLANS = {
                    llm_token_cap=8_000_000, packages=60, days=30, price_label="$29"),
     "pass90": Plan("pass90", avatar_seconds_included=9 * INTERVIEW_SECONDS, llm_model=PASS_MODEL,
                    llm_token_cap=8_000_000, packages=150, days=90, price_label="$69"),
-    # Plans that renew (2026-11-20). Same allowances as the pass each replaces, refilled every paid
-    # period; the period end comes from Stripe, `days` is only the nominal length.
+    # Plans that renew (2026-11-20), refilled every paid period; the period end comes from Stripe,
+    # `days` is only the nominal length. Student includes 40 packages a month and Standard 60
+    # (2026-11-25); the unsold every-3-months plans keep the same proportion, 100 and 150.
     "student_monthly": Plan("student_monthly", avatar_seconds_included=3 * INTERVIEW_SECONDS, llm_model=PASS_MODEL,
-                            llm_token_cap=8_000_000, packages=60, days=30, price_label="$29",
+                            llm_token_cap=8_000_000, packages=40, days=30, price_label="$29",
                             tier="student", months=1),
     "student_quarterly": Plan("student_quarterly", avatar_seconds_included=9 * INTERVIEW_SECONDS,
-                              llm_model=PASS_MODEL, llm_token_cap=8_000_000, packages=150, days=90,
+                              llm_model=PASS_MODEL, llm_token_cap=8_000_000, packages=100, days=90,
                               price_label="$69", tier="student", months=3),
     "standard_monthly": Plan("standard_monthly", avatar_seconds_included=3 * INTERVIEW_SECONDS,
                              llm_model=PASS_MODEL, llm_token_cap=8_000_000, packages=60, days=30,

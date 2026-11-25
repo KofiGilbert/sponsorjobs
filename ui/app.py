@@ -906,7 +906,7 @@ def _make_byo_llm(provider: str):
 
 # The upgrade lines (owner decision 2026-11-25). Each opens the ONE plans panel; no price is
 # repeated here, so a price change is made in one place.
-FREE_RESUMES_USED_LINE = "You've used your 3 free tailored resumes this month. Plans include 60 a month."
+FREE_RESUMES_USED_LINE = "You've used your 3 free tailored resumes this month. Plans include 40 or 60 a month."
 FREE_RECORDED_USED_LINE = ("You've used this month's practice interview. Plans include unlimited "
                            "recorded practice.")
 
