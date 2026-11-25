@@ -3143,11 +3143,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-fb-h { font-size: 11.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
 
 .mock-top { display: flex; align-items: center; gap: 14px; padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
-.scr-leave { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: -6px 0 18px;
-  padding: 12px 16px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg); }
-.scr-leave[hidden] { display: none; }
-.scr-leave-t { flex: 1 1 auto; font-size: 14px; color: var(--ink); }
-.scr-leave-acts { display: flex; gap: 8px; }
 .mock-count { font-size: 12px; font-weight: 600; color: var(--muted); }
 .mock-timer { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--faint);
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
@@ -3165,7 +3160,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* Share the landing's centered 1040 column so the header and cards line up at any width,
    then cap the inner content at 720 (its tuned width for the recording grid). */
 .prep-screen { max-width: 1040px; margin: 0 auto; }
-.prep-screen > .mock-top, .prep-screen > .scr-stage, .prep-screen > .scr-leave { max-width: 880px; }
+.prep-screen > .mock-top, .prep-screen > .scr-stage { max-width: 880px; }
 /* Recorded-interview intro: framed as a card, matching the landing's card system. */
 .scr-intro { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 30px 32px; }
 /* Round 1 landing and notice: minimal, one action. */
@@ -3173,16 +3168,11 @@ body.cv-dragging * { cursor: grabbing !important; }
 .scr-welcome-h { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; color: var(--ink); margin: 0 0 8px; text-wrap: balance; }
 .scr-welcome-sub { font-size: 14px; color: var(--muted); margin: 0 0 26px; }
 .scr-welcome-acts { display: flex; align-items: center; gap: 10px; }
-/* Device check: camera preview left, the tips and the one action right. */
-.scr-ready { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 26px; align-items: start; }
-@media (max-width: 680px) { .scr-ready { grid-template-columns: 1fr; gap: 18px; } }
-.scr-ready-side { display: flex; flex-direction: column; }
 .scr-ready-h { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); margin: 2px 0 6px; }
 .scr-ready-sub { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 0 0 18px; }
 .seg { font-size: 13px; font-weight: 600; color: var(--muted); background: transparent; border: 0; border-radius: 999px;
   padding: 6px 16px; cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
 .seg.is-on { color: var(--accent-ink); background: var(--accent); }
-.scr-ready-acts { display: flex; align-items: center; gap: 10px; margin-top: auto; }
 .scr-comp { display: inline-block; font-size: 10.5px; font-weight: 700; color: #6941c6; background: #f4f0ff;
   border: 1px solid #d9cffb; border-radius: 999px; padding: 1px 8px; margin-right: 6px; vertical-align: middle; }
 .scr-warm { display: inline-block; font-size: 10.5px; font-weight: 700; color: #b54708; background: #fffaeb;
@@ -3334,7 +3324,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 
 
 .rec-meter { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.rec-meter-ic { font-size: 14px; opacity: .7; }
+.rec-meter-ic { display: inline-flex; color: var(--muted); }
 .rec-meter-track { flex: 1; height: 6px; border-radius: 999px; background: var(--surface-2, #f2f4f7); overflow: hidden; }
 .rec-meter-fill { display: block; height: 100%; width: 0; border-radius: 999px; background: #12b76a; transition: width .08s linear; }
 
@@ -3369,74 +3359,251 @@ body.cv-dragging * { cursor: grabbing !important; }
 .zoom-mins { color: #9aa2ad; font-size: 12.5px; }
 .zoom-mins b { color: #e7e9ee; }
 
-/* ============ Round 1 (one-way recorded interview): the light stage ============ */
-/* Screens 3 to 6 (device check, practice, the questions, All done) sit on a plain white surface like
-   the real product, so the muscle memory transfers. Tokens are scoped to the stage; the app around it
-   keeps its own theme. The landing, the notice and the report stay on the app theme. */
+/* ============ Round 1 (one-way recorded interview): the stage ============ */
+/* Round 1 up to the report (welcome, notice, device check, practice, the questions, All done) runs
+   on ONE stage that takes the window, like the real product, which shows no navigation around an
+   interview: a very light page with one composed card on it. Tokens are scoped to the stage
+   (--r1-*): a white card on a light grey page in the light theme, the app's own dark surfaces in
+   the dark theme. The app's fonts and neutral palette throughout; the only colour is red, and only
+   while recording. The report goes back to the app's page. */
 .r1-light { --r1-bg: #ffffff; --r1-surface: #f5f6f8; --r1-ink: #1b1f27; --r1-ink-2: #3d4350; --r1-muted: #6b7280; --r1-faint: #9ca3af;
-  --r1-border: #e4e6ea; --r1-primary: #1f2937; --r1-primary-ink: #ffffff; --r1-rec: #d92d20; --r1-good: #1f8a5b;
-  color-scheme: light; color: var(--r1-ink); background: var(--r1-bg); border: 1px solid var(--r1-border);
-  border-radius: var(--r-lg); padding: 28px 32px; }
-.r1-light .scr-ready-h { color: var(--r1-ink); }
-.r1-light .scr-ready-sub, .r1-light .r1-q-help { color: var(--r1-muted); }
-.r1-light .rec-meter-track { background: var(--r1-surface); }
-.r1-light .fld { background: #fff; color: var(--r1-ink); border-color: var(--r1-border); }
-.r1-light .scr-video-wrap { border-radius: 12px; box-shadow: 0 8px 24px rgba(16,24,40,.12); }
-.r1-tips { margin: 0 0 22px; padding-left: 18px; font-size: 13px; color: var(--r1-ink-2); line-height: 1.6; }
-.r1-conn { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--r1-muted); }
-.r1-conn::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--r1-good); }
-.r1-conn.warn::before { background: var(--r1-rec); }
-/* Buttons on the light stage: one solid primary, a quiet ghost, and a red stop. */
-.r1-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 18px;
-  font: inherit; font-size: 13.5px; font-weight: 600; border-radius: 10px; border: 1px solid var(--r1-border);
-  background: #fff; color: var(--r1-ink); cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+  --r1-border: #e4e6ea; --r1-primary: #1f2937; --r1-primary-hover: #111827; --r1-primary-ink: #ffffff; --r1-btn: #ffffff;
+  --r1-rec: #d92d20; --r1-rec-hover: #b42318; --r1-rec-soft: #fef3f2; --r1-rec-line: #fecdca; --r1-good: #1f8a5b; --r1-warn: #b54708;
+  --r1-shadow: 0 8px 24px rgba(16,24,40,.12);
+  --r1-page: #f4f5f7; --r1-line: #eceef1; --r1-track: #e7e9ee; --r1-card-shadow: 0 1px 2px rgba(16,24,40,.04), 0 12px 32px rgba(16,24,40,.07);
+  color-scheme: light; color: var(--r1-ink); background: var(--r1-bg); }
+:root:not([data-theme="light"]) .r1-light { --r1-surface: var(--surface-2); --r1-ink: var(--ink); --r1-ink-2: var(--ink-2);
+  --r1-muted: #9a9aa4; --r1-faint: var(--muted); --r1-border: var(--border-strong); --r1-primary: var(--accent); --r1-primary-hover: var(--accent-hover);
+  --r1-primary-ink: var(--accent-ink); --r1-btn: var(--surface); --r1-rec: #e5484d; --r1-rec-hover: #f2555a; --r1-rec-soft: #2a1516; --r1-rec-line: #5c2327;
+  --r1-good: var(--good); --r1-warn: #e0a458; --r1-shadow: 0 8px 28px rgba(0,0,0,.45);
+  --r1-bg: var(--surface); --r1-page: var(--bg); --r1-line: var(--border); --r1-track: var(--border-strong); --r1-card-shadow: 0 12px 36px rgba(0,0,0,.35); color-scheme: dark; }
+
+/* Focus mode. A stage inside the open Interview view takes the whole window: the side menu, the
+   page title, the round tracker, the footer line and (when its pane is closed) the right-hand rail
+   are hidden. Pure CSS on purpose: the chrome returns the moment the stage is gone (report, Exit,
+   another view), with no flag that could be left on. */
+.app:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) { grid-template-columns: minmax(0, 1fr); }
+.app:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) > .sidebar { display: none; }
+.main:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) > .privacy-line { display: none; }
+body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .panel-rail { display: none; }
+body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .side-panel { visibility: hidden; }
+body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .app { margin-right: 0; }
+#view-prep:has(#prepScreen:not([hidden]) .r1-stage) { padding: 0; overflow: hidden; scrollbar-gutter: auto; max-width: none; }
+/* clip, not hidden: a hidden box can still be scrolled by a focus call, which would shift the stage. */
+.main:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) { overflow: clip; }
+#view-prep:has(#prepScreen:not([hidden]) .r1-stage) > .page-head,
+#view-prep:has(#prepScreen:not([hidden]) .r1-stage) > .prep-progress,
+#prepScreen:has(.r1-stage) > .mock-top { display: none; }
+#prepScreen:has(.r1-stage), #prepScreen:has(.r1-stage) > .scr-stage { max-width: none; height: 100%; margin: 0; }
+
+.r1-stage { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; background: var(--r1-page); }
+/* The bar: Exit, nothing else. Everything about the question lives in the card. */
+.r1-bar { position: relative; display: flex; align-items: center; height: 52px; padding: 0 20px; }
+/* In the desktop window the bar is the title bar: clear of the window buttons, and draggable. */
+.in-shell .r1-bar { padding-left: 88px; -webkit-app-region: drag; }
+.in-shell .r1-bar button, .in-shell .r1-leave { -webkit-app-region: no-drag; }
+.r1-exit { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; font: inherit; font-size: clamp(13px, .62vw + 4px, 15.5px);
+  font-weight: 600; color: var(--r1-muted); background: transparent; border: 0; border-radius: 8px; cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+.r1-exit:hover { color: var(--r1-ink); background: var(--r1-line); }
+.r1-pop, .r1-leave { position: absolute; z-index: 30; background: var(--r1-bg); border: 1px solid var(--r1-border);
+  border-radius: 12px; box-shadow: var(--r1-shadow); }
+.r1-leave { top: calc(100% + 4px); left: 16px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; max-width: calc(100% - 32px); padding: 12px 12px 12px 16px; }
+.in-shell .r1-leave { left: 88px; }
+.r1-leave-t { font-size: 13.5px; color: var(--r1-ink); }
+.r1-leave-acts { display: flex; gap: 8px; }
+
+/* The card. One composed surface in the upper middle of the window, never a few things floating
+   in a void. Its width follows the window (and the height, so the whole card always fits): the
+   type and the video inside scale with it through container units. The spacers above and below
+   are 2 to 3, which sits it slightly above centre. */
+.r1-main { container: r1main / size; min-height: 0; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 0 0 12px; }
+.r1-main::before { content: ""; flex: 2 1 0; }
+.r1-main::after { content: ""; flex: 3 1 0; }
+.r1-card { container: r1card / inline-size; box-sizing: border-box; flex: none;
+  width: min(100cqw - 48px, max(560px, (100cqh - 60px) * 1.92), 2400px);
+  padding: clamp(24px, 2.6cqw, 56px) clamp(24px, 3cqw, 64px) clamp(26px, 2.8cqw, 60px);
+  background: var(--r1-bg); border: 1px solid var(--r1-line); border-radius: 16px; box-shadow: var(--r1-card-shadow);
+  display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); column-gap: clamp(28px, 3.4cqw, 72px); align-items: stretch; }
+.r1-col { display: flex; flex-direction: column; min-width: 0; }
+/* The column labels: small, uppercase, tracked, with a hairline. Both start on one line. */
+.r1-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; box-sizing: border-box; min-height: clamp(38px, 3.3cqi, 54px);
+  padding-bottom: clamp(9px, .9cqi, 14px); margin-bottom: clamp(16px, 1.7cqi, 30px); border-bottom: 1px solid var(--r1-line);
+  font-size: clamp(11px, .95cqi, 14.5px); font-weight: 650; letter-spacing: .09em; text-transform: uppercase; color: var(--r1-ink-2); }
+.r1-label > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The status never moves: same pill, same place (the end of the camera's label line). */
+.r1-status { flex: none; display: inline-flex; align-items: center; gap: 7px; box-sizing: border-box; min-width: 10.6em; height: 2.15em; padding: 0 .9em;
+  font-size: clamp(12px, .98cqi, 15px); font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--r1-muted); border: 1px solid var(--r1-border); border-radius: 999px; white-space: nowrap; }
+.r1-status-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--r1-faint); }
+.r1-status.is-rec { color: var(--r1-rec); border-color: var(--r1-rec-line); background: var(--r1-rec-soft); }
+.r1-status.is-rec .r1-status-dot { background: var(--r1-rec); animation: scrpulse 1.2s infinite; }
+
+/* The question: calm, medium, top aligned right under its label. About 38 characters a line
+   (`ch` is the width of a zero, wider than the average letter, so 31ch holds about 38), balanced,
+   never cut. A very long question steps down one size (data-size from SJStage.questionTier). */
+.r1-q { margin: 0; font-weight: 500; letter-spacing: -0.011em; color: var(--r1-ink); text-wrap: balance; overflow-wrap: break-word; }
+.r1-q[data-size="m"] { font-size: clamp(20px, 1.9cqi, 34px); line-height: 1.36; max-inline-size: 31ch; }
+.r1-q[data-size="s"] { font-size: clamp(17px, 1.55cqi, 27px); line-height: 1.42; max-inline-size: 40ch; }
+/* One short line under the question during prep, or none. */
+.r1-q-help { min-height: 1.5em; margin: clamp(12px, 1.2cqi, 20px) 0 0; font-size: clamp(13px, 1.05cqi, 16px); line-height: 1.5; color: var(--r1-muted); }
+/* Titles sit on ONE line (owner's rule): never balanced onto two, no narrow measure. r1FitTitles steps
+   the size down until the title fits and adds .is-wrap only when it cannot fit at the smallest size. */
+.r1-h { margin: 0; font-size: clamp(20px, 1.8cqi, 30px); font-weight: 600; line-height: 1.3; letter-spacing: -0.012em; color: var(--r1-ink); white-space: nowrap; }
+.r1-h.is-wrap { white-space: normal; }
+.r1-conn { margin: 14px 0 0; font-size: 13px; color: var(--r1-warn); }
+.r1-conn:empty { display: none; }
+/* Settings: a quiet link at the bottom of the words column; the menus open above it. */
+.r1-set { position: relative; margin-top: auto; padding-top: 20px; }
+.r1-link { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px 0 6px; margin-left: -6px; font: inherit; font-size: clamp(13px, 1.05cqi, 15.5px);
+  font-weight: 550; color: var(--r1-muted); background: transparent; border: 0; border-radius: 8px; cursor: pointer; }
+.r1-link:hover:not(:disabled), .r1-link[aria-expanded="true"] { color: var(--r1-ink); background: var(--r1-surface); }
+.r1-link:disabled { opacity: .4; cursor: not-allowed; }
+.r1-pop { left: -6px; bottom: calc(100% - 14px); width: min(380px, 100% + 12px); padding: 16px; }
+.r1-pop .r1-devs { margin: 0; max-width: none; }
+
+/* The camera with its controls attached: the strip (clock, bar, action) joined to the top of the
+   video in one rounded frame, and the microphone level directly under it, the same width. */
+.r1-frame { border: 1px solid var(--r1-border); border-radius: 12px; overflow: hidden; background: var(--r1-surface); }
+.r1-frame.is-rec { border-color: var(--r1-rec); box-shadow: 0 0 0 1px var(--r1-rec); }
+.r1-strip { display: flex; align-items: center; gap: 12px; box-sizing: border-box; min-height: clamp(52px, 4.6cqi, 76px); padding: 7px 7px 7px clamp(14px, 1.4cqi, 24px); }
+.r1-strip-l { flex: 1 1 0; min-width: 0; display: flex; align-items: center; font-size: clamp(13px, 1.08cqi, 16.5px); color: var(--r1-muted); }
+.r1-strip-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r1-strip-t:empty { display: none; }
+/* Both labels share one cell (the unused one is invisible), so the digits and the bar never shift
+   when the label changes from "Prep time" to "Response time". */
+.r1-clock { flex: 1 1 0; min-width: 0; display: flex; align-items: center; font-variant-numeric: tabular-nums; }
+.r1-clock-l { display: inline-grid; white-space: nowrap; }
+.r1-clock-l > span { grid-area: 1 / 1; visibility: hidden; }
+.r1-clock[data-l="prep"] [data-l="prep"], .r1-clock[data-l="left"] [data-l="left"] { visibility: visible; }
+.r1-clock b { display: inline-block; min-width: 3.4ch; margin: 0 clamp(10px, 1cqi, 18px) 0 8px; font-size: 1.12em; font-weight: 650; color: var(--r1-ink); }
+.r1-clock.warn b { color: var(--r1-rec); }
+.r1-prog { flex: 1 1 0; max-width: 22cqi; height: 6px; border-radius: 999px; background: var(--r1-track); overflow: hidden; }
+.r1-prog > i { display: block; height: 100%; width: 100%; border-radius: 999px; background: var(--r1-ink-2); transition: width 1s linear; }
+.r1-frame.is-rec .r1-prog > i { background: var(--r1-rec); }
+.r1-acts { flex: none; display: flex; align-items: center; gap: 8px; }
+.r1-frame .scr-video-wrap { border-radius: 0; box-shadow: none; }
+.scr-video.is-playback { transform: none; object-fit: contain; }
+.r1-under { display: flex; align-items: center; height: 20px; margin-top: clamp(10px, 1cqi, 16px); }
+.r1-under.is-off { visibility: hidden; }
+.r1-under .rec-meter { flex: 1; }
+.r1-count { position: absolute; inset: 0; display: grid; place-items: center; font-size: clamp(64px, 9cqi, 180px); font-weight: 650; color: #fff;
+  background: rgba(16,24,40,.45); font-variant-numeric: tabular-nums; }
+
+/* Camera and microphone: a label, then a menu of the real devices (or the one device's name when
+   there is nothing to choose). */
+.r1-devs { display: grid; gap: 10px; max-width: 460px; margin: clamp(18px, 1.8cqi, 28px) 0 0; }
+.r1-dev { display: grid; grid-template-columns: 124px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 36px; }
+.r1-dev-l { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 550; color: var(--r1-ink-2); }
+.r1-dev-l svg { color: var(--r1-muted); flex: none; }
+.r1-dev-name { font-size: 13px; color: var(--r1-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r1-dev-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--r1-warn); }
+.r1-dev-note:empty { display: none; }
+.r1-menu { position: relative; min-width: 0; }
+.r1-menu-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 36px; padding: 0 10px 0 12px;
+  font: inherit; font-size: 13px; color: var(--r1-ink); background: var(--r1-btn); border: 1px solid var(--r1-border); border-radius: 9px; cursor: pointer; }
+.r1-menu-btn:hover, .r1-menu-btn[aria-expanded="true"] { background: var(--r1-surface); }
+.r1-menu-btn svg { flex: none; color: var(--r1-muted); }
+.r1-menu-v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r1-menu-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40; margin: 0; padding: 4px; list-style: none; max-height: 240px;
+  overflow-y: auto; background: var(--r1-bg); border: 1px solid var(--r1-border); border-radius: 10px; box-shadow: var(--r1-shadow); }
+.r1-menu-opt { position: relative; padding: 8px 10px 8px 30px; font-size: 13px; color: var(--r1-ink); border-radius: 7px; cursor: pointer; outline: none; }
+.r1-menu-opt:hover, .r1-menu-opt:focus { background: var(--r1-surface); }
+.r1-menu-opt[aria-selected="true"] { font-weight: 600; }
+.r1-menu-opt[aria-selected="true"]::before { content: ""; position: absolute; left: 11px; top: 50%; width: 9px; height: 5px; margin-top: -5px;
+  border-left: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: rotate(-45deg); }
+.r1-light .rec-meter { margin-top: 0; }
+.r1-light .rec-meter-track { background: var(--r1-track); }
+.r1-light .rec-meter-ic { color: var(--r1-muted); }
+.r1-light .rec-meter-fill { background: var(--r1-good); }
+.r1-light .fld { background: var(--r1-btn); color: var(--r1-ink); border-color: var(--r1-border); }
+
+/* Buttons on the stage: one solid primary, a quiet ghost, and a red one only while recording. */
+.r1-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: clamp(38px, 3.3cqi, 58px); padding: 0 clamp(16px, 1.6cqi, 28px);
+  font: inherit; font-size: clamp(13.5px, 1.1cqi, 17px); font-weight: 600; border-radius: 9px; border: 1px solid var(--r1-border); white-space: nowrap;
+  background: var(--r1-btn); color: var(--r1-ink); cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .r1-btn:hover { background: var(--r1-surface); }
 .r1-btn:disabled { opacity: .5; cursor: not-allowed; }
+.r1-btn-sm { min-height: 32px; padding: 0 14px; font-size: 13px; border-radius: 8px; }
 .r1-btn-primary { background: var(--r1-primary); color: var(--r1-primary-ink); border-color: var(--r1-primary); }
-.r1-btn-primary:hover { background: #111827; }
+.r1-btn-primary:hover { background: var(--r1-primary-hover); }
 .r1-btn-ghost { background: transparent; }
 .r1-btn-stop { background: var(--r1-rec); color: #fff; border-color: var(--r1-rec); }
-.r1-btn-stop:hover { background: #b42318; }
-/* The question screen: progress left, prep countdown top centre, status right; the question text on
-   the left and the self view in the centre; the actions underneath. No back button, by design. */
-.r1-top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding-bottom: 14px; margin-bottom: 20px; border-bottom: 1px solid var(--r1-border); }
-.r1-progress { font-size: 12.5px; font-weight: 600; color: var(--r1-muted); }
-.r1-prep { font-size: 14px; color: var(--r1-muted); font-variant-numeric: tabular-nums; }
-.r1-prep b { color: var(--r1-ink); font-size: 18px; font-weight: 650; margin-left: 4px; }
-.r1-status { justify-self: end; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--r1-muted);
-  border: 1px solid var(--r1-border); border-radius: 999px; padding: 4px 12px; }
-.r1-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--r1-faint); }
-.r1-status.is-rec { color: var(--r1-rec); border-color: #fecdca; background: #fef3f2; }
-.r1-status.is-rec .r1-status-dot { background: var(--r1-rec); animation: scrpulse 1.2s infinite; }
-.r1-body { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 28px; align-items: start; }
-@media (max-width: 760px) { .r1-body { grid-template-columns: 1fr; gap: 16px; } .r1-top { grid-template-columns: 1fr auto; } .r1-status { grid-column: 1 / -1; justify-self: start; } }
-.r1-q { font-size: 21px; font-weight: 600; line-height: 1.35; color: var(--r1-ink); margin: 4px 0 0; text-wrap: balance; }
-.r1-q-help { font-size: 13px; line-height: 1.55; margin: 14px 0 0; }
-.r1-tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--r1-muted);
-  border: 1px solid var(--r1-border); border-radius: 999px; padding: 2px 9px; margin-bottom: 8px; }
-.r1-answer-clock { position: absolute; right: 12px; bottom: 12px; font-size: 15px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums;
-  background: rgba(16,24,40,.72); border-radius: 999px; padding: 4px 14px; }
-.r1-answer-clock.warn { background: var(--r1-rec); }
-.r1-count { position: absolute; inset: 0; display: grid; place-items: center; font-size: 96px; font-weight: 700; color: #fff;
-  background: rgba(16,24,40,.45); font-variant-numeric: tabular-nums; }
-.r1-acts { display: flex; justify-content: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
-.r1-acts .r1-btn { min-width: 180px; }
-.r1-foot { text-align: center; font-size: 12px; color: var(--r1-faint); margin: 10px 0 0; min-height: 1em; }
-/* Landing and notice (app theme). */
-.r1-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
-.r1-notice { margin: 0 0 20px; padding-left: 18px; font-size: 13.5px; color: var(--ink-2); line-height: 1.65; }
-.r1-check { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 24px; font-size: 13.5px; color: var(--ink); cursor: pointer; max-width: 56ch; }
-.r1-check input { margin-top: 3px; accent-color: var(--accent); }
-.r1-check-d { color: var(--muted); }
-/* All done: a quiet wait, then the typed fallback if this computer can't transcribe. */
-.r1-done { text-align: center; }
-.r1-done .scr-ready-sub { margin-left: auto; margin-right: auto; max-width: 52ch; }
-.r1-spinner { width: 22px; height: 22px; margin: 6px auto 0; border-radius: 50%; border: 2px solid var(--r1-border); border-top-color: var(--r1-primary); animation: r1spin .9s linear infinite; }
+.r1-btn-stop:hover { background: var(--r1-rec-hover); }
+
+/* The intro and All done: the same card, one column, at the same scale as the main card. It
+   grows with the window like the main card does, so it is never a small box lost on the screen.
+   Spacing is on an 8px unit (--u) that scales with the card; sections (who, the facts, privacy,
+   the setting, the action) are parted by whitespace and hairlines. */
+.r1-card.is-solo { display: block; width: min(100cqw - 32px, max(740px, 54cqw)); padding: clamp(28px, 3cqw, 72px) clamp(28px, 3.4cqw, 84px) clamp(30px, 3.2cqw, 76px); }
+.r1-card.is-solo > *, .r1-foot { --u: clamp(8px, 1.18cqi, 14px); }
+.r1-card.is-solo .r1-label { min-height: 0; padding-bottom: calc(var(--u) * 1.5); margin-bottom: calc(var(--u) * 3); font-size: clamp(11.5px, 1.6cqi, 18px); }
+.r1-id { display: flex; align-items: center; gap: calc(var(--u) * 2); }
+.r1-id .fr-logo { width: calc(var(--u) * 6.5); height: calc(var(--u) * 6.5); border-radius: calc(var(--u) * 1.4); }
+.r1-id .av-mono { font-size: calc(var(--u) * 2.3); }
+.r1-id-t { flex: 1; min-width: 0; }
+.r1-card.is-solo .r1-h { font-size: clamp(25px, 3.6cqi, 44px); line-height: 1.2; letter-spacing: -0.018em; }
+.r1-co { margin: .18em 0 0; font-size: clamp(15px, 2.1cqi, 25px); line-height: 1.35; color: var(--r1-muted); }
+/* The facts: four separate items, a large tabular number with a small label under it. */
+.r1-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: calc(var(--u) * 3.5); border-top: 1px solid var(--r1-line); border-bottom: 1px solid var(--r1-line); }
+.r1-stats[data-n="1"] { grid-template-columns: minmax(0, 1fr); }
+.r1-stat { display: grid; gap: .28em; padding: calc(var(--u) * 2.25) 0 calc(var(--u) * 2.25) calc(var(--u) * 2.5); border-left: 1px solid var(--r1-line); }
+.r1-stat:first-child { padding-left: 0; border-left: 0; }
+.r1-stat b { font-size: clamp(24px, 3.5cqi, 42px); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--r1-ink); white-space: nowrap; }
+.r1-stat span { font-size: clamp(13px, 1.85cqi, 22px); line-height: 1.3; color: var(--r1-muted); white-space: nowrap; }
+.r1-retake { margin: calc(var(--u) * 1.5) 0 0; font-size: clamp(13px, 1.85cqi, 22px); line-height: 1.4; color: var(--r1-muted); }
+.r1-retake:empty { display: none; }
+.r1-points { list-style: none; margin: calc(var(--u) * 3.5) 0 0; padding: 0; display: grid; gap: calc(var(--u) * 1.5);
+  font-size: clamp(15.5px, 2.15cqi, 26px); line-height: 1.4; color: var(--r1-ink-2); }
+.r1-points li { display: flex; align-items: flex-start; gap: calc(var(--u) * 1.5); }
+.r1-points svg { flex: none; width: 1.15em; height: 1.15em; margin-top: .12em; color: var(--r1-muted); }
+/* Extra time is a setting, not a bullet: its own row between hairlines, the control at the end.
+   A checkbox, not a switch: it takes effect on Get started, and a switch promises "right now". */
+.r1-opt { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--u) * 3); margin-top: calc(var(--u) * 3.5); padding: calc(var(--u) * 2.25) 0;
+  border-top: 1px solid var(--r1-line); border-bottom: 1px solid var(--r1-line); cursor: pointer; }
+.r1-opt-t { display: grid; gap: .16em; min-width: 0; }
+.r1-opt-t b { font-size: clamp(15.5px, 2.15cqi, 26px); font-weight: 600; line-height: 1.35; color: var(--r1-ink); }
+.r1-opt-t span { font-size: clamp(13px, 1.85cqi, 22px); line-height: 1.4; color: var(--r1-muted); }
+.r1-card .r1-opt input[type="checkbox"] { flex: none; width: calc(var(--u) * 2.75); height: calc(var(--u) * 2.75); margin: 0; accent-color: var(--r1-primary); cursor: pointer; }
+/* One primary action, on the left edge the eye has followed down the card. The card ends on it. */
+.r1-solo-acts { display: flex; align-items: center; gap: calc(var(--u) * 2); flex-wrap: wrap; margin-top: calc(var(--u) * 3.5); }
+.r1-solo-acts .r1-btn { min-height: calc(var(--u) * 6); padding: 0 calc(var(--u) * 4); font-size: clamp(15.5px, 2.1cqi, 25px); border-radius: calc(var(--u) * 1.4); }
+.r1-solo-msg { font-size: clamp(14px, 1.9cqi, 22px); color: var(--r1-rec); }
+/* Starting: the button keeps its colour (a greyed primary reads as disabled); a spinner and
+   "Starting..." appear only if the call takes more than a moment. */
+.r1-btn.is-busy { pointer-events: none; }
+.r1-btn-spin { display: none; width: 1em; height: 1em; border-radius: 50%; border: 2px solid currentColor; border-top-color: transparent; opacity: .85; animation: r1spin .8s linear infinite; }
+.r1-btn.is-slow .r1-btn-spin { display: inline-block; }
+/* The footnote sits under the card, not in it. */
+.r1-foot { flex: none; box-sizing: border-box; width: min(100cqw - 32px, max(740px, 54cqw)); margin: 14px 0 0; padding: 0 8px; text-align: center;
+  font-size: clamp(11.5px, .62cqw + 3px, 15px); line-height: 1.5; color: var(--r1-faint); }
+.r1-card.is-solo .rc-drill-list { margin: calc(var(--u) * 2) 0 0; font-size: clamp(14.5px, 1.9cqi, 23px); color: var(--r1-ink-2); }
+/* A narrow card: the facts become two by two. */
+@container r1card (max-width: 620px) {
+  .r1-stats:not([data-n="1"]) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .r1-stat:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .r1-stat:nth-child(n + 3) { border-top: 1px solid var(--r1-line); }
+}
+.r1-done-sub { margin: 0 0 18px; font-size: clamp(16px, 2.2cqi, 27px); line-height: 1.5; color: var(--r1-muted); }
+.r1-spinner { width: 22px; height: 22px; margin: 6px 0 0; border-radius: 50%; border: 2px solid var(--r1-border); border-top-color: var(--r1-primary); animation: r1spin .9s linear infinite; }
 @keyframes r1spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .r1-spinner, .r1-status.is-rec .r1-status-dot { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .r1-spinner, .r1-btn-spin, .r1-status.is-rec .r1-status-dot { animation: none; } .r1-prog > i { transition: none; } }
 .r1-type { text-align: left; margin: 16px 0; }
 .r1-type-q { font-size: 13px; font-weight: 600; color: var(--r1-ink); margin-bottom: 6px; }
 .r1-ta { width: 100%; }
+
+/* Narrow (the Browser pane open, a small window): one column, the words above the camera. The
+   video is capped by the height so the action stays on screen. */
+@container r1main (max-width: 819px) {
+  .r1-card:not(.is-solo) { display: block; width: min(100cqw - 32px, 760px); padding: 22px 24px 24px; }
+  .r1-col-q { margin-bottom: 22px; }
+  .r1-col-v { width: min(100%, max(300px, (100cqh - 388px) * 16 / 9)); margin: 0 auto; }
+  .r1-label { min-height: 0; margin-bottom: 14px; }
+  .r1-q[data-size="m"] { font-size: 20px; max-inline-size: none; }
+  .r1-q[data-size="s"] { font-size: 17px; max-inline-size: none; }
+  .r1-set { margin-top: 0; padding-top: 10px; }
+  .r1-pop { bottom: auto; top: calc(100% + 4px); }
+  .r1-strip { flex-wrap: wrap; }
+}
 /* Round 2 gate: needs a live interviewer. Inline (under the Round 1 report) or as its own card. */
 .r2-gate-inline { display: block; }
 .r2-gate-h { font-size: 17px; font-weight: 650; color: var(--ink); margin: 0 0 6px; }

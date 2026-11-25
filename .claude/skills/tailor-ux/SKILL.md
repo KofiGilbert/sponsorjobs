@@ -24,6 +24,14 @@ never fought for. The user has said this repeatedly. When in doubt, remove.
 
 ## 2. Copy rules (hard)
 
+- **A title is never broken onto two lines when it can fit on one** (owner, 2026-11-25: "you know I
+  don't like it when we break text into 2"). No `text-wrap: balance` and no narrow max line length
+  on headings or titles. Size the title to fit one line (step the size down to a sensible minimum)
+  and let it wrap only when it truly cannot fit at that minimum. If a title is long because it
+  joins two things ("Role at Company"), split it into a title and a quiet second line instead.
+  The one exception is a long interview QUESTION, which is meant to sit on two or three balanced
+  lines. On the interview stage `r1FitTitles` does this for every `.r1-h`.
+
 - **No em or en dashes in any user-facing text.** They read as AI-written. Enforced by
   `tests/test_no_dashes.py` (scans index.html, app.js, copy modules, and mdash/ndash
   entities). Use `&rarr;` for arrows, a comma or full stop otherwise. Hyphens are fine.
@@ -68,29 +76,63 @@ practice or typed mock; those were removed.
 a feature name, icon or heading; the only mention is the one-line disclaimer on the landing
 ("Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc.").
 Our Round 1 tracks the real candidate flow screen by screen:
-1. **Landing**: company + role, "5 questions, about 20 minutes", the kinds of questions, one
-   primary action ("Get started"), the disclaimer.
-2. **Notice**: recordings stay on this computer, can be deleted from the report, no facial
-   analysis. An "I need extra time" accessibility checkbox doubles both clocks. This replaced
-   the old Realistic/Relaxed switch.
-3. **Device check**: camera preview, mic meter, a connection note, tips in the real product's
-   wording ("light in front of you", "a spot free from distractions and noise", "don't worry
-   about eye contact, just be natural").
-4. **Practice**: unlimited practice questions in the exact real format, unscored, never saved,
-   with "Do another practice question" and "Start the interview".
-5. **Each question**: question text on the LEFT, "Prep time 0:30" at the TOP, the self view in
-   the centre, a "Not Recording" / red-dot "Recording" status, "Start Recording" (or auto-start
-   when prep ends), a 3-2-1 overlay, an answer countdown ("2:00"), "I'm done, stop recording",
-   auto-submit at time-out, "Retake (1 left)" once per question, then "Next question". No back
-   button. Progress "Question 2 of 5".
+1. **Intro** (ONE screen, the old welcome and "Before you begin" merged; the real product also
+   opens on a single page that walks through the interview's requirements). Five parts, parted by
+   whitespace and hairlines: WHO (the label "ROUND 1 · RECORDED INTERVIEW", the company mark, the
+   role as a ONE-LINE title, the company as a quiet line under it); THE FACTS as a stat row, never a
+   sentence ("5 / questions", "~20 min / in total", "30 sec / to prepare", "2 min / to answer": a
+   large tabular number over a small label, from `GET /api/screens/config`, never typed into the
+   copy; two by two when narrow), with "1 retake per question" as one quiet line; PRIVACY (three
+   points with small icons); THE SETTING ("Need extra time?" in its own row with a checkbox at the
+   right end; a checkbox, not a switch, because it applies on Get started); THE ACTION ("Get
+   started", left aligned, the last thing in the card). The disclaimer sits under the card. Exit (in
+   the bar) is the way out: no Back, no "Not now".
+2. (merged into 1.)
+3. **Device check**: left "SET UP", the one-line heading, a Camera menu and a Microphone menu (real
+   devices, switched live, remembered); right "CAMERA PREVIEW", the strip with the two tips ("Light
+   in front of you. Somewhere quiet.") and the action ("Try a practice question"), the video, the
+   microphone level under it. A good connection says nothing.
+4. **Practice**: unlimited practice questions in the exact real format, unscored, never saved. The
+   take can be played back to check picture and sound, then "Another practice question" or "Start
+   the interview".
+5. **Each question**: left the label ("QUESTION 2 OF 5" or "PRACTICE QUESTION · NOT SAVED"), the
+   question right under it, one hint line during prep, "Settings" at the bottom; right "YOUR
+   RESPONSE" with the "Not recording" / red-dot "Recording" pill at the end of its line, then the
+   strip ("Prep time 0:27" or "Response time 1:57", a draining bar, "Start recording" or "Done
+   answering"), the video, the microphone level. Auto-start when prep ends, a 3-2-1 overlay,
+   auto-submit at time-out, "Retake (1 left)" once per question, then "Next question". No back button.
 6. **All done** while answers save, transcribe and score (a typed fallback appears here only
    if this computer cannot transcribe).
 7. **Report**: score/100, passed at 70, why, do this next, competency bars, per-answer feedback
    with fillers and hedges highlighted, "See a stronger version", .docx, delete recordings,
    and the API's `disclaimer`.
-Screens 3 to 6 run on a **light, plain, white surface** like the real thing (owner's choice),
-scoped to the stage container (`.r1-light`) with its own `--r1-*` tokens; the rest of the app
-stays on the app theme. Calm, minimal tone.
+Screens 1 to 6 are **one stage** (`.r1-stage`, tokens `--r1-*`): a very light page with ONE
+composed card on it (white card in the light theme, the app's dark surfaces in the dark theme), laid
+out like the real product's recording screen. We take the layout and the hierarchy, never the
+brand: the app's own fonts and neutral palette, red only while recording. Rules (2026-11-25, pinned
+by `tests/test_interview_stage.py`):
+- **Focus mode.** While a stage is on screen the side menu, page title, round tracker, footer line
+  and the closed panel rail are hidden (pure CSS `:has(.r1-stage)`, so nothing can leave it stuck).
+  A slim bar holds only Exit, which asks before a recording or saved answers are left; Escape asks
+  too and never ends a recording.
+- **A composed card, not things floating.** The card sits in the upper middle and follows the
+  window (width from the height too, so it always fits whole); its type and video scale with it
+  through container units. Two columns, about 40/60, that START ON ONE LINE, each under a small
+  uppercase tracked label with a hairline. Below 820px wide the columns stack.
+- **Controls attached to the video.** One rounded frame holds the strip (clock, progress bar, the
+  action at its right end) and the video; the microphone level is directly under it, the same
+  width. The action is in the same spot on every step. Nothing sits on its own below the video.
+- **The question is calm.** About 22 to 26px at a normal window, weight 500, line height about 1.36,
+  about 38 characters a line, `text-wrap: balance`, top aligned right under its label. Only a very
+  long question steps down (`SJStage.questionTier`, `.r1-q[data-size]`); never truncated. A big
+  bold question centred in an empty pane was the rejected look.
+- **One place per thing.** The status pill and the clock never move between states; one clock.
+- **Every text earns its place.** Say a thing once, one short hint line or none, a status only
+  when there is a problem, sentence case, inline SVG icons (no emoji).
+- **Device choice.** `ui/static/interview_stage.js` holds the rules (default first, pseudo devices
+  folded, one device shown as plain text, exact device ids, fallback to the default with one quiet
+  line, "No sound from this microphone..." after five quiet seconds on the check). Settings is
+  locked while recording.
 
 **Round 2 is one live interview with the Tavus interviewer (15 minutes)** in the Electron
 video pane (`renderCviStage`, `window.tailorShell.openBrowser`), then "End interview" leads to
@@ -657,3 +699,42 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   jobs' staircase (5, 4, 3, 2) first. A project the person names in the chat ("use these 4
   projects"), adds from GitHub, switches on, or puts back stays past the cap
   (tailoring/assembler.py `project_cap`, `_cap_projects`, `_shrink_once`).
+- 2026-11-25: **Recorded interview: full-window stage, device choice, less text** (owner: "do they
+  squeeze the video in the middle like we have, or use the entire screen?", "every text must earn
+  its place"). The session (device check to All done) left the 880px card for one stage that fills
+  the window with the app's chrome hidden, the question large on the left and the video on the
+  right (see §4 for the rules). Camera and Microphone menus were added because the desktop window has
+  no browser device picker; the real product has a Settings link for the same job. Cut: the page
+  title, subtitle, Quit, divider and Past interviews during a session; the second "practice" label;
+  the third tip and the device-check sentence; "Connection: looks good"; the helper lines while
+  counting down and recording; the retakes footnote (the Retake button says it); the timer on the
+  video. Added on purpose: playback of a practice take. The stage now follows the dark theme
+  (a full window of white inside a dark app is a flash); the light theme keeps the white stage.
+- 2026-11-25 (later the same day, supersedes the floating two-pane stage): the owner rejected the
+  first full-window stage ("not there yet, do your homework well") and sent the real product's
+  recording screen. What was wrong: a very large bold question floating in the vertical centre of
+  an empty pane, a bar carrying the step, clock and status far from the video, and the button on
+  its own below the video. What the reference does, and we now do: one contained card; two columns
+  starting on one line under small labels; a medium, regular-weight question top aligned under
+  "Question 2 of 6"; the clock, a progress bar and "Done Answering" in a strip attached to the top
+  of the video; the microphone level directly under it; quiet Settings at the bottom left. The
+  welcome and "Before you begin" moved into the same card and focus mode. Lesson: when a screen
+  mirrors a real product, get the product's actual screen in front of you before designing; a help
+  article's description of it is not enough.
+- 2026-11-25 (intro): the owner asked whether "Before you begin" was presented well and whether the
+  real product has such a screen. It does (one requirements page, then terms, then attempts), but
+  ours was a second click-through for three lines and a tick box, in a 640px card with 14px text
+  lost in the window. Now ONE intro screen, at the stage's scale: card about 740 to 780px at a
+  normal window and growing with it (never a small box on a big screen), heading 26px and up, body
+  16px and up. A primary button never looks disabled while enabled: in flight it keeps its colour
+  (`is-busy`), and only after about 300 ms shows a spinner and "Starting...".
+- 2026-11-25 (intro, second pass): the owner rejected the first merged intro for two things: the
+  title "Product Manager at Ochsner Clinic Foundation" was balanced onto two lines although it fit
+  on one, and the facts ("5 questions · about 20 minutes · 30 seconds to prepare, 2 minutes to answer
+  · 1 retake") were one lumped sentence. Fixed with the one-line title rule (§2), role and company
+  on separate lines, and a four-item stat row. References: NN/g on chunking ("Presenting content in
+  chunks makes scanning easier") and on scanning; the number-over-label statistic pattern (UK MoJ
+  "numeric data", HubSpot "statistics", at most four side by side); HackerRank's test intro (duration
+  and number of questions as separate facts); LukeW on aligning the primary action with the
+  content's left edge; NN/g toggle guidelines (a switch must take effect at once, so this is a
+  checkbox); Apple HIG ("Aim to keep titles short enough to display on a single line").
