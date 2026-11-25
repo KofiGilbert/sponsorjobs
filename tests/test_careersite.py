@@ -276,6 +276,16 @@ def test_excluded_roles_are_not_stored():
     assert not [r for r in store.list_jobs() if r["source_id"].endswith("REQ-200")]
 
 
+def test_the_feed_build_stores_excluded_roles_too():
+    """all_roles (the feed build, 2026-11-25): a citizenship-only role is stored, to be published
+    as a general row; it is no longer re-read on every run either."""
+    pages = base_pages()
+    pages[f"https://{HOST}/job/200"] = posting_page(200, desc="Must be a U.S. citizen. Active TS/SCI clearance required.")
+    _, store, summary, _ = run(pages, all_roles=True)
+    assert summary["excluded"] == 0
+    assert [r for r in store.list_jobs() if r["source_id"].endswith("REQ-200")]
+
+
 def test_crawl_sites_runs_hosts_in_threads_with_own_connections(tmp_path):
     db = tmp_path / "jobs.db"
     Watchlist(db).close()

@@ -48,14 +48,80 @@ manifests are kept.
 **All jobs, sponsors first (2026-11-20).** Two kinds of row, each marked `sponsor_relevant`:
 
 * **Sponsor rows** (`sponsor_relevant: true`, `sourcing/quality.is_sponsor_relevant`): every job from
-  a board on the watchlist (those companies are there because they have a sponsorship record), plus
+  a board on the watchlist (unless the board is on the general list, below), plus
   aggregator rows when the employer carries a sponsor badge or the posting states sponsorship. Never
   capped. This is exactly the whole feed as it was from 2026-10-01 to 2026-11-20.
 * **General rows** (`sponsor_relevant: false`): the other checked US rows (an aggregator role with no
-  sponsor signal, or an ad that says it will not sponsor), English titles only, newest first, at most
+  sponsor signal, an ad that says it will not sponsor or needs citizenship, a clearance-heavy
+  employer, a board of an employer with no sponsorship record), English titles only, newest first, at most
   `FEED_GENERAL_MAX` of them (`backend/feed.general_max`; the workflow sets 50,000, the code default
   0 keeps a feed sponsor-only). Shard 0 pulls them with the general freehire dump
   (`FREEHIRE_GENERAL_BULK=1`, `FREEHIRE_BULK` rows per run, both set in the workflow).
+
+### Every employer, not only sponsors (2026-11-25)
+
+The board is open to every job seeker, so nothing is left out any more for lacking a sponsorship
+record. What changed, and what each switch is:
+
+* **Every role is stored.** The crawl used to keep only roles a visa holder can take
+  (`quality.is_intl_student_accessible`): a role whose ad says it will not sponsor or needs
+  citizenship, and every role at a clearance-heavy contractor, was dropped before it reached the
+  database. The feed build now stores them (`service.crawl_keeps`, `all_roles=True`; board pass,
+  career-site lane, list-only boards after their description is read) and publishes them as general
+  rows with the ad's own sentence (the "No sponsorship" / "Citizenship or clearance required" chip).
+  They are never sponsor rows: `is_sponsor_relevant` is false for an ad that says no and for a
+  clearance-heavy employer, whatever the employer's H-1B record. `FEED_ALL_ROLES=0` (repository
+  variable) restores the old crawl. The desktop app's own small crawl is unchanged. A side effect:
+  such a Workday or career-site role used to be re-read on every run (it was never stored, so never
+  "known"); now it is read once.
+* **Boards of employers with no record.** `seed/watchlist_general.csv` lists the watched boards
+  whose employer has no H-1B or PERM record. A row from a listed board is a sponsor row only with a
+  sponsor badge or an ad that offers sponsorship, the aggregator rule; every board not listed keeps
+  the old promise. A general board is added to the seed and to this list in one write, by
+  `scripts/add_general_boards.py` (a file of employer names, or of known boards) or by the discovery
+  crawl's general lane (`scripts/grow_watchlist.py --no-record`: the seed's employers with no
+  record, the ones that filed for an H-1B first). Listing a board whose employer turns out to have a
+  record is harmless: the badge still makes its rows sponsor rows.
+* **Discovery asks clearance-heavy employers too** (`growth.should_skip` no longer turns them away).
+* **The old verdict became a label.** The crawl's blunt no-sponsorship phrasings catch a few ads the
+  ad reader misses (about 3 in 100 of the roles it used to drop). `quality.feed_ad_stance` marks
+  those "not_offered" with the sentence that matched, so every role the old crawl hid from a visa
+  holder is a labelled general row and the sponsor board is the same set of roles as before.
+* **First batch, 2026-11-25 (42 boards, 11,837 jobs listed, about 9,150 of them in the US).** From
+  the remoteintech company names (789 asked on Greenhouse, Lever and Ashby, 1,778 requests, no
+  429): 33 boards, 584 US jobs; 21 have no sponsorship record (Tailscale, Calendly, Bitwarden,
+  Axios, Honeycomb, Mattermost...), 12 have one and are ordinary sponsor boards (Elastic, GitLab,
+  Vercel, Chainguard...). From the clearance-heavy employers: 9 Workday boards, about 8,565 US jobs
+  in the first 2,000 rows each lists (Leidos, Northrop Grumman, Booz Allen Hamilton, CACI, GDIT,
+  Parsons, Draper, Sierra Space, Cubic). Those 9 are list-only boards: their descriptions are read
+  at `WORKDAY_MAX_DETAIL_FEED` per board per run, so they fill in over three or four runs, and a
+  shard that reaches its time cap meanwhile continues where it stopped on the next run.
+* **The general cap is visible.** The funnel line of each build logs `general_over_cap`, the general
+  rows `FEED_GENERAL_MAX` left out. Raise the variable in stages when it is above zero.
+
+Sizes measured on 2026-11-25 (the live feed, 332,937 rows): 36.6 MB to download, 41 s to download and
+assemble on a home connection, about 715 MB of memory at the peak of that first load. That is roughly
+110 bytes of download and 2 KB of peak memory per row, so each extra 10,000 rows cost about 1.1 MB and
+20 MB. Storing every role adds an estimated 12,000 to 20,000 general rows (an estimate from the 2026-11-25 run's log: about 13,000
+rows fetched but neither stored, duplicate nor unread; a 26-board sample went from 404 to 419 published
+rows with the sponsor count unchanged), which fits under the 50,000 cap beside the 28,000 general rows
+already there. Past the cap, stage it: 50,000, then 75,000, then 100,000, checking `general_over_cap`,
+the feed size and the app's first load after each step.
+
+What is NOT switched on, and why (each needs the owner):
+
+* **freehire.me** changed its terms: "Without a plan, the API is for personal and non-commercial
+  use... Showing our postings in a product or service you offer to others, paid or not, needs a
+  plan" ([terms](https://freehire.me/terms), read 2026-11-25), and its keyless job reads no longer
+  carry the employer's link (`url` is empty; the newest 300 US rows on 2026-11-25 had none, so
+  `freehire_employer_url_ok` kept 0 of them). The general pull (`FREEHIRE_GENERAL_BULK`) and the
+  sponsor slice therefore add nothing now, and the freehire rows already on the board age out at the
+  21-day prune. Its API plan is 29 USD a month (1,200 requests a minute, employer links through
+  `/data/jobs/search`), its Data plan 99 USD a month (a full catalogue file). Nothing here raises a
+  freehire budget, and the paid endpoints are not wired: that needs a key to test against.
+* **Adzuna**: still refused (written consent needed, preview-only text; see "Aggregator terms").
+* **SmartRecruiters**: still off (its API robots.txt disallows us).
+* **Hacker News**: still opt-in (`HN_WHOISHIRING=1`), for its terms.
 
 The manifest's `count` is every live job; `sponsor_count` is the sponsor rows (the website's "live
 roles at sponsoring employers"). The app's Jobs screen starts on "Sponsors only" for anyone who needs

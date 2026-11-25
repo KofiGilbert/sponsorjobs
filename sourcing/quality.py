@@ -19,7 +19,10 @@ the employer list in #2 is a short, curated set of well-known primes, not a broa
 
 from __future__ import annotations
 
+import csv
 import re
+from functools import lru_cache
+from pathlib import Path
 
 from .adstance import RESTRICTED_SRC
 from .sponsors import normalize_employer
@@ -29,15 +32,35 @@ from .sponsors import normalize_employer
 # The citizenship / green-card / clearance branches live in sourcing/adstance.py
 # (RESTRICTED_SRC), where the ad reader turns the same sentences into the "restricted" chip
 # the app and the extension show; one source, so the board and the chips never disagree.
-_EXCLUDE_RE = re.compile(
-    "(" + RESTRICTED_SRC +
-    r"|no\s+(visa\s+)?sponsorship|not\s+(able|eligible)\s+to\s+sponsor"
+_NO_SPONSORSHIP_SRC = (
+    r"no\s+(visa\s+)?sponsorship|not\s+(able|eligible)\s+to\s+sponsor"
     r"|unable\s+to\s+sponsor|do(es)?\s+not\s+(offer|provide|sponsor)\s+(visa\s+)?sponsor"
     r"|will\s+not\s+sponsor|without\s+(visa\s+)?sponsorship"
     r"|sponsorship\s+is\s+not\s+(available|offered|provided)"
-    r"|not\s+(provide|offer)\s+(visa\s+)?sponsorship)",
-    re.I,
-)
+    r"|not\s+(provide|offer)\s+(visa\s+)?sponsorship")
+_EXCLUDE_RE = re.compile("(" + RESTRICTED_SRC + "|" + _NO_SPONSORSHIP_SRC + ")", re.I)
+_NO_SPONSORSHIP_RE = re.compile(_NO_SPONSORSHIP_SRC, re.I)
+
+
+def feed_ad_stance(text: str) -> dict:
+    """What the ad says about sponsorship, for the central feed: sourcing.adstance.ad_stance,
+    plus one fallback. The crawl used to DROP a role whose description matched the blunt
+    no-sponsorship phrasings above; the careful ad reader misses a few of those ("authorized to
+    work in the US without sponsorship", with no visa word beside it). Now that the feed build
+    stores every role (2026-11-25), such a role must still never be a sponsor row, so it is
+    marked "not_offered" here with the sentence that matched: exactly the roles the old crawl
+    hid from a visa holder are the ones the board now labels."""
+    from .adstance import NOT_OFFERED, RESTRICTED, ad_stance
+    st = ad_stance(text)
+    if st["stance"] in (NOT_OFFERED, RESTRICTED) or not text or "sponsor" not in text.lower():
+        return st
+    m = _NO_SPONSORSHIP_RE.search(text)
+    if not m:
+        return st
+    start = max(text.rfind(c, 0, m.start()) for c in ".!?\n") + 1
+    ends = [i for i in (text.find(c, m.end()) for c in ".!?\n") if i >= 0]
+    end = min(ends) + 1 if ends else len(text)
+    return {"stance": NOT_OFFERED, "sentence": " ".join(text[start:end].split())[:300]}
 
 # Curated defense / intelligence / government-services contractors whose public listings are
 # overwhelmingly clearance- or citizenship-gated. Normalized names; subsidiaries match by
@@ -63,9 +86,11 @@ _CLEARANCE_EMPLOYERS = {normalize_employer(x) for x in (
 )}
 
 
+@lru_cache(maxsize=200_000)
 def employer_is_clearance_heavy(company: str) -> bool:
     """True for a curated defense/intel/gov-services prime (or a subsidiary of one), whose
-    public roles are overwhelmingly clearance/citizen-only."""
+    public roles are overwhelmingly clearance/citizen-only. Cached: the feed build asks once
+    per row, and a few thousand employer names cover every row."""
     norm = normalize_employer(company)
     if not norm:
         return False
@@ -155,7 +180,8 @@ def is_entry_level(title: str, jd_text: str = "") -> bool:
 
 
 # Sources that are aggregators, not a company's own board. A board on the watchlist is there
-# because the company has a sponsorship record, so its rows always fit the product's promise;
+# because the company has a sponsorship record (unless it is on the general-board list below,
+# 2026-11-25), so its rows always fit the product's promise;
 # an aggregator row fits only when the employer carries a sponsor badge or the posting itself
 # states sponsorship (decided 2026-10-01: sponsor-relevant only, like niche boards such as
 # H1BGrader, rather than an Indeed-style "everything, ranked" list). Since 2026-11-20 the feed
@@ -184,13 +210,58 @@ AGGREGATOR_SOURCES = frozenset({"remotive", "adzuna", "arbeitnow", "remoteok", "
                                 "hackernews"})
 
 
+# Boards of employers with NO sponsorship record (2026-11-25, "every employer, not only
+# sponsors"). The watchlist used to promise that every board on it belongs to a sponsor; since the
+# product opened to all job seekers it also carries boards of employers the H-1B / PERM data does
+# not know. Those are listed here (ats, board_id), beside the seed, so their rows are marked
+# honestly: on the sponsor board only with a sponsor badge or an ad that offers sponsorship, the
+# same rule as an aggregator row. A board NOT listed here keeps the old promise.
+GENERAL_BOARDS_SEED = Path(__file__).resolve().parents[1] / "seed" / "watchlist_general.csv"
+GENERAL_BOARD_FIELDS = ["ats", "board_id", "company", "url", "jobs", "us_jobs", "verified", "source"]
+
+
+def board_key(ats: str, board_id: str) -> tuple[str, str]:
+    """A board's identity, compared case-blind between the general list and a row's source_id."""
+    return (str(ats or "").strip().lower(), str(board_id or "").strip().lower())
+
+
+@lru_cache(maxsize=4)
+def general_boards(path: str | None = None) -> frozenset:
+    """{(ats, board_id)} of the watched boards whose employer has no sponsorship record
+    (seed/watchlist_general.csv). Empty when the file is missing. Cached per path."""
+    p = Path(path) if path else GENERAL_BOARDS_SEED
+    out = set()
+    try:
+        with open(p, encoding="utf-8", newline="") as f:
+            for r in csv.DictReader(f):
+                if r.get("ats") and r.get("board_id"):
+                    out.add(board_key(r["ats"], r["board_id"]))
+    except OSError:
+        return frozenset()
+    return frozenset(out)
+
+
+def is_general_board_row(job: dict) -> bool:
+    """Is this row from a watched board of an employer with no sponsorship record? Read from the
+    row's own source_id ("<ats>:<board_id>:<job id>", sourcing.ats._job)."""
+    parts = str(job.get("source_id") or "").split(":", 2)
+    if len(parts) < 3 or not parts[1]:
+        return False
+    return board_key(parts[0], parts[1]) in general_boards()
+
+
 def is_sponsor_relevant(job: dict) -> bool:
-    """Does this row belong on SponsorJobs at all? Board rows: yes. Aggregator rows: only with
-    a sponsor badge (`visa`, set by SponsorDB.tag_jobs for US roles) or a posting that states
-    sponsorship (`sponsorship_stated` is True)."""
+    """Is this row on the SPONSOR board (the app's "Sponsors only" view)? A row at a watched
+    sponsor's board: yes. An aggregator row, or a row from a board of an employer with no
+    sponsorship record (general_boards): only with a sponsor badge (`visa`, set by
+    SponsorDB.tag_jobs for US roles) or a posting that states sponsorship. Never when the ad
+    itself says no, or the employer is a clearance-heavy contractor: those rows are general
+    rows, shown to people who need no sponsorship."""
     if job.get("ad_stance") in ("not_offered", "restricted"):
         return False                      # the ad itself rules the role out for a visa holder
-    if (job.get("source") or "") not in AGGREGATOR_SOURCES:
+    if employer_is_clearance_heavy(job.get("company", "")):
+        return False                      # citizenship / clearance roles: general, never sponsor
+    if (job.get("source") or "") not in AGGREGATOR_SOURCES and not is_general_board_row(job):
         return True
     if job.get("visa"):
         return True

@@ -306,6 +306,16 @@ def prune_rows(w, log=print, where: str = "crawl") -> tuple[int, int]:
     return unlisted, stale
 
 
+def all_roles_enabled(env=None) -> bool:
+    """Does this build keep EVERY role its sources list, including the ones a visa holder cannot
+    take (a clearance-heavy employer, an ad that says it will not sponsor or needs citizenship)?
+    On by default since 2026-11-25: the board serves every job seeker, and such a row is published
+    as a general row with what its ad says, never as a sponsor role. FEED_ALL_ROLES=0 restores the
+    crawl that stored accessible roles only."""
+    env = os.environ if env is None else env
+    return str(env.get("FEED_ALL_ROLES", "1") or "1").strip().lower() not in ("0", "off", "false", "no")
+
+
 def aggregators_for_feed(env=None, log=print) -> list[str]:
     """The aggregator feeds this build may crawl into the PUBLIC file."""
     env = os.environ if env is None else env
@@ -350,11 +360,12 @@ def freehire_sponsor_pass(w, data_dir, log=print, **kw) -> dict:
 class _CareerSiteLane:
     """Runs sourcing.careersite.crawl_sites in a background thread for the feed build."""
 
-    def __init__(self, db_path, log, cursor_path=None):
+    def __init__(self, db_path, log, cursor_path=None, all_roles: bool = False):
         from sourcing.careersite import crawl_sites
         self.summaries: list[dict] = []
         self._thread = threading.Thread(
-            target=lambda: self.summaries.extend(crawl_sites(db_path, cursor_path=cursor_path, log=log)),
+            target=lambda: self.summaries.extend(crawl_sites(db_path, cursor_path=cursor_path, log=log,
+                                                             all_roles=all_roles)),
             name="careersite-lane", daemon=True)
 
     def start(self):
@@ -412,6 +423,7 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
                 criteria["aggregator_terms"] = list(criteria["titles"])
             criteria["titles"] = []
         w.set_criteria(criteria)
+        all_roles = all_roles_enabled()
         if crawl:
             # The build has time to spare, so every list-only (Workday, SmartRecruiters) row it
             # keeps gets its description fetched and checked (WORKDAY_MAX_DETAIL_FEED /
@@ -422,7 +434,8 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
             lane = None
             if (crawler is None and fetch is None and owns_lanes(index)
                     and os.environ.get("CAREERSITE_LANE", "1") != "0"):
-                lane = _CareerSiteLane(jobs_db, log, cursor_path=data_dir / CAREERSITE_CURSOR_FILE)
+                lane = _CareerSiteLane(jobs_db, log, cursor_path=data_dir / CAREERSITE_CURSOR_FILE,
+                                       all_roles=all_roles)
                 lane.start()
             if crawler is not None:
                 summary = crawler(w)
@@ -434,7 +447,8 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
                 summary = refresh_watchlist(w, **({"fetch": fetch} if fetch else {}),
                                             detail_budgets=feed_detail_budgets(), boards=boards,
                                             time_budget=crawl_minutes * 60 if crawl_minutes else None,
-                                            include_aggregators=owns_lanes(index))
+                                            include_aggregators=owns_lanes(index),
+                                            all_roles=all_roles)
                 save_cursor(data_dir, start, summary.get("boards_crawled", 0), len(boards), boards,
                             cursor_file=cfile)
                 log(f"[build_feed] {'shard %d/%d ' % (index, count) if count > 1 else ''}"

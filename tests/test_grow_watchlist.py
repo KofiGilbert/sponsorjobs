@@ -130,7 +130,9 @@ def test_load_sponsor_seed_keeps_employers_with_h1b_approvals_or_perm(tmp_path):
 
 
 def test_should_skip_uses_only_the_existing_filters():
-    assert growth.should_skip("Lockheed Martin Corporation")      # curated clearance list
+    # A clearance-heavy employer is probed since 2026-11-25: the feed keeps its roles as general
+    # rows for job seekers who need no sponsorship (tests/test_all_employers.py).
+    assert growth.should_skip("Lockheed Martin Corporation") is None
     assert growth.should_skip("First National Group")             # no brand word to verify
     assert growth.should_skip("Datadog Inc") is None
     assert growth.should_skip("Tata Consultancy Svcs Ltd") is None   # no invented body-shop filter

@@ -50,7 +50,6 @@ from urllib.parse import urlparse
 from .ats import fetch_json, valid_board_id_for
 from .careersite import Robots, looks_challenged, robots_unavailable
 from .discover import DISCOVER_ATS, discover_for_company, slug_candidates
-from .quality import employer_is_clearance_heavy
 from .workday import WD_EXTRA_INSTANCES, WD_INSTANCES, parse_board_id
 from .sponsors import cap_exempt_verdict, normalize_employer
 
@@ -150,9 +149,18 @@ def _int(v) -> int:
         return 0
 
 
-def load_sponsor_seed(path: str | Path = SPONSOR_SEED) -> list[dict]:
+def has_record(row: dict) -> bool:
+    """Does this employer have a sponsorship record: an H-1B approval or a certified PERM case?"""
+    return _int(row.get("h1b_approvals")) > 0 or _int(row.get("perm_certs")) > 0
+
+
+def load_sponsor_seed(path: str | Path = SPONSOR_SEED, no_record: bool = False) -> list[dict]:
     """The employers with at least one H-1B approval or certified PERM application from the
-    committed sponsor seed, with the seed's industry code and cap-exempt flag."""
+    committed sponsor seed, with the seed's industry code and cap-exempt flag. `no_record=True`
+    returns the OTHER employers in the seed instead (2026-11-25): the ones with neither, there
+    because they are E-Verify participants or filed without an approval. The board is open to
+    every job seeker now, so their boards are wanted too, as general boards
+    (quality.general_boards)."""
     import gzip
     opener = gzip.open if str(path).endswith(".gz") else open
     out: list[dict] = []
@@ -163,7 +171,7 @@ def load_sponsor_seed(path: str | Path = SPONSOR_SEED) -> list[dict]:
             except ValueError:
                 continue
             perm = _int(r.get("perm_certs"))
-            if approvals <= 0 and perm <= 0:
+            if (approvals <= 0 and perm <= 0) != bool(no_record):
                 continue
             out.append({"norm_name": r.get("norm_name") or normalize_employer(r.get("display_name", "")),
                         "display_name": r.get("display_name", ""),
@@ -202,12 +210,17 @@ def sponsor_score(row: dict, newest_fy: int, cap_boost: float = CAP_EXEMPT_BOOST
 
 
 def rank_sponsors(rows, limit: int | None = None, skip_norms=(), skip_fn=None,
-                  cap_boost: float = CAP_EXEMPT_BOOST, cap_exempt_only: bool = False) -> list[dict]:
+                  cap_boost: float = CAP_EXEMPT_BOOST, cap_exempt_only: bool = False,
+                  no_record: bool = False) -> list[dict]:
     """Sponsors most worth probing first: approvals weighted toward recent filing years, plus
     PERM, cap-exempt employers boosted (`cap_boost`; 1 turns it off, `cap_exempt_only` keeps
     only them), minus anyone in `skip_norms` (normalized names already watched / already
-    probed) and anyone `skip_fn(display_name)` turns down. Deterministic (ties by name)."""
-    rows = [r for r in rows if _int(r.get("h1b_approvals")) > 0 or _int(r.get("perm_certs")) > 0]
+    probed) and anyone `skip_fn(display_name)` turns down. Deterministic (ties by name).
+    `no_record=True` ranks the employers WITHOUT a sponsorship record instead (the general
+    lane): none has a score, so the ones that filed for an H-1B at all come first (newest filing
+    year first: an employer that files runs a real hiring process, and is far likelier to have
+    a public board than a five-person E-Verify participant), then the rest by name."""
+    rows = [r for r in rows if has_record(r) != bool(no_record)]
     if cap_exempt_only:
         rows = [r for r in rows if cap_exempt_likely(r)]
     newest = max((int(r.get("h1b_last_fy") or 0) for r in rows), default=0)
@@ -223,7 +236,8 @@ def rank_sponsors(rows, limit: int | None = None, skip_norms=(), skip_fn=None,
         seen.add(norm)
         ranked.append({**r, "norm_name": norm, "score": sponsor_score(r, newest, cap_boost),
                        "cap_exempt_likely": cap_exempt_likely(r)})
-    ranked.sort(key=lambda r: (-r["score"], r["display_name"]))
+    ranked.sort(key=lambda r: (-r["score"], -_int(r.get("h1b_last_fy")) if no_record else 0,
+                               r["display_name"]))
     return ranked[:limit] if limit else ranked
 
 
@@ -360,6 +374,51 @@ def count_us_jobs(ats: str, board_id: str, company: str = "", fetch=fetch_json) 
     except Exception:                                      # noqa: BLE001
         return None
     return sum(1 for r in rows if looks_us(r.get("location") or ""))
+
+
+# -- boards of employers with no sponsorship record (seed/watchlist_general.csv) ---- #
+
+def read_general_boards(path: str | Path | None = None) -> list[dict]:
+    from .quality import GENERAL_BOARDS_SEED
+    path = Path(path or GENERAL_BOARDS_SEED)
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8", newline="") as f:
+        return [dict(r) for r in csv.DictReader(f) if r.get("ats") and r.get("board_id")]
+
+
+def write_general_boards(path: str | Path | None, rows) -> list[dict]:
+    """Merge rows into the general-board list (the boards on the watchlist whose employer has no
+    sponsorship record), keyed on (ats, board_id); a later row replaces an earlier one. Sorted
+    like the seed. quality.is_sponsor_relevant reads this file to mark those boards' rows as
+    general rows, so a board must be written here in the SAME change that adds it to the seed.
+    Returns what was written."""
+    from .quality import GENERAL_BOARD_FIELDS, GENERAL_BOARDS_SEED, general_boards
+    path = Path(path or GENERAL_BOARDS_SEED)
+    by_key: dict[tuple[str, str], dict] = {}
+    for r in [*read_general_boards(path), *rows]:
+        key = (str(r["ats"]).strip().lower(), str(r["board_id"]).strip())
+        if not valid_board_id_for(key[0], key[1]):
+            continue
+        by_key[key] = {k: ("" if r.get(k) is None else str(r.get(k))) for k in GENERAL_BOARD_FIELDS}
+        by_key[key]["ats"], by_key[key]["board_id"] = key
+    clean = sorted(by_key.values(), key=lambda r: (r["company"], r["ats"], r["board_id"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=GENERAL_BOARD_FIELDS)
+        w.writeheader()
+        w.writerows(clean)
+    general_boards.cache_clear()
+    return clean
+
+
+def general_board_row(ev: dict, source: str = "", today: str | None = None) -> dict:
+    """One general-board line from a verified board's evidence row."""
+    return {"ats": ev["ats"], "board_id": ev["board_id"], "company": ev.get("company", ""),
+            "url": ev.get("url") or board_url(ev["ats"], ev["board_id"]),
+            "jobs": ev.get("jobs", ""), "us_jobs": "" if ev.get("us_jobs") is None else ev.get("us_jobs"),
+            "verified": ev.get("verified") or today or date.today().isoformat(),
+            "source": source or ev.get("source", "")}
 
 
 def per_ats_counts(rows) -> dict[str, int]:
@@ -803,12 +862,11 @@ def lanes_for(atss) -> set[str]:
 # -- the crawl ----------------------------------------------------------------- #
 
 def should_skip(display_name: str) -> str | None:
-    """Why an employer is not worth a single request, or None to probe it. Uses only
-    filters that already exist in the product (no new heuristics): the curated
-    clearance-heavy employer list (their postings get filtered out of the feed anyway),
-    and names with no distinctive brand word (discovery could never confirm a hit)."""
-    if employer_is_clearance_heavy(display_name):
-        return "clearance-heavy employer (feed filters its roles)"
+    """Why an employer is not worth a single request, or None to probe it: a name with no
+    distinctive brand word (discovery could never confirm a hit). A clearance-heavy employer
+    was skipped here too until 2026-11-25, when the feed filtered its roles out; the feed now
+    keeps them as general rows for job seekers who need no sponsorship, so it is probed like
+    any other (employers a past run recorded as skipped stay in the checkpoint)."""
     if not slug_candidates(display_name):
         return "no distinctive brand word to verify a board against"
     return None

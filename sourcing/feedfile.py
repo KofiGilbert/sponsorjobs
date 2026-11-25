@@ -571,10 +571,11 @@ _ADS: tuple = ((), {})      # (rows, jd_by_id) for the forked workers to read
 
 
 def _read_one(r: dict, jd_by_id: dict):
-    from sourcing.adstance import UNKNOWN, ad_stance
+    from sourcing.adstance import UNKNOWN
     from sourcing.jobtags import job_tags
+    from sourcing.quality import feed_ad_stance
     jd = (jd_by_id or {}).get(r.get("source_id")) or r.get("jd_text") or ""
-    st = ad_stance(jd) if jd else {"stance": UNKNOWN, "sentence": ""}
+    st = feed_ad_stance(jd) if jd else {"stance": UNKNOWN, "sentence": ""}
     return st, job_tags(r.get("title") or "", jd)
 
 

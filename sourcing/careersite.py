@@ -585,7 +585,8 @@ class PageBudget:
 
 def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep=time.sleep,
                clock=time.monotonic, deadline: float | None = None, max_detail: int | None = None,
-               max_urls: int = DEFAULT_MAX_URLS, budget: PageBudget | None = None, log=None) -> dict:
+               max_urls: int = DEFAULT_MAX_URLS, budget: PageBudget | None = None, log=None,
+               all_roles: bool = False) -> dict:
     """Crawl one site into `store` (a sourcing.watchlist.Watchlist): robots, sitemap(s), then
     job pages newest first for URLs the store does not hold yet, until `max_detail` pages, the
     shared `budget` or the `deadline` (by `clock`). URLs already stored are stamped seen (still
@@ -648,9 +649,9 @@ def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep
                 continue
             if not job["posted_at"]:
                 job["posted_at"] = lastmod
-            if not is_intl_student_accessible(job):
-                summary["excluded"] += 1
-                continue
+            if not all_roles and not is_intl_student_accessible(job):
+                summary["excluded"] += 1                           # the feed build keeps these as
+                continue                                           # general rows (all_roles)
             kept.append(job)
             if len(kept) >= 50:
                 store.upsert_jobs(kept)
@@ -707,13 +708,15 @@ def next_cursor(order: list[str], start: int, summaries: list[dict]) -> int:
 
 def crawl_sites(db_path, sites: dict | None = None, *, minutes: float | None = None,
                 workers: int | None = None, page_budget: int | None = None, cursor_path=None,
-                text_fetch=fetch_page, sleep=time.sleep, clock=time.monotonic, log=None) -> list[dict]:
+                text_fetch=fetch_page, sleep=time.sleep, clock=time.monotonic, log=None,
+                all_roles: bool = False) -> list[dict]:
     """Crawl the sites in `sites` (default SITES) with `workers` threads, one host per thread at
     a time (each host still sees one request at a time), stopping at `minutes`. Job pages read
     across all sites are capped by `page_budget` (env CAREERSITE_PAGE_BUDGET; 0 = no cap). The
     order rotates: it starts at the cursor in `cursor_path` and the cursor is saved for the next
     run, so a capped run never starves the end of the table. Each thread opens its own Watchlist
-    connection (SQLite WAL). Returns the per-site summaries."""
+    connection (SQLite WAL). `all_roles` (the feed build) also keeps roles a visa holder cannot
+    take, as general rows (service.crawl_keeps). Returns the per-site summaries."""
     from .watchlist import Watchlist
     sites = SITES if sites is None else sites
     minutes = float(os.environ.get("CAREERSITE_MINUTES", DEFAULT_MINUTES)) if minutes is None else minutes
@@ -737,7 +740,7 @@ def crawl_sites(db_path, sites: dict | None = None, *, minutes: float | None = N
                         return
                     host_name, cfg = items.pop(0)
                 s = crawl_site(store, host_name, cfg, text_fetch=text_fetch, sleep=sleep, clock=clock,
-                               deadline=deadline, budget=budget, log=log)
+                               deadline=deadline, budget=budget, log=log, all_roles=all_roles)
                 with lock:
                     out.append(s)
         finally:
