@@ -2,8 +2,10 @@
 // retired one-time passes, ported from backend/billing.py (the reference) and the /billing/* routes
 // in backend/broker.py.
 //
-// Plans (owner decision 2026-11-20) are Stripe subscriptions (Checkout mode=subscription): Student
-// $29 a month or $69 every 3 months, Standard $49 a month or $119 every 3 months. Which price a
+// Plans are Stripe subscriptions (Checkout mode=subscription). ON SALE (owner decision 2026-11-25):
+// Student $29 a month and Standard $49 a month, nothing else. The every-3-months plans ($69 / $119)
+// are still understood (a subscription already on one renews and cancels as before) but are sold
+// only with SELL_QUARTERLY=1. Which price a
 // person pays is decided HERE from the stored student check (src/student.ts), never by the client.
 // A plan renews until cancelled; src/subscriptions.ts turns Stripe's webhook events into the
 // entitlement (paid through the period end) and handles cancel, resume and renewal reminders.
@@ -11,8 +13,8 @@
 // Extra-interview packs stay one-time Checkout Sessions (mode=payment), granted on
 // checkout.session.completed once paid, exactly once per session id (processed_events). The old
 // one-time passes are granted the same way, so anyone who bought one keeps it until it ends; they
-// are only offered while their STRIPE_PRICE_PASS* secrets are still set (for app versions that
-// predate the plans).
+// are no longer sold (SELL_PASSES=1 with their STRIPE_PRICE_PASS* secrets would sell them again).
+// Packs on sale: 1 interview for $12, 3 for $33. The 5-pack is retired the same way.
 //
 // Stripe is called with plain fetch and form-encoded bodies (no SDK). The secret key lives only in
 // the Worker's secrets. Nothing about a resume or history is ever sent to Stripe: only the account
@@ -20,7 +22,8 @@
 
 import type { Env } from "./env";
 import {
-  type Interval, interviewsIn, ONE_TIME_PASSES, PACK_PRICE_LABEL, PACKS, packSeconds, PLANS, SUBSCRIPTION_PLANS,
+  type Interval, interviewsIn, ONE_TIME_PASSES, PACK_PRICE_LABEL, PACKS, packSeconds, PLANS, sellsPasses, SOLD_PACKS,
+  soldPlans, SUBSCRIPTION_PLANS,
 } from "./metering";
 
 const PASS_PRICE_ENV: Record<string, keyof Env> = {
@@ -40,8 +43,10 @@ export interface Billing {
   key: string;
   webhookSecret: string;
   passPrices: Record<string, string>;   // the retired one-time passes, while still configured
-  planPrices: Record<string, string>;   // the renewing plans
+  planPrices: Record<string, string>;   // every renewing plan with a price id, sold or not (renewals need them)
   packPrices: Record<string, string>;
+  soldPlans: readonly string[];         // the plans a NEW checkout may be started for
+  sellPasses: boolean;                  // SELL_PASSES=1: the retired passes are on sale again
   successUrl: string;
   cancelUrl: string;
 }
@@ -56,6 +61,7 @@ export function billingFrom(env: Env): Billing | null {
   const planPrices = pick(PLAN_PRICE_ENV);
   if (!key || Object.keys(passPrices).length + Object.keys(planPrices).length === 0) return null;
   return { key, webhookSecret: env.STRIPE_WEBHOOK_SECRET || "", passPrices, planPrices, packPrices: pick(PACK_PRICE_ENV),
+           soldPlans: soldPlans(env), sellPasses: sellsPasses(env),
            successUrl: `${appUrl(env)}/?checkout=success`, cancelUrl: `${appUrl(env)}/?checkout=cancel` };
 }
 
@@ -102,20 +108,22 @@ export function planOffer(id: string) {
            interviews: interviewsIn(p), packages: p.packages, auto_renew: true };
 }
 
-/** Every configured renewing plan, Student first, monthly before every 3 months. Both tiers are
- * listed so the app can show both; checkout charges the one the caller qualifies for. */
-export const offeredPlans = (b: Billing) => SUBSCRIPTION_PLANS.filter((id) => b.planPrices[id]).map(planOffer);
+/** Every renewing plan ON SALE with a configured price, Student first. Both tiers are listed so
+ * the app can show both; checkout charges the one the caller qualifies for. A plan that is not
+ * sold (every 3 months, unless SELL_QUARTERLY=1) is never listed, even with its price still set. */
+export const offeredPlans = (b: Billing) => b.soldPlans.filter((id) => b.planPrices[id]).map(planOffer);
 
 export function packOffer(id: string) {
   return { id, price_label: PACK_PRICE_LABEL[id], interviews: PACKS[id], seconds: packSeconds(id) };
 }
 
-/** The retired one-time passes, listed only while their prices are still configured (older app
- * versions read this list; the current app shows `plans`). */
-export const offeredPasses = (b: Billing) => ONE_TIME_PASSES.filter((id) => b.passPrices[id]).map(passOffer);
+/** The retired one-time passes: not sold, so nothing is listed, unless SELL_PASSES=1 and their
+ * prices are configured. */
+export const offeredPasses = (b: Billing) =>
+  b.sellPasses ? ONE_TIME_PASSES.filter((id) => b.passPrices[id]).map(passOffer) : [];
 
-/** The packs on sale (those with a configured price), smallest first. */
-export const offeredPacks = (b: Billing) => Object.keys(PACKS)
+/** The packs on sale (SOLD_PACKS with a configured price), smallest first. */
+export const offeredPacks = (b: Billing) => [...SOLD_PACKS]
   .sort((a, c) => PACKS[a]! - PACKS[c]!).filter((id) => b.packPrices[id]).map(packOffer);
 
 // ---- checkout ------------------------------------------------------------------------------- //
@@ -177,7 +185,7 @@ export function renewalTerms(planId: string): string {
 export async function subscriptionCheckoutUrl(b: Billing, user: string, planId: string, email: string,
                                               consentAt: number, customer: string | null): Promise<string> {
   const price = b.planPrices[planId];
-  if (!price || !SUBSCRIPTION_PLANS.includes(planId)) throw new UnknownProduct(`unknown plan: ${planId}`);
+  if (!price || !b.soldPlans.includes(planId)) throw new UnknownProduct(`plan not on sale: ${planId}`);
   const meta = { kind: "subscription", plan: planId, user, consent_at: consentAt };
   const out = await stripeCall(b, "POST", "/checkout/sessions", {
     mode: "subscription",                  // renews every interval until cancelled
@@ -200,7 +208,7 @@ export type { Interval };
 export class UnknownProduct extends Error {}
 
 export async function passCheckoutUrl(b: Billing, user: string, passId: string, email: string): Promise<string> {
-  const price = b.passPrices[passId];
+  const price = b.sellPasses ? b.passPrices[passId] : undefined;
   if (!price) throw new UnknownProduct(`unknown pass: ${passId}`);
   const p = PLANS[passId]!;
   return session(b, user, price, { kind: "pass", pass: passId, days: p.days,
@@ -210,7 +218,7 @@ export async function passCheckoutUrl(b: Billing, user: string, passId: string, 
 /** The pack's price, or UnknownProduct. Checked BEFORE the active-pass rule, in the Python order
  * (an unknown pack is a 400 even without a pass). */
 export function packPrice(b: Billing, pack: string): string {
-  const price = b.packPrices[pack];
+  const price = SOLD_PACKS.includes(pack) ? b.packPrices[pack] : undefined;
   if (!price) throw new UnknownProduct(`unknown pack: ${pack}`);
   return price;
 }

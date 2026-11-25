@@ -49,7 +49,7 @@ export async function newAccount(): Promise<{ id: string; token: string }> {
 }
 
 /** Put an account on an active pass, as a completed purchase would (phase 1 cannot sell one). */
-export async function givePass(user: string, name: "pass30" | "pass90" = "pass30", packages?: number) {
+export async function givePass(user: string, name: string = "pass30", packages?: number) {
   const plan = PLANS[name]!;
   const now = Math.floor(Date.now() / 1000);
   await setPass(env.DB, user, name, now + plan.days * DAY_SECONDS, plan.avatarSecondsIncluded,

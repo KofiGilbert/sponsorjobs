@@ -19,7 +19,12 @@ const STRIPE: Partial<Env> = {
   STRIPE_PRICE_PACK_1: "price_pack1",
   STRIPE_PRICE_PACK_3: "price_pack3",
   STRIPE_PRICE_PACK_5: "price_pack5",
+  // The one-time passes are retired (2026-11-25). Most of this file checks the one-time payment
+  // plumbing with them, so the switch that sells them again is on here; "what is on sale" below
+  // checks the default, with it off.
+  SELL_PASSES: "1",
 };
+const { SELL_PASSES: _off, ...LAUNCH } = STRIPE;   // the deploy's default: passes not sold
 
 interface StripeCall { url: string; auth: string | null; form: Record<string, string> }
 
@@ -92,21 +97,51 @@ describe("offers", () => {
     expect(free.data.packs).toEqual([]);
     await givePass(id);
     const paid = await call("/billing/offers", { token, env: STRIPE });
-    expect(paid.data.packs.map((p: any) => p.id)).toEqual(["pack_1", "pack_3", "pack_5"]);
-    expect(paid.data.packs[1]).toEqual({ id: "pack_3", price_label: "$24", interviews: 3, seconds: 3 * INTERVIEW_SECONDS });
+    expect(paid.data.packs).toEqual([
+      { id: "pack_1", price_label: "$12", interviews: 1, seconds: INTERVIEW_SECONDS },
+      { id: "pack_3", price_label: "$33", interviews: 3, seconds: 3 * INTERVIEW_SECONDS }]);
     expect(paid.data.current.tier).toBe("pass30");
     expect((await call("/billing/offers", { env: STRIPE })).data.current).toBeNull();
   });
 
   it("an unset price is simply not offered", async () => {
     const r = await call("/billing/packs", { env: { ...STRIPE, STRIPE_PRICE_PACK_3: "" } });
-    expect(r.data.packs.map((p: any) => p.id)).toEqual(["pack_1", "pack_5"]);
+    expect(r.data.packs.map((p: any) => p.id)).toEqual(["pack_1"]);
   });
 
   it("pass and pack allowances are N interviews x INTERVIEW_SECONDS", () => {
     expect(PLANS.pass30!.avatarSecondsIncluded).toBe(3 * INTERVIEW_SECONDS);
     expect(PLANS.pass90!.avatarSecondsIncluded).toBe(9 * INTERVIEW_SECONDS);
     expect(PACKS).toEqual({ pack_1: 1, pack_3: 3, pack_5: 5 });
+  });
+});
+
+describe("what is on sale (2026-11-25)", () => {
+  it("the one-time passes are not offered and cannot be bought unless SELL_PASSES=1", async () => {
+    const { id, token } = await signedInAccount();
+    const sent = stubStripe();
+    expect((await call("/billing/offers", { token, env: LAUNCH })).data.passes).toEqual([]);
+    for (const pass of ["pass30", "pass90"]) {
+      const r = await call(`/billing/passes/${pass}/checkout`, { method: "POST", token, env: LAUNCH });
+      expect(r.status, pass).toBe(400);
+    }
+    expect(sent).toHaveLength(0);
+    // Someone who already holds a pass keeps it, and a pass paid for earlier is still granted.
+    await deliver(completed(id, { kind: "pass", pass: "pass30" }));
+    expect((await call("/me/usage", { token, env: LAUNCH })).data).toMatchObject({ tier: "pass30", interviews_left: 3 });
+  });
+
+  it("the 5-pack is not offered and cannot be bought, but one already paid for is still granted", async () => {
+    const { id, token } = await signedInAccount();
+    await givePass(id);
+    const sent = stubStripe();
+    expect((await call("/billing/packs", { token, env: STRIPE })).data.packs.map((p: any) => p.id)).toEqual(["pack_1", "pack_3"]);
+    const r = await call("/billing/packs/pack_5/checkout", { method: "POST", token, env: STRIPE });
+    expect(r.status).toBe(400);
+    expect(sent).toHaveLength(0);
+    const before = (await usage(token)).interviews_left;
+    await deliver(completed(id, { kind: "credit_pack", pack: "pack_5", seconds: 5 * INTERVIEW_SECONDS }));
+    expect((await usage(token)).interviews_left).toBe(before + 5);
   });
 });
 
@@ -166,12 +201,12 @@ describe("checkout", () => {
     const { id, token } = await signedInAccount();
     await givePass(id);
     const sent = stubStripe();
-    const r = await call("/billing/packs/pack_5/checkout", { method: "POST", token,
+    const r = await call("/billing/packs/pack_3/checkout", { method: "POST", token,
       env: { ...STRIPE, TAILOR_APP_URL: "https://sponsorjobs.ai/" } });
     expect(r.status).toBe(200);
     expect(sent[0]!.form).toMatchObject({
-      mode: "payment", "line_items[0][price]": "price_pack5", client_reference_id: id,
-      "metadata[kind]": "credit_pack", "metadata[pack]": "pack_5", "metadata[seconds]": String(5 * INTERVIEW_SECONDS),
+      mode: "payment", "line_items[0][price]": "price_pack3", client_reference_id: id,
+      "metadata[kind]": "credit_pack", "metadata[pack]": "pack_3", "metadata[seconds]": String(3 * INTERVIEW_SECONDS),
       success_url: "https://sponsorjobs.ai/?checkout=success", cancel_url: "https://sponsorjobs.ai/?checkout=cancel",
     });
   });

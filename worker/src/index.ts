@@ -29,11 +29,11 @@ import { type Env, intVar } from "./env";
 import { aliasCreate, aliasDelete, aliasGet, aliasNotify, inboxRead, messagesRead, receiveMail } from "./mail";
 import {
   avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, type Interval, INTERVALS, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft,
-  passActive, periodOf, planFor, QuotaExceeded, requireLlm, status, subscriptionPlan, tierFor,
+  passActive, periodOf, planFor, QuotaExceeded, recordedLeft, requireLlm, soldIntervals, status, subscriptionPlan, tierFor,
 } from "./metering";
 import {
   addCreditOnce, avatarSessionOwner, chargeableSeconds, consumeAvatar, grantPassOnce, sessionUsed, loadState, markAvatarEnded,
-  recordAvatarSession, recordLlm, takeFreePackage, takePassPackage,
+  recordAvatarSession, recordLlm, takeFreePackage, takeFreeRecorded, takePassPackage,
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
 import { studentEligible, studentGet, studentRow, studentStart, studentStatus, studentVerify } from "./student";
@@ -231,6 +231,25 @@ const llmPackage: Handler = async ({ req, env, now, nowMs }) => {
                 tier: tierFor(state, now) });
 };
 
+/** The app calls this ONCE when a recorded practice interview is scored (Round 1). The free plan
+ * includes 1 scored recorded interview per calendar month, counted here in one guarded statement;
+ * 402 recorded_limit when it is used up, so the app can show the plans. Every paid plan is
+ * unlimited: nothing is counted and recorded_left is null. */
+const interviewRecorded: Handler = async ({ req, env, now, nowMs }) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const period = periodOf(nowMs);
+  const { state } = await loadState(env.DB, user, period, dayOf(nowMs));
+  const tier = tierFor(state, now);
+  if (recordedLeft(state, now) === null) return json({ recorded_left: null, tier });
+  const used = await takeFreeRecorded(env.DB, user, period);
+  if (used === null) {
+    return json({ error: "this month's free recorded practice interview is used", reason: "recorded_limit",
+                  tier, recorded_left: 0 }, 402);
+  }
+  return json({ recorded_left: recordedLeft({ ...state, recordedUsed: used }, now), tier });
+};
+
 // ---- live interviews on the company Tavus key (ported from backend/broker.py) ---------------- //
 
 const avatarOff = () => json({ error: "live interviews are not configured" }, 503);
@@ -397,7 +416,11 @@ const billingSubscribe = withBilling(async ({ req, env, now }, b) => {
   if (email instanceof Response) return email;
   const bd = await body(req);
   const interval = String(bd.interval ?? "") as Interval;
-  if (!INTERVALS.includes(interval)) return json({ error: "pick monthly or every 3 months", reason: "bad_interval" }, 400);
+  // Only the intervals on sale: every 3 months is refused unless SELL_QUARTERLY=1 (2026-11-25).
+  if (!INTERVALS.includes(interval)) return json({ error: "pick a plan first", reason: "bad_interval" }, 400);
+  if (!soldIntervals(env).includes(interval)) {
+    return json({ error: "that plan is not on sale", reason: "not_on_sale" }, 400);
+  }
   if (bd.consent !== true) {
     return json({ error: "agree to the renewal terms first", reason: "consent_required" }, 400);
   }
@@ -532,6 +555,7 @@ const ROUTES: Route[] = [
   ["POST", /^\/account\/revoke$/, accountRevoke],
   ["POST", /^\/llm\/complete$/, llmComplete],
   ["POST", /^\/llm\/package$/, llmPackage],
+  ["POST", /^\/interview\/recorded$/, interviewRecorded],
   ["GET", /^\/me\/usage$/, meUsage],
 
   ["GET", /^\/billing\/offers$/, billingOffers],

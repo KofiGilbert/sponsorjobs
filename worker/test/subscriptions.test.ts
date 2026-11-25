@@ -23,6 +23,8 @@ const STRIPE: Partial<Env> = {
   STRIPE_PRICE_PACK_1: "price_pack1",
   RESEND_API_KEY: "re_test_not_real",
 };
+// The switch that sells the every-3-months plans again. Off (the default) everywhere else here.
+const QUARTERLY: Partial<Env> = { ...STRIPE, SELL_QUARTERLY: "1" };
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -110,17 +112,64 @@ function subEvent(type: string, user: string, sub: string, plan: string, over: R
 }
 
 describe("offers", () => {
-  it("lists both tiers of every interval, renewing, and says which tier the caller pays", async () => {
+  it("lists only the two monthly plans, renewing, and says which tier the caller pays", async () => {
     const a = await signedInAccount();
     const o = await offers(a.token);
-    expect(o.plans.map((p: any) => p.id)).toEqual(["student_monthly", "student_quarterly", "standard_monthly", "standard_quarterly"]);
-    expect(o.plans.map((p: any) => p.price_label)).toEqual(["$29", "$69", "$49", "$119"]);
+    // The every-3-months prices are still configured (STRIPE above), and still not offered.
+    expect(o.plans.map((p: any) => p.id)).toEqual(["student_monthly", "standard_monthly"]);
+    expect(o.plans.map((p: any) => p.price_label)).toEqual(["$29", "$49"]);
     expect(o.plans.every((p: any) => p.auto_renew === true)).toBe(true);
-    expect(o.plans[1]).toMatchObject({ tier: "student", interval: "quarterly", months: 3, interviews: 9, packages: 150 });
+    for (const p of o.plans) expect(p).toMatchObject({ interval: "monthly", months: 1, interviews: 3, packages: 60 });
     expect(o.price_tier).toBe("standard");
     expect(o.passes).toEqual([]);                          // the retired passes are not on sale
     await makeStudent(a.id, monthFromNow(10));
     expect((await offers(a.token)).price_tier).toBe("student");
+  });
+});
+
+describe("the every-3-months plans are behind one switch", () => {
+  it("off (the default): a quarterly checkout is refused and Stripe is never called", async () => {
+    const a = await signedInAccount();
+    const sent = stubStripe();
+    for (const env of [STRIPE, { ...STRIPE, SELL_QUARTERLY: "0" }, { ...STRIPE, SELL_QUARTERLY: "" }]) {
+      const r = await call("/billing/subscribe", { token: a.token, body: { interval: "quarterly", consent: true }, env });
+      expect(r.status).toBe(400);
+      expect(r.data.reason).toBe("not_on_sale");
+    }
+    expect(sent).toHaveLength(0);
+  });
+
+  it("on: all four plans are offered and a quarterly checkout starts", async () => {
+    const a = await signedInAccount();
+    const sent = stubStripe();
+    const o = (await call("/billing/offers", { token: a.token, env: QUARTERLY })).data;
+    expect(o.plans.map((p: any) => p.id)).toEqual(["student_monthly", "student_quarterly", "standard_monthly", "standard_quarterly"]);
+    expect(o.plans.map((p: any) => p.price_label)).toEqual(["$29", "$69", "$49", "$119"]);
+    expect(o.plans[1]).toMatchObject({ tier: "student", interval: "quarterly", months: 3, interviews: 9, packages: 150 });
+    const r = await call("/billing/subscribe", { token: a.token, body: { interval: "quarterly", consent: true }, env: QUARTERLY });
+    expect(r.status).toBe(200);
+    expect(r.data.plan).toBe("standard_quarterly");
+    expect(sent[0]!.form["line_items[0][price]"]).toBe("price_standard_q");
+    expect(sent[0]!.form["custom_text[submit][message]"]).toContain("$119 every 3 months. Renews automatically until you cancel.");
+  });
+
+  it("off: a subscription already on a quarterly plan still renews, reads and cancels correctly", async () => {
+    const a = await signedInAccount();
+    const sub = `sub_q_${a.id}`;
+    const end = now() + 90 * DAY_SECONDS;
+    await deliver(sessionCompleted(a.id, sub, "student_quarterly"));
+    await deliver(invoicePaid(a.id, sub, "student_quarterly", now(), end));
+    expect(await usage(a.token)).toMatchObject({ tier: "student_quarterly", pass_until: end, interviews_left: 9, packages_left: 150 });
+    // The next period is paid: refilled, and the end moves out, all with the switch off.
+    const next = end + 90 * DAY_SECONDS;
+    await env.DB.prepare("UPDATE users SET pass_packages = 5 WHERE user = ?").bind(a.id).run();
+    await deliver(invoicePaid(a.id, sub, "student_quarterly", end, next));
+    expect(await usage(a.token)).toMatchObject({ tier: "student_quarterly", pass_until: next, packages_left: 150 });
+    const o = await offers(a.token);
+    expect(o.subscription).toMatchObject({ plan: "student_quarterly", tier: "student", interval: "quarterly", price_label: "$69" });
+    expect(o.plans.map((p: any) => p.id)).toEqual(["student_monthly", "standard_monthly"]);
+    // One running plan per account still holds.
+    expect((await subscribe(a.token, { interval: "monthly", consent: true })).data.reason).toBe("already_subscribed");
   });
 });
 
@@ -144,20 +193,20 @@ describe("checkout picks the price on the server", () => {
   it("standard for everyone without a student check, whatever the client asks for", async () => {
     const a = await signedInAccount();
     const sent = stubStripe();
-    const r = await subscribe(a.token, { interval: "quarterly", consent: true, plan: "student_quarterly", tier: "student" });
+    const r = await subscribe(a.token, { interval: "monthly", consent: true, plan: "student_monthly", tier: "student" });
     expect(r.status).toBe(200);
-    expect(r.data).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_sub_1", plan: "standard_quarterly" });
+    expect(r.data).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_sub_1", plan: "standard_monthly" });
     const f = sent[0]!.form;
     expect(f).toMatchObject({
-      mode: "subscription", "line_items[0][price]": "price_standard_q", "line_items[0][quantity]": "1",
+      mode: "subscription", "line_items[0][price]": "price_standard_m", "line_items[0][quantity]": "1",
       client_reference_id: a.id, customer_email: a.email,
-      "metadata[kind]": "subscription", "metadata[plan]": "standard_quarterly",
-      "subscription_data[metadata][user]": a.id, "subscription_data[metadata][plan]": "standard_quarterly",
+      "metadata[kind]": "subscription", "metadata[plan]": "standard_monthly",
+      "subscription_data[metadata][user]": a.id, "subscription_data[metadata][plan]": "standard_monthly",
     });
     expect(Number(f["subscription_data[metadata][consent_at]"])).toBeGreaterThan(now() - 60);
     // The renewal terms are on Stripe's page too, next to its button.
-    expect(f["custom_text[submit][message]"]).toBe(renewalTerms("standard_quarterly"));
-    expect(f["custom_text[submit][message]"]).toContain("$119 every 3 months. Renews automatically until you cancel.");
+    expect(f["custom_text[submit][message]"]).toBe(renewalTerms("standard_monthly"));
+    expect(f["custom_text[submit][message]"]).toContain("$49 every month. Renews automatically until you cancel.");
   });
 
   it("the student price for a verified student, and for a graduate up to 24 months after", async () => {

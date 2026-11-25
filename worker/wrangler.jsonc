@@ -77,6 +77,11 @@
     "TAILOR_PASS_MODEL": "",
     // "1" accepts the X-Tailor-User dev header in place of a token. Never in production.
     "DEV_HEADER_AUTH": "0",
+    // What is on sale (src/metering.ts, owner decision 2026-11-25). "0" = only the two monthly
+    // plans are sold. "1" sells the every-3-months plans (or the retired one-time passes) again.
+    // Off stops NEW sales only: a subscription already on one of them keeps renewing as before.
+    "SELL_QUARTERLY": "0",
+    "SELL_PASSES": "0",
     // Admin dashboard (docs/admin-dashboard.md). Not secrets: the Zero Trust team name (e.g.
     // "sponsorjobs") and the Access application's AUD tag. Empty = the dashboard stays closed (403).
     "ACCESS_TEAM_DOMAIN": "sponsorjobs",

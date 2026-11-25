@@ -79,10 +79,25 @@ def test_llm_complete_meters_tokens_picks_the_plan_model_and_free_cap_blocks(cli
     assert body["tokens"]["used"] > 0
 
 
+def test_free_has_one_scored_recorded_interview_a_month_and_paid_is_unlimited(client):
+    assert client.post("/interview/recorded").status_code == 401
+    r = client.post("/interview/recorded", headers=H)
+    assert r.status_code == 200 and r.get_json() == {"recorded_left": 0, "tier": "free"}
+    r = client.post("/interview/recorded", headers=H)
+    assert r.status_code == 402
+    assert r.get_json() == {"error": "this month's free recorded practice interview is used",
+                            "reason": "recorded_limit", "tier": "free", "recorded_left": 0}
+    client.post("/billing/plan", json={"plan": "standard_monthly"}, headers=H)
+    for _ in range(3):
+        r = client.post("/interview/recorded", headers=H)
+        assert r.status_code == 200 and r.get_json() == {"recorded_left": None, "tier": "standard_monthly"}
+    assert client.get("/me/usage", headers=H).get_json()["recorded_left"] is None
+
+
 def test_me_usage_reports_tier_pass_and_balances(client):
     assert client.get("/me/usage", headers=H).get_json() == {
         "plan": "free", "tier": "free", "pass_until": None, "interviews_left": 0, "packages_left": 3,
-        "avatar_seconds_left": 0, "llm_model": "claude-haiku-4-5"}
+        "recorded_left": 1, "avatar_seconds_left": 0, "llm_model": "claude-haiku-4-5"}
     client.post("/billing/plan", json={"plan": "pass90"}, headers=H)
     body = client.get("/me/usage", headers=H).get_json()
     assert body["plan"] == body["tier"] == "pass90" and body["pass_until"]

@@ -300,7 +300,11 @@ describe("revenue (Stripe)", () => {
   it("maps our price labels back to products", () => {
     expect(productFor(2900)).toBe("pass30");
     expect(productFor(6900)).toBe("pass90");
+    expect(productFor(1200)).toBe("pack_1");
+    expect(productFor(3300)).toBe("pack_3");
+    // Packs bought at the prices before 2026-11-25 are still named.
     expect(productFor(900)).toBe("pack_1");
+    expect(productFor(2400)).toBe("pack_3");
     expect(productFor(3900)).toBe("pack_5");
     expect(productFor(1234)).toBe("other");
     // A charge that paid an invoice is a renewing plan: $29 is then the Student plan, not the pass.
