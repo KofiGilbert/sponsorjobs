@@ -300,7 +300,11 @@ describe("revenue (Stripe)", () => {
   it("maps our price labels back to products", () => {
     expect(productFor(2900)).toBe("pass30");
     expect(productFor(6900)).toBe("pass90");
+    expect(productFor(1200)).toBe("pack_1");
+    expect(productFor(3300)).toBe("pack_3");
+    // Packs bought at the prices before 2026-11-25 are still named.
     expect(productFor(900)).toBe("pack_1");
+    expect(productFor(2400)).toBe("pack_3");
     expect(productFor(3900)).toBe("pack_5");
     expect(productFor(1234)).toBe("other");
     // A charge that paid an invoice is a renewing plan: $29 is then the Student plan, not the pass.
@@ -335,6 +339,22 @@ describe("revenue (Stripe)", () => {
     expect(r.text).toContain("Student, monthly");
     expect(r.text).toContain("$68.67");
     await env.DB.prepare("DELETE FROM subscriptions").run();
+  });
+
+  it("with only the monthly plans sold, MRR is the plain sum and the 3-month rows read zero", async () => {
+    const { subscriptionStats } = await import("../src/admin");
+    const s = subscriptionStats([
+      { plan: "student_monthly", status: "active", canceling: 0, n: 3 },     // 3 x $29
+      { plan: "standard_monthly", status: "active", canceling: 0, n: 2 },    // 2 x $49
+      { plan: "standard_monthly", status: "active", canceling: 1, n: 1 },    // canceling, still paid up
+      { plan: "standard_monthly", status: "past_due", canceling: 0, n: 1 },  // failed payment: not in MRR
+    ]);
+    expect(s).toMatchObject({ active: 7, renewing: 6, canceling: 1, past_due: 1, mrr_usd: 3 * 29 + 3 * 49 });
+    expect(s.by_plan.student_monthly).toMatchObject({ active: 3, mrr_usd: 87 });
+    expect(s.by_plan.standard_monthly).toMatchObject({ active: 4, past_due: 1, mrr_usd: 147 });
+    for (const q of ["student_quarterly", "standard_quarterly"]) {
+      expect(s.by_plan[q]).toEqual({ active: 0, renewing: 0, canceling: 0, past_due: 0, mrr_usd: 0 });
+    }
   });
 });
 

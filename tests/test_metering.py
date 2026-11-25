@@ -264,3 +264,65 @@ def test_set_plan_free_ends_a_pass():
     assert m.tier_for("u") == "pass90"
     m.set_plan("u", "free")
     assert m.tier_for("u") == "free" and m.avatar_seconds_left("u", P) == 0
+
+
+# -- what is sold, and the free recorded practice interview (owner decision 2026-11-25) -----------
+def test_only_the_monthly_plans_are_sold_unless_the_switch_is_on():
+    from backend.metering import sells_passes, sells_quarterly, sold_plans
+    assert sold_plans({}) == ("student_monthly", "standard_monthly")
+    assert sold_plans({"SELL_QUARTERLY": "0"}) == ("student_monthly", "standard_monthly")
+    assert sold_plans({"SELL_QUARTERLY": "1"}) == (
+        "student_monthly", "student_quarterly", "standard_monthly", "standard_quarterly")
+    assert sells_quarterly({}) is False and sells_passes({}) is False
+    assert sells_passes({"SELL_PASSES": "1"}) is True
+    # Each sold plan: 60 tailored applications and 3 live interviews of 20 minutes a period.
+    for name, price in (("student_monthly", "$29"), ("standard_monthly", "$49")):
+        p = PLANS[name]
+        assert (p.price_label, p.packages, p.interviews, p.months) == (price, 60, 3, 1)
+    assert INTERVIEW_SECONDS == 20 * 60
+
+
+def test_an_account_already_on_a_quarterly_plan_still_reads_correctly():
+    m = _meter()
+    m.grant_pass("u", "student_quarterly")
+    st = m.status("u", P)
+    assert st["tier"] == "student_quarterly" and st["interviews_left"] == 9 and st["packages_left"] == 150
+    assert st["recorded_left"] is None
+
+
+def test_free_gets_one_scored_recorded_interview_a_month_and_it_resets():
+    m = _meter()
+    assert PLANS["free"].recorded_interviews == 1
+    assert all(p.recorded_interviews is None for k, p in PLANS.items() if k != "free")
+    assert m.recorded_left("u", P) == 1 and m.status("u", P)["recorded_left"] == 1
+    assert m.start_recorded("u", P) == {"recorded_left": 0, "tier": "free"}
+    with pytest.raises(QuotaExceeded) as e:
+        m.start_recorded("u", P)
+    assert e.value.reason == "recorded_limit"
+    assert m.packages_left("u", P) == 3                    # a separate count from the free resumes
+    assert m.recorded_left("u", "2099-01") == 1            # a new calendar month: back to 1
+    assert m.start_recorded("u", "2099-01")["recorded_left"] == 0
+
+
+def test_paid_plans_have_unlimited_recorded_interviews_and_are_never_counted():
+    m = _meter()
+    m.grant_pass("u", "standard_monthly")
+    for _ in range(5):
+        assert m.start_recorded("u", P) == {"recorded_left": None, "tier": "standard_monthly"}
+    assert m.store.get_recorded_used("u", P) == 0
+
+
+def test_the_sqlite_store_counts_recorded_interviews_and_upgrades_an_old_db(tmp_path):
+    import sqlite3
+    from backend.store_sqlite import SqliteUsageStore
+    db = tmp_path / "old.db"
+    c = sqlite3.connect(db)                                 # a database from before this column
+    c.execute("CREATE TABLE usage (user TEXT NOT NULL, period TEXT NOT NULL, avatar_used INTEGER NOT NULL "
+              "DEFAULT 0, llm_tokens INTEGER NOT NULL DEFAULT 0, packages INTEGER NOT NULL DEFAULT 0, "
+              "PRIMARY KEY (user, period))")
+    c.execute("INSERT INTO usage(user, period, packages) VALUES('u', '2026-11', 2)")
+    c.commit(); c.close()
+    s = SqliteUsageStore(str(db))
+    assert s.get_packages_used("u", "2026-11") == 2 and s.get_recorded_used("u", "2026-11") == 0
+    s.add_recorded_used("u", "2026-11", 1)
+    assert s.get_recorded_used("u", "2026-11") == 1 and s.get_recorded_used("u", "2026-12") == 0

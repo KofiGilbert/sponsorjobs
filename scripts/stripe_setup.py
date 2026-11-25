@@ -6,8 +6,9 @@
 It asks for your Stripe SECRET key (typing is hidden; the key is never printed or saved to a file),
 then, for the account that key belongs to:
 
-1. creates the products and prices: the four plans that renew automatically (recurring USD prices)
-   and the three extra-interview packs (one-time USD prices). Re-running reuses them: prices are
+1. creates the products and prices for what is SOLD: the two monthly plans that renew
+   automatically (recurring USD prices) and the two extra-interview packs (one-time USD prices).
+   Re-running reuses them: prices are
    matched by lookup_key, never duplicated; a changed amount or interval makes a new price and
    moves the key to it;
 2. creates the customer portal settings the app's "Update card" link uses (update the card, see
@@ -21,10 +22,16 @@ A TEST key (sk_test_...) is stored as STRIPE_TEST_SECRET_KEY, and billing then s
 account ids you give with --testers: Stripe's public test card would otherwise hand anyone a real
 plan. A LIVE key (sk_live_...) is stored as STRIPE_SECRET_KEY and sells to everyone.
 
-Pricing (decided 2026-11-20): Student $29 every month or $69 every 3 months; Standard $49 every
-month or $119 every 3 months; all renew until cancelled. Extra live interviews (20 minutes each):
-1 for $9, 3 for $24, 5 for $39, one-time. The old one-time passes are no longer created; see
-docs/stripe-setup.md for retiring their price secrets.
+Pricing (decided 2026-11-25): Student $29 every month and Standard $49 every month, each with 60
+tailored applications and 3 live interviews of 20 minutes a period; both renew until cancelled.
+Extra live interviews (20 minutes each): 1 for $12, 3 for $33, one-time. Nothing else is created:
+no every-3-months plan, no 5-pack, no one-time pass. Prices made by an earlier run are left alone
+in Stripe (a subscription already on one keeps renewing), and their Worker secrets are not touched.
+
+    python3 scripts/stripe_setup.py --sell-quarterly           # ALSO the every-3-months plans
+
+The every-3-months plans ($69 / $119) are kept behind that one flag. Selling them again also needs
+SELL_QUARTERLY set to "1" in worker/wrangler.jsonc and a Worker deploy.
 """
 from __future__ import annotations
 
@@ -66,23 +73,30 @@ def _plan(lookup: str, name: str, cents: int, months: int, env: str, who: str) -
             "desc": f"{who}. {allowance} {every}. Renews automatically until you cancel."}
 
 
-def products() -> list[dict]:
-    """What is on sale. The amounts are the prices people pay; the app's labels must match."""
+def quarterly_products() -> list[dict]:
+    """The every-3-months plans. NOT sold (owner decision 2026-11-25); made only with
+    --sell-quarterly."""
+    return [
+        _plan("sponsorjobs_student_quarterly", "Student plan, every 3 months", 6900, 3,
+              "STRIPE_PRICE_STUDENT_QUARTERLY", "For verified students and recent graduates"),
+        _plan("sponsorjobs_standard_quarterly", "Standard plan, every 3 months", 11900, 3,
+              "STRIPE_PRICE_STANDARD_QUARTERLY", "SponsorJobs Standard"),
+    ]
+
+
+def products(sell_quarterly: bool = False) -> list[dict]:
+    """What is on sale, and nothing else. The amounts are the prices people pay; the app's labels
+    must match (worker/src/metering.ts)."""
     return [
         _plan("sponsorjobs_student_monthly", "Student plan, monthly", 2900, 1, "STRIPE_PRICE_STUDENT_MONTHLY",
               "For verified students and recent graduates"),
-        _plan("sponsorjobs_student_quarterly", "Student plan, every 3 months", 6900, 3,
-              "STRIPE_PRICE_STUDENT_QUARTERLY", "For verified students and recent graduates"),
         _plan("sponsorjobs_standard_monthly", "Standard plan, monthly", 4900, 1, "STRIPE_PRICE_STANDARD_MONTHLY",
               "SponsorJobs Standard"),
-        _plan("sponsorjobs_standard_quarterly", "Standard plan, every 3 months", 11900, 3,
-              "STRIPE_PRICE_STANDARD_QUARTERLY", "SponsorJobs Standard"),
-        {"lookup": "sponsorjobs_pack_1", "name": "1 extra live interview", "amount": 900,
+        *(quarterly_products() if sell_quarterly else []),
+        {"lookup": "sponsorjobs_pack_1", "name": "1 extra live interview", "amount": 1200,
          "env": "STRIPE_PRICE_PACK_1", "desc": f"One {MINUTES}-minute live interview. Never expires."},
-        {"lookup": "sponsorjobs_pack_3", "name": "3 extra live interviews", "amount": 2400,
+        {"lookup": "sponsorjobs_pack_3", "name": "3 extra live interviews", "amount": 3300,
          "env": "STRIPE_PRICE_PACK_3", "desc": f"Three {MINUTES}-minute live interviews. Never expire."},
-        {"lookup": "sponsorjobs_pack_5", "name": "5 extra live interviews", "amount": 3900,
-         "env": "STRIPE_PRICE_PACK_5", "desc": f"Five {MINUTES}-minute live interviews. Never expire."},
     ]
 
 
@@ -188,6 +202,8 @@ def put_secret(name: str, value: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--testers", default="", help="test mode: comma-separated account ids that see billing")
+    ap.add_argument("--sell-quarterly", action="store_true",
+                    help="also create the every-3-months plans ($69 / $119); they are not sold by default")
     a = ap.parse_args()
 
     key = getpass.getpass("Paste your Stripe secret key (hidden, then press Enter): ").strip()
@@ -201,7 +217,7 @@ def main() -> None:
           f"  ({'LIVE: real money' if live else 'TEST: fake money'})")
 
     prices = {}
-    for spec in products():
+    for spec in products(a.sell_quarterly):
         prices[spec["env"]] = ensure_price(key, spec)
         print(f"  {spec['name']:30s} ${spec['amount'] / 100:.0f}  ready")
     portal = ensure_portal(key)

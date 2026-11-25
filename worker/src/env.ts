@@ -23,18 +23,22 @@ export interface Env {
   STRIPE_TEST_ACCOUNTS?: string;   // test mode only: account ids allowed to see billing (comma-separated)
   STRIPE_WEBHOOK_SECRET?: string;   // whsec_...: proves a /billing/webhook call came from Stripe
   STRIPE_PORTAL_CONFIG?: string;    // bpc_...: the billing portal settings scripts/stripe_setup.py made
-  // The renewing plans (2026-11-20): recurring price ids. An unset one is simply not offered.
+  // The renewing plans: recurring price ids. An unset one is simply not offered. Only the monthly
+  // two are sold (2026-11-25); the every-3-months ids matter only for a subscription already on one.
   STRIPE_PRICE_STUDENT_MONTHLY?: string;     // $29 every month
-  STRIPE_PRICE_STUDENT_QUARTERLY?: string;   // $69 every 3 months
+  STRIPE_PRICE_STUDENT_QUARTERLY?: string;   // $69 every 3 months (not sold unless SELL_QUARTERLY=1)
   STRIPE_PRICE_STANDARD_MONTHLY?: string;    // $49 every month
-  STRIPE_PRICE_STANDARD_QUARTERLY?: string;  // $119 every 3 months
-  // The retired one-time passes: set only while app versions that predate the plans still sell
-  // them. Unset both and only the plans are on sale; anyone who bought a pass keeps it until it ends.
+  STRIPE_PRICE_STANDARD_QUARTERLY?: string;  // $119 every 3 months (not sold unless SELL_QUARTERLY=1)
+  // What is on sale (src/metering.ts). Plain vars, both off unless "1". Off stops new sales only.
+  SELL_QUARTERLY?: string;          // "1" sells the every-3-months plans again
+  SELL_PASSES?: string;             // "1" sells the retired one-time passes again
+  // The retired one-time passes: never sold unless SELL_PASSES=1. Anyone who bought a pass keeps it
+  // until it ends.
   STRIPE_PRICE_PASS30?: string;     // price_... ids; an unset one is simply not offered
   STRIPE_PRICE_PASS90?: string;
-  STRIPE_PRICE_PACK_1?: string;
-  STRIPE_PRICE_PACK_3?: string;
-  STRIPE_PRICE_PACK_5?: string;
+  STRIPE_PRICE_PACK_1?: string;     // 1 extra live interview, $12
+  STRIPE_PRICE_PACK_3?: string;     // 3 extra live interviews, $33
+  STRIPE_PRICE_PACK_5?: string;     // retired 2026-11-25: read but never offered
   // Where Stripe sends the person back after paying (+ "/?checkout=success|cancel"). Defaults to
   // the desktop app's local address, as in backend/server.py.
   TAILOR_APP_URL?: string;

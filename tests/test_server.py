@@ -57,9 +57,13 @@ def test_billing_needs_a_pass_price_and_reads_the_pass_and_pack_envs(monkeypatch
     monkeypatch.setitem(sys.modules, "stripe", types.SimpleNamespace(api_key=None))
     monkeypatch.setenv("STRIPE_PRICE_PASS30", "price_p30")
     monkeypatch.setenv("STRIPE_PRICE_PACK_5", "price_k5")
+    monkeypatch.setenv("STRIPE_PRICE_PACK_3", "price_k3")
+    monkeypatch.delenv("SELL_PASSES", raising=False)
     b = build_billing(Meter(InMemoryStore()))
-    assert [p["id"] for p in b.offered_passes()] == ["pass30"]
-    assert [p["id"] for p in b.offered_packs()] == ["pack_5"]
+    assert b.offered_passes() == []                                   # retired: not sold by default
+    assert [p["id"] for p in b.offered_packs()] == ["pack_3"]         # the 5-pack is never offered
+    monkeypatch.setenv("SELL_PASSES", "1")
+    assert [p["id"] for p in build_billing(Meter(InMemoryStore())).offered_passes()] == ["pass30"]
 
 
 def test_no_dev_plan_leaves_the_local_user_on_free(tmp_path, monkeypatch):

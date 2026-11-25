@@ -548,6 +548,9 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .page-head .updated { margin-top: 16px; }
 .page-head.left { text-align: left; }
 .page-head.left h1, .page-head.left .lede { margin-left: 0; }
+/* A short two-sentence headline and its lede each sit on ONE line where the window allows. */
+.page-head-wide h1 { max-width: none; font-size: clamp(34px, 5.2vw, 64px); }
+.page-head-wide .lede { max-width: 80ch; text-wrap: pretty; }
 .page-head.left h1 { font-size: clamp(36px, 4.6vw, 56px); }
 
 .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }

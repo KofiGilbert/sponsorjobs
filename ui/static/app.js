@@ -61,12 +61,12 @@
       pk: "outage.busy.p",
       p: "The model is overloaded at the moment. This usually clears in a minute.",
     },
-    // Bundled (managed AI) paywall: the person used the tailored packages on their tier (Free: 3 a
-    // month; a pass: its balance). Different from no_credit (a bring-your-own-key wallet); the fix
-    // is a pass or their own key, so the button opens the passes panel, not the add-a-key modal.
+    // Bundled (managed AI) paywall: the person used the tailored resumes on their tier (Free: 3 a
+    // month; a plan: its balance). Different from no_credit (a bring-your-own-key wallet); the fix
+    // is a plan, so the button opens the ONE plans panel. No price is written here.
     upgrade_required: {
-      hk: "outage.upgrade.h", h: "You've used your tailored packages",
-      p: "Free includes 3 tailored packages a month. A paid plan gives you many more. Plans renew until you cancel.",
+      hk: "outage.upgrade.h", h: "You've used this month's free resumes",
+      pk: "upg.freeResumesUsed", p: "You've used your 3 free tailored resumes this month. Plans include 60 a month.",
       btnk: "outage.upgrade.btn", btn: "See plans",
     },
     service_down: {
@@ -141,6 +141,10 @@
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = await r.json().catch(() => ({}));
+    // An upgrade moment the engine has waiting (the free plan's last tailored resume was just
+    // used): one line and a "See plans" button, shown once.
+    const moment = r.headers.get("X-SJ-Moment");
+    if (moment && window.__upgradeMoment) window.__upgradeMoment(moment);
     if (!r.ok || data.error) {
       if (data.reason === "locked") showLock();      // App Lock engaged mid-session
       // No key yet: this is the moment it is needed, so ask for it right here (just in time),
@@ -9839,6 +9843,8 @@
         clearTimeout(slow); btn.classList.remove("is-busy", "is-slow"); btn.removeAttribute("aria-busy");
         const t = $("#scrBeginT"); if (t) t.textContent = T("r1.getStarted", "Get started");
         if (msg) { msg.textContent = err.message || T("r1.cantStart", "Couldn't start the interview."); msg.hidden = false; }
+        // Free, and this month's recorded practice interview is used: the one line, and the plans.
+        if (msg && err.data && err.data.error_code === "recorded_limit") window.__recordedLimit?.(msg, null, btn);
         return;
       }
       SCR_PRACTICE = SCREEN.practice || null;
@@ -10319,6 +10325,7 @@
     } catch (err) {
       if (spin) spin.hidden = true;
       if (sub) sub.textContent = err.message || T("r1.cantScore", "Couldn't score this interview.");
+      if (sub && body && err.data && err.data.error_code === "recorded_limit") { body.innerHTML = ""; window.__recordedLimit?.(sub, body); return; }
       if (body) { body.innerHTML = `<div class="r1-solo-acts"><button class="r1-btn r1-btn-primary" id="r1Retry" type="button">${esc(T("r1.tryAgainScore", "Try again"))}</button></div>`;
         $("#r1Retry")?.addEventListener("click", () => finishR1(true)); }
     }
@@ -10357,6 +10364,7 @@
         <button class="btn btn-danger-ghost btn-sm" id="scrDelete" type="button">${esc(T("r1.deleteRec", "Delete recordings"))}</button>`,
       gate: true });
     REPORT_WHEN = null;
+    window.__r1FreeUpsell?.($("#r1Gate"));
     wireReportA2(r, { prepId: SCR_PREP && SCR_PREP.id, currentId: SCREEN && SCREEN.id,
       leave: () => { stopPrepClock(); stopAnswerClock(); stopScrStream(); SCR_PHASE = "idle"; $("#prepScreen").classList.remove("is-report"); },
       back: quitScreen, again: async () => { const p = await prepById(SCR_PREP && SCR_PREP.id); $("#prepScreen").classList.remove("is-report"); startScreen(p); },
@@ -11355,8 +11363,10 @@
     if (it.id !== "menuLanguage") it.addEventListener("mouseenter", closeLangMenu);
   });
 
-  // Plans (owner decision 2026-11-20): Student and Standard, monthly or every 3 months, renewing
-  // until cancelled. Next to the one buy button sit the price, the interval, that it renews until
+  // Plans (owner decision 2026-11-25): Student and Standard, monthly only, renewing until
+  // cancelled. The every-3-months plans are not sold: the Monthly / Every 3 months switch stays
+  // hidden unless the broker offers one (its SELL_QUARTERLY switch) or this person is still on one.
+  // Next to the one buy button sit the price, the interval, that it renews until
   // cancelled and how to cancel, and a checkbox that must be ticked first (auto-renewal laws). The
   // page sends only the interval and the tick: the broker picks the student or standard price from
   // the school email check, never from this page. A student checks once, with a 6-digit code sent
@@ -11454,6 +11464,10 @@
                   onSale: new Set((o.plans || []).map(p => p.id)), loaded: !!OFFERS };
     // A plan that renews opens on its own interval.
     if (sub && sub.interval) UPG_INTERVAL = sub.interval;
+    // Only what is on sale: without an every-3-months plan in the offers there is nothing to switch.
+    const quarterlySold = (o.plans || []).some(p => p.interval === "quarterly");
+    if (!quarterlySold && !(sub && sub.interval === "quarterly")) UPG_INTERVAL = "monthly";
+    const seg = $("#upgSeg"); if (seg) seg.hidden = !quarterlySold;
     upgModal.querySelectorAll(".upg-seg-b").forEach(b => {
       const on = b.dataset.interval === UPG_INTERVAL;
       b.classList.toggle("is-on", on); b.setAttribute("aria-checked", on ? "true" : "false");
@@ -11465,8 +11479,9 @@
       card.querySelector("[data-price]").textContent = planPrice(id);
       card.querySelector("[data-unit]").textContent = unitText(UPG_INTERVAL);
       card.querySelector("[data-feats]").innerHTML = [
-        q ? T("upg.feat9", "9 live interviews every 3 months") : T("upg.feat3", "3 live interviews a month"),
-        q ? T("upg.feat150", "150 tailored packages every 3 months") : T("upg.feat60", "60 tailored packages a month"),
+        q ? T("upg.feat9", "9 live interviews every 3 months") : T("upg.feat3", "3 live interviews of 20 minutes a month"),
+        q ? T("upg.feat150", "150 tailored applications every 3 months") : T("upg.feat60", "60 tailored applications a month"),
+        T("upg.featRecorded", "Unlimited recorded practice interviews"),
         T("upg.betterModel", "Tailoring on our best AI model"),
       ].map(x => `<li>${esc(x)}</li>`).join("");
       card.classList.toggle("is-current-plan", !!(sub && sub.plan === id));
@@ -11627,6 +11642,44 @@
   upgModal?.addEventListener("click", (e) => { if (e.target === upgModal) closeUpgrade(); });
   // Free stays unlimited on the person's own AI key.
   $("#upgOwnKey")?.addEventListener("click", () => { closeUpgrade(); openAiModal(true); });
+
+  // ---- Upgrade moments (owner decision 2026-11-25). Each is one plain line and a "See plans"
+  // button that opens the ONE plans panel above. No price is repeated in any of them.
+  const seePlansBtn = (cls) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = cls; b.textContent = T("outage.upgrade.btn", "See plans");
+    b.addEventListener("click", openUpgrade);
+    return b;
+  };
+  // The free plan's 3rd tailored resume of the month was just used (the engine says so once).
+  window.__upgradeMoment = (kind) => {
+    if (kind !== "free_resumes_used") return;
+    toast(T("upg.freeResumesUsed", "You've used your 3 free tailored resumes this month. Plans include 60 a month."),
+          { label: T("outage.upgrade.btn", "See plans"), run: openUpgrade }, 12000);
+  };
+  // Free, and this month's recorded practice interview is used: the one line (plain, it is not an
+  // error) in `lineEl`, and "See plans" as the screen's one button. On the intro it takes the
+  // place of Get started (`swapBtn`), which could only fail again; on the scoring screen it goes
+  // into `actsEl`.
+  window.__recordedLimit = (lineEl, actsEl, swapBtn) => {
+    lineEl.textContent = T("upg.recordedUsed", "You've used this month's practice interview. Plans include unlimited recorded practice.");
+    lineEl.classList.add("is-plain"); lineEl.hidden = false;
+    document.querySelector(".upg-moment-btn")?.remove();
+    const b = seePlansBtn("r1-btn r1-btn-primary upg-moment-btn");
+    if (swapBtn) { swapBtn.hidden = true; swapBtn.insertAdjacentElement("beforebegin", b); return; }
+    const row = document.createElement("div"); row.className = "r1-solo-acts"; row.appendChild(b);
+    (actsEl || lineEl.parentElement)?.appendChild(row);
+  };
+  // The Round 1 report, Free only: one quiet line under the report's own actions.
+  window.__r1FreeUpsell = (gate) => {
+    if (!gate || ACCT_PLAN !== "free" || gate.parentElement?.querySelector(".upg-moment")) return;
+    const p = document.createElement("p");
+    p.className = "upg-moment";
+    const s = document.createElement("span");
+    s.textContent = T("upg.practiseLive", "Practise live with an interviewer");
+    p.append(s, seePlansBtn("upg-link upg-moment-link"));
+    gate.insertAdjacentElement("afterend", p);
+  };
 
   // toast("Moved", {label: "Undo", run}) shows one action beside the message (Gmail's undo
   // toast) and stays up a little longer so there is time to reach it.

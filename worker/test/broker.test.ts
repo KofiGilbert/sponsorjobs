@@ -86,7 +86,7 @@ describe("/me/usage", () => {
   it("reports tier, pass and balances (free, then a pass)", async () => {
     const { id, token } = await newAccount();
     expect((await call("/me/usage", { token })).data).toEqual({
-      plan: "free", tier: "free", pass_until: null, interviews_left: 0, packages_left: 3,
+      plan: "free", tier: "free", pass_until: null, interviews_left: 0, packages_left: 3, recorded_left: 1,
       avatar_seconds_left: 0, llm_model: "claude-haiku-4-5", subscription: null });
     await givePass(id, "pass90");
     const b = (await call("/me/usage", { token })).data;
@@ -391,6 +391,45 @@ describe("/llm/package", () => {
     expect(p.status).toBe(200);
     expect(p.data).toEqual({ model: "claude-sonnet-5-5", packages_left: 59, tier: "pass30" });
     expect((await call("/llm/package", { method: "POST" })).status).toBe(401);
+  });
+
+  it("free: 1 scored recorded practice interview a month, then 402 recorded_limit; it resets with the month", async () => {
+    const { id, token } = await newAccount();
+    expect((await call("/interview/recorded", { method: "POST" })).status).toBe(401);
+    const first = await call("/interview/recorded", { token, method: "POST" });
+    expect(first.status).toBe(200);
+    expect(first.data).toEqual({ recorded_left: 0, tier: "free" });
+    expect((await call("/me/usage", { token })).data.recorded_left).toBe(0);
+    const again = await call("/interview/recorded", { token, method: "POST" });
+    expect(again.status).toBe(402);
+    expect(again.data).toEqual({ error: "this month's free recorded practice interview is used",
+                                 reason: "recorded_limit", tier: "free", recorded_left: 0 });
+    // The free tailored packages are a separate count: using the interview does not touch them.
+    expect((await call("/me/usage", { token })).data.packages_left).toBe(3);
+    // A new calendar month is a new row: move this month's count to last month and it is back.
+    await env.DB.prepare("UPDATE usage SET period = '2000-01' WHERE user = ?").bind(id).run();
+    expect((await call("/me/usage", { token })).data.recorded_left).toBe(1);
+    expect((await call("/interview/recorded", { token, method: "POST" })).status).toBe(200);
+  });
+
+  it("two scores landing at once cannot both take the free recorded interview", async () => {
+    const { token } = await newAccount();
+    const rs = await Promise.all([1, 2, 3].map(() => call("/interview/recorded", { token, method: "POST" })));
+    expect(rs.map((r) => r.status).sort()).toEqual([200, 402, 402]);
+  });
+
+  it("paid plans: recorded practice interviews are unlimited and never counted", async () => {
+    const { id, token } = await newAccount();
+    expect((await call("/interview/recorded", { token, method: "POST" })).status).toBe(200);   // the free one
+    await givePass(id, "standard_monthly");
+    expect((await call("/me/usage", { token })).data.recorded_left).toBeNull();
+    for (let i = 0; i < 4; i++) {
+      const r = await call("/interview/recorded", { token, method: "POST" });
+      expect(r.status).toBe(200);
+      expect(r.data).toEqual({ recorded_left: null, tier: "standard_monthly" });
+    }
+    const row = await env.DB.prepare("SELECT recorded_interviews AS n FROM usage WHERE user = ?").bind(id).first<{ n: number }>();
+    expect(row!.n).toBe(1);
   });
 
   it("a pass's packages run out with 402 package_limit", async () => {

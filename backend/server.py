@@ -76,10 +76,12 @@ def build_billing(meter):
     None (the broker still runs, and the checkout/webhook routes return 503). The key lives ONLY
     here, server-side. Passes: STRIPE_PRICE_PASS30 / STRIPE_PRICE_PASS90; extra-interview packs:
     STRIPE_PRICE_PACK_1 / _3 / _5. Any unset price is just not offered. All are one-time prices
-    here; the plans that renew are sold by the Worker broker (worker/src/subscriptions.ts).
+    here; the plans that renew are sold by the Worker broker (worker/src/subscriptions.ts). The
+    passes are retired: they are listed and sold only with SELL_PASSES=1, and the 5-pack never.
     STRIPE_SECRET_KEY (live) wins over STRIPE_TEST_SECRET_KEY (sandbox)."""
     key = _cred("STRIPE_SECRET_KEY") or _cred("STRIPE_TEST_SECRET_KEY")
     from backend.billing import PACK_PRICE_ENV, PASS_PRICE_ENV, Billing, StripeClient
+    from backend.metering import sells_passes
     pass_prices = {pid: _cred(env) for pid, env in PASS_PRICE_ENV.items()}
     if not key or not any(pass_prices.values()):
         return None
@@ -90,7 +92,7 @@ def build_billing(meter):
         meter, pass_prices,
         success_url=app_url + "/?checkout=success",
         cancel_url=app_url + "/?checkout=cancel",
-        pack_prices=pack_prices)
+        pack_prices=pack_prices, sell_passes=sells_passes())
 
 
 def build_broker(db_path: str | None = None, provider=None):

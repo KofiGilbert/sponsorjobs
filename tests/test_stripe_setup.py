@@ -11,16 +11,21 @@ spec.loader.exec_module(S)
 
 
 def test_prices_match_the_decided_plans_and_say_twenty_minutes():
+    # Only what is sold (2026-11-25): two monthly plans, a 1-pack and a 3-pack.
     p = {x["env"]: x for x in S.products()}
     assert {k: v["amount"] for k, v in p.items()} == {
-        "STRIPE_PRICE_STUDENT_MONTHLY": 2900, "STRIPE_PRICE_STUDENT_QUARTERLY": 6900,
-        "STRIPE_PRICE_STANDARD_MONTHLY": 4900, "STRIPE_PRICE_STANDARD_QUARTERLY": 11900,
-        "STRIPE_PRICE_PACK_1": 900, "STRIPE_PRICE_PACK_3": 2400, "STRIPE_PRICE_PACK_5": 3900}
-    # The plans renew every month or every 3 months; the packs are one-time.
+        "STRIPE_PRICE_STUDENT_MONTHLY": 2900, "STRIPE_PRICE_STANDARD_MONTHLY": 4900,
+        "STRIPE_PRICE_PACK_1": 1200, "STRIPE_PRICE_PACK_3": 3300}
     assert {k: (v.get("recurring") or {}).get("interval_count") for k, v in p.items()} == {
-        "STRIPE_PRICE_STUDENT_MONTHLY": 1, "STRIPE_PRICE_STUDENT_QUARTERLY": 3,
-        "STRIPE_PRICE_STANDARD_MONTHLY": 1, "STRIPE_PRICE_STANDARD_QUARTERLY": 3,
-        "STRIPE_PRICE_PACK_1": None, "STRIPE_PRICE_PACK_3": None, "STRIPE_PRICE_PACK_5": None}
+        "STRIPE_PRICE_STUDENT_MONTHLY": 1, "STRIPE_PRICE_STANDARD_MONTHLY": 1,
+        "STRIPE_PRICE_PACK_1": None, "STRIPE_PRICE_PACK_3": None}
+    assert not any("QUARTERLY" in k or "PACK_5" in k for k in p)
+    # The every-3-months plans are behind one flag, unchanged.
+    q = {x["env"]: x for x in S.products(sell_quarterly=True)}
+    assert q["STRIPE_PRICE_STUDENT_QUARTERLY"]["amount"] == 6900
+    assert q["STRIPE_PRICE_STANDARD_QUARTERLY"]["amount"] == 11900
+    assert q["STRIPE_PRICE_STANDARD_QUARTERLY"]["recurring"] == {"interval": "month", "interval_count": 3}
+    assert len(q) == len(p) + 2
     assert all(v["recurring"]["interval"] == "month" for v in p.values() if v.get("recurring"))
     assert all("Renews automatically" in v["desc"] for v in p.values() if v.get("recurring"))
     assert all("15-minute" not in v["desc"] and "15 minute" not in v["desc"] for v in p.values())
@@ -106,8 +111,10 @@ def test_test_key_is_stored_as_the_test_key_and_limited_to_testers(monkeypatch):
     fake, secrets = _run(monkeypatch, "sk_test_abc", ["--testers", "acct_1"], fake)
     assert secrets["STRIPE_TEST_SECRET_KEY"] == "sk_test_abc" and "STRIPE_SECRET_KEY" not in secrets
     assert secrets["STRIPE_TEST_ACCOUNTS"] == "acct_1" and secrets["STRIPE_WEBHOOK_SECRET"].startswith("whsec_")
-    assert all(k in secrets for k in ("STRIPE_PRICE_STUDENT_MONTHLY", "STRIPE_PRICE_STANDARD_QUARTERLY",
-                                      "STRIPE_PRICE_PACK_5", "STRIPE_PORTAL_CONFIG"))
+    assert all(k in secrets for k in ("STRIPE_PRICE_STUDENT_MONTHLY", "STRIPE_PRICE_STANDARD_MONTHLY",
+                                      "STRIPE_PRICE_PACK_1", "STRIPE_PRICE_PACK_3", "STRIPE_PORTAL_CONFIG"))
+    # Nothing that is not sold is created or stored.
+    assert not any("QUARTERLY" in k or "PACK_5" in k for k in secrets)
     assert not any(k.startswith("STRIPE_PRICE_PASS") for k in secrets)
     assert ("DELETE", "/webhook_endpoints/we_old") in fake.calls      # its secret can't be read again
 
@@ -123,7 +130,7 @@ def test_the_webhook_listens_for_every_event_the_worker_acts_on(monkeypatch):
 def test_a_second_run_reuses_every_price_and_the_portal(monkeypatch):
     fake, first = _run(monkeypatch, "sk_test_abc", ["--testers", "acct_1"])
     prices, products, portals = len(fake.prices), len(fake.products), len(fake.portals)
-    assert prices == 7 and products == 7 and portals == 1
+    assert prices == 4 and products == 4 and portals == 1          # 2 monthly plans + 2 packs
     fake, second = _run(monkeypatch, "sk_test_abc", ["--testers", "acct_1"], fake)
     assert (len(fake.prices), len(fake.products), len(fake.portals)) == (prices, products, portals)
 
