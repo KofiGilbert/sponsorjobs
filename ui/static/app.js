@@ -9691,50 +9691,267 @@
       goDevices();
     });
   }
+  // ---- The stage (screens 3 to 6): one full-window surface, the same on every step.
+  // While a session runs the app's own chrome is gone (CSS: a .r1-stage inside the open Interview
+  // view hides the side menu, the page title and the footer), like the real product, which shows
+  // no navigation around an interview. One slim bar: Exit on the left (it asks before a recording
+  // or saved answers would be left behind; Escape asks too, it never ends a recording), the step and
+  // the clock in the centre, the recording status on the right, always in that one place. Below it
+  // two panes that scale with the window: the words on the left, the camera on the right with the
+  // one action under it, in the same spot on every step. Narrow windows stack them.
+  const R1_IC = {
+    back: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    cam: `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="1.8" y="4" width="8.6" height="8" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.4 7.2l3.8-2v5.6l-3.8-2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
+    mic: `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="5.8" y="1.8" width="4.4" height="7.6" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0M8 12v2.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`,
+    chev: `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    gear: `<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+  };
+  const r1Meter = () => `<span class="rec-meter" title="${esc(T("r1.micLevel", "Mic level"))}"><span class="rec-meter-ic" aria-hidden="true">${R1_IC.mic}</span><span class="rec-meter-track"><i class="rec-meter-fill"></i></span></span>`;
+  function r1Stage(step, o) {
+    o = o || {};
+    return `
+      <div class="r1-light r1-stage" id="r1Stage" data-step="${step}">
+        <header class="r1-bar">
+          <button class="r1-exit" id="r1Exit" type="button">${R1_IC.back}<span>${esc(T("r1.exit", "Exit"))}</span></button>
+          <div class="r1-bar-mid">
+            <span class="r1-step" id="r1Step">${esc(o.label || "")}</span>
+            <span class="r1-clock" id="r1Clock" hidden><span class="r1-clock-l"><span data-l="prep">${esc(T("r1.prepTime", "Prep"))}</span><span data-l="left">${esc(T("r1.timeLeft", "Time left"))}</span></span><b id="r1ClockT"></b></span>
+          </div>
+          <div class="r1-bar-end">
+            ${o.status ? `<span class="r1-status" id="r1Status" role="status"><i class="r1-status-dot"></i><span id="r1StatusT">${esc(T("r1.notRecording", "Not recording"))}</span></span>
+            <button class="r1-gear" id="r1Gear" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="${esc(T("r1.devSettings", "Camera and microphone"))}" title="${esc(T("r1.devSettings", "Camera and microphone"))}">${R1_IC.gear}</button>
+            <div class="r1-pop" id="r1Pop" role="dialog" aria-label="${esc(T("r1.devSettings", "Camera and microphone"))}" hidden><div class="r1-devs" data-r1-devs></div></div>` : ""}
+          </div>
+          <div class="r1-leave" id="r1Leave" role="alertdialog" aria-labelledby="r1LeaveT" hidden>
+            <span class="r1-leave-t" id="r1LeaveT"></span>
+            <span class="r1-leave-acts">
+              <button class="r1-btn r1-btn-ghost r1-btn-sm" id="r1LeaveGo" type="button">${esc(T("r1.leave", "Leave"))}</button>
+              <button class="r1-btn r1-btn-primary r1-btn-sm" id="r1LeaveStay" type="button">${esc(T("r1.keepGoing", "Keep going"))}</button>
+            </span>
+          </div>
+        </header>
+        <main class="r1-main"><div class="r1-grid">${o.body || ""}</div></main>
+      </div>`;
+  }
+  // The clock: one place and one style for the prep countdown and the answer countdown.
+  function r1Clock(which, secs, warn) {
+    const el = $("#r1Clock"); if (!el) return;
+    el.hidden = secs == null;
+    if (secs == null) return;
+    el.dataset.l = which; $("#r1ClockT").textContent = fmtClock(Math.max(0, secs));
+    el.classList.toggle("warn", !!warn);
+  }
+  function r1Status(rec) {
+    const st = $("#r1Status"); if (!st) return;
+    st.classList.toggle("is-rec", !!rec);
+    $("#r1StatusT").textContent = rec ? T("r1.recording", "Recording") : T("r1.notRecording", "Not recording");
+    r1GearSync();
+  }
+  function r1Help(text) { const el = $("#r1Help"); if (el) el.textContent = text || ""; }
+
+  // ---- Camera and microphone choice. The app is its own window, so there is no browser picker:
+  // without this, a person with an external webcam or a headset gets whatever the system default
+  // is. The choice is remembered on this computer and used for the whole session and the next one.
+  let SCR_DEV = { cam: [], mic: [] }, SCR_DEV_SEL = { cam: null, mic: null }, SCR_DEV_NOTE = "", SCR_DEV_DIRTY = false, SCR_SILENT = false;
+  const r1DevSaved = (kind) => { try { return JSON.parse(localStorage.getItem("sj.r1." + kind) || "null"); } catch (e) { return null; } };
+  const r1DevSave = (kind, d) => { try { if (d) localStorage.setItem("sj.r1." + kind, JSON.stringify({ id: d.id, label: d.label })); } catch (e) {} };
+  const r1Busy = () => SCR_PHASE === "countdown" || SCR_PHASE === "recording";
+  const r1TrackOf = (kind) => { const t = SCR_STREAM && (kind === "cam" ? SCR_STREAM.getVideoTracks() : SCR_STREAM.getAudioTracks())[0]; return t || null; };
+  // What the open stream really uses, so the menus show the truth even after a fallback.
+  function r1DevReadSelection() {
+    for (const kind of ["cam", "mic"]) {
+      const t = r1TrackOf(kind); let id = "";
+      try { id = (t && t.getSettings && t.getSettings().deviceId) || ""; } catch (e) {}
+      const list = SCR_DEV[kind];
+      SCR_DEV_SEL[kind] = list.find(d => d.id === id) || (t && list.find(d => d.label === SJStage.cleanLabel(t.label))) || SJStage.pickDevice(list, null);
+    }
+  }
+  async function r1OpenStream() {
+    const md = navigator.mediaDevices, cam = r1DevSaved("cam"), mic = r1DevSaved("mic");
+    if (cam || mic) {
+      // The remembered devices first; if one is gone, quietly use the system default.
+      try { return await md.getUserMedia(SJStage.streamConstraints(cam && cam.id, mic && mic.id)); } catch (e) {}
+    }
+    return md.getUserMedia({ video: true, audio: true });
+  }
+  async function r1DevRefresh() {
+    SCR_DEV = await SJStage.listDevices(navigator.mediaDevices);
+    r1DevReadSelection(); r1DevPaint();
+  }
+  // Swap one device, live. Only that track is replaced, so changing the microphone never blinks
+  // the camera. A device that will not open falls back to the default, with one quiet line.
+  async function r1DevSwitch(kind, id, note) {
+    if (r1Busy() || !SCR_STREAM) return;
+    const key = kind === "cam" ? "video" : "audio";
+    const get = async (c) => (await navigator.mediaDevices.getUserMedia({ [key]: c })).getTracks()[0];
+    SCR_STREAM.getTracks().filter(t => t.kind === key).forEach(t => t.stop());
+    let track = null; SCR_DEV_NOTE = note || "";
+    try { track = await get(id ? { deviceId: { exact: id } } : true); }
+    catch (e) {
+      SCR_DEV_NOTE = T("r1.devFallback", "That device is not available. Using the default.");
+      try { track = await get(true); } catch (e2) { SCR_DEV_NOTE = kind === "cam" ? T("r1.noCam", "No camera found. Plug one in.") : T("r1.noMic", "No microphone found. Plug one in."); }
+    }
+    const keep = SCR_STREAM.getTracks().filter(t => t.kind !== key);
+    SCR_STREAM = new MediaStream(track ? [...keep, track] : keep);
+    const v = $("#scrVideo"); if (v && !v.classList.contains("is-playback")) v.srcObject = SCR_STREAM;
+    startMicMeter(SCR_STREAM);
+    SCR_DEV = await SJStage.listDevices(navigator.mediaDevices);
+    r1DevReadSelection();
+    if (id && SCR_DEV_SEL[kind] && SCR_DEV_SEL[kind].id === id) r1DevSave(kind, SCR_DEV_SEL[kind]);
+    r1DevPaint();
+  }
+  // A headset unplugged, a webcam plugged in: refresh the lists, and if the device in use is gone
+  // move to the default. Never while recording; it is picked up as soon as the take ends.
+  async function r1DevChanged() {
+    if (!SCR_STREAM) return;
+    if (r1Busy()) { SCR_DEV_DIRTY = true; return; }
+    SCR_DEV_DIRTY = false;
+    SCR_DEV = await SJStage.listDevices(navigator.mediaDevices);
+    for (const kind of ["cam", "mic"]) {
+      const t = r1TrackOf(kind), sel = SCR_DEV_SEL[kind];
+      const gone = !t || t.readyState === "ended" || (sel && !SCR_DEV[kind].some(d => d.id === sel.id));
+      if (gone) await r1DevSwitch(kind, null, T("r1.devGone", "Device disconnected. Using the default."));
+    }
+    r1DevReadSelection(); r1DevPaint();
+  }
+  function r1DevRow(kind) {
+    const list = SCR_DEV[kind], sel = SCR_DEV_SEL[kind], mode = SJStage.menuMode(list);
+    const label = kind === "cam" ? T("r1.camera", "Camera") : T("r1.microphone", "Microphone");
+    const name = sel ? sel.label : (kind === "cam" ? T("r1.noCamShort", "No camera") : T("r1.noMicShort", "No microphone"));
+    const control = mode === "menu"
+      ? `<div class="r1-menu" data-kind="${kind}">
+          <button class="r1-menu-btn" type="button" data-r1-menu aria-haspopup="listbox" aria-expanded="false" aria-label="${esc(label)}"><span class="r1-menu-v">${esc(name)}</span>${R1_IC.chev}</button>
+          <ul class="r1-menu-list" role="listbox" aria-label="${esc(label)}" hidden>${list.map(d =>
+            `<li class="r1-menu-opt" role="option" tabindex="-1" data-r1-opt="${esc(d.id)}" aria-selected="${sel && sel.id === d.id ? "true" : "false"}">${esc(d.label)}</li>`).join("")}</ul>
+        </div>`
+      : `<span class="r1-dev-name">${esc(name)}</span>`;
+    return `<div class="r1-dev"><span class="r1-dev-l">${R1_IC[kind]}${esc(label)}</span>${control}</div>`;
+  }
+  function r1DevNote() {
+    const check = $("#r1Stage")?.dataset.step === "check";
+    return SCR_DEV_NOTE || (check && SCR_SILENT ? T("r1.micSilent", "No sound from this microphone. Pick another one or check it is not muted.") : "");
+  }
+  function r1DevPaint() {
+    document.querySelectorAll("#scrStage [data-r1-devs]").forEach(host => {
+      host.innerHTML = r1DevRow("cam") + r1DevRow("mic")
+        + `<div class="r1-dev r1-dev-level"><span></span>${r1Meter()}</div>`
+        + `<p class="r1-dev-note" role="status">${esc(r1DevNote())}</p>`;
+    });
+  }
+  function r1DevNotePaint() { const t = r1DevNote(); document.querySelectorAll("#scrStage .r1-dev-note").forEach(el => { if (el.textContent !== t) el.textContent = t; }); }
+  function r1MenuClose() {
+    document.querySelectorAll("#scrStage .r1-menu-list:not([hidden])").forEach(l => { l.hidden = true; l.parentElement.querySelector("[data-r1-menu]")?.setAttribute("aria-expanded", "false"); });
+  }
+  function r1PopOpen(on) {
+    const pop = $("#r1Pop"), gear = $("#r1Gear"); if (!pop || !gear) return;
+    if (on && r1Busy()) return;
+    pop.hidden = !on; gear.setAttribute("aria-expanded", on ? "true" : "false");
+    if (on) { r1DevPaint(); pop.querySelector("[data-r1-menu]")?.focus(); } else r1MenuClose();
+  }
+  // The gear is for fixing a dead microphone without quitting. Not while recording.
+  function r1GearSync() {
+    const gear = $("#r1Gear"); if (!gear) return;
+    const busy = r1Busy();
+    gear.disabled = busy;
+    gear.title = busy ? T("r1.devLocked", "You can change these when you are not recording.") : T("r1.devSettings", "Camera and microphone");
+    if (busy) r1PopOpen(false);
+  }
+  // Leaving. Exit asks first when something would be left behind; otherwise it just leaves.
+  function r1LeaveAsk(on) {
+    const bar = $("#r1Leave"); if (!bar) return;
+    if (on) $("#r1LeaveT").textContent = SCR_PHASE === "recording"
+      ? T("r1.leaveRec", "Leave now? This recording will be lost.")
+      : T("r1.leaveAsk", "Leave the interview? Your answers so far are kept.");
+    bar.hidden = !on;
+    if (on) $("#r1LeaveStay")?.focus();
+  }
+  function r1Exit() { r1PopOpen(false); if (scrHasAnswers()) r1LeaveAsk(true); else quitScreen(); }
+  // One set of listeners for the whole stage: its markup is re-rendered on every step.
+  $("#scrStage")?.addEventListener("click", (e) => {
+    const t = e.target;
+    if (!t.closest || !t.closest("#r1Stage")) return;
+    if (t.closest("#r1Exit")) { r1Exit(); return; }
+    if (t.closest("#r1LeaveGo")) { r1LeaveAsk(false); quitScreen(); return; }
+    if (t.closest("#r1LeaveStay")) { r1LeaveAsk(false); $("#r1Exit")?.focus(); return; }
+    if (t.closest("#r1Gear")) { r1PopOpen($("#r1Pop")?.hidden); return; }
+    const opt = t.closest("[data-r1-opt]");
+    if (opt) { const kind = opt.closest(".r1-menu").dataset.kind; r1MenuClose(); r1DevSwitch(kind, opt.dataset.r1Opt); return; }
+    const btn = t.closest("[data-r1-menu]");
+    if (btn) {
+      const list = btn.parentElement.querySelector(".r1-menu-list"), open = list.hidden;
+      r1MenuClose();
+      if (open) { list.hidden = false; btn.setAttribute("aria-expanded", "true"); (list.querySelector('[aria-selected="true"]') || list.firstElementChild)?.focus(); }
+      return;
+    }
+    r1MenuClose();
+    if (!t.closest("#r1Pop")) r1PopOpen(false);
+  });
+  $("#scrStage")?.addEventListener("keydown", (e) => {
+    const opt = e.target.closest && e.target.closest("[data-r1-opt]");
+    if (!opt) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); (e.key === "ArrowDown" ? opt.nextElementSibling : opt.previousElementSibling)?.focus(); }
+    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); opt.click(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); const b = opt.closest(".r1-menu").querySelector("[data-r1-menu]"); r1MenuClose(); b?.focus(); }
+  });
+  // Escape closes what is open; with nothing open it asks before leaving answers or a recording.
+  // It never ends a recording by itself.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (!$("#r1Stage") || $("#prepScreen")?.hidden || !$("#view-prep")?.classList.contains("is-active")) return;
+    e.preventDefault();
+    if ($("#r1Pop") && !$("#r1Pop").hidden) { r1PopOpen(false); $("#r1Gear")?.focus(); return; }
+    if (!$("#r1Leave").hidden) { r1LeaveAsk(false); $("#r1Exit")?.focus(); return; }
+    if (scrHasAnswers()) r1LeaveAsk(true);
+  });
+  // A connection that works says nothing. Offline says what to do.
+  function r1ConnPaint() {
+    const el = $("#r1Conn"); if (!el) return;
+    el.textContent = navigator.onLine === false ? T("r1.connOff", "You are offline. Reconnect before you start, scoring needs the internet.") : "";
+  }
+  window.addEventListener("online", r1ConnPaint); window.addEventListener("offline", r1ConnPaint);
+
   // Screen 3: device check. Camera and mic turn on here; the person confirms they can see and
-  // hear themselves. Tips in the real product's wording.
+  // hear themselves, and can pick another camera or microphone.
   async function goDevices() {
     if (!navigator.mediaDevices?.getUserMedia) { toast(T("r1.noCamera", "This browser can't reach your camera. Try Chrome or Edge.")); renderR1Notice(); return; }
     if (!SCR_STREAM) {
-      try { SCR_STREAM = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); }
+      try { SCR_STREAM = await r1OpenStream(); }
       catch { toast(T("r1.allowCamera", "Camera and mic access is needed. Please allow them and try again.")); renderR1Notice(); return; }
+      try { navigator.mediaDevices.addEventListener("devicechange", r1DevChanged); } catch (e) {}
     }
+    SCR_DEV_NOTE = ""; SCR_SILENT = false;
+    SCR_DEV = await SJStage.listDevices(navigator.mediaDevices);
+    r1DevReadSelection();
     renderR1Devices();
   }
-  function r1Connection() {
-    const on = navigator.onLine !== false;
-    return `<span class="r1-conn ${on ? "ok" : "warn"}">${esc(on ? T("r1.connOk", "Connection: looks good") : T("r1.connOff", "Connection: you appear to be offline"))}</span>`;
-  }
   function renderR1Devices() {
-    scrHead("", "");
-    $("#scrStage").innerHTML = `
-      <div class="r1-light"><div class="scr-ready">
-        <div class="scr-ready-cam">
-          <div class="scr-video-wrap"><video class="scr-video" id="scrPreview" autoplay muted playsinline></video></div>
-          <div class="rec-meter" title="${esc(T("r1.micLevel", "Mic level"))}"><span class="rec-meter-ic" aria-hidden="true">&#127908;</span><span class="rec-meter-track"><i class="rec-meter-fill" id="scrMeter"></i></span></div>
-          ${r1Connection()}
+    scrHead("", ""); SCR_PHASE = "check"; SCR_CUR = null;
+    $("#scrStage").innerHTML = r1Stage("check", { body: `
+      <div class="r1-text">
+        <h2 class="r1-h">${esc(T("r1.devicesH", "Check your camera and microphone"))}</h2>
+        <div class="r1-devs" data-r1-devs></div>
+        <ul class="r1-tips">
+          <li>${esc(T("r1.tip1", "Light in front of you."))}</li>
+          <li>${esc(T("r1.tip2", "Somewhere quiet."))}</li>
+        </ul>
+        <p class="r1-conn" id="r1Conn" role="status"></p>
+      </div>
+      <div class="r1-cam"><div class="r1-cam-in">
+        <div class="scr-video-wrap"><video class="scr-video" id="scrVideo" autoplay muted playsinline></video></div>
+        <div class="r1-under"></div>
+        <div class="r1-acts" id="r1Acts">
+          <button class="r1-btn r1-btn-primary" id="scrToPractice" type="button">${esc(T("r1.toPractice", "Try a practice question"))}</button>
         </div>
-        <div class="scr-ready-side">
-          <h2 class="scr-ready-h">${esc(T("r1.devicesH", "Check your camera and microphone"))}</h2>
-          <p class="scr-ready-sub">${esc(T("r1.devicesSub", "Make sure you can see yourself and the bar moves when you talk."))}</p>
-          <ul class="r1-tips">
-            <li>${esc(T("r1.tip1", "Have the light in front of you, not behind."))}</li>
-            <li>${esc(T("r1.tip2", "Find a spot free from distractions and noise."))}</li>
-            <li>${esc(T("r1.tip3", "Don't worry about eye contact, just be natural."))}</li>
-          </ul>
-          <div class="scr-ready-acts">
-            <button class="r1-btn r1-btn-primary" id="scrToPractice" type="button">${esc(T("r1.toPractice", "Continue to a practice question"))}</button>
-            <button class="r1-btn r1-btn-ghost" id="scrBackNotice" type="button">${esc(T("r1.back", "Back"))}</button>
-          </div>
-        </div>
-      </div></div>`;
-    $("#scrPreview").srcObject = SCR_STREAM;
+      </div></div>` });
+    $("#scrVideo").srcObject = SCR_STREAM;
+    r1DevPaint(); r1ConnPaint();
     startMicMeter(SCR_STREAM);
     $("#scrToPractice")?.addEventListener("click", () => renderR1Question({ practice: true }));
-    $("#scrBackNotice")?.addEventListener("click", () => { stopMicMeter(); renderR1Notice(); });
   }
   // Screens 4 and 5: a question, in the exact real format. `practice` runs the same screen with the
   // practice prompt: unscored, never saved. The real questions upload after each take.
+  let SCR_PLAY_URL = null;
+  function r1PlaybackClear() { if (SCR_PLAY_URL) { try { URL.revokeObjectURL(SCR_PLAY_URL); } catch (e) {} SCR_PLAY_URL = null; } }
   function renderR1Question(opts) {
     const practice = !!(opts && opts.practice);
     const qs = SCREEN.questions || [];
@@ -9742,39 +9959,30 @@
     const q = practice ? (SCR_PRACTICE || { text: "", kind: "practice" }) : qs[idx];
     const n = qs.length, cfg = SCREEN.config || {};
     SCR_CUR = { practice, idx, q };
-    SCR_PHASE = "prep";
-    const left = practice ? null : retakesLeft(idx);
-    const progress = practice ? T("r1.practiceLabel", "Practice question") : T("r1.progress", "Question {n} of {total}").replace("{n}", idx + 1).replace("{total}", n);
+    SCR_PHASE = "prep"; r1PlaybackClear();
+    if (!practice) retakesLeft(idx);
+    const progress = practice ? T("r1.practiceLabel", "Practice · not saved") : T("r1.progress", "Question {n} of {total}").replace("{n}", idx + 1).replace("{total}", n);
+    const text = String(q.text || q.q || "");
     scrHead("", "");
-    $("#scrStage").innerHTML = `
-      <div class="r1-light r1-q-screen">
-        <div class="r1-top">
-          <span class="r1-progress">${esc(progress)}</span>
-          <span class="r1-prep" id="r1Prep">${esc(T("r1.prepTime", "Prep time"))} <b>${fmtClock(Number(cfg.prep_s || 30))}</b></span>
-          <span class="r1-status" id="r1Status"><i class="r1-status-dot"></i>${esc(T("r1.notRecording", "Not Recording"))}</span>
+    $("#scrStage").innerHTML = r1Stage("question", { label: progress, status: true, body: `
+      <div class="r1-text">
+        <h2 class="r1-q" id="r1Q" data-size="${SJStage.questionTier(text)}">${esc(text)}</h2>
+        <p class="r1-q-help" id="r1Help">${esc(T("r1.qHelp", "Recording starts when prep ends."))}</p>
+      </div>
+      <div class="r1-cam"><div class="r1-cam-in">
+        <div class="scr-video-wrap">
+          <video class="scr-video" id="scrVideo" autoplay muted playsinline></video>
+          <div class="r1-count" id="r1Count" hidden></div>
         </div>
-        <div class="r1-body">
-          <div class="r1-left">
-            ${practice ? `<span class="r1-tag">${esc(T("r1.practiceTag", "Practice, not scored or saved"))}</span>` : ""}
-            <h2 class="r1-q">${esc(q.text || q.q || "")}</h2>
-            <p class="r1-q-help" id="r1Help">${esc(T("r1.qHelp", "Use the prep time to think. Recording starts when it ends, or sooner if you choose."))}</p>
-          </div>
-          <div class="r1-cam">
-            <div class="scr-video-wrap">
-              <video class="scr-video" id="scrVideo" autoplay muted playsinline></video>
-              <span class="r1-answer-clock" id="r1Answer" hidden>${fmtClock(Number(cfg.answer_s || 120))}</span>
-              <div class="r1-count" id="r1Count" hidden></div>
-            </div>
-            <div class="rec-meter" title="${esc(T("r1.micLevel", "Mic level"))}"><span class="rec-meter-ic" aria-hidden="true">&#127908;</span><span class="rec-meter-track"><i class="rec-meter-fill" id="scrMeter"></i></span></div>
-          </div>
-        </div>
+        <div class="r1-under" id="r1Under">${r1Meter()}</div>
         <div class="r1-acts" id="r1Acts">
-          <button class="r1-btn r1-btn-primary" id="r1Start" type="button">${esc(T("r1.startRecording", "Start Recording"))}</button>
+          <button class="r1-btn r1-btn-primary" id="r1Start" type="button">${esc(T("r1.startRecording", "Start recording"))}</button>
         </div>
-        <p class="r1-foot" id="r1Foot">${(!practice && Number(cfg.retakes ?? 1) > 0) ? esc(T("r1.retakesNote", "{n} retake per question").replace("{n}", String(cfg.retakes ?? 1))) : ""}</p>
-      </div>`;
+      </div></div>` });
     $("#scrVideo").srcObject = SCR_STREAM;
     startMicMeter(SCR_STREAM);
+    r1GearSync();
+    if (SCR_DEV_DIRTY) r1DevChanged();
     $("#r1Start")?.addEventListener("click", beginCountdown);
     startPrepClock(Number(cfg.prep_s || 30));
   }
@@ -9785,10 +9993,10 @@
   }
   function startPrepClock(secs) {
     stopPrepClock(); let s = secs;
-    const el = $("#r1Prep");
+    r1Clock("prep", s);
     SCR_PREPT = setInterval(() => {
       s--;
-      if (el) el.innerHTML = `${esc(T("r1.prepTime", "Prep time"))} <b>${fmtClock(Math.max(0, s))}</b>`;
+      r1Clock("prep", s);
       if (s <= 0) { stopPrepClock(); if (SCR_PHASE === "prep") beginCountdown(); }
     }, 1000);
   }
@@ -9797,9 +10005,8 @@
   function beginCountdown() {
     if (SCR_PHASE !== "prep") return;
     SCR_PHASE = "countdown"; stopPrepClock();
-    const prep = $("#r1Prep"); if (prep) prep.hidden = true;
+    r1Clock("", null); r1GearSync(); r1Help("");
     const start = $("#r1Start"); if (start) start.disabled = true;
-    const help = $("#r1Help"); if (help) help.textContent = T("r1.getReady", "Get ready...");
     const ov = $("#r1Count"); let n = 3;
     if (ov) { ov.hidden = false; ov.textContent = String(n); }
     if (SCR_COUNT) clearInterval(SCR_COUNT);
@@ -9817,15 +10024,14 @@
     SCR_CHUNKS = [];
     const mt = scrMime();
     try { SCR_REC = mt ? new MediaRecorder(SCR_STREAM, { mimeType: mt }) : new MediaRecorder(SCR_STREAM); }
-    catch { toast(T("r1.cantRecord", "This browser can't record here.")); SCR_PHASE = "prep"; return; }
+    catch { toast(T("r1.cantRecord", "This browser can't record here.")); SCR_PHASE = "prep"; r1GearSync(); const b = $("#r1Start"); if (b) b.disabled = false; return; }
     SCR_REC.ondataavailable = (e) => { if (e.data && e.data.size) SCR_CHUNKS.push(e.data); };
     SCR_REC.onstop = onR1Stopped;
     SCR_REC.start();
     SCR_REC_T0 = Date.now();                                 // report card: the take's real length
     SCR_PHASE = "recording";
-    const st = $("#r1Status"); if (st) { st.classList.add("is-rec"); st.innerHTML = `<i class="r1-status-dot"></i>${esc(T("r1.recording", "Recording"))}`; }
-    const help = $("#r1Help"); if (help) help.textContent = T("r1.answerHelp", "Answer in your own words. Stop when you're done, or the clock will stop for you.");
-    $("#r1Acts").innerHTML = `<button class="r1-btn r1-btn-stop" id="r1Stop" type="button">${esc(T("r1.stopRecording", "I'm done, stop recording"))}</button>`;
+    r1Status(true); r1Help("");
+    $("#r1Acts").innerHTML = `<button class="r1-btn r1-btn-stop" id="r1Stop" type="button">${esc(T("r1.stopRecording", "Stop recording"))}</button>`;
     $("#r1Stop")?.addEventListener("click", stopRecording);
     startAnswerClock(Number((SCREEN.config || {}).answer_s || 120));
   }
@@ -9833,10 +10039,10 @@
   // The answer clock counts down; at zero the take is submitted for you, like the real thing.
   function startAnswerClock(cap) {
     stopAnswerClock(); let s = cap;
-    const el = $("#r1Answer"); if (el) { el.hidden = false; el.textContent = fmtClock(cap); el.classList.remove("warn"); }
+    r1Clock("left", s);
     SCR_TIMER = setInterval(() => {
       s--;
-      if (el) { el.textContent = fmtClock(Math.max(0, s)); el.classList.toggle("warn", s <= 15); }
+      r1Clock("left", s, s <= 15);
       if (s <= 0) { stopAnswerClock(); stopRecording(); }
     }, 1000);
   }
@@ -9844,15 +10050,24 @@
   async function onR1Stopped() {
     stopAnswerClock();
     SCR_PHASE = "review";
-    const st = $("#r1Status"); if (st) { st.classList.remove("is-rec"); st.innerHTML = `<i class="r1-status-dot"></i>${esc(T("r1.notRecording", "Not Recording"))}`; }
-    const clock = $("#r1Answer"); if (clock) clock.hidden = true;
+    r1Status(false); r1Clock("", null); r1LeaveAsk(false);
     const cur = SCR_CUR; if (!cur) return;
     const blob = new Blob(SCR_CHUNKS, { type: SCR_CHUNKS[0]?.type || "video/webm" });
+    const under = $("#r1Under"); if (under) under.classList.add("is-off");
+    if (SCR_DEV_DIRTY) r1DevChanged();
     if (cur.practice) {
-      // Practice: nothing is saved. Offer another, or start the interview.
-      const help = $("#r1Help"); if (help) help.textContent = T("r1.practiceDone", "That was practice. Nothing was saved.");
+      // Practice: nothing is saved. Play it back to check picture and sound (the real product
+      // lets you review a practice answer), then another one, or start the interview.
+      const v = $("#scrVideo");
+      if (v && blob.size) {
+        r1PlaybackClear(); SCR_PLAY_URL = URL.createObjectURL(blob);
+        v.srcObject = null; v.src = SCR_PLAY_URL; v.muted = false; v.controls = true; v.autoplay = false;
+        v.classList.add("is-playback"); try { v.pause(); } catch (e) {}
+        stopMicMeter();
+      }
+      r1Help(T("r1.practiceDone", "Play it back to check your picture and sound."));
       $("#r1Acts").innerHTML = `
-        <button class="r1-btn r1-btn-ghost" id="r1Another" type="button">${esc(T("r1.anotherPractice", "Do another practice question"))}</button>
+        <button class="r1-btn r1-btn-ghost" id="r1Another" type="button">${esc(T("r1.anotherPractice", "Another practice question"))}</button>
         <button class="r1-btn r1-btn-primary" id="r1StartReal" type="button">${esc(T("r1.startInterview", "Start the interview"))}</button>`;
       $("#r1Another")?.addEventListener("click", async () => {
         const b = $("#r1Another"); if (b) b.disabled = true;
@@ -9868,7 +10083,7 @@
     SCR_SECS[idx] = SCR_REC_T0 ? Math.round((Date.now() - SCR_REC_T0) / 100) / 10 : null; SCR_REC_T0 = 0;
     uploadTake(idx, blob, SCR_SECS[idx]);
     const left = retakesLeft(idx);
-    const help = $("#r1Help"); if (help) help.textContent = T("r1.saved", "Saved on this computer.");
+    r1Help(T("r1.saved", "Saved on this computer."));
     $("#r1Acts").innerHTML = `
       ${left > 0 ? `<button class="r1-btn r1-btn-ghost" id="r1Retake" type="button">${esc(T("r1.retake", "Retake ({n} left)").replace("{n}", String(left)))}</button>` : ""}
       <button class="r1-btn r1-btn-primary" id="r1Next" type="button">${esc(last ? T("r1.finish", "Finish interview") : T("r1.next", "Next question"))}</button>`;
@@ -9892,13 +10107,14 @@
   async function renderR1Done() {
     stopPrepClock(); stopAnswerClock(); stopMicMeter(); stopScrStream();
     scrHead("", "");
-    $("#scrStage").innerHTML = `
-      <div class="r1-light r1-done">
-        <h2 class="scr-ready-h">${esc(T("r1.allDone", "All done"))}</h2>
-        <p class="scr-ready-sub" id="r1DoneSub">${esc(T("r1.doneSub", "Saving and scoring your answers on this computer. This takes a minute."))}</p>
+    SCR_PHASE = "done"; r1PlaybackClear();
+    $("#scrStage").innerHTML = r1Stage("done", { body: `
+      <div class="r1-done">
+        <h2 class="r1-h">${esc(T("r1.allDone", "All done"))}</h2>
+        <p class="r1-done-sub" id="r1DoneSub">${esc(T("r1.doneSub", "Scoring your answers. This takes a minute."))}</p>
         <div class="r1-spinner" id="r1Spin" aria-hidden="true"></div>
         <div id="r1DoneBody"></div>
-      </div>`;
+      </div>` });
     const n = (SCREEN.questions || []).length;
     const results = await Promise.all(Array.from({ length: n }, (_, i) => (SCR_TR[i] || Promise.resolve({ available: false })).then(x => x, () => ({ available: false }))));
     const need = results.map((tr, i) => ({ i, tr })).filter(({ tr }) => !tr || tr.available === false || !(tr.transcript || tr.text));
@@ -9929,7 +10145,7 @@
   // Screen 7: the report. Back on the app theme.
   function renderR1Report(r) {
     r = r || {};
-    SCR_PHASE = "report"; scrLeaveAsk(false);
+    SCR_PHASE = "report";
     const passed = !!r.passed;
     const items = (r.answers || []).map((a, k) => {
       const i = a.i ?? k, paf = a.per_answer_feedback || {};
@@ -10037,15 +10253,19 @@
   function startMicMeter(stream) {
     stopMicMeter();
     try {
-      const AC = window.AudioContext || window.webkitAudioContext; if (!AC || !stream) return;
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC || !stream || !stream.getAudioTracks().length) return;
       SCR_AUDIO = new AC();
       const analyser = SCR_AUDIO.createAnalyser(); analyser.fftSize = 512;
       SCR_AUDIO.createMediaStreamSource(stream).connect(analyser);
       const data = new Uint8Array(analyser.frequencyBinCount);
+      const quiet = SJStage.silenceWatch(5000);
       const tick = () => {
         analyser.getByteTimeDomainData(data);
-        let sum = 0; for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
-        const el = $("#scrMeter"); if (el) el.style.width = Math.min(100, Math.round(Math.sqrt(sum / data.length) * 260)) + "%";
+        const level = SJStage.rms(data), w = SJStage.meterPercent(level) + "%";
+        document.querySelectorAll("#scrStage .rec-meter-fill").forEach(el => { el.style.width = w; });
+        // Device check only: a microphone that hears nothing for five seconds gets one line.
+        const silent = quiet.feed(level, performance.now());
+        if (silent !== SCR_SILENT) { SCR_SILENT = silent; r1DevNotePaint(); }
         SCR_METER_RAF = requestAnimationFrame(tick);
       };
       tick();
@@ -10054,30 +10274,27 @@
   function stopMicMeter() {
     if (SCR_METER_RAF) { cancelAnimationFrame(SCR_METER_RAF); SCR_METER_RAF = null; }
     if (SCR_AUDIO) { try { SCR_AUDIO.close(); } catch (e) {} SCR_AUDIO = null; }
+    SCR_SILENT = false;
   }
-  function stopScrStream() { stopMicMeter(); if (SCR_STREAM) { SCR_STREAM.getTracks().forEach(t => t.stop()); SCR_STREAM = null; } }
+  function stopScrStream() {
+    stopMicMeter(); r1PlaybackClear();
+    try { navigator.mediaDevices?.removeEventListener("devicechange", r1DevChanged); } catch (e) {}
+    if (SCR_STREAM) { SCR_STREAM.getTracks().forEach(t => t.stop()); SCR_STREAM = null; }
+  }
   function quitScreen() {
-    scrLeaveAsk(false);
     stopPrepClock(); stopAnswerClock(); if (SCR_COUNT) { clearInterval(SCR_COUNT); SCR_COUNT = null; }
     if (SCR_REC && SCR_REC.state === "recording") { SCR_REC.onstop = null; try { SCR_REC.stop(); } catch {} }
     SCR_PHASE = "idle"; stopScrStream();
+    $("#scrStage").innerHTML = "";          // the stage is gone, so the app's own chrome comes back
     $("#prepScreen").hidden = true; $("#prepList").hidden = false;
     loadPreps();
   }
-  // Quit right after recording an answer used to leave at once. Once any answer is recorded (or
-  // one is recording) it asks first; before that, and on the report, Quit just leaves.
+  // Once any answer is recorded (or one is recording) leaving asks first; before that, and on the
+  // report, it just leaves.
   function scrHasAnswers() {
-    return SCR_PHASE !== "report" && (SCR_PHASE === "recording" || Object.keys(SCR_UPLOADS).length > 0);
+    return SCR_PHASE !== "report" && SCR_PHASE !== "idle" && (SCR_PHASE === "recording" || Object.keys(SCR_UPLOADS).length > 0);
   }
-  function scrLeaveAsk(on) {
-    const bar = $("#scrLeave"); if (!bar) return;
-    bar.hidden = !on;
-    if (on) $("#scrLeaveStay")?.focus();
-  }
-  $("#scrQuit")?.addEventListener("click", () => { if (scrHasAnswers()) scrLeaveAsk(true); else quitScreen(); });
-  $("#scrLeaveGo")?.addEventListener("click", () => { scrLeaveAsk(false); quitScreen(); });
-  $("#scrLeaveStay")?.addEventListener("click", () => { scrLeaveAsk(false); $("#scrQuit")?.focus(); });
-  $("#scrLeave")?.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); scrLeaveAsk(false); } });
+  $("#scrQuit")?.addEventListener("click", quitScreen);   // landing and notice only: nothing recorded yet
 
   // ---------------------------------------------------------------- Round 2: live interview (Tavus)
   // One 20-minute conversation with the Tavus interviewer, in the app's own video pane. Paid only

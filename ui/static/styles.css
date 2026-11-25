@@ -3123,11 +3123,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-fb-h { font-size: 11.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
 
 .mock-top { display: flex; align-items: center; gap: 14px; padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
-.scr-leave { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: -6px 0 18px;
-  padding: 12px 16px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg); }
-.scr-leave[hidden] { display: none; }
-.scr-leave-t { flex: 1 1 auto; font-size: 14px; color: var(--ink); }
-.scr-leave-acts { display: flex; gap: 8px; }
 .mock-count { font-size: 12px; font-weight: 600; color: var(--muted); }
 .mock-timer { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--faint);
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
@@ -3145,7 +3140,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* Share the landing's centered 1040 column so the header and cards line up at any width,
    then cap the inner content at 720 (its tuned width for the recording grid). */
 .prep-screen { max-width: 1040px; margin: 0 auto; }
-.prep-screen > .mock-top, .prep-screen > .scr-stage, .prep-screen > .scr-leave { max-width: 880px; }
+.prep-screen > .mock-top, .prep-screen > .scr-stage { max-width: 880px; }
 /* Recorded-interview intro: framed as a card, matching the landing's card system. */
 .scr-intro { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 30px 32px; }
 /* Round 1 landing and notice: minimal, one action. */
@@ -3153,16 +3148,11 @@ body.cv-dragging * { cursor: grabbing !important; }
 .scr-welcome-h { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; color: var(--ink); margin: 0 0 8px; text-wrap: balance; }
 .scr-welcome-sub { font-size: 14px; color: var(--muted); margin: 0 0 26px; }
 .scr-welcome-acts { display: flex; align-items: center; gap: 10px; }
-/* Device check: camera preview left, the tips and the one action right. */
-.scr-ready { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 26px; align-items: start; }
-@media (max-width: 680px) { .scr-ready { grid-template-columns: 1fr; gap: 18px; } }
-.scr-ready-side { display: flex; flex-direction: column; }
 .scr-ready-h { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); margin: 2px 0 6px; }
 .scr-ready-sub { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 0 0 18px; }
 .seg { font-size: 13px; font-weight: 600; color: var(--muted); background: transparent; border: 0; border-radius: 999px;
   padding: 6px 16px; cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
 .seg.is-on { color: var(--accent-ink); background: var(--accent); }
-.scr-ready-acts { display: flex; align-items: center; gap: 10px; margin-top: auto; }
 .scr-comp { display: inline-block; font-size: 10.5px; font-weight: 700; color: #6941c6; background: #f4f0ff;
   border: 1px solid #d9cffb; border-radius: 999px; padding: 1px 8px; margin-right: 6px; vertical-align: middle; }
 .scr-warm { display: inline-block; font-size: 10.5px; font-weight: 700; color: #b54708; background: #fffaeb;
@@ -3314,7 +3304,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 
 
 .rec-meter { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.rec-meter-ic { font-size: 14px; opacity: .7; }
+.rec-meter-ic { display: inline-flex; color: var(--muted); }
 .rec-meter-track { flex: 1; height: 6px; border-radius: 999px; background: var(--surface-2, #f2f4f7); overflow: hidden; }
 .rec-meter-fill { display: block; height: 100%; width: 0; border-radius: 999px; background: #12b76a; transition: width .08s linear; }
 
@@ -3349,68 +3339,191 @@ body.cv-dragging * { cursor: grabbing !important; }
 .zoom-mins { color: #9aa2ad; font-size: 12.5px; }
 .zoom-mins b { color: #e7e9ee; }
 
-/* ============ Round 1 (one-way recorded interview): the light stage ============ */
-/* Screens 3 to 6 (device check, practice, the questions, All done) sit on a plain white surface like
-   the real product, so the muscle memory transfers. Tokens are scoped to the stage; the app around it
-   keeps its own theme. The landing, the notice and the report stay on the app theme. */
+/* ============ Round 1 (one-way recorded interview): the stage ============ */
+/* Screens 3 to 6 (device check, practice, the questions, All done) are ONE full-window stage, like
+   the real product, which shows no navigation around an interview. Tokens are scoped to the stage
+   (--r1-*): plain white in the light theme (the real product's look), the app's own dark palette in
+   the dark theme, because a full window of white in a dark app is a flash, not a surface. The
+   landing, the notice and the report stay on the app's page. */
 .r1-light { --r1-bg: #ffffff; --r1-surface: #f5f6f8; --r1-ink: #1b1f27; --r1-ink-2: #3d4350; --r1-muted: #6b7280; --r1-faint: #9ca3af;
-  --r1-border: #e4e6ea; --r1-primary: #1f2937; --r1-primary-ink: #ffffff; --r1-rec: #d92d20; --r1-good: #1f8a5b;
-  color-scheme: light; color: var(--r1-ink); background: var(--r1-bg); border: 1px solid var(--r1-border);
-  border-radius: var(--r-lg); padding: 28px 32px; }
-.r1-light .scr-ready-h { color: var(--r1-ink); }
-.r1-light .scr-ready-sub, .r1-light .r1-q-help { color: var(--r1-muted); }
+  --r1-border: #e4e6ea; --r1-primary: #1f2937; --r1-primary-hover: #111827; --r1-primary-ink: #ffffff; --r1-btn: #ffffff;
+  --r1-rec: #d92d20; --r1-rec-hover: #b42318; --r1-rec-soft: #fef3f2; --r1-rec-line: #fecdca; --r1-good: #1f8a5b; --r1-warn: #b54708;
+  --r1-shadow: 0 8px 24px rgba(16,24,40,.12);
+  color-scheme: light; color: var(--r1-ink); background: var(--r1-bg); }
+:root:not([data-theme="light"]) .r1-light { --r1-bg: var(--bg); --r1-surface: var(--surface-2); --r1-ink: var(--ink); --r1-ink-2: var(--ink-2);
+  --r1-muted: #9a9aa4; --r1-faint: var(--muted); --r1-border: var(--border-strong); --r1-primary: var(--accent); --r1-primary-hover: var(--accent-hover);
+  --r1-primary-ink: var(--accent-ink); --r1-btn: var(--surface); --r1-rec: #e5484d; --r1-rec-hover: #f2555a; --r1-rec-soft: #2a1516; --r1-rec-line: #5c2327;
+  --r1-good: var(--good); --r1-warn: #e0a458; --r1-shadow: 0 8px 28px rgba(0,0,0,.45); color-scheme: dark; }
+
+/* Focus mode. A stage inside the open Interview view takes the whole window: the side menu, the
+   page title, the round tracker, the footer line and (when its pane is closed) the right-hand rail
+   are hidden. Pure CSS on purpose: the chrome returns the moment the stage is gone (report, Exit,
+   another view), with no flag that could be left on. */
+.app:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) { grid-template-columns: minmax(0, 1fr); }
+.app:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) > .sidebar { display: none; }
+.main:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) > .privacy-line { display: none; }
+body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .panel-rail { display: none; }
+body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .side-panel { visibility: hidden; }
+body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .app { margin-right: 0; }
+#view-prep:has(#prepScreen:not([hidden]) .r1-stage) { padding: 0; overflow: hidden; scrollbar-gutter: auto; max-width: none; }
+/* clip, not hidden: a hidden box can still be scrolled by a focus call, which would shift the stage. */
+.main:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) { overflow: clip; }
+#view-prep:has(#prepScreen:not([hidden]) .r1-stage) > .page-head,
+#view-prep:has(#prepScreen:not([hidden]) .r1-stage) > .prep-progress,
+#prepScreen:has(.r1-stage) > .mock-top { display: none; }
+#prepScreen:has(.r1-stage), #prepScreen:has(.r1-stage) > .scr-stage { max-width: none; height: 100%; margin: 0; }
+
+.r1-stage { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+/* The bar: Exit left, step and clock centre, status right. Nothing else, on every step. */
+.r1-bar { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px;
+  height: 56px; padding: 0 20px; border-bottom: 1px solid var(--r1-border); }
+/* In the desktop window the bar is the title bar: clear of the window buttons, and draggable. */
+.in-shell .r1-bar { padding-left: 88px; -webkit-app-region: drag; }
+.in-shell .r1-bar button, .in-shell .r1-pop, .in-shell .r1-leave { -webkit-app-region: no-drag; }
+.r1-exit { justify-self: start; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; font: inherit; font-size: 13px;
+  font-weight: 600; color: var(--r1-muted); background: transparent; border: 0; border-radius: 8px; cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+.r1-exit:hover { color: var(--r1-ink); background: var(--r1-surface); }
+.r1-bar-mid { display: flex; align-items: baseline; gap: 12px; min-width: 0; white-space: nowrap; }
+.r1-step { font-size: 13px; font-weight: 600; color: var(--r1-muted); }
+.r1-step:empty { display: none; }
+/* One clock, one place, one style: the prep countdown and the answer countdown. */
+/* Both labels share one cell (the unused one is invisible), so the digits never shift when the
+   label changes from "Prep" to "Time left". */
+.r1-clock { display: inline-flex; align-items: baseline; font-size: 13px; color: var(--r1-muted); font-variant-numeric: tabular-nums; }
+.r1-clock-l { display: inline-grid; justify-items: end; }
+.r1-clock-l > span { grid-area: 1 / 1; visibility: hidden; }
+.r1-clock[data-l="prep"] [data-l="prep"], .r1-clock[data-l="left"] [data-l="left"] { visibility: visible; }
+.r1-clock b { display: inline-block; min-width: 4ch; margin-left: 7px; font-size: 18px; font-weight: 650; color: var(--r1-ink); text-align: left; }
+.r1-clock.warn b { color: var(--r1-rec); }
+.r1-bar-end { justify-self: end; display: flex; align-items: center; gap: 8px; }
+/* The status never moves: same pill, same place, recording or not. */
+.r1-status { display: inline-flex; align-items: center; gap: 8px; box-sizing: border-box; min-width: 136px; height: 30px; padding: 0 13px;
+  font-size: 12.5px; font-weight: 600; color: var(--r1-muted); border: 1px solid var(--r1-border); border-radius: 999px; white-space: nowrap; }
+.r1-status-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--r1-faint); }
+.r1-status.is-rec { color: var(--r1-rec); border-color: var(--r1-rec-line); background: var(--r1-rec-soft); }
+.r1-status.is-rec .r1-status-dot { background: var(--r1-rec); animation: scrpulse 1.2s infinite; }
+.r1-gear { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--r1-muted); background: transparent;
+  border: 0; border-radius: 8px; cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+.r1-gear:hover:not(:disabled), .r1-gear[aria-expanded="true"] { color: var(--r1-ink); background: var(--r1-surface); }
+.r1-gear:disabled { opacity: .35; cursor: not-allowed; }
+.r1-pop, .r1-leave { position: absolute; top: calc(100% + 8px); z-index: 30; background: var(--r1-btn); border: 1px solid var(--r1-border);
+  border-radius: 12px; box-shadow: var(--r1-shadow); }
+.r1-pop { right: 16px; width: min(360px, calc(100% - 32px)); padding: 16px; }
+.r1-pop .r1-devs { margin: 0; max-width: none; }
+.r1-leave { left: 16px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; max-width: calc(100% - 32px); padding: 12px 12px 12px 16px; }
+.in-shell .r1-leave { left: 88px; }
+.r1-leave-t { font-size: 13.5px; color: var(--r1-ink); }
+.r1-leave-acts { display: flex; gap: 8px; }
+
+/* The two panes. They scale with the window: the words take about 42%, the camera 58%, the video
+   stays 16:9 and as large as the height allows, and both sit centred as one group. */
+.r1-main { container: r1main / size; min-height: 0; }
+.r1-grid { box-sizing: border-box; height: 100%; max-width: 2400px; margin: 0 auto; display: grid;
+  grid-template-columns: minmax(0, 42fr) minmax(0, 58fr); grid-template-rows: minmax(0, 1fr); align-items: center;
+  gap: clamp(28px, 4cqw, 80px); padding: clamp(20px, 4cqh, 56px) clamp(24px, 4.5cqw, 96px); }
+.r1-text { container: r1text / inline-size; min-width: 0; max-height: 100%; overflow-y: auto; }
+/* The device check holds menus that open over what is below them, so it must not clip. */
+.r1-stage[data-step="check"] .r1-text { overflow: visible; }
+.r1-cam { container: r1cam / size; align-self: stretch; min-width: 0; min-height: 0; display: flex; }
+/* 100px is the fixed strip under the video (level meter, then the action), so the button sits in
+   the same spot on every step. */
+.r1-cam-in { margin: auto; width: max(240px, min(100cqw, calc((100cqh - 100px) * 16 / 9))); max-width: 100%; }
+.r1-light .scr-video-wrap { border-radius: 14px; box-shadow: var(--r1-shadow); }
+.scr-video.is-playback { transform: none; object-fit: contain; }
+.r1-under { display: flex; align-items: center; height: 28px; margin-top: 12px; }
+.r1-under.is-off { visibility: hidden; }
+.r1-under .rec-meter { flex: 1; }
+.r1-acts { display: flex; justify-content: center; align-items: center; gap: 10px; min-height: 44px; margin-top: 16px; flex-wrap: wrap; }
+.r1-acts .r1-btn { min-width: 190px; }
+/* The question: the most important text on the screen. Large, 600, left aligned, balanced over two
+   or three lines of about 30 characters; a longer question steps the size down (data-size comes
+   from SJStage.questionTier) and is never cut. `ch` is the width of a zero, wider than the average
+   letter, so 27ch holds about 32 characters. */
+.r1-q { margin: 0; font-weight: 600; letter-spacing: -0.015em; color: var(--r1-ink); text-wrap: balance; overflow-wrap: break-word; }
+.r1-q[data-size="l"] { font-size: clamp(28px, 6.4cqi, 54px); line-height: 1.16; max-inline-size: 24ch; }
+.r1-q[data-size="m"] { font-size: clamp(24px, 5.5cqi, 46px); line-height: 1.2; max-inline-size: 27ch; }
+.r1-q[data-size="s"] { font-size: clamp(20px, 4.5cqi, 36px); line-height: 1.26; max-inline-size: 33ch; }
+.r1-q[data-size="xs"] { font-size: clamp(17px, 3.6cqi, 28px); line-height: 1.36; max-inline-size: 42ch; letter-spacing: -0.005em; }
+/* One short line under the question, or none. The height is held so the question never shifts. */
+.r1-q-help { min-height: 1.5em; margin: 16px 0 0; font-size: clamp(13px, 2.2cqi, 16px); line-height: 1.5; color: var(--r1-muted); }
+.r1-h { margin: 0; font-size: clamp(24px, 5.2cqi, 40px); font-weight: 650; line-height: 1.2; letter-spacing: -0.02em; color: var(--r1-ink);
+  text-wrap: balance; max-inline-size: 20ch; }
+.r1-tips { margin: 22px 0 0; padding: 0; list-style: none; font-size: 13.5px; line-height: 1.7; color: var(--r1-muted); }
+.r1-conn { margin: 14px 0 0; font-size: 13px; color: var(--r1-warn); }
+.r1-conn:empty { display: none; }
+
+/* Narrow (the Browser pane open, a small window): the words above, the camera below. */
+@container r1main (max-width: 999px) {
+  .r1-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); align-items: start; gap: 18px; }
+  .r1-text { max-height: 42cqh; }
+  .r1-q[data-size] { max-inline-size: none; }
+  .r1-q[data-size="l"] { font-size: clamp(22px, 4.2cqi, 32px); }
+  .r1-q[data-size="m"] { font-size: clamp(20px, 3.6cqi, 28px); }
+  .r1-q[data-size="s"] { font-size: clamp(17px, 3cqi, 23px); }
+  .r1-q[data-size="xs"] { font-size: clamp(15px, 2.5cqi, 19px); }
+  .r1-h { font-size: clamp(22px, 3.6cqi, 28px); max-inline-size: none; }
+  .r1-devs { margin-top: 16px; }
+  .r1-tips { margin-top: 14px; }
+  .r1-bar-mid { gap: 10px; }
+}
+@container r1main (max-width: 640px) { .r1-status { min-width: 0; } }
+
+/* Camera and microphone: a label, then a menu of the real devices (or the one device's name when
+   there is nothing to choose), with the level meter under the microphone. */
+.r1-devs { display: grid; gap: 10px; max-width: 440px; margin: 24px 0 0; }
+.r1-dev { display: grid; grid-template-columns: 124px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 36px; }
+.r1-dev-l { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--r1-ink-2); }
+.r1-dev-l svg { color: var(--r1-muted); flex: none; }
+.r1-dev-name { font-size: 13px; color: var(--r1-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r1-dev-level { min-height: 0; margin-top: -4px; }
+.r1-dev-level .rec-meter-ic { display: none; }
+.r1-dev-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--r1-warn); }
+.r1-dev-note:empty { display: none; }
+.r1-menu { position: relative; min-width: 0; }
+.r1-menu-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 36px; padding: 0 10px 0 12px;
+  font: inherit; font-size: 13px; color: var(--r1-ink); background: var(--r1-btn); border: 1px solid var(--r1-border); border-radius: 9px; cursor: pointer; }
+.r1-menu-btn:hover, .r1-menu-btn[aria-expanded="true"] { background: var(--r1-surface); }
+.r1-menu-btn svg { flex: none; color: var(--r1-muted); }
+.r1-menu-v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r1-menu-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40; margin: 0; padding: 4px; list-style: none; max-height: 240px;
+  overflow-y: auto; background: var(--r1-btn); border: 1px solid var(--r1-border); border-radius: 10px; box-shadow: var(--r1-shadow); }
+.r1-menu-opt { position: relative; padding: 8px 10px 8px 30px; font-size: 13px; color: var(--r1-ink); border-radius: 7px; cursor: pointer; outline: none; }
+.r1-menu-opt:hover, .r1-menu-opt:focus { background: var(--r1-surface); }
+.r1-menu-opt[aria-selected="true"] { font-weight: 600; }
+.r1-menu-opt[aria-selected="true"]::before { content: ""; position: absolute; left: 11px; top: 50%; width: 9px; height: 5px; margin-top: -5px;
+  border-left: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: rotate(-45deg); }
+.r1-light .rec-meter { margin-top: 0; }
 .r1-light .rec-meter-track { background: var(--r1-surface); }
-.r1-light .fld { background: #fff; color: var(--r1-ink); border-color: var(--r1-border); }
-.r1-light .scr-video-wrap { border-radius: 12px; box-shadow: 0 8px 24px rgba(16,24,40,.12); }
-.r1-tips { margin: 0 0 22px; padding-left: 18px; font-size: 13px; color: var(--r1-ink-2); line-height: 1.6; }
-.r1-conn { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--r1-muted); }
-.r1-conn::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--r1-good); }
-.r1-conn.warn::before { background: var(--r1-rec); }
-/* Buttons on the light stage: one solid primary, a quiet ghost, and a red stop. */
-.r1-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 18px;
-  font: inherit; font-size: 13.5px; font-weight: 600; border-radius: 10px; border: 1px solid var(--r1-border);
-  background: #fff; color: var(--r1-ink); cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.r1-light .rec-meter-ic { color: var(--r1-muted); }
+.r1-light .rec-meter-fill { background: var(--r1-good); }
+.r1-light .fld { background: var(--r1-btn); color: var(--r1-ink); border-color: var(--r1-border); }
+
+/* Buttons on the stage: one solid primary, a quiet ghost, and a red stop. */
+.r1-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 22px;
+  font: inherit; font-size: 14px; font-weight: 600; border-radius: 11px; border: 1px solid var(--r1-border);
+  background: var(--r1-btn); color: var(--r1-ink); cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .r1-btn:hover { background: var(--r1-surface); }
 .r1-btn:disabled { opacity: .5; cursor: not-allowed; }
+.r1-btn-sm { min-height: 32px; padding: 0 14px; font-size: 13px; border-radius: 8px; }
 .r1-btn-primary { background: var(--r1-primary); color: var(--r1-primary-ink); border-color: var(--r1-primary); }
-.r1-btn-primary:hover { background: #111827; }
+.r1-btn-primary:hover { background: var(--r1-primary-hover); }
 .r1-btn-ghost { background: transparent; }
 .r1-btn-stop { background: var(--r1-rec); color: #fff; border-color: var(--r1-rec); }
-.r1-btn-stop:hover { background: #b42318; }
-/* The question screen: progress left, prep countdown top centre, status right; the question text on
-   the left and the self view in the centre; the actions underneath. No back button, by design. */
-.r1-top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding-bottom: 14px; margin-bottom: 20px; border-bottom: 1px solid var(--r1-border); }
-.r1-progress { font-size: 12.5px; font-weight: 600; color: var(--r1-muted); }
-.r1-prep { font-size: 14px; color: var(--r1-muted); font-variant-numeric: tabular-nums; }
-.r1-prep b { color: var(--r1-ink); font-size: 18px; font-weight: 650; margin-left: 4px; }
-.r1-status { justify-self: end; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--r1-muted);
-  border: 1px solid var(--r1-border); border-radius: 999px; padding: 4px 12px; }
-.r1-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--r1-faint); }
-.r1-status.is-rec { color: var(--r1-rec); border-color: #fecdca; background: #fef3f2; }
-.r1-status.is-rec .r1-status-dot { background: var(--r1-rec); animation: scrpulse 1.2s infinite; }
-.r1-body { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 28px; align-items: start; }
-@media (max-width: 760px) { .r1-body { grid-template-columns: 1fr; gap: 16px; } .r1-top { grid-template-columns: 1fr auto; } .r1-status { grid-column: 1 / -1; justify-self: start; } }
-.r1-q { font-size: 21px; font-weight: 600; line-height: 1.35; color: var(--r1-ink); margin: 4px 0 0; text-wrap: balance; }
-.r1-q-help { font-size: 13px; line-height: 1.55; margin: 14px 0 0; }
-.r1-tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--r1-muted);
-  border: 1px solid var(--r1-border); border-radius: 999px; padding: 2px 9px; margin-bottom: 8px; }
-.r1-answer-clock { position: absolute; right: 12px; bottom: 12px; font-size: 15px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums;
-  background: rgba(16,24,40,.72); border-radius: 999px; padding: 4px 14px; }
-.r1-answer-clock.warn { background: var(--r1-rec); }
-.r1-count { position: absolute; inset: 0; display: grid; place-items: center; font-size: 96px; font-weight: 700; color: #fff;
+.r1-btn-stop:hover { background: var(--r1-rec-hover); }
+.r1-count { position: absolute; inset: 0; display: grid; place-items: center; font-size: clamp(72px, 22cqh, 180px); font-weight: 700; color: #fff;
   background: rgba(16,24,40,.45); font-variant-numeric: tabular-nums; }
-.r1-acts { display: flex; justify-content: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
-.r1-acts .r1-btn { min-width: 180px; }
-.r1-foot { text-align: center; font-size: 12px; color: var(--r1-faint); margin: 10px 0 0; min-height: 1em; }
 /* Landing and notice (app theme). */
 .r1-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
 .r1-notice { margin: 0 0 20px; padding-left: 18px; font-size: 13.5px; color: var(--ink-2); line-height: 1.65; }
 .r1-check { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 24px; font-size: 13.5px; color: var(--ink); cursor: pointer; max-width: 56ch; }
 .r1-check input { margin-top: 3px; accent-color: var(--accent); }
 .r1-check-d { color: var(--muted); }
-/* All done: a quiet wait, then the typed fallback if this computer can't transcribe. */
-.r1-done { text-align: center; }
-.r1-done .scr-ready-sub { margin-left: auto; margin-right: auto; max-width: 52ch; }
+/* All done: a quiet wait in the middle of the stage, then the typed fallback if this computer
+   can't transcribe. */
+.r1-done { grid-column: 1 / -1; align-self: center; justify-self: center; width: min(640px, 100%); max-height: 100%; overflow-y: auto; text-align: center; }
+.r1-done .r1-h { max-inline-size: none; }
+.r1-done-sub { margin: 10px auto 18px; max-width: 46ch; font-size: 14px; line-height: 1.5; color: var(--r1-muted); }
 .r1-spinner { width: 22px; height: 22px; margin: 6px auto 0; border-radius: 50%; border: 2px solid var(--r1-border); border-top-color: var(--r1-primary); animation: r1spin .9s linear infinite; }
 @keyframes r1spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .r1-spinner, .r1-status.is-rec .r1-status-dot { animation: none; } }
