@@ -139,7 +139,8 @@ def test_the_layout_follows_the_pages_own_width_and_never_the_windows():
     assert ".view-inbox .ib-split { grid-template-columns: minmax(0, 1fr); }" in container
     assert ".view-inbox .ib-split.is-reading .ib-list-w { display: none; }" in container
     assert ".view-inbox .ib-back { display: inline-flex; }" in container        # a back link, one pane only
-    inbox_css = CSS[CSS.index("Inbox (docs/mail-alias.md)"):]
+    # the Inbox block ends where the Tracker's begins (the Tracker has lozenge colours of its own)
+    inbox_css = CSS[CSS.index("Inbox (docs/mail-alias.md)"):CSS.index("/* ============ Tracker (")]
     assert "grid-template-columns: minmax(340px, 2fr) minmax(0, 3fr)" in inbox_css
     assert ".view-inbox [hidden] { display: none !important; }" in inbox_css
     # No fixed pixel widths on the panes or the rows, and no colour of its own beyond the frame's white page.

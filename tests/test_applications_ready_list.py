@@ -308,7 +308,7 @@ def test_every_new_string_has_every_locale():
             assert not re.search(r"[—–]", d[k]), (code, k)
     en = json.loads((ROOT / "ui/static/locales/en.json").read_text(encoding="utf-8"))
     assert en["aa.act.fill"] == "Autofill application" and en["bb.fillHere"] == "Autofill this page"
-    assert en["tracker.stage.approved"] == "Ready to apply"
+    assert en["tracker.stage.approved"] == "Resume ready" and en["aa.ready"] == "To apply"
     assert not [k for k in keys if "CV" in en[k] or "résumé" in en[k]]
 
 

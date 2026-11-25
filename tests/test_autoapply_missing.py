@@ -148,4 +148,4 @@ def test_the_page_shows_the_cause(needle):
 def test_the_page_never_says_to_review_for_zero():
     src = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     assert 'r.queued ? (APPLY_AGENT ? T("aa.queued", "Queued {n}. They are in To review.")' in src
-    assert 'T("aa.queuedReady", "Tailored {n}. They are in Ready to apply.")' in src
+    assert 'T("aa.queuedReady", "Tailored {n}. They are in To apply on the Tracker.")' in src

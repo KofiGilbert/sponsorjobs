@@ -19,7 +19,9 @@ def test_autoapply_layout_rules_follow_the_page_width():
 
 
 def test_tracker_columns_keep_a_readable_width_and_scroll():
-    # (2026-11-24) A flex board: each column keeps a readable width and the board scrolls sideways
-    # inside its own box when the page is narrow (the browser open, a small window).
-    assert ".trk-col { flex: 1 1 0; min-width: 200px;" in CSS
-    assert "#view-tracker > .trk-board { flex: 1 1 auto; min-height: 320px; display: flex; gap: 12px; align-items: stretch;\n  overflow-x: auto;" in CSS
+    # (2026-11-25) Five columns in a grid: each keeps a readable width (168px at least) and the
+    # board scrolls sideways inside its own box only when the page is narrower than five of them
+    # (the browser open, a small window). From 1280px up nothing scrolls sideways.
+    assert ("#view-tracker > .trk-board { flex: 1 1 auto; min-height: 0; display: grid; "
+            "grid-template-columns: repeat(5, minmax(168px, 1fr)); gap: 12px;\n  overflow-x: auto;") in CSS
+    assert ".trk-col { min-width: 0; min-height: 0; display: flex; flex-direction: column;" in CSS
