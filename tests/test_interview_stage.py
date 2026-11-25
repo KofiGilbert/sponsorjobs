@@ -78,10 +78,10 @@ def test_focus_mode_is_tied_to_a_live_stage_in_the_open_interview_view():
     """Pure CSS: the chrome is hidden only while a .r1-stage sits in the visible Interview view,
     so it cannot be left hidden by a flag nobody cleared."""
     css = CSS.read_text(encoding="utf-8")
-    live = "#view-prep.is-active #prepScreen:not([hidden]) .r1-stage"
+    live = "#view-prep.is-active :is(#prepScreen, #prepLive):not([hidden]) .r1-stage"   # both rounds
     assert f".app:has({live}) > .sidebar {{ display: none; }}" in css
     assert f".main:has({live}) > .privacy-line {{ display: none; }}" in css
-    assert "#view-prep:has(#prepScreen:not([hidden]) .r1-stage) > .page-head" in css
+    assert "#view-prep:has(:is(#prepScreen, #prepLive):not([hidden]) .r1-stage) > .page-head" in css
     # Leaving empties the stage, which is what brings the chrome back.
     quit_body = _stage_src().split("function quitScreen()", 1)[1].split("\n  }\n", 1)[0]
     assert '$("#scrStage").innerHTML = ""' in quit_body
@@ -166,7 +166,9 @@ def test_the_status_and_the_clock_have_one_place_each():
 def test_the_controls_are_attached_to_the_video():
     """One frame holds the strip (clock, bar, action) and the video; the level sits right under."""
     src = _stage_src()
-    for fn in ("function renderR1Devices()", "function renderR1Question(opts)"):
+    # The device check card is shared with the live round (r1CheckBody); only its action differs.
+    assert "r1CheckBody(" in src.split("function renderR1Devices()", 1)[1].split("\n  }\n", 1)[0]
+    for fn in ("function r1CheckBody(action)", "function renderR1Question(opts)"):
         body = src.split(fn, 1)[1].split("\n  }\n", 1)[0]
         frame = body.split('<div class="r1-frame" id="r1Frame">', 1)[1]
         assert frame.index("${r1Strip(") < frame.index('class="scr-video-wrap"') < frame.index('id="r1Under"'), fn

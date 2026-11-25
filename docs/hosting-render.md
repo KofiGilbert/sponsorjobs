@@ -28,9 +28,11 @@ sells only one-time prices (the retired passes and the packs); the plans that re
 the Cloudflare Worker broker (docs/stripe-setup.md).
 - `STRIPE_PRICE_PASS30`: Job Hunt Pass, $29, 30 days (3 live interviews, 60 packages).
 - `STRIPE_PRICE_PASS90`: Season Pass, $69, 90 days (9 live interviews, 150 packages).
-- `STRIPE_PRICE_PACK_1`: 1 extra live interview, $9.
-- `STRIPE_PRICE_PACK_3`: 3 extra live interviews, $24.
-- `STRIPE_PRICE_PACK_5`: 5 extra live interviews, $35.
+- `STRIPE_PRICE_PACK_1`: 1 extra live interview, $12.
+- `STRIPE_PRICE_PACK_3`: 3 extra live interviews, $33.
+- `STRIPE_PRICE_PACK_5`: retired 2026-11-25, never offered.
+
+The passes are retired too: this broker lists and sells them only with `SELL_PASSES=1`.
 
 (A price whose var is unset is simply not offered in the app; billing turns on with the secret
 key and at least one pass price. `STRIPE_PRICE_STUDENT` / `STRIPE_PRICE_PRO` are retired and no

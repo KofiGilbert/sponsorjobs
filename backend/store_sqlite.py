@@ -59,6 +59,9 @@ class SqliteUsageStore(UsageStore):
                 c.execute(f"ALTER TABLE users ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
         if "packages" not in cols("usage"):
             c.execute("ALTER TABLE usage ADD COLUMN packages INTEGER NOT NULL DEFAULT 0")
+        # The free plan's scored recorded practice interviews this month (2026-11-25).
+        if "recorded_interviews" not in cols("usage"):
+            c.execute("ALTER TABLE usage ADD COLUMN recorded_interviews INTEGER NOT NULL DEFAULT 0")
         marks = ",".join("?" for _ in LEGACY_PLANS)
         c.execute(f"UPDATE users SET plan=? WHERE plan IN ({marks})", (DEFAULT_PLAN, *LEGACY_PLANS))
 
@@ -123,7 +126,13 @@ class SqliteUsageStore(UsageStore):
     def add_packages_used(self, user: str, period: str, n: int) -> None:
         self._add_counter(user, period, "packages", n)
 
-    _COUNTER_COLS = ("avatar_used", "llm_tokens", "packages")
+    def get_recorded_used(self, user: str, period: str) -> int:
+        return self._get_counter(user, period, "recorded_interviews")
+
+    def add_recorded_used(self, user: str, period: str, n: int) -> None:
+        self._add_counter(user, period, "recorded_interviews", n)
+
+    _COUNTER_COLS = ("avatar_used", "llm_tokens", "packages", "recorded_interviews")
 
     def _get_counter(self, user: str, period: str, col: str) -> int:
         assert col in self._COUNTER_COLS   # col is a fixed internal literal, never user input; guard anyway

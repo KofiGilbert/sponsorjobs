@@ -61,12 +61,12 @@
       pk: "outage.busy.p",
       p: "The model is overloaded at the moment. This usually clears in a minute.",
     },
-    // Bundled (managed AI) paywall: the person used the tailored packages on their tier (Free: 3 a
-    // month; a pass: its balance). Different from no_credit (a bring-your-own-key wallet); the fix
-    // is a pass or their own key, so the button opens the passes panel, not the add-a-key modal.
+    // Bundled (managed AI) paywall: the person used the tailored resumes on their tier (Free: 3 a
+    // month; a plan: its balance). Different from no_credit (a bring-your-own-key wallet); the fix
+    // is a plan, so the button opens the ONE plans panel. No price is written here.
     upgrade_required: {
-      hk: "outage.upgrade.h", h: "You've used your tailored packages",
-      p: "Free includes 3 tailored packages a month. A paid plan gives you many more. Plans renew until you cancel.",
+      hk: "outage.upgrade.h", h: "You've used this month's free resumes",
+      pk: "upg.freeResumesUsed", p: "You've used your 3 free tailored resumes this month. Plans include 60 a month.",
       btnk: "outage.upgrade.btn", btn: "See plans",
     },
     service_down: {
@@ -141,6 +141,10 @@
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = await r.json().catch(() => ({}));
+    // An upgrade moment the engine has waiting (the free plan's last tailored resume was just
+    // used): one line and a "See plans" button, shown once.
+    const moment = r.headers.get("X-SJ-Moment");
+    if (moment && window.__upgradeMoment) window.__upgradeMoment(moment);
     if (!r.ok || data.error) {
       if (data.reason === "locked") showLock();      // App Lock engaged mid-session
       // No key yet: this is the moment it is needed, so ask for it right here (just in time),
@@ -9533,8 +9537,8 @@
       if (c.round === 2) {
         const d = await api(`/api/interviews/${encodeURIComponent(c.id)}`);
         R2_CTX = { prep_id: c.prep_id || (d.interview || {}).prep_id };
+        R2_PREP = { id: R2_CTX.prep_id, role: c.role || "", company: c.company || (d.interview || {}).company || "" };
         $("#prepList").hidden = true; $("#prepLive").hidden = false;
-        $("#liveCount").textContent = T("r2.title", "Round 2, live interview"); $("#liveTier").textContent = "";
         renderR2Report(d.report || {}, c.id);
       } else {
         const d = await api(`/api/screens/${encodeURIComponent(c.id)}`);
@@ -9674,7 +9678,7 @@
     paintPrepHead(null);                     // the rounds run under the plain "Interview prep" head
     GUIDED = mode === "full";
     if (GUIDED) showGuidedProgress(1);
-    if (mode === "live") startRound2(prep.id, null, true); else startScreen(prep);
+    if (mode === "live") startRound2(prep.id, null, true, prep); else startScreen(prep);
   }
   $("#prepStart")?.addEventListener("click", startFromSetup);
   // Full mock: Round 1 first; a pass leads to Round 2. A 2-step tracker shows where you are.
@@ -9751,7 +9755,7 @@
   // still does not fit at the smallest size. Questions are the one exception: they are meant to
   // sit on two or three balanced lines (.r1-q).
   function r1FitTitles() {
-    document.querySelectorAll("#scrStage .r1-h").forEach(h => {
+    document.querySelectorAll(R1_HOSTS.map(h => h + " .r1-h").join(", ")).forEach(h => {
       h.classList.remove("is-wrap"); h.style.fontSize = "";
       const max = parseFloat(getComputedStyle(h).fontSize) || 0, min = Math.max(17, max * 0.72);
       let size = max;
@@ -9759,11 +9763,15 @@
       if (h.scrollWidth > h.clientWidth + 0.5) h.classList.add("is-wrap");
     });
   }
-  if ($("#scrStage")) {
-    new MutationObserver(r1FitTitles).observe($("#scrStage"), { childList: true });
-    if (window.ResizeObserver) new ResizeObserver(r1FitTitles).observe($("#scrStage"));
-    try { document.fonts?.ready?.then(r1FitTitles); } catch (e) {}
-  }
+  // Both rounds draw the same stage: Round 1 in #scrStage, Round 2 in #liveStage.
+  const R1_HOSTS = ["#scrStage", "#liveStage"];
+  const r1All = (sel) => document.querySelectorAll(R1_HOSTS.map(h => h + " " + sel).join(", "));
+  R1_HOSTS.forEach(id => {
+    const host = $(id); if (!host) return;
+    new MutationObserver(r1FitTitles).observe(host, { childList: true });
+    if (window.ResizeObserver) new ResizeObserver(r1FitTitles).observe(host);
+  });
+  try { document.fonts?.ready?.then(r1FitTitles); } catch (e) {}
   // Speech to text runs on this computer. Its model (about 140 MB) downloads once, on first use:
   // the intro starts that download and shows its progress in one quiet line, so it is ready
   // before the first answer. Ready says nothing. The line stops updating once the intro is gone.
@@ -9835,6 +9843,8 @@
         clearTimeout(slow); btn.classList.remove("is-busy", "is-slow"); btn.removeAttribute("aria-busy");
         const t = $("#scrBeginT"); if (t) t.textContent = T("r1.getStarted", "Get started");
         if (msg) { msg.textContent = err.message || T("r1.cantStart", "Couldn't start the interview."); msg.hidden = false; }
+        // Free, and this month's recorded practice interview is used: the one line, and the plans.
+        if (msg && err.data && err.data.error_code === "recorded_limit") window.__recordedLimit?.(msg, null, btn);
         return;
       }
       SCR_PRACTICE = SCREEN.practice || null;
@@ -9859,6 +9869,9 @@
     lock: `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.6"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></svg>`,
     trash: `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.3h10.4M6.2 4.3V2.8h3.6v1.5M4.2 4.3l.6 9h6.4l.6-9M6.7 7v4M9.3 7v4"/></svg>`,
     eyeOff: `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.9A6.3 6.3 0 0 1 8 3.7c3.6 0 5.8 4.3 5.8 4.3a10 10 0 0 1-1.6 2.1M10.2 11.7A5.7 5.7 0 0 1 8 12.3C4.4 12.3 2.2 8 2.2 8a10.2 10.2 0 0 1 2.6-3M6.7 6.8a1.8 1.8 0 0 0 2.5 2.5M2.5 2.5l11 11"/></svg>`,
+    micOff: `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M10.2 7.3V4a2.2 2.2 0 0 0-4.3-.6M5.8 6.2v1.4a2.2 2.2 0 0 0 3.4 1.8M3.6 7.6a4.4 4.4 0 0 0 7.1 3.5M12.4 7.6c0 .5-.1 1-.2 1.4M8 12v2.2M2.5 2.5l11 11"/></svg>`,
+    camOff: `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h2.6a1.8 1.8 0 0 1 1.8 1.8v2.8M10.4 10.4v.4a1.2 1.2 0 0 1-1.2 1.2H3.6a1.8 1.8 0 0 1-1.8-1.8V5.8A1.8 1.8 0 0 1 3.4 4M10.4 7.2l3.8-2v5.6l-3.8-2M1.8 1.8l12.4 12.4"/></svg>`,
+    hangUp: `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="currentColor"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.96.96 0 0 1 0-1.41C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67a.96.96 0 0 1 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.3 11.3 0 0 0-2.67-1.85.99.99 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>`,
     gear: `<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   };
   const r1Meter = () => `<span class="rec-meter" title="${esc(T("r1.micLevel", "Mic level"))}"><span class="rec-meter-ic" aria-hidden="true">${R1_IC.mic}</span><span class="rec-meter-track"><i class="rec-meter-fill"></i></span></span>`;
@@ -9879,6 +9892,7 @@
       <div class="r1-light r1-stage" id="r1Stage" data-step="${step}">
         <header class="r1-bar">
           <button class="r1-exit" id="r1Exit" type="button">${R1_IC.back}<span>${esc(T("r1.exit", "Exit"))}</span></button>
+          ${o.bar || ""}
           <div class="r1-leave" id="r1Leave" role="alertdialog" aria-labelledby="r1LeaveT" hidden>
             <span class="r1-leave-t" id="r1LeaveT"></span>
             <span class="r1-leave-acts">
@@ -9887,7 +9901,8 @@
             </span>
           </div>
         </header>
-        <main class="r1-main"><div class="r1-card${o.solo ? " is-solo" : ""}">${o.body || ""}</div>${o.foot ? `<p class="r1-foot">${esc(o.foot)}</p>` : ""}</main>
+        ${o.call ? `<main class="r1-main r2-call-main">${o.body || ""}</main>`
+          : `<main class="r1-main"><div class="r1-card${o.solo ? " is-solo" : ""}">${o.body || ""}</div>${o.foot ? `<p class="r1-foot">${esc(o.foot)}</p>` : ""}</main>`}
       </div>`;
   }
   // The clock: one place and one style for the prep countdown and the response countdown, with a
@@ -9994,13 +10009,13 @@
     return SCR_DEV_NOTE || (check && SCR_SILENT ? T("r1.micSilent", "No sound from this microphone. Pick another one or check it is not muted.") : "");
   }
   function r1DevPaint() {
-    document.querySelectorAll("#scrStage [data-r1-devs]").forEach(host => {
+    r1All("[data-r1-devs]").forEach(host => {
       host.innerHTML = r1DevRow("cam") + r1DevRow("mic") + `<p class="r1-dev-note" role="status">${esc(r1DevNote())}</p>`;
     });
   }
-  function r1DevNotePaint() { const t = r1DevNote(); document.querySelectorAll("#scrStage .r1-dev-note").forEach(el => { if (el.textContent !== t) el.textContent = t; }); }
+  function r1DevNotePaint() { const t = r1DevNote(); r1All(".r1-dev-note").forEach(el => { if (el.textContent !== t) el.textContent = t; }); }
   function r1MenuClose() {
-    document.querySelectorAll("#scrStage .r1-menu-list:not([hidden])").forEach(l => { l.hidden = true; l.parentElement.querySelector("[data-r1-menu]")?.setAttribute("aria-expanded", "false"); });
+    r1All(".r1-menu-list:not([hidden])").forEach(l => { l.hidden = true; l.parentElement.querySelector("[data-r1-menu]")?.setAttribute("aria-expanded", "false"); });
   }
   function r1PopOpen(on) {
     const pop = $("#r1Pop"), gear = $("#r1Gear"); if (!pop || !gear) return;
@@ -10034,25 +10049,30 @@
     if (t.closest("#r1LeaveGo")) { r1LeaveAsk(false); quitScreen(); return; }
     if (t.closest("#r1LeaveStay")) { r1LeaveAsk(false); $("#r1Exit")?.focus(); return; }
     if (t.closest("#r1Gear")) { r1PopOpen($("#r1Pop")?.hidden); return; }
-    const opt = t.closest("[data-r1-opt]");
-    if (opt) { const kind = opt.closest(".r1-menu").dataset.kind; r1MenuClose(); r1DevSwitch(kind, opt.dataset.r1Opt); return; }
-    const btn = t.closest("[data-r1-menu]");
-    if (btn) {
-      const list = btn.parentElement.querySelector(".r1-menu-list"), open = list.hidden;
-      r1MenuClose();
-      if (open) { list.hidden = false; btn.setAttribute("aria-expanded", "true"); (list.querySelector('[aria-selected="true"]') || list.firstElementChild)?.focus(); }
-      return;
-    }
+    if (r1MenuClick(t, r1DevSwitch)) return;
     r1MenuClose();
     if (!t.closest("#r1Pop")) r1PopOpen(false);
   });
-  $("#scrStage")?.addEventListener("keydown", (e) => {
+  // The camera and microphone menus, for both rounds: a click on a menu button opens its list, a
+  // click on an option hands the device to `pick(kind, id)`. True when the click was the menu's.
+  function r1MenuClick(t, pick) {
+    const opt = t.closest("[data-r1-opt]");
+    if (opt) { const kind = opt.closest(".r1-menu").dataset.kind; r1MenuClose(); pick(kind, opt.dataset.r1Opt); return true; }
+    const btn = t.closest("[data-r1-menu]");
+    if (!btn) return false;
+    const list = btn.parentElement.querySelector(".r1-menu-list"), open = list.hidden;
+    r1MenuClose();
+    if (open) { list.hidden = false; btn.setAttribute("aria-expanded", "true"); (list.querySelector('[aria-selected="true"]') || list.firstElementChild)?.focus(); }
+    return true;
+  }
+  function r1MenuKeys(e) {
     const opt = e.target.closest && e.target.closest("[data-r1-opt]");
     if (!opt) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); (e.key === "ArrowDown" ? opt.nextElementSibling : opt.previousElementSibling)?.focus(); }
     else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); opt.click(); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); const b = opt.closest(".r1-menu").querySelector("[data-r1-menu]"); r1MenuClose(); b?.focus(); }
-  });
+  }
+  R1_HOSTS.forEach(id => $(id)?.addEventListener("keydown", r1MenuKeys));
   // Escape closes what is open; with nothing open it asks before leaving answers or a recording.
   // It never ends a recording by itself.
   document.addEventListener("keydown", (e) => {
@@ -10084,9 +10104,10 @@
     r1DevReadSelection();
     renderR1Devices();
   }
-  function renderR1Devices() {
-    scrHead("", ""); SCR_PHASE = "check"; SCR_CUR = null;
-    $("#scrStage").innerHTML = r1Stage("check", { body: `
+  // The device check card, the same for both rounds: only the action at the end of the strip
+  // differs (Round 1 goes on to a practice question, Round 2 joins the call).
+  function r1CheckBody(action) {
+    return `
       <section class="r1-col r1-col-q">
         ${r1Label(T("r1.setUp", "Set up"))}
         <h2 class="r1-h">${esc(T("r1.devicesH", "Check your camera and microphone"))}</h2>
@@ -10096,12 +10117,16 @@
       <section class="r1-col r1-col-v">
         ${r1Label(T("r1.preview", "Camera preview"))}
         <div class="r1-frame" id="r1Frame">
-          ${r1Strip(T("r1.tip1", "Light in front of you.") + " " + T("r1.tip2", "Somewhere quiet."),
-            `<button class="r1-btn r1-btn-primary" id="scrToPractice" type="button">${esc(T("r1.toPractice", "Try a practice question"))}</button>`)}
+          ${r1Strip(T("r1.tip1", "Light in front of you.") + " " + T("r1.tip2", "Somewhere quiet."), action)}
           <div class="scr-video-wrap"><video class="scr-video" id="scrVideo" autoplay muted playsinline></video></div>
         </div>
         <div class="r1-under" id="r1Under">${r1Meter()}</div>
-      </section>` });
+      </section>`;
+  }
+  function renderR1Devices() {
+    scrHead("", ""); SCR_PHASE = "check"; SCR_CUR = null;
+    $("#scrStage").innerHTML = r1Stage("check", { body: r1CheckBody(
+      `<button class="r1-btn r1-btn-primary" id="scrToPractice" type="button">${esc(T("r1.toPractice", "Try a practice question"))}</button>`) });
     $("#scrVideo").srcObject = SCR_STREAM;
     r1DevPaint(); r1ConnPaint();
     startMicMeter(SCR_STREAM);
@@ -10300,6 +10325,7 @@
     } catch (err) {
       if (spin) spin.hidden = true;
       if (sub) sub.textContent = err.message || T("r1.cantScore", "Couldn't score this interview.");
+      if (sub && body && err.data && err.data.error_code === "recorded_limit") { body.innerHTML = ""; window.__recordedLimit?.(sub, body); return; }
       if (body) { body.innerHTML = `<div class="r1-solo-acts"><button class="r1-btn r1-btn-primary" id="r1Retry" type="button">${esc(T("r1.tryAgainScore", "Try again"))}</button></div>`;
         $("#r1Retry")?.addEventListener("click", () => finishR1(true)); }
     }
@@ -10338,6 +10364,7 @@
         <button class="btn btn-danger-ghost btn-sm" id="scrDelete" type="button">${esc(T("r1.deleteRec", "Delete recordings"))}</button>`,
       gate: true });
     REPORT_WHEN = null;
+    window.__r1FreeUpsell?.($("#r1Gate"));
     wireReportA2(r, { prepId: SCR_PREP && SCR_PREP.id, currentId: SCREEN && SCREEN.id,
       leave: () => { stopPrepClock(); stopAnswerClock(); stopScrStream(); SCR_PHASE = "idle"; $("#prepScreen").classList.remove("is-report"); },
       back: quitScreen, again: async () => { const p = await prepById(SCR_PREP && SCR_PREP.id); $("#prepScreen").classList.remove("is-report"); startScreen(p); },
@@ -10360,15 +10387,12 @@
       $("#r1Again")?.addEventListener("click", () => startScreen(SCR_PREP));
       return;
     }
+    // Without a live interview left, the Round 2 intro says what it needs (one place for that).
     const st = await round2Status();
-    if (st && st.available) {
-      box.innerHTML = `<div class="scr-unlock"><b>${esc(T("r1.unlocked", "Round 2 unlocked."))}</b> ${esc(T("r1.unlockedD", "A live interview with the Tavus interviewer, 20 minutes."))}
-        <button class="btn btn-primary btn-sm" id="scrToLive" type="button">${esc(T("r2.start", "Start Round 2"))}</button></div>`;
-      $("#scrToLive")?.addEventListener("click", () => startRound2(SCR_PREP.id, SCREEN.id, false));
-    } else {
-      box.innerHTML = r2GateHtml(st, "inline");
-      wireR2Gate(() => quitScreen());
-    }
+    const why = st && st.available ? T("r1.unlockedD", "A live interview with the Tavus interviewer, 20 minutes.") : T("r2.planLine", "Live interviews are part of every plan.");
+    box.innerHTML = `<div class="scr-unlock"><b>${esc(T("r1.unlocked", "Round 2 unlocked."))}</b> ${esc(why)}
+      <button class="btn btn-primary btn-sm" id="scrToLive" type="button">${esc(T("r2.start", "Start Round 2"))}</button></div>`;
+    $("#scrToLive")?.addEventListener("click", () => startRound2(SCR_PREP.id, SCREEN.id, false, SCR_PREP));
   }
   // Delivery readout: pace, length, and fillers, from the local transcript metrics.
   function deliveryReadout(d) {
@@ -10438,7 +10462,7 @@
       const tick = () => {
         analyser.getByteTimeDomainData(data);
         const level = SJStage.rms(data), w = SJStage.meterPercent(level) + "%";
-        document.querySelectorAll("#scrStage .rec-meter-fill").forEach(el => { el.style.width = w; });
+        r1All(".rec-meter-fill").forEach(el => { el.style.width = w; });
         // Device check only: a microphone that hears nothing for five seconds gets one line.
         const silent = quiet.feed(level, performance.now());
         if (silent !== SCR_SILENT) { SCR_SILENT = silent; r1DevNotePaint(); }
@@ -10473,196 +10497,158 @@
   $("#scrQuit")?.addEventListener("click", quitScreen);   // landing and notice only: nothing recorded yet
 
   // ---------------------------------------------------------------- Round 2: live interview (Tavus)
-  // One 20-minute conversation with the Tavus interviewer, in the app's own video pane. Paid only
-  // (Kofi, 2026-10-14): it runs on a pass or a pack, on the company key held by the broker. Nobody
-  // adds their own Tavus key.
-  let R2 = null, LIVE_STREAM = null, R2_CTX = null, CVI_CLOCK = null, CVI_PREV_W = "", CVI_UNBILLED = 0;
+  // One 20-minute conversation with the Tavus interviewer, on the same stage as Round 1: focus
+  // mode, one card, the same labels, buttons and device menus. The intro (or, with no live
+  // interview left, the way to a plan), the device check, the call, "All done", the report.
+  // Paid only (Kofi, 2026-10-14): it runs on a plan or a pack, on the company key held by the
+  // broker. Nobody adds their own Tavus key. Prices live in ONE place, the plans panel: this
+  // screen never lists a plan or a price (owner, 2026-11-25).
+  let R2 = null, R2_CTX = null, R2_PREP = null, R2_CFG = null, CVI_CLOCK = null, CVI_PREV_W = "", CVI_UNBILLED = 0;
   // The old side-pane call put the interview in the Browser pane; only then does its teardown
   // close the pane (it runs on every sidebar click, and closed an application's page, 2026-11-19).
   let CVI_IN_PANE = false;
   async function round2Status() {
     try { return await api("/api/interview/round2/status"); } catch { return null; }
   }
-  async function startRound2(prepId, screenId, skip) {
+  // How long the interview runs and how many main questions the interviewer is briefed to ask,
+  // from the engine's own settings, never typed into the copy.
+  async function r2LoadConfig() {
+    if (!R2_CFG) { try { const d = await api("/api/interview/round2/config"); if (d && d.minutes) R2_CFG = d; } catch (e) { /* the intro then shows no stat row */ } }
+    return R2_CFG;
+  }
+  async function startRound2(prepId, screenId, skip, known) {
     R2_CTX = { prep_id: prepId, screen_id: screenId || "", skip_screen: !!skip };
-    if ($("#prepScreen")) $("#prepScreen").hidden = true;
-    if ($("#prepList")) $("#prepList").hidden = true;
-    $("#prepLive").hidden = false;
+    if ($("#scrStage #r1Stage")) $("#scrStage").innerHTML = "";   // never two stages at once
+    $("#prepScreen").hidden = true; $("#prepList").hidden = true;
+    $("#prepLive").hidden = false; $("#prepLive").classList.remove("is-report");
     if (GUIDED) showGuidedProgress(2);
-    $("#liveCount").textContent = T("r2.title", "Round 2, live interview"); $("#liveTier").textContent = "";
-    const st = await round2Status();
-    if (!st || !st.available) { renderR2Gate(st); return; }
-    renderR2GreenRoom(st);
+    // The bare stage first, so the app's chrome never flashes back while the intro loads.
+    $("#liveStage").innerHTML = r1Stage("intro", { call: true, body: "" });
+    const [prep] = await Promise.all([known && known.id === prepId ? known : prepById(prepId), r2LoadConfig()]);
+    R2_PREP = prep || { id: prepId }; R2_CTX.role = prepRole(R2_PREP);
+    renderR2Intro();
+    renderR2Act(await round2Status());
   }
-  // The gate: live interviews are paid. No pass: the passes on sale (names, prices and interview
-  // counts all from the broker, never hard-coded here). A pass whose interviews are used up: the
-  // extra-interview packs. The broker unreachable: say so and offer to check again.
-  function r2PackLabel(p) {
-    const n = Number(p.interviews) || 1;
-    const label = n === 1 ? T("r2.buyOne", "Buy 1 interview") : T("r2.buyMany", "Buy {n} interviews").replace("{n}", String(n));
-    return p.price_label ? `${label}, ${p.price_label}` : label;
+  // What to expect, as a stat row like Round 1's: the length, the questions, the report.
+  function r2Stats() {
+    const c = R2_CFG; if (!c) return [];
+    return [[T("r1.unitMin", "{n} min").replace("{n}", String(c.minutes)), T("r2.statLive", "live, on video")],
+            [T("r2.statRange", "{a} to {b}").replace("{a}", String(c.questions_min)).replace("{b}", String(c.questions_max)), T("r2.statQuestions", "questions, with follow-ups")],
+            ["1", T("r2.statReport", "scored report")]];
   }
-  function r2PassLabel(p) {
-    const name = PASS_NAMES[p.id] ? PASS_NAMES[p.id]() : String(p.id || "");
-    const n = Number(p.interviews) || 0;
-    const ivs = n === 1 ? T("r2.passOneIv", "1 live interview") : T("r2.passNIv", "{n} live interviews").replace("{n}", String(n));
-    return [name, p.price_label, n ? ivs : ""].filter(Boolean).join(", ");
+  // Whole interviews left on the plan (one interview is R2_CFG.minutes on the broker).
+  function r2InterviewsLeft(mins) {
+    const n = Math.floor(Number(mins) / ((R2_CFG && R2_CFG.minutes) || 20));
+    return n === 1 ? T("r2.oneLeft", "1 live interview left") : T("r2.nLeft", "{n} live interviews left").replace("{n}", String(n));
   }
-  function r2GateHtml(st, mode) {
-    const wrap = mode === "inline" ? "scr-unlock r2-gate-inline" : "scr-intro r2-gate";
-    const finish = `<button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>`;
-    if (st && st.reason === "no_minutes") {
-      const packs = (st.can_buy && Array.isArray(st.packs)) ? st.packs : [];
-      return `<div class="${wrap}">
-      <div class="r2-gate-main">
-        <h3 class="r2-gate-h">${esc(T("r2.usedUpH", "You've used this period's live interviews."))}</h3>
-        <p class="r2-gate-d">${esc(packs.length ? T("r2.usedUpDPaid", "Buy more, they never expire.") : T("r2.usedUpNoBuyPaid", "They refill when your plan renews."))}</p>
-        <div class="scr-welcome-acts">
-          ${packs.map((p, i) => `<button class="btn ${i === 0 ? "btn-primary" : "btn-ghost"} btn-sm r2-buy" data-pack="${esc(p.id)}" type="button">${esc(r2PackLabel(p))}</button>`).join("")}
-          ${packs.length ? "" : `<button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See plans"))}</button>`}
-          ${finish}
+  // The intro: the same card as Round 1's. Who it is for, the facts, what happens to the call
+  // (it runs live through Tavus, so nothing here says "stays on this computer" about the video),
+  // and the action area, which depends on the account (renderR2Act).
+  function renderR2Intro() {
+    const p = R2_PREP || {}, stats = r2Stats();
+    const point = (ic, key, text) => `<li>${R1_IC[ic]}<span>${esc(T(key, text))}</span></li>`;
+    $("#liveStage").innerHTML = r1Stage("intro", { solo: true, body: `
+      <div class="r1-label"><span>${esc(T("r2.eyebrow", "Round 2 · live interview"))}</span></div>
+      <div class="r1-id">
+        ${p.company ? companyAvatar({ company: p.company }) : ""}
+        <div class="r1-id-t">
+          <h2 class="r1-h">${esc(prepRole(p))}</h2>
+          ${p.company ? `<p class="r1-co">${esc(p.company)}</p>` : ""}
         </div>
-        <p class="r2-gate-d" id="r2BuyMsg" hidden></p>
-      </div></div>`;
-    }
-    if (!st || st.reason === "unreachable") {
-      return `<div class="${wrap}">
-      <div class="r2-gate-main">
-        <h3 class="r2-gate-h">${esc(T("r2.offH", "The live interviewer isn't reachable right now"))}</h3>
-        <p class="r2-gate-d">${esc(T("r2.offD", "Live interviews run on our service. Check your connection, then try again."))}</p>
-        <div class="scr-welcome-acts">
-          <button class="btn btn-primary btn-sm" id="r2Retry" type="button">${esc(T("r2.checkAgain", "Check again"))}</button>
-          ${finish}
-        </div>
-      </div></div>`;
-    }
-    // No pass: the passes that include live interviews, filled in from the broker's offers.
-    return `<div class="${wrap}">
-      <div class="r2-gate-main">
-        <h3 class="r2-gate-h">${esc(T("r2.passH", "Live interviews come with a paid plan"))}</h3>
-        <p class="r2-gate-d">${esc(T("r2.passD", "Twenty minutes with a live interviewer who asks, listens and follows up, then a scored report."))}</p>
-        <div class="scr-welcome-acts" id="r2PassActs">
-          <button class="btn btn-ghost btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See plans"))}</button>
-          ${finish}
-        </div>
-        <p class="r2-gate-d" id="r2BuyMsg" hidden></p>
-      </div></div>`;
+      </div>
+      ${stats.length ? `<div class="r1-stats" id="r2Facts" data-n="${stats.length}">${r1StatsHtml({ stats })}</div>` : ""}
+      <p class="r1-retake" id="r2Left"></p>
+      <ul class="r1-points">
+        ${point("cam", "r2.notice1", "The call runs live through our video partner, Tavus.")}
+        ${point("lock", "r2.notice2", "We don't keep your video. Your report stays on this computer.")}
+        ${point("eyeOff", "r1.notice3", "No facial analysis. Only your words are scored.")}
+      </ul>
+      <div class="r2-act" id="r2Act" aria-live="polite"></div>` });
   }
-  // The passes on sale, as buttons ahead of "See passes". Nothing on sale (billing off, or the
-  // broker briefly unreachable): "See passes" alone, which opens the same panel as Upgrade.
-  async function fillR2Passes() {
-    const acts = $("#r2PassActs"); if (!acts) return;
-    let o = null;
-    try { o = await api("/api/billing/offers"); } catch { return; }
-    const passes = ((o && o.passes) || []).filter(p => p && p.id);
-    if (!passes.length || !document.body.contains(acts)) return;
-    acts.insertAdjacentHTML("afterbegin", passes.map((p, i) =>
-      `<button class="btn ${i === 0 ? "btn-primary" : "btn-ghost"} btn-sm r2-pass" data-pass="${esc(p.id)}" type="button">${esc(r2PassLabel(p))}</button>`).join(""));
-    acts.querySelectorAll(".r2-pass").forEach(b => b.addEventListener("click", () => buyR2Pass(b.dataset.pass, b)));
+  // The action area. A live interview left: "Get started". None: one line and ONE way on to the
+  // plans panel (where every price lives), or "Check again" when the service is unreachable.
+  // "Not now" goes back to the Interview page.
+  function r2UsedUpLine(st) {
+    const renews = st.pass_until && st.tier && st.tier !== "pass30" && st.tier !== "pass90";
+    return renews ? T("r2.usedUpOn", "You've used this period's live interviews. They refill on {date}.").replace("{date}", fmtLongDate(st.pass_until))
+      : T("r2.usedUp", "You've used this period's live interviews. They refill when your plan renews.");
   }
-  async function buyR2Pass(passId, btn) {
-    if (!ACCT_EMAIL) { openSignin({ kind: "pass", id: passId }); return; }   // sign in first, then Stripe
-    if (btn) btn.disabled = true;
-    try {
-      if (await doCheckout(passId)) r2AfterCheckout();
-    } finally { if (btn) btn.disabled = false; }
-  }
-  // After a checkout opens: say where to finish, and a "Check again" that re-reads the status
-  // without a restart.
-  function r2AfterCheckout() {
-    const msg = $("#r2BuyMsg");
-    const say = (t) => { if (msg) { msg.textContent = t; msg.hidden = false; } };
-    say(T("r2.buyOpened", "Finish paying in the checkout, then check again."));
-    if (!$("#r2Recheck") && msg) {
-      msg.insertAdjacentHTML("afterend", `<div class="scr-welcome-acts"><button class="btn btn-ghost btn-sm" id="r2Recheck" type="button">${esc(T("r2.checkAgain", "Check again"))}</button></div>`);
-      $("#r2Recheck")?.addEventListener("click", async () => {
-        if (window.tailorShell) window.tailorShell.closeBrowser();
-        const st = await round2Status();
-        paintRound2Tile();
-        if (st && st.available) renderR2GreenRoom(st); else say(T("r2.notYet", "Not there yet. It can take a moment after paying."));
-      });
-    }
-  }
-  function wireR2Gate(onFinish) {
-    $("#r2Finish")?.addEventListener("click", onFinish);
-    $("#r2SeePasses")?.addEventListener("click", () => openUpgrade());
-    $("#r2Retry")?.addEventListener("click", async () => {
-      const st = await round2Status();
-      paintRound2Tile();
-      if (st && st.available) renderR2GreenRoom(st);
-      else { const g = document.querySelector(".r2-gate, .r2-gate-inline"); if (g) { g.outerHTML = r2GateHtml(st, g.classList.contains("r2-gate-inline") ? "inline" : "page"); wireR2Gate(onFinish); } }
+  function renderR2Act(st) {
+    const box = $("#r2Act"); if (!box) return;
+    const left = $("#r2Left");
+    if (left) left.textContent = st && st.available && st.minutes_left != null ? r2InterviewsLeft(st.minutes_left) : "";
+    const primary = (id, key, text) => `<button class="r1-btn r1-btn-primary" id="${id}" type="button"><i class="r1-btn-spin" aria-hidden="true"></i><span>${esc(T(key, text))}</span></button>`;
+    const notNow = (alone) => `<button class="${alone ? "r1-btn" : "r2-quiet"}" id="r2NotNow" type="button">${esc(T("r1.notNow", "Not now"))}</button>`;
+    let line = "", acts = "";
+    if (st && st.available) acts = primary("r2Begin", "r1.getStarted", "Get started");
+    else if (!st || st.reason === "unreachable") { line = T("r2.offH", "The live interviewer isn't reachable right now"); acts = primary("r2Retry", "r2.checkAgain", "Check again") + notNow(); }
+    else if (st.reason === "no_minutes") { line = r2UsedUpLine(st); acts = st.can_buy ? primary("r2Plans", "r2.buyMore", "Buy more interviews") + notNow() : notNow(true); }
+    else { line = T("r2.planLine", "Live interviews are part of every plan."); acts = primary("r2Plans", "r2.seePasses", "See plans") + notNow(); }
+    box.innerHTML = `${line ? `<p class="r2-act-line">${esc(line)}</p>` : ""}<div class="r1-solo-acts">${acts}</div>`;
+    $("#r2Begin")?.addEventListener("click", r2GoDevices);
+    $("#r2Plans")?.addEventListener("click", () => openUpgrade());
+    $("#r2NotNow")?.addEventListener("click", quitLive);
+    $("#r2Retry")?.addEventListener("click", async (e) => {
+      const b = e.currentTarget; if (b.classList.contains("is-busy")) return;
+      b.classList.add("is-busy", "is-slow");
+      const s2 = await round2Status(); paintRound2Tile(); renderR2Act(s2);
     });
-    document.querySelectorAll(".r2-buy").forEach(b => b.addEventListener("click", () => buyInterviews(b.dataset.pack, b)));
-    fillR2Passes();
   }
-  // Buy a prepaid interview pack: the broker mints a Stripe Checkout, we open it, and the
-  // credits land once Stripe confirms. "Check again" re-reads the status without a restart.
-  async function buyInterviews(pack, btn) {
-    const msg = $("#r2BuyMsg");
-    const say = (t) => { if (msg) { msg.textContent = t; msg.hidden = false; } };
-    if (!ACCT_EMAIL) { openSignin({ kind: "pack", id: pack }); return; }   // sign in first, then Stripe
-    if (btn) btn.disabled = true;
-    try {
-      const d = await api("/api/interview/round2/buy", { pack });
-      if (window.tailorShell) window.tailorShell.openBrowser(d.url);
-      else openOutside(d.url);
-      r2AfterCheckout();
-    } catch (err) {
-      if (err.reason === "sign_in_required") { if (btn) btn.disabled = false; openSignin({ kind: "pack", id: pack }); return; }
-      if (err.data && err.data.offer === "passes") openUpgrade();   // no active pass: show the passes
-      say(err.message || T("r2.cantBuy", "Couldn't start checkout."));
+  // Back from the plans panel or a checkout: if the intro still waits on a plan, look again.
+  async function r2Recheck() {
+    if (!$("#r2Act") || $("#r2Begin") || $("#prepLive")?.hidden) return;
+    const st = await round2Status();
+    if (st && st.available && $("#r2Act")) { paintRound2Tile(); renderR2Act(st); }
+  }
+  window.addEventListener("focus", () => { r2Recheck(); });
+
+  // The device check: Round 1's card (the same menus, preview and level), with "Join interview"
+  // where Round 1 has its practice question. The camera and microphone remembered from either
+  // round open first, and the call is handed the same ones. No camera: the interview is a
+  // conversation, so the microphone is enough; it says so and joins with the voice only.
+  async function r2GoDevices() {
+    SCR_DEV_NOTE = ""; SCR_SILENT = false; SCR_PHASE = "check";
+    if (!SCR_STREAM && navigator.mediaDevices?.getUserMedia) {
+      try { SCR_STREAM = await r1OpenStream(); }
+      catch (e) {
+        try { SCR_STREAM = await navigator.mediaDevices.getUserMedia({ audio: true }); SCR_DEV_NOTE = T("r2.noCamJoin", "No camera found. You can still join with your voice."); }
+        catch (e2) { SCR_DEV_NOTE = T("r2.allowMedia", "Allow the camera and microphone, then join."); }
+      }
+      try { navigator.mediaDevices.addEventListener("devicechange", r1DevChanged); } catch (e) {}
     }
-    if (btn) btn.disabled = false;
-  }
-  function renderR2Gate(st) {
-    $("#liveStage").innerHTML = r2GateHtml(st, "page");
-    wireR2Gate(quitLive);
-  }
-  // Green room: preview yourself, then Join. The interviewer runs its own camera and mic in the pane.
-  function renderR2GreenRoom(st) {
-    const mins = st && st.minutes_left != null ? Number(st.minutes_left) : null;
-    $("#liveStage").innerHTML = `
-      <div class="zoom-greenroom">
-        <div class="zoom-gr-preview">
-          <video class="zoom-gr-video" id="grVideo" autoplay muted playsinline></video>
-          <div class="zoom-gr-off" id="grOff">${esc(T("r2.previewOff", "Your camera preview will appear here"))}</div>
-        </div>
-        <div class="zoom-gr-side">
-          <div class="zoom-gr-eyebrow">${esc(T("r2.aboutToJoin", "You are about to join"))}</div>
-          <h2 class="zoom-gr-h">${esc(T("r2.title", "Round 2, live interview"))}</h2>
-          <p class="zoom-gr-sub">${esc(T("r2.greenSub", "20 minutes with a live interviewer. They ask, you answer, and they follow up like a real interview."))}</p>
-          ${R2_CTX && R2_CTX.skip_screen ? `<p class="scr-warm" style="display:inline-block">${esc(T("r2.skippedR1", "Straight to Round 2, no Round 1 first."))}</p>` : ""}
-          <p class="zoom-gr-note">${esc(T("r2.note", "Your camera and mic stay on this computer."))}${mins != null ? " " + esc(r2InterviewsLeft(mins)) : ""}</p>
-          <div class="zoom-gr-acts">
-            <button class="btn btn-primary" id="liveBegin" type="button">${esc(T("r2.join", "Join interview"))}</button>
-            <button class="btn btn-ghost" id="liveBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
-          </div>
-        </div>
-      </div>`;
+    try { SCR_DEV = await SJStage.listDevices(navigator.mediaDevices); } catch (e) { SCR_DEV = { cam: [], mic: [] }; }
+    r1DevReadSelection();
+    $("#liveStage").innerHTML = r1Stage("check", { body: r1CheckBody(
+      `<button class="r1-btn r1-btn-primary" id="liveBegin" type="button"><i class="r1-btn-spin" aria-hidden="true"></i><span id="liveBeginT">${esc(T("r2.join", "Join interview"))}</span></button>`) });
+    const v = $("#scrVideo"); if (v) v.srcObject = SCR_STREAM;
+    // No picture: the crossed camera, never a black box that looks broken.
+    if (!r1TrackOf("cam")) v?.parentElement?.insertAdjacentHTML("beforeend", `<span class="r2-me-off r2-nocam" aria-hidden="true">${R1_IC.camOff}</span>`);
+    r1DevPaint(); r1ConnPaint();
+    if (SCR_STREAM) startMicMeter(SCR_STREAM);
     $("#liveBegin")?.addEventListener("click", beginLive);
-    $("#liveBail")?.addEventListener("click", quitLive);
-    (async () => {
-      try {
-        LIVE_STREAM = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        const v = $("#grVideo"), off = $("#grOff");
-        if (v) { v.srcObject = LIVE_STREAM; }
-        if (off) off.hidden = true;
-      } catch (e) { /* no preview; Join still works (the pane has its own camera) */ }
-    })();
   }
   async function beginLive() {
     if (CVI_CLOCK) return;                                   // already in a live interview; ignore re-entry
-    const btn = $("#liveBegin"); if (btn) btn.disabled = true;
+    const btn = $("#liveBegin"); if (!btn || btn.classList.contains("is-busy")) return;
+    // In flight the button keeps its colour; a slow start says so, with a spinner (as Round 1).
+    btn.classList.add("is-busy"); btn.setAttribute("aria-busy", "true");
+    const slow = setTimeout(() => { btn.classList.add("is-slow"); const t = $("#liveBeginT"); if (t) t.textContent = T("r2.joining", "Joining..."); }, 300);
+    const ready = () => { clearTimeout(slow); btn.classList.remove("is-busy", "is-slow"); btn.removeAttribute("aria-busy"); const t = $("#liveBeginT"); if (t) t.textContent = T("r2.join", "Join interview"); };
     let r, data;
     try {
-      r = await fetch("/api/interviews/cvi/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(R2_CTX) });
+      r = await fetch("/api/interviews/cvi/start", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prep_id: R2_CTX.prep_id, screen_id: R2_CTX.screen_id, skip_screen: R2_CTX.skip_screen }) });
       data = await r.json().catch(() => ({}));
-    } catch (e) { toast(T("r2.cantStart", "Couldn't start the live interview.")); if (btn) btn.disabled = false; return; }
+    } catch (e) { ready(); toast(T("r2.cantStart", "Couldn't start the live interview.")); return; }
+    clearTimeout(slow);
     if (r.status === 403) { toast(T("r2.notPassed", "Pass Round 1 first to unlock Round 2.")); quitLive(); return; }
-    if (r.status === 402 || data.error === "round2_unavailable") { stopLiveStream(); renderR2Gate(await round2Status()); return; }
-    if (!r.ok) { toast(data.error || T("r2.cantStart", "Couldn't start the live interview.")); if (btn) btn.disabled = false; return; }
+    if (r.status === 402 || data.error === "round2_unavailable") { stopScrStream(); SCR_PHASE = "idle"; renderR2Intro(); renderR2Act(await round2Status()); return; }
+    if (!r.ok) { ready(); toast(data.message || data.error || T("r2.cantStart", "Couldn't start the live interview.")); return; }
     R2 = data;
-    renderCviStage(data);
+    // The devices chosen on the check go to the call; the check's own stream is freed for it.
+    const pick = { cam: SCR_DEV_SEL.cam ? SCR_DEV_SEL.cam.id : "", mic: SCR_DEV_SEL.mic ? SCR_DEV_SEL.mic.id : "", hasCam: !!r1TrackOf("cam") };
+    stopScrStream(); SCR_PHASE = "idle";
+    renderCviStage(data, pick);
   }
   // ---- The live call, in our own page, with a timekeeper (Kofi, 2026-10-09) -------------------
   // A real interviewer with a day of candidates keeps time: they let an answer run its course,
@@ -10688,56 +10674,72 @@
     note: cviNote, say: cviSay, end: () => endCvi(), now: () => Date.now(),
     later: (fn, ms) => setTimeout(fn, ms) });
 
-  function renderCviStage(s) {
+  // The call screen (HireVue's live layout, Google Meet and Zoom's one-to-one view): the bar
+  // holds Exit and a "Live interview" pill with the time left; the interviewer fills one large
+  // tile and you sit in a small tile in its corner; a thin outline marks whoever is speaking; the
+  // controls are one row of round icon buttons centred under the video: microphone, camera,
+  // settings (the device menus) and a red end button that asks first.
+  const r2Ctrl = (id, on, off, label) => `<button class="r2-ctrl" id="${id}" type="button" aria-pressed="false" aria-label="${esc(label)}" title="${esc(label)}"><span class="r2-ic-on">${on}</span><span class="r2-ic-off">${off}</span></button>`;
+  function renderCviStage(s, pick) {
     const t = s.timing || { total: 1200, answer_nudge: 180, answer_step_in: 240, pause_wait: 15,
                             last_question: 930, candidate_questions: 1110, close_wait: 20, hard_end: 1230,
                             think_grace: 10, answer_grace: 60, minutes: 20 };
-    stopLiveStream();   // the call takes the camera and mic itself; free the green-room preview
+    pick = pick || { hasCam: true };
+    stopScrStream();   // the call takes the camera and mic itself; free the device check's stream
     // Our own call screen, not Daily's ready-made page in a box: that page brought its own
     // "Are you ready to join?" lobby (a second green room, scrolling inside the frame), and the
     // minutes a person spent in it could outlive the room's short-lived entry token, so their
     // Join was refused and the interview ended (Kofi, 2026-10-23). The call object joins the
     // moment our Join is clicked, and we draw the interviewer to fill the stage.
-    $("#prepLive").classList.add("in-call");
-    $("#liveStage").innerHTML =
-      `<div class="zoom-call" id="cviCall">
-        <video class="zoom-call-remote" id="cviRemote" autoplay playsinline></video>
-        <audio id="cviAudio" autoplay></audio>
-        <div class="zoom-call-wait" id="cviWait"><div class="zoom-call-wait-row"><span class="zoom-call-spin"></span>${esc(T("r2.connecting", "Connecting to your interviewer..."))}</div><div class="zoom-call-wait-sub">${esc(T("r2.connectingSub", "Nothing to click. They will greet you in a moment, and your time starts then."))}</div></div>
-        <div class="zoom-call-top">
-          <span class="zoom-live"><i></i> LIVE</span>
-          <span class="zoom-title">${esc(T("r2.title", "Round 2, live interview"))}</span>
-          <span class="zoom-mins" id="cviClockWrap">${esc(T("r2.timeLeft", "Time left"))}: <b id="cviMins">${fmtClock(t.total)}</b></span>
+    const endLabel = T("r2.end", "End interview");
+    $("#liveStage").innerHTML = r1Stage("call", { call: true,
+      bar: `<div class="r2-pill" id="cviPill" title="${esc(T("r2.timeLeft", "Time left"))}"><i class="r2-pill-dot" aria-hidden="true"></i><span>${esc(T("r2.pill", "Live interview"))}</span><b id="cviMins">${fmtClock(t.total)}</b></div>`,
+      body: `
+      <div class="r2-call" id="cviCall">
+        <div class="r2-tile r2-tile-iv" id="cviIv">
+          <video class="r2-vid" id="cviRemote" autoplay playsinline></video>
+          <audio id="cviAudio" autoplay></audio>
+          <div class="r2-wait" id="cviWait"><span class="r2-spin" aria-hidden="true"></span><b>${esc(T("r2.connecting", "Connecting to your interviewer..."))}</b><span>${esc(T("r2.connectingSub", "Nothing to click. They will greet you in a moment, and your time starts then."))}</span></div>
+          <div class="r2-tile r2-tile-me is-off" id="cviMe"${pick.hasCam ? "" : " hidden"}><video class="r2-vid r2-vid-me" id="cviSelf" autoplay muted playsinline hidden></video><span class="r2-me-off" aria-hidden="true">${R1_IC.camOff}</span></div>
         </div>
-        <video class="zoom-call-self" id="cviSelf" autoplay muted playsinline></video>
-        <div class="zoom-call-bar">
-          <button class="zoom-ctrl" id="cviMic" type="button">${esc(T("r2.mute", "Mute"))}</button>
-          <button class="zoom-ctrl" id="cviCam" type="button">${esc(T("r2.camOff", "Stop video"))}</button>
-          <button class="zoom-ctrl zoom-leave" id="cviEnd" type="button">${esc(T("r2.end", "End interview"))}</button>
+        <div class="r2-ctrls" role="toolbar" aria-label="${esc(T("r2.controls", "Call controls"))}">
+          ${r2Ctrl("cviMic", R1_IC.mic, R1_IC.micOff, T("r2.mute", "Mute"))}
+          ${pick.hasCam ? r2Ctrl("cviCam", R1_IC.cam, R1_IC.camOff, T("r2.camOff", "Stop video")) : ""}
+          <span class="r2-ctrl-wrap">
+            <button class="r2-ctrl" id="cviGear" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="${esc(T("r1.devSettings", "Camera and microphone"))}" title="${esc(T("r1.devSettings", "Camera and microphone"))}">${R1_IC.gear}</button>
+            <div class="r1-pop r2-pop" id="cviPop" role="dialog" aria-label="${esc(T("r1.devSettings", "Camera and microphone"))}" hidden><div class="r1-devs" data-r1-devs></div></div>
+          </span>
+          <button class="r2-ctrl r2-ctrl-end" id="cviEnd" type="button" aria-label="${esc(endLabel)}" title="${esc(endLabel)}">${R1_IC.hangUp}</button>
+          <div class="r1-leave r2-confirm" id="cviConfirm" role="alertdialog" aria-labelledby="cviConfirmT" hidden>
+            <span class="r1-leave-t" id="cviConfirmT">${esc(T("r2.endAsk", "End the interview now?"))}</span>
+            <span class="r1-leave-acts">
+              <button class="r1-btn r1-btn-ghost r1-btn-sm" id="cviEndStay" type="button">${esc(T("r1.keepGoing", "Keep going"))}</button>
+              <button class="r1-btn r1-btn-stop r1-btn-sm" id="cviEndGo" type="button">${esc(endLabel)}</button>
+            </span>
+          </div>
         </div>
-      </div>`;
-    fitCviCall();
-    $("#cviEnd")?.addEventListener("click", () => endCvi());
+      </div>` });
     if (window.Daily) {
       // Nothing counts until the interviewer is on screen: not the clock, not the timekeeper, and
       // not the pass. Joining, connecting, or a call that never gets going costs the person nothing.
       CVI_HEARD = false; CVI_T = t;
-      CVI_CALL = window.Daily.createCallObject({ subscribeToTracksAutomatically: true });
+      const opts = { subscribeToTracksAutomatically: true };
+      if (pick.cam) opts.videoSource = pick.cam; else if (!pick.hasCam) opts.videoSource = false;
+      if (pick.mic) opts.audioSource = pick.mic;
+      CVI_CALL = window.Daily.createCallObject(opts);
       CVI_WAIT = setTimeout(() => cviDropped("no interviewer"), 90000);
-      CVI_CALL.on("app-message", (e) => { if (CVI_TK) CVI_TK.onEvent(e && e.data); });
+      CVI_CALL.on("app-message", (e) => { r2Speaking(e && e.data); if (CVI_TK) CVI_TK.onEvent(e && e.data); });
       CVI_CALL.on("track-started", cviTrack);
       CVI_CALL.on("track-stopped", cviTrack);
       CVI_CALL.on("error", (e) => cviDropped((e && e.errorMsg) || "error"));
       CVI_CALL.on("left-meeting", () => cviDropped("left"));
       $("#cviMic")?.addEventListener("click", (ev) => {
         const on = !CVI_CALL.localAudio(); CVI_CALL.setLocalAudio(on);
-        ev.currentTarget.classList.toggle("off", !on);
-        ev.currentTarget.textContent = on ? T("r2.mute", "Mute") : T("r2.unmute", "Unmute");
+        r2CtrlPaint(ev.currentTarget, on, T("r2.mute", "Mute"), T("r2.unmute", "Unmute"));
       });
       $("#cviCam")?.addEventListener("click", (ev) => {
         const on = !CVI_CALL.localVideo(); CVI_CALL.setLocalVideo(on);
-        ev.currentTarget.classList.toggle("off", !on);
-        ev.currentTarget.textContent = on ? T("r2.camOff", "Stop video") : T("r2.camOn", "Start video");
+        r2CtrlPaint(ev.currentTarget, on, T("r2.camOff", "Stop video"), T("r2.camOn", "Start video"));
       });
       // The broker hands a room URL with the meeting token in ?t=; the call object takes it apart.
       let url = s.join_url, token;
@@ -10755,10 +10757,8 @@
       if (CVI_CALL && !CVI_HEARD) return;                  // still connecting: free
       const now = CVI_TK ? CVI_TK.tick() : (Date.now() - t0) / 1000;
       const left = Math.max(0, Math.round(t.total - now));
-      const wrap = $("#cviClockWrap");
-      if (wrap) wrap.innerHTML = left > 0
-        ? `${esc(T("r2.timeLeft", "Time left"))}: <b id="cviMins">${fmtClock(left)}</b>`
-        : `<b>${esc(T("r2.wrappingUp", "Wrapping up"))}</b>`;
+      const mins = $("#cviMins");
+      if (mins) mins.textContent = left > 0 ? fmtClock(left) : T("r2.wrappingUp", "Wrapping up");
       if (!CVI_TK && now >= t.hard_end) { endCvi(); return; }
       // On the plan, report time used every 30 s so the broker meters it (capped at 20 minutes
       // per interview there, so the wrap-up is never charged).
@@ -10770,16 +10770,20 @@
       }
     }, 1000);
   }
-  // The call fills the window below the page header, so nothing on the page scrolls.
-  function fitCviCall() {
-    const el = $("#cviCall"); if (!el) return;
-    el.style.height = Math.max(380, window.innerHeight - el.getBoundingClientRect().top - 20) + "px";
-    // The view's own bottom padding and footer sit below the call: take back whatever still spills.
-    const view = el.closest(".view");
-    const spill = view ? view.scrollHeight - view.clientHeight : 0;
-    if (spill > 0) el.style.height = Math.max(380, el.offsetHeight - spill) + "px";
+  // A control that switches something off turns red with the crossed icon, and its label says
+  // what a click does next.
+  function r2CtrlPaint(btn, on, onLabel, offLabel) {
+    btn.classList.toggle("is-off", !on); btn.setAttribute("aria-pressed", on ? "false" : "true");
+    const label = on ? onLabel : offLabel; btn.setAttribute("aria-label", label); btn.title = label;
   }
-  window.addEventListener("resize", fitCviCall);
+  // Who is speaking, from the interviewer's own events on the call's data channel (the same ones
+  // the timekeeper listens to): a thin outline on that tile while they talk.
+  function r2Speaking(ev) {
+    const type = ev && ev.event_type, role = ev && ev.properties && ev.properties.role;
+    if (type !== "conversation.started_speaking" && type !== "conversation.stopped_speaking") return;
+    const tile = role === "user" ? $("#cviMe") : (role === "replica" || role === "pal") ? $("#cviIv") : null;
+    if (tile) tile.classList.toggle("is-speaking", type === "conversation.started_speaking");
+  }
   // Each track goes to its own element: the interviewer fills the stage, you sit in the corner.
   function cviTrack(e) {
     if (!CVI_CALL || !e || !e.participant) return;
@@ -10788,8 +10792,9 @@
     const v = (tr.video && tr.video.state === "playable") ? tr.video.persistentTrack : null;
     const a = (tr.audio && tr.audio.state === "playable") ? tr.audio.persistentTrack : null;
     if (local) {
-      const self = $("#cviSelf");
+      const self = $("#cviSelf"), me = $("#cviMe");
       if (self) { self.srcObject = v ? new MediaStream([v]) : null; self.hidden = !v; }
+      if (me) { me.classList.toggle("is-off", !v); if (v) me.hidden = false; }
       return;
     }
     const remote = $("#cviRemote"), audio = $("#cviAudio");
@@ -10801,6 +10806,69 @@
       const w = $("#cviWait"); if (w) w.hidden = true;
     }
   }
+  // Settings during the call: the same Camera and Microphone menus, switched on the call itself,
+  // and remembered for both rounds.
+  async function r2PopOpen(on) {
+    const pop = $("#cviPop"), gear = $("#cviGear"); if (!pop || !gear) return;
+    pop.hidden = !on; gear.setAttribute("aria-expanded", on ? "true" : "false");
+    if (!on) { r1MenuClose(); return; }
+    r2Confirm(false);
+    try { SCR_DEV = await SJStage.listDevices(navigator.mediaDevices); } catch (e) {}
+    let cur = {};
+    try { cur = CVI_CALL ? await CVI_CALL.getInputDevices() : {}; } catch (e) {}
+    const now = { cam: cur.camera && cur.camera.deviceId, mic: cur.mic && cur.mic.deviceId };
+    for (const kind of ["cam", "mic"]) SCR_DEV_SEL[kind] = SCR_DEV[kind].find(d => d.id === now[kind]) || SCR_DEV_SEL[kind] || SJStage.pickDevice(SCR_DEV[kind], r1DevSaved(kind));
+    r1DevPaint(); pop.querySelector("[data-r1-menu]")?.focus();
+  }
+  async function r2DevPick(kind, id) {
+    if (!CVI_CALL) { r1DevSwitch(kind, id); return; }       // the device check: Round 1's live switch
+    try {
+      await CVI_CALL.setInputDevicesAsync(kind === "cam" ? { videoDeviceId: id } : { audioDeviceId: id });
+      const d = SCR_DEV[kind].find(x => x.id === id);
+      if (d) { SCR_DEV_SEL[kind] = d; r1DevSave(kind, d); }
+      SCR_DEV_NOTE = "";
+    } catch (e) { SCR_DEV_NOTE = T("r1.devFallback", "That device is not available. Using the default."); }
+    r1DevPaint();
+  }
+  // Ending asks first, from the end button (the question sits right above it) or from Exit.
+  function r2Confirm(on) {
+    const box = $("#cviConfirm"); if (!box) return;
+    box.hidden = !on;
+    if (on) { r2PopOpen(false); $("#cviEndStay")?.focus(); }
+  }
+  function r2Exit() {
+    if (!CVI_CLOCK) { quitLive(); return; }
+    r2PopOpen(false); r2Confirm(false);
+    const bar = $("#r1Leave"); if (!bar) return;
+    $("#r1LeaveT").textContent = T("r2.endAsk", "End the interview now?");
+    $("#r1LeaveGo").textContent = T("r2.end", "End interview");
+    bar.hidden = false; $("#r1LeaveStay")?.focus();
+  }
+  $("#liveStage")?.addEventListener("click", (e) => {
+    const t = e.target;
+    if (!t.closest || !t.closest("#r1Stage")) return;
+    if (t.closest("#r1Exit")) { r2Exit(); return; }
+    if (t.closest("#r1LeaveGo")) { $("#r1Leave").hidden = true; endCvi(); return; }
+    if (t.closest("#r1LeaveStay")) { $("#r1Leave").hidden = true; $("#r1Exit")?.focus(); return; }
+    if (t.closest("#cviEndGo")) { r2Confirm(false); endCvi(); return; }
+    if (t.closest("#cviEndStay")) { r2Confirm(false); $("#cviEnd")?.focus(); return; }
+    if (t.closest("#cviEnd")) { r2Confirm($("#cviConfirm")?.hidden); return; }
+    if (t.closest("#cviGear")) { r2PopOpen($("#cviPop")?.hidden); return; }
+    if (r1MenuClick(t, r2DevPick)) return;
+    r1MenuClose();
+    if (!t.closest("#cviPop")) r2PopOpen(false);
+  });
+  // Escape closes what is open; in the call, with nothing open, it asks before ending. It never
+  // ends the interview by itself.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (!$("#liveStage #r1Stage") || $("#prepLive")?.hidden || !$("#view-prep")?.classList.contains("is-active")) return;
+    e.preventDefault();
+    if ($("#cviPop") && !$("#cviPop").hidden) { r2PopOpen(false); $("#cviGear")?.focus(); return; }
+    if ($("#cviConfirm") && !$("#cviConfirm").hidden) { r2Confirm(false); $("#cviEnd")?.focus(); return; }
+    if (!$("#r1Leave").hidden) { $("#r1Leave").hidden = true; $("#r1Exit")?.focus(); return; }
+    if (CVI_CLOCK) r2Confirm(true);
+  });
   // The call closed without our End button. Once the interviewer has been on screen this is the
   // interview ending (Tavus's own time limit, a drop that never came back): score what was said.
   // Before that, there is nothing to score: say so plainly and offer to try again.
@@ -10812,7 +10880,6 @@
   }
   function teardownCvi() {                                 // idempotent: safe to call from any exit path
     if (CVI_CLOCK) { clearInterval(CVI_CLOCK); CVI_CLOCK = null; }
-    $("#prepLive")?.classList.remove("in-call");
     clearTimeout(CVI_WAIT);
     CVI_TK = null;
     if (CVI_CALL) { const c = CVI_CALL; CVI_CALL = null; c.leave().catch(() => {}).finally(() => { try { c.destroy(); } catch (e) {} }); }
@@ -10824,7 +10891,8 @@
       window.dispatchEvent(new Event("resize"));
     }
   }
-  // "End interview": close the pane, then score the conversation into the report.
+  // "End interview": close the call, then "All done" on the same card while the conversation is
+  // scored, then the report. Nobody is asked to type anything.
   async function endCvi(opt) {
     teardownCvi();
     const id = R2 && R2.interview_id;
@@ -10835,25 +10903,44 @@
     }
     R2 = null;
     if (!id) { quitLive(); return; }
-    $("#liveStage").innerHTML = `<div class="scr-intro"><div class="scr-welcome"><h2 class="scr-ready-h">${esc(T("r2.ended", "Interview ended"))}</h2><p class="scr-ready-sub">${esc(T("r2.scoring", "Scoring your interview..."))}</p></div></div>`;
-    try { const d = await api("/api/interviews/cvi/end", { interview_id: id }); REPORT_ROLE = ((d && d.interview) || {}).role || ""; renderR2Report((d && d.report) || {}, id); }
-    catch (err) {
+    $("#liveStage").innerHTML = r1Stage("done", { solo: true, body: `
+      <div class="r1-done">
+        ${r1Label(T("r1.allDone", "All done"))}
+        <p class="r1-done-sub" id="r2DoneSub"></p>
+        <div class="r1-spinner" id="r2Spin" aria-hidden="true"></div>
+        <div id="r2DoneBody"></div>
+      </div>` });
+    r2Finish(id, opt);
+  }
+  // Still on this interview's "All done" (Exit may have left it while it was being scored).
+  const r2OnDone = () => !$("#prepLive")?.hidden && $("#liveStage #r1Stage")?.dataset.step === "done";
+  async function r2Finish(id, opt) {
+    const sub = $("#r2DoneSub"), spin = $("#r2Spin"), body = $("#r2DoneBody");
+    if (sub) sub.textContent = T("r2.doneSub", "Scoring your interview. This takes a minute.");
+    if (spin) spin.hidden = false;
+    if (body) body.innerHTML = "";
+    try {
+      const d = await api("/api/interviews/cvi/end", { interview_id: id });
+      if (!r2OnDone()) return;
+      REPORT_ROLE = ((d && d.interview) || {}).role || ""; renderR2Report((d && d.report) || {}, id);
+    } catch (err) {
+      if (!r2OnDone()) return;
       if ((err.data && err.data.error === "no_transcript") || (opt && opt.early)) { renderCviNoStart(); return; }
-      toast(err.message || T("r2.cantScore", "Couldn't score the interview.")); quitLive();
+      if (spin) spin.hidden = true;
+      if (sub) sub.textContent = err.message || T("r2.cantScore", "Couldn't score the interview.");
+      if (body) { body.innerHTML = `<div class="r1-solo-acts"><button class="r1-btn r1-btn-primary" id="r2Retry" type="button">${esc(T("r1.tryAgainScore", "Try again"))}</button></div>`;
+        $("#r2Retry")?.addEventListener("click", () => r2Finish(id)); }
     }
   }
   // Nothing was said, so there is no report. Never drop the person back on the prep list in
-  // silence: tell them what happened and let them go straight back in.
+  // silence: tell them what happened and let them go straight back in. Exit is the way out.
   function renderCviNoStart() {
-    $("#liveStage").innerHTML = `<div class="scr-intro"><div class="scr-welcome">
-      <h2 class="scr-ready-h">${esc(T("r2.noStartH", "The call closed before your interview began"))}</h2>
-      <p class="scr-ready-sub">${esc(T("r2.noStartSub", "Nothing was said, so there is nothing to score. You can join again now."))}</p>
-      <div class="zoom-gr-acts" style="justify-content:center;margin-top:16px">
-        <button class="btn btn-primary" id="cviRetry" type="button">${esc(T("r2.tryAgain", "Join again"))}</button>
-        <button class="btn btn-ghost" id="cviBack" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
-      </div></div></div>`;
-    $("#cviRetry")?.addEventListener("click", async () => renderR2GreenRoom(await round2Status()));
-    $("#cviBack")?.addEventListener("click", quitLive);
+    $("#liveStage").innerHTML = r1Stage("nostart", { solo: true, body: `
+      ${r1Label(T("r2.eyebrow", "Round 2 · live interview"))}
+      <h2 class="r1-h">${esc(T("r2.noStartH", "The call closed before your interview began"))}</h2>
+      <p class="r1-done-sub r2-nostart-sub">${esc(T("r2.noStartSub", "Nothing was said, so there is nothing to score. You can join again now."))}</p>
+      <div class="r1-solo-acts"><button class="r1-btn r1-btn-primary" id="cviRetry" type="button">${esc(T("r2.tryAgain", "Join again"))}</button></div>` });
+    $("#cviRetry")?.addEventListener("click", r2GoDevices);
   }
   function renderR2Report(rep, interviewId) {
     rep = rep || {};
@@ -10862,13 +10949,13 @@
       competency: a.competency || "", score: a.score, feedback: a.feedback || "", extra: "", coach: false }));
     $("#prepLive").classList.add("is-report");
     $("#liveStage").innerHTML = reportA2Html(rep, {
-      kind: T("rep.kindLive", "Live interview"), role: (R2_CTX && R2_CTX.role) || REPORT_ROLE || "", company: "",
+      kind: T("rep.kindLive", "Live interview"), role: (R2_CTX && R2_CTX.role) || REPORT_ROLE || "", company: (R2_PREP && R2_PREP.company) || "",
       when: REPORT_WHEN || Date.now() / 1000, items, round: 2,
       transcript: rep.transcript ? r2TranscriptHtml(rep.transcript) : "", actions: "" });
     REPORT_WHEN = null; REPORT_ROLE = "";
     wireReportA2(rep, { prepId: R2_CTX && R2_CTX.prep_id, currentId: interviewId,
-      leave: () => { teardownCvi(); R2 = null; stopLiveStream(); $("#prepLive").hidden = true; $("#prepLive").classList.remove("is-report"); },
-      back: quitLive, again: () => { $("#prepLive").classList.remove("is-report"); startRound2(R2_CTX && R2_CTX.prep_id, "", true); } });
+      leave: () => { teardownCvi(); R2 = null; stopScrStream(); $("#prepLive").hidden = true; $("#prepLive").classList.remove("is-report"); },
+      back: quitLive, again: () => { $("#prepLive").classList.remove("is-report"); startRound2(R2_CTX && R2_CTX.prep_id, "", true, R2_PREP); } });
   }
   // The live transcript is a list of turns; show it as a dialogue, fillers highlighted.
   function r2TranscriptHtml(tr) {
@@ -10876,12 +10963,12 @@
     if (!Array.isArray(tr)) return "";
     return tr.map(t => `<span class="rc-turn ${t.role === "interviewer" ? "iv" : "me"}">${esc(t.role === "interviewer" ? T("rc.interviewer", "Interviewer") : T("rc.you", "You"))}:</span> ${t.role === "interviewer" ? esc(t.content || "") : highlightDisfluencies(t.content || "")}`).join("<br>");
   }
-  function stopLiveStream() { if (LIVE_STREAM) { LIVE_STREAM.getTracks().forEach(t => t.stop()); LIVE_STREAM = null; } }
   function quitLive() {
     teardownCvi();                                          // every exit path ends the live interview cleanly
-    R2 = null; stopLiveStream(); $("#prepLive").hidden = true; $("#prepList").hidden = false; loadPreps();
+    R2 = null; stopScrStream(); SCR_PHASE = "idle";
+    $("#liveStage").innerHTML = "";                         // the stage is gone, so the app's own chrome comes back
+    $("#prepLive").hidden = true; $("#prepLive").classList.remove("is-report"); $("#prepList").hidden = false; loadPreps();
   }
-  $("#liveQuit")?.addEventListener("click", quitLive);
 
   // ---------------------------------------------------------------- Report card (both rounds)
   // The structured card the engine stores next to the overall score (interview/report.py):
@@ -11105,11 +11192,6 @@
       </div>`;
   }
 
-  // Whole 20-minute interviews from the pass's minutes (one interview is 20 minutes on the broker).
-  function r2InterviewsLeft(mins) {
-    const n = Math.floor(Number(mins) / 20);
-    return n === 1 ? T("r2.oneLeft", "1 interview left.") : T("r2.nLeft", "{n} interviews left.").replace("{n}", String(n));
-  }
 
   /* ---------------------------------------------------------------- Connect your AI (API key) */
   let AI_CONFIGURED = false;
@@ -11281,8 +11363,10 @@
     if (it.id !== "menuLanguage") it.addEventListener("mouseenter", closeLangMenu);
   });
 
-  // Plans (owner decision 2026-11-20): Student and Standard, monthly or every 3 months, renewing
-  // until cancelled. Next to the one buy button sit the price, the interval, that it renews until
+  // Plans (owner decision 2026-11-25): Student and Standard, monthly only, renewing until
+  // cancelled. The every-3-months plans are not sold: the Monthly / Every 3 months switch stays
+  // hidden unless the broker offers one (its SELL_QUARTERLY switch) or this person is still on one.
+  // Next to the one buy button sit the price, the interval, that it renews until
   // cancelled and how to cancel, and a checkbox that must be ticked first (auto-renewal laws). The
   // page sends only the interval and the tick: the broker picks the student or standard price from
   // the school email check, never from this page. A student checks once, with a 6-digit code sent
@@ -11380,6 +11464,10 @@
                   onSale: new Set((o.plans || []).map(p => p.id)), loaded: !!OFFERS };
     // A plan that renews opens on its own interval.
     if (sub && sub.interval) UPG_INTERVAL = sub.interval;
+    // Only what is on sale: without an every-3-months plan in the offers there is nothing to switch.
+    const quarterlySold = (o.plans || []).some(p => p.interval === "quarterly");
+    if (!quarterlySold && !(sub && sub.interval === "quarterly")) UPG_INTERVAL = "monthly";
+    const seg = $("#upgSeg"); if (seg) seg.hidden = !quarterlySold;
     upgModal.querySelectorAll(".upg-seg-b").forEach(b => {
       const on = b.dataset.interval === UPG_INTERVAL;
       b.classList.toggle("is-on", on); b.setAttribute("aria-checked", on ? "true" : "false");
@@ -11391,8 +11479,9 @@
       card.querySelector("[data-price]").textContent = planPrice(id);
       card.querySelector("[data-unit]").textContent = unitText(UPG_INTERVAL);
       card.querySelector("[data-feats]").innerHTML = [
-        q ? T("upg.feat9", "9 live interviews every 3 months") : T("upg.feat3", "3 live interviews a month"),
-        q ? T("upg.feat150", "150 tailored packages every 3 months") : T("upg.feat60", "60 tailored packages a month"),
+        q ? T("upg.feat9", "9 live interviews every 3 months") : T("upg.feat3", "3 live interviews of 20 minutes a month"),
+        q ? T("upg.feat150", "150 tailored applications every 3 months") : T("upg.feat60", "60 tailored applications a month"),
+        T("upg.featRecorded", "Unlimited recorded practice interviews"),
         T("upg.betterModel", "Tailoring on our best AI model"),
       ].map(x => `<li>${esc(x)}</li>`).join("");
       card.classList.toggle("is-current-plan", !!(sub && sub.plan === id));
@@ -11507,6 +11596,12 @@
     } catch (err) { toast(err.message || T("upg.cantChange", "Couldn't change your plan. Try again in a moment.")); }
     b.disabled = false;
   });
+  // "Buy 3 interviews, $24": an extra-interview pack's button in the plans panel.
+  function r2PackLabel(p) {
+    const n = Number(p.interviews) || 1;
+    const label = n === 1 ? T("r2.buyOne", "Buy 1 interview") : T("r2.buyMany", "Buy {n} interviews").replace("{n}", String(n));
+    return p.price_label ? `${label}, ${p.price_label}` : label;
+  }
   function loadPacks() {
     const o = OFFERS || {}, cur = o.current || {};
     const active = !!(cur.tier && PASS_NAMES[cur.tier] && cur.pass_until);
@@ -11538,7 +11633,7 @@
     loadOffers().then(loadPacks);
     paintPlan();
   }
-  function closeUpgrade() { if (upgModal) upgModal.hidden = true; }
+  function closeUpgrade() { if (upgModal) upgModal.hidden = true; r2Recheck(); }
   $("#menuUpgrade")?.addEventListener("click", openUpgrade);
   // "Get an API key" opens the connect-AI picker in setup mode, so you choose Claude or
   // OpenAI first; the "get your key" step then links to that provider's console.
@@ -11547,6 +11642,44 @@
   upgModal?.addEventListener("click", (e) => { if (e.target === upgModal) closeUpgrade(); });
   // Free stays unlimited on the person's own AI key.
   $("#upgOwnKey")?.addEventListener("click", () => { closeUpgrade(); openAiModal(true); });
+
+  // ---- Upgrade moments (owner decision 2026-11-25). Each is one plain line and a "See plans"
+  // button that opens the ONE plans panel above. No price is repeated in any of them.
+  const seePlansBtn = (cls) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = cls; b.textContent = T("outage.upgrade.btn", "See plans");
+    b.addEventListener("click", openUpgrade);
+    return b;
+  };
+  // The free plan's 3rd tailored resume of the month was just used (the engine says so once).
+  window.__upgradeMoment = (kind) => {
+    if (kind !== "free_resumes_used") return;
+    toast(T("upg.freeResumesUsed", "You've used your 3 free tailored resumes this month. Plans include 60 a month."),
+          { label: T("outage.upgrade.btn", "See plans"), run: openUpgrade }, 12000);
+  };
+  // Free, and this month's recorded practice interview is used: the one line (plain, it is not an
+  // error) in `lineEl`, and "See plans" as the screen's one button. On the intro it takes the
+  // place of Get started (`swapBtn`), which could only fail again; on the scoring screen it goes
+  // into `actsEl`.
+  window.__recordedLimit = (lineEl, actsEl, swapBtn) => {
+    lineEl.textContent = T("upg.recordedUsed", "You've used this month's practice interview. Plans include unlimited recorded practice.");
+    lineEl.classList.add("is-plain"); lineEl.hidden = false;
+    document.querySelector(".upg-moment-btn")?.remove();
+    const b = seePlansBtn("r1-btn r1-btn-primary upg-moment-btn");
+    if (swapBtn) { swapBtn.hidden = true; swapBtn.insertAdjacentElement("beforebegin", b); return; }
+    const row = document.createElement("div"); row.className = "r1-solo-acts"; row.appendChild(b);
+    (actsEl || lineEl.parentElement)?.appendChild(row);
+  };
+  // The Round 1 report, Free only: one quiet line under the report's own actions.
+  window.__r1FreeUpsell = (gate) => {
+    if (!gate || ACCT_PLAN !== "free" || gate.parentElement?.querySelector(".upg-moment")) return;
+    const p = document.createElement("p");
+    p.className = "upg-moment";
+    const s = document.createElement("span");
+    s.textContent = T("upg.practiseLive", "Practise live with an interviewer");
+    p.append(s, seePlansBtn("upg-link upg-moment-link"));
+    gate.insertAdjacentElement("afterend", p);
+  };
 
   // toast("Moved", {label: "Undo", run}) shows one action beside the message (Gmail's undo
   // toast) and stays up a little longer so there is time to reach it.

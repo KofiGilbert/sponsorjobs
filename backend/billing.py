@@ -1,17 +1,18 @@
 """Stripe billing for the managed-AI broker (the Python reference): extra-interview packs and the
 retired one-time passes.
 
-Pricing (decided by the owner 2026-11-20): paid plans RENEW AUTOMATICALLY until cancelled, as Stripe
-subscriptions: Student $29 a month or $69 every 3 months (verified school e-mail, valid until
-graduation + 24 months), Standard $49 a month or $119 every 3 months. Those are sold, renewed,
+Pricing (decided by the owner 2026-11-25): paid plans RENEW AUTOMATICALLY until cancelled, as Stripe
+subscriptions, and only two are sold: Student $29 a month (verified school e-mail, valid until
+graduation + 24 months) and Standard $49 a month. Those are sold, renewed,
 cancelled and reminded about by the production broker, the Cloudflare Worker
 (worker/src/billing.ts, worker/src/subscriptions.ts, worker/src/student.ts). This module keeps the
 one-time purchases the reference broker has always sold, for local development and its tests:
 
-  * Extra live interviews (packs): 1 for $9, 3 for $24, 5 for $39. Sold ONLY while a plan or pass
-    is active; prepaid seconds that never expire.
+  * Extra live interviews (packs): 1 for $12, 3 for $33. Sold ONLY while a plan or pass is
+    active; prepaid seconds that never expire. The 5-pack is retired: never offered, still granted
+    if one was already paid for.
   * The retired passes (``pass30`` $29 for 30 days, ``pass90`` $69 for 90 days), one payment each.
-    Holders keep a pass until it ends.
+    Not sold unless ``SELL_PASSES=1`` (``sell_passes``); holders keep a pass until it ends.
 
 Each is a one-time Stripe Checkout Session (``mode="payment"``). The webhook grants what was bought
 on ``checkout.session.completed`` once the session is paid, exactly once per session id (the store's
@@ -33,7 +34,8 @@ from backend.metering import INTERVIEW_SECONDS, ONE_TIME_PASSES, PLANS
 
 # Extra-interview packs: id -> (whole interviews, display price).
 PACKS = {"pack_1": 1, "pack_3": 3, "pack_5": 5}
-PACK_PRICE_LABEL = {"pack_1": "$9", "pack_3": "$24", "pack_5": "$39"}
+PACK_PRICE_LABEL = {"pack_1": "$12", "pack_3": "$33", "pack_5": "$39"}
+SOLD_PACKS = ("pack_1", "pack_3")     # on sale since 2026-11-25; pack_5 stays grantable only
 PACK_PRICE_ENV = {"pack_1": "STRIPE_PRICE_PACK_1", "pack_3": "STRIPE_PRICE_PACK_3",
                   "pack_5": "STRIPE_PRICE_PACK_5"}
 PASS_PRICE_ENV = {"pass30": "STRIPE_PRICE_PASS30", "pass90": "STRIPE_PRICE_PASS90"}
@@ -79,9 +81,11 @@ def pack_offer(pack_id: str) -> dict:
 
 class Billing:
     def __init__(self, client, meter, pass_prices: dict | None = None, *, success_url: str,
-                 cancel_url: str, pack_prices: dict | None = None) -> None:
+                 cancel_url: str, pack_prices: dict | None = None, sell_passes: bool = False) -> None:
         self.client = client
         self.meter = meter
+        # The retired one-time passes are on sale only when asked for (SELL_PASSES=1).
+        self.sell_passes = bool(sell_passes)
         # {"pass30": "price_...", "pass90": "price_..."}; unset/empty ones are simply not offered
         self.pass_prices = {k: v for k, v in (pass_prices or {}).items() if v and k in ONE_TIME_PASSES}
         # {"pack_1": "price_...", ...}; unset/empty packs are simply not offered
@@ -91,12 +95,14 @@ class Billing:
 
     # -- what is on sale ---------------------------------------------------------------- #
     def offered_passes(self) -> list[dict]:
+        if not self.sell_passes:
+            return []
         return [pass_offer(pid) for pid in ONE_TIME_PASSES if pid in self.pass_prices]
 
     def offered_packs(self) -> list[dict]:
-        """The packs on sale (those with a configured price), smallest first."""
+        """The packs on sale (SOLD_PACKS with a configured price), smallest first."""
         return [pack_offer(pid) for pid, _n in sorted(PACKS.items(), key=lambda kv: kv[1])
-                if pid in self.pack_prices]
+                if pid in SOLD_PACKS and pid in self.pack_prices]
 
     # -- checkout ----------------------------------------------------------------------- #
     def _session(self, user: str, price: str, metadata: dict) -> str:
@@ -112,7 +118,7 @@ class Billing:
 
     def pass_checkout_url(self, user: str, pass_id: str) -> str:
         """A one-time Checkout Session for a pass; return its URL."""
-        price = self.pass_prices.get(pass_id)
+        price = self.pass_prices.get(pass_id) if self.sell_passes else None
         if not price:
             raise ValueError(f"unknown pass: {pass_id}")
         p = PLANS[pass_id]
@@ -122,7 +128,7 @@ class Billing:
 
     def pack_checkout_url(self, user: str, pack: str) -> str:
         """A one-time Checkout Session for an extra-interview pack. Only while a pass is active."""
-        price = self.pack_prices.get(pack)
+        price = self.pack_prices.get(pack) if pack in SOLD_PACKS else None
         if not price:
             raise ValueError(f"unknown pack: {pack}")
         if not self.meter.can_buy_pack(user):

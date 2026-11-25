@@ -9,7 +9,7 @@
 
 import type { Env } from "./env";
 import { intVar } from "./env";
-import { DAY_SECONDS, FREE_MODEL, INTERVIEW_SECONDS, ONE_TIME_PASSES, PACK_PRICE_LABEL, PASS_MODEL, PASSES, PLANS, SUBSCRIPTION_PLANS } from "./metering";
+import { DAY_SECONDS, FREE_MODEL, INTERVIEW_SECONDS, OLD_PACK_PRICE_LABEL, ONE_TIME_PASSES, PACK_PRICE_LABEL, PASS_MODEL, PASSES, PLANS, SUBSCRIPTION_PLANS } from "./metering";
 import { FREE_POOL_CAP_KEY, FREE_POOL_USER, poolCapOverride } from "./store";
 
 // Anthropic list prices, $ per 1M tokens (checked 2026-10-10), blended at 80% input.
@@ -421,7 +421,7 @@ export function productFor(amountCents: number, invoice = false): string {
   }
   for (const p of ONE_TIME_PASSES) if (PLANS[p]!.priceLabel === label) return p;
   for (const [id, l] of Object.entries(PACK_PRICE_LABEL)) if (l === label) return id;
-  return "other";
+  return OLD_PACK_PRICE_LABEL[label] ?? "other";   // a pack bought at its price before 2026-11-25
 }
 
 export async function revenue(env: Env, nowMs: number): Promise<Revenue> {

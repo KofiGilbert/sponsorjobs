@@ -61,10 +61,12 @@ class FakeStripe:
         return self._event
 
 
-def _billing(client=None, pass_prices=PASS_PRICES, pack_prices=PACK_PRICES, meter=None):
+def _billing(client=None, pass_prices=PASS_PRICES, pack_prices=PACK_PRICES, meter=None, sell_passes=True):
+    # sell_passes=True: most of this file checks the one-time payment plumbing with the retired
+    # passes. The shipped default (off) is checked in test_what_is_on_sale_by_default.
     meter = meter or Meter(InMemoryStore(), clock=Clock())
     b = Billing(client or FakeStripe(), meter, pass_prices, success_url="http://app/ok",
-                cancel_url="http://app/no", pack_prices=pack_prices)
+                cancel_url="http://app/no", pack_prices=pack_prices, sell_passes=sell_passes)
     return b, meter
 
 
@@ -173,15 +175,32 @@ def test_pass_grant_is_idempotent_on_sqlite_across_a_restart(tmp_path):
 
 
 # -- packs ----------------------------------------------------------------------------------------
-def test_packs_on_sale_include_the_five_pack_with_prices():
-    assert PACKS == {"pack_1": 1, "pack_3": 3, "pack_5": 5}
+def test_packs_on_sale_are_one_for_12_and_three_for_33():
+    assert PACKS == {"pack_1": 1, "pack_3": 3, "pack_5": 5}       # pack_5 stays grantable only
     b, _ = _billing()
     assert b.offered_packs() == [
-        {"id": "pack_1", "price_label": "$9", "interviews": 1, "seconds": 1200},
-        {"id": "pack_3", "price_label": "$24", "interviews": 3, "seconds": 3600},
-        {"id": "pack_5", "price_label": "$39", "interviews": 5, "seconds": 6000}]
+        {"id": "pack_1", "price_label": "$12", "interviews": 1, "seconds": 1200},
+        {"id": "pack_3", "price_label": "$33", "interviews": 3, "seconds": 3600}]
     b2, _ = _billing(pack_prices={"pack_1": "", "pack_5": "price_k5"})
-    assert [p["id"] for p in b2.offered_packs()] == ["pack_5"]
+    assert b2.offered_packs() == []                                # the 5-pack is never offered
+
+
+def test_what_is_on_sale_by_default():
+    """The shipped default (2026-11-25): no one-time pass and no 5-pack can be bought, but a pass
+    or 5-pack that was already paid for is still granted."""
+    fake = FakeStripe()
+    b, meter = _billing(fake, sell_passes=False)
+    assert b.offered_passes() == []
+    with pytest.raises(ValueError):
+        b.pass_checkout_url("u1", "pass30")
+    b.apply_event(_pass_event())
+    assert meter.tier_for("u1") == "pass30"
+    with pytest.raises(ValueError):
+        b.pack_checkout_url("u1", "pack_5")
+    assert fake.created is None                                    # Stripe never called
+    before = meter.interviews_left("u1")
+    b.apply_event(_pack_event(sid="cs_pack_old5", pack="pack_5", seconds=6000))
+    assert meter.interviews_left("u1") == before + 5
 
 
 def test_packs_require_an_active_pass():
@@ -191,9 +210,9 @@ def test_packs_require_an_active_pass():
         b.pack_checkout_url("u1", "pack_1")
     assert fake.created is None                                         # Stripe never called
     meter.grant_pass("u1", "pass30")
-    assert b.pack_checkout_url("u1", "pack_5") == "https://checkout.stripe.test/s/cs_123"
+    assert b.pack_checkout_url("u1", "pack_3") == "https://checkout.stripe.test/s/cs_123"
     assert fake.created["mode"] == "payment"
-    assert fake.created["metadata"] == {"kind": "credit_pack", "pack": "pack_5", "seconds": 6000}
+    assert fake.created["metadata"] == {"kind": "credit_pack", "pack": "pack_3", "seconds": 3600}
     with pytest.raises(ValueError):
         b.pack_checkout_url("u1", "pack_99")
 
@@ -221,7 +240,7 @@ def test_unpaid_or_non_pack_checkouts_grant_nothing():
 def _app(client_stub=None, pass_prices=PASS_PRICES, pack_prices=PACK_PRICES):
     meter = Meter(InMemoryStore(), clock=Clock())
     b = Billing(client_stub or FakeStripe(), meter, pass_prices, success_url="http://app/ok",
-                cancel_url="http://app/no", pack_prices=pack_prices)
+                cancel_url="http://app/no", pack_prices=pack_prices, sell_passes=True)
     app = create_app(meter=meter, provider=None, period_fn=lambda: "2026-07", billing=b)
     app.config.update(TESTING=True)
     return app, meter
@@ -244,7 +263,7 @@ def test_offers_during_a_pass_list_the_packs_and_what_is_left():
     app, meter = _app()
     meter.grant_pass("u1", "pass30")
     body = app.test_client().get("/billing/offers", headers=H).get_json()
-    assert [p["id"] for p in body["packs"]] == ["pack_1", "pack_3", "pack_5"]
+    assert [p["id"] for p in body["packs"]] == ["pack_1", "pack_3"]
     assert body["current"] == {"tier": "pass30", "pass_until": T0 + 30 * DAY_SECONDS,
                                "interviews_left": 3, "packages_left": 60}
 
@@ -283,7 +302,7 @@ def test_pack_checkout_route_needs_an_active_pass():
 def test_packs_route_lists_the_offered_packs():
     app, _ = _app()
     assert [p["id"] for p in app.test_client().get("/billing/packs").get_json()["packs"]] \
-        == ["pack_1", "pack_3", "pack_5"]
+        == ["pack_1", "pack_3"]
 
 
 def test_webhook_verifies_the_signature_then_grants_the_pass():

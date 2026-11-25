@@ -4,19 +4,25 @@ The heart of "protect the margin" (docs/bundled-api-backend.md, sec 5): the brok
 allowance BEFORE calling a paid provider and records usage AFTER, so no user can run the company's
 Anthropic/Tavus account past what they paid for.
 
-Pricing (decided by the owner 2026-11-20; plans renew automatically until cancelled):
+Pricing (decided by the owner 2026-11-25; plans renew automatically until cancelled). ON SALE:
 
-  * ``free``   (default, no card): 3 AI-tailored packages per CALENDAR MONTH on the cheap model,
-               no live interviews. Unlimited tailoring stays available on the person's own key
-               (that path never touches the broker).
-  * ``student_monthly`` / ``standard_monthly``: $29 / $49 every month, 3 live interviews + 60
-               packages a period, Sonnet. ``student_quarterly`` / ``standard_quarterly``: $69 /
-               $119 every 3 months, 9 live interviews + 150 packages a period. The student price
-               needs a verified school e-mail (worker/src/student.ts). These are Stripe
+  * ``free``   (default, no card): 3 AI-tailored resumes per CALENDAR MONTH on the cheap model,
+               1 scored recorded practice interview per calendar month, no live interviews.
+               Unlimited tailoring stays available on the person's own key (that path never
+               touches the broker).
+  * ``student_monthly`` / ``standard_monthly``: $29 / $49 every month, 3 live interviews of 20
+               minutes + 60 packages a period, unlimited recorded practice, Sonnet. The student
+               price needs a verified school e-mail (worker/src/student.ts). These are Stripe
                subscriptions, sold by the production broker (worker/src/subscriptions.ts); this
                Python reference knows the plans so it reads an account on one correctly.
-  * ``pass30`` / ``pass90``: the retired one-time passes ($29 for 30 days, $69 for 90 days). No
-               longer sold to current app versions; anyone who bought one keeps it until it ends.
+
+NOT sold, kept so an account already on one reads correctly until it ends:
+
+  * ``student_quarterly`` / ``standard_quarterly``: $69 / $119 every 3 months, 9 live interviews
+               + 150 packages a period. One switch sells them again: ``SELL_QUARTERLY=1``
+               (``sold_plans`` below; the Worker reads the same name).
+  * ``pass30`` / ``pass90``: the retired one-time passes ($29 for 30 days, $69 for 90 days).
+               ``SELL_PASSES=1`` would sell them again; anyone who bought one keeps it until it ends.
 
 A pass's allowances belong to the PASS PERIOD, not the calendar month: buying one stores
 ``pass_until`` plus a balance of interview seconds and packages on the account. When the period
@@ -63,6 +69,8 @@ class Plan:
     price_label: str = ""         # display only; the real price lives in Stripe
     tier: str = ""                # "student" | "standard" for a plan that renews; "" otherwise
     months: int = 0               # a renewing plan's interval in calendar months
+    # Scored recorded practice interviews per calendar month; None = unlimited (every paid plan).
+    recorded_interviews: int | None = None
 
     @property
     def interviews(self) -> int:
@@ -75,7 +83,7 @@ class Plan:
 
 PLANS = {
     "free":   Plan("free",   avatar_seconds_included=0, llm_model=FREE_MODEL,
-                   llm_token_cap=400_000, packages=3),
+                   llm_token_cap=400_000, packages=3, recorded_interviews=1),
     "pass30": Plan("pass30", avatar_seconds_included=3 * INTERVIEW_SECONDS, llm_model=PASS_MODEL,
                    llm_token_cap=8_000_000, packages=60, days=30, price_label="$29"),
     "pass90": Plan("pass90", avatar_seconds_included=9 * INTERVIEW_SECONDS, llm_model=PASS_MODEL,
@@ -99,6 +107,28 @@ DEFAULT_PLAN = "free"
 PASSES = tuple(k for k, p in PLANS.items() if p.is_pass)          # every paid plan, as stored on an account
 ONE_TIME_PASSES = tuple(k for k, p in PLANS.items() if p.is_pass and not p.tier)
 SUBSCRIPTION_PLANS = tuple(k for k, p in PLANS.items() if p.tier)
+
+
+def _on(name: str, env=None) -> bool:
+    return str((os.environ if env is None else env).get(name) or "").strip() == "1"
+
+
+def sells_quarterly(env=None) -> bool:
+    """THE switch for the every-3-months plans (owner decision 2026-11-25): off unless
+    SELL_QUARTERLY=1. Off only stops new sales; an account already on one is read as before."""
+    return _on("SELL_QUARTERLY", env)
+
+
+def sells_passes(env=None) -> bool:
+    """The retired one-time passes are sold again only with SELL_PASSES=1."""
+    return _on("SELL_PASSES", env)
+
+
+def sold_plans(env=None) -> tuple:
+    """The renewing plans a new checkout may be started for, in offer order."""
+    return tuple(k for k in SUBSCRIPTION_PLANS if PLANS[k].months == 1 or sells_quarterly(env))
+
+
 # Old subscription tiers (trial/student/pro/browse) are no longer sold; an account still carrying
 # one of those names is read as free (store_sqlite also rewrites them on open).
 LEGACY_PLANS = ("browse", "trial", "student", "pro")
@@ -125,6 +155,9 @@ class UsageStore:
     def add_llm_tokens(self, user: str, period: str, tokens: int) -> None: raise NotImplementedError
     def get_packages_used(self, user: str, period: str) -> int: raise NotImplementedError
     def add_packages_used(self, user: str, period: str, n: int) -> None: raise NotImplementedError
+    # Free scored recorded practice interviews this calendar month (the free plan states 1).
+    def get_recorded_used(self, user: str, period: str) -> int: raise NotImplementedError
+    def add_recorded_used(self, user: str, period: str, n: int) -> None: raise NotImplementedError
     def get_credit_seconds(self, user: str) -> int: raise NotImplementedError
     def add_credit_seconds(self, user: str, seconds: int) -> None: raise NotImplementedError
     # Idempotency for Stripe: a webhook can be delivered more than once, so a payment is recorded
@@ -142,6 +175,7 @@ class InMemoryStore(UsageStore):
         self._avatar: dict[tuple[str, str], int] = {}
         self._llm: dict[tuple[str, str], int] = {}
         self._pkgs: dict[tuple[str, str], int] = {}
+        self._recorded: dict[tuple[str, str], int] = {}
         self._credits: dict[str, int] = {}
         self._processed: set[str] = set()
 
@@ -163,6 +197,8 @@ class InMemoryStore(UsageStore):
     def add_llm_tokens(self, user, period, tokens): self._llm[(user, period)] = self.get_llm_tokens(user, period) + tokens
     def get_packages_used(self, user, period): return self._pkgs.get((user, period), 0)
     def add_packages_used(self, user, period, n): self._pkgs[(user, period)] = self.get_packages_used(user, period) + n
+    def get_recorded_used(self, user, period): return self._recorded.get((user, period), 0)
+    def add_recorded_used(self, user, period, n): self._recorded[(user, period)] = self.get_recorded_used(user, period) + n
     def get_credit_seconds(self, user): return self._credits.get(user, 0)
     def add_credit_seconds(self, user, seconds): self._credits[user] = max(0, self.get_credit_seconds(user) + seconds)
     def has_processed(self, key): return key in self._processed
@@ -179,7 +215,8 @@ class QuotaExceeded(Exception):
     """Raised by the strict pre-checks (``require_*``) when a user has no allowance left. ``reason``
     tells the app which offer to show: ``pass_required`` (free user -> the passes),
     ``no_interviews`` (pass user out of interviews -> the packs), ``package_limit`` (out of
-    tailored packages), ``token_cap`` (the monthly AI safety net)."""
+    tailored packages), ``recorded_limit`` (the free plan's recorded practice interview this
+    month is used), ``token_cap`` (the monthly AI safety net)."""
 
     def __init__(self, message: str, reason: str = "") -> None:
         super().__init__(message)
@@ -324,6 +361,27 @@ class Meter:
             self.store.add_packages_used(user, period, 1)
         return {"packages_left": self.packages_left(user, period), "tier": self.tier_for(user)}
 
+    # -- recorded practice interviews (Round 1; counted when one is scored) ------------- #
+    def recorded_left(self, user: str, period: str) -> int | None:
+        """Scored recorded practice interviews left this calendar month, or None for unlimited
+        (every paid plan). The free plan's count resets with the month, like its packages."""
+        allowance = self.plan_for(user).recorded_interviews
+        if allowance is None:
+            return None
+        return max(0, allowance - self.store.get_recorded_used(user, period))
+
+    def start_recorded(self, user: str, period: str) -> dict:
+        """Count one scored recorded practice interview. Paid plans are unlimited and never
+        counted; the free plan has 1 a month and raises QuotaExceeded('recorded_limit') after."""
+        left = self.recorded_left(user, period)
+        if left is None:
+            return {"recorded_left": None, "tier": self.tier_for(user)}
+        if left <= 0:
+            raise QuotaExceeded("this month's free recorded practice interview is used",
+                                "recorded_limit")
+        self.store.add_recorded_used(user, period, 1)
+        return {"recorded_left": self.recorded_left(user, period), "tier": self.tier_for(user)}
+
     # -- llm (bundled; the token cap is a monthly safety net) -------------------------- #
     def llm_model_for(self, user: str) -> str:
         plan = self.plan_for(user)
@@ -357,5 +415,6 @@ class Meter:
                 "pass_until": int(p["until"]) if p["active"] else None,
                 "interviews_left": self.interviews_left(user, period),
                 "packages_left": self.packages_left(user, period),
+                "recorded_left": self.recorded_left(user, period),   # None = unlimited (paid)
                 "avatar_seconds_left": self.avatar_seconds_left(user, period),
                 "llm_model": self.llm_model_for(user)}

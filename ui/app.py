@@ -61,9 +61,28 @@ APP_CSP = ("script-src 'self' https://c.daily.co blob: 'unsafe-eval' 'wasm-unsaf
            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 
+# An upgrade moment waiting to be shown (owner decision 2026-11-25): set when the broker says the
+# free plan's last tailored resume of the month was just used, and handed to the page ONCE, on the
+# next successful /api/ reply, as the X-SJ-Moment header. The page shows one line with a "See
+# plans" button that opens the one plans panel. No price is ever written here.
+_UPGRADE_MOMENT = {"pending": ""}
+_UPGRADE_MOMENT_LOCK = threading.Lock()
+
+
+def _flag_upgrade_moment(kind: str) -> None:
+    with _UPGRADE_MOMENT_LOCK:
+        _UPGRADE_MOMENT["pending"] = kind
+
+
 @app.after_request
 def _no_store(resp):
     resp.headers["Cache-Control"] = "no-store"
+    if _UPGRADE_MOMENT["pending"] and request.path.startswith("/api/") and resp.status_code == 200 \
+            and resp.mimetype == "application/json":
+        with _UPGRADE_MOMENT_LOCK:
+            kind, _UPGRADE_MOMENT["pending"] = _UPGRADE_MOMENT["pending"], ""
+        if kind:
+            resp.headers["X-SJ-Moment"] = kind
     if request.path == "/" and resp.mimetype == "text/html" and "Content-Security-Policy" not in resp.headers:
         resp.headers["Content-Security-Policy"] = APP_CSP
     return resp
@@ -885,6 +904,56 @@ def _make_byo_llm(provider: str):
     return AnthropicLLM(model=os.environ.get("RESUME_AGENT_MODEL"), api_key=key)
 
 
+# The upgrade lines (owner decision 2026-11-25). Each opens the ONE plans panel; no price is
+# repeated here, so a price change is made in one place.
+FREE_RESUMES_USED_LINE = "You've used your 3 free tailored resumes this month. Plans include 60 a month."
+FREE_RECORDED_USED_LINE = ("You've used this month's practice interview. Plans include unlimited "
+                           "recorded practice.")
+
+
+def _recorded_refusal():
+    """The reply when the free plan's recorded practice interview of the month is used: the one
+    line, and `upgrade: "plans"` so the page puts a "See plans" button next to it. `error_code`,
+    not `reason`: a `reason` makes the page's api() treat the reply as an AI outage."""
+    return jsonify({"error": FREE_RECORDED_USED_LINE, "error_code": "recorded_limit",
+                    "upgrade": "plans"}), 402
+
+
+def _on_bundled_ai() -> bool:
+    """Whether the app's AI runs through the managed broker (so the plan's limits apply). On the
+    person's own key nothing is counted, exactly as with tailored resumes."""
+    try:
+        from llm.broker_client import BrokerLLM
+        return isinstance(_make_llm(), BrokerLLM)
+    except Exception:
+        return False
+
+
+def _free_recorded_used_up() -> bool:
+    """True only when the broker says this account is on Free and has no scored recorded practice
+    interview left this month. An unreachable broker, an older broker that does not report the
+    count, a paid plan (unlimited) or the person's own key never block a start."""
+    if not _on_bundled_ai():
+        return False
+    st, usage = _broker_get("/me/usage")
+    if st != 200 or not isinstance(usage, dict):
+        return False
+    left = usage.get("recorded_left")
+    return (usage.get("tier") or usage.get("plan")) == "free" and isinstance(left, int) \
+        and not isinstance(left, bool) and left <= 0
+
+
+def _count_recorded() -> bool:
+    """Count one scored recorded practice interview with the broker, where the free plan's 1 a
+    month is enforced. False only when the broker refuses (402: this month's is used). A broker
+    that is unreachable or too old to know the route (404) never blocks a score; paid plans are
+    unlimited and the person's own key is never counted."""
+    if not _on_bundled_ai():
+        return True
+    st, _data = _broker_post("/interview/recorded", {})
+    return st != 402
+
+
 def _count_package(llm):
     """One tailoring run is one "package" (docs/bundled-api-backend.md, Pricing). On the bundled
     AI the broker counts it BEFORE any model call: the free plan's 3 a month, or the active
@@ -904,12 +973,15 @@ def _count_package(llm):
         return llm
     st, data = _broker_post("/llm/package", {})
     if st != 402:
+        # The free plan's last tailored resume of the month was just used: the upgrade moment.
+        if st == 200 and isinstance(data, dict) and data.get("tier") == "free" \
+                and data.get("packages_left") == 0:
+            _flag_upgrade_moment("free_resumes_used")
         return llm
     if _cred("ANTHROPIC_API_KEY"):
         return _make_byo_llm("anthropic")
     tier = str((data or {}).get("tier") or "free")
-    msg = ("You've used the 3 free tailored packages this month. A paid plan "
-           "gives you many more, or add your own AI key for unlimited tailoring."
+    msg = (FREE_RESUMES_USED_LINE
            if tier == "free" else
            "This period's tailored packages are used up. They refill when your plan renews, or add "
            "your own AI key for unlimited tailoring.")
@@ -1598,7 +1670,7 @@ _FAILURE_TEXT = {
     "rate_limited": "your AI provider is rate limiting right now. Try again in a few minutes.",
     "busy": "your AI provider is overloaded right now. Try again in a few minutes.",
     "offline": "this computer looks offline. I'll be able to do it once it's back online.",
-    "upgrade_required": "you've used the AI allowance on your plan. Open SponsorJobs to see the passes, or add your own AI key.",
+    "upgrade_required": "you've used the AI allowance on your plan. Open SponsorJobs to see the plans, or add your own AI key.",
     # OUR outage (the company AI key failed) and a passing one: plain words, nothing to buy,
     # nothing about the person's key or connection (llm/broker_client.py).
     "ai_company": ("SponsorJobs' AI is temporarily unavailable. Your plan and packages are not "
@@ -12077,6 +12149,10 @@ def screens_create():
     drill = _drill_questions(b.get("drill"))
     if b.get("drill") is not None and not drill:
         return jsonify({"error": "Pick 1 to 5 questions to drill."}), 400
+    # Free: 1 scored recorded practice interview a month (the broker counts it when it is scored).
+    # Once it is used, another one does not start: one line and the plans, before any model call.
+    if _free_recorded_used_up():
+        return _recorded_refusal()
     extra = bool(b.get("extra_time"))
     if drill:
         qs = drill
@@ -12426,6 +12502,17 @@ def _score_screen(sid: str):
     answers = s.get("answers") or []
     if not any(str(a.get("transcript") or "").strip() or a.get("video_path") for a in answers):
         return None, (jsonify({"error": "Record at least one answer first."}), 400)
+    # One recorded interview is counted ONCE, the first time it is scored, and the mark is saved
+    # before the scoring starts, so scoring it again (a retry, a rescue) is never counted twice.
+    if not s.get("counted") and not s.get("result"):
+        if not _count_recorded():
+            return None, _recorded_refusal()
+        with _SCREENS_LOCK:
+            screens = _load_screens()
+            cur = next((x for x in screens if x.get("id") == sid), None)
+            if cur is not None:
+                cur["counted"] = True
+                _save_screens(screens)
     profile = (_memory().load("default") or {}).get("profile") or {}
     result = _score_answer_set(s.get("role", ""), s.get("company", ""), answers, profile)
     result["disclaimer"] = ROUND1_DISCLAIMER
@@ -12674,6 +12761,20 @@ def _round2_status() -> dict:
 @_guard
 def interview_round2_status():
     return jsonify(_round2_status())
+
+
+# How many main questions the interviewer is briefed to ask (the briefing and the plan use these).
+ROUND2_Q_MIN, ROUND2_Q_MAX = 4, 6
+
+
+@app.get("/api/interview/round2/config")
+@_guard
+def interview_round2_config():
+    """What a live interview runs on, so the intro can state it before it starts (the call and its
+    own timing only exist once the person joins): its length in minutes and how many main questions
+    the interviewer is briefed to ask. Nothing about the account; that is /round2/status."""
+    return jsonify({"minutes": _cvi_timing()["minutes"], "questions_min": ROUND2_Q_MIN,
+                    "questions_max": ROUND2_Q_MAX})
 
 
 @app.post("/api/interview/round2/buy")
@@ -13087,14 +13188,16 @@ def billing_offers():
 @app.post("/api/billing/subscribe")
 @_guard
 def billing_subscribe():
-    """Start a plan that renews: {interval: "monthly" | "quarterly", consent: true}. Only the
+    """Start a plan that renews: {interval: "monthly", consent: true}. Only monthly plans are
+    sold (2026-11-25). "quarterly" is still passed on, because the broker holds the one switch
+    (SELL_QUARTERLY) and refuses it while that is off. Only the
     interval is passed on; the broker picks the student or standard price from the account's
     school check, never from anything this app says. `consent` must be the literal true the
     renewal checkbox sends. The Checkout URL comes back for the app to open."""
     b = request.json or {}
     interval = str(b.get("interval") or "").strip()
     if interval not in ("monthly", "quarterly"):
-        return jsonify({"error": "Pick monthly or every 3 months."}), 400
+        return jsonify({"error": "Pick a plan first."}), 400
     if b.get("consent") is not True:
         return jsonify({"error": "Tick the box to agree to automatic renewal first.",
                         "reason": "consent_required"}), 400
@@ -13278,11 +13381,11 @@ def _round2_plan(prep: dict, facts: list[dict] | None = None) -> list[dict]:
         text = str(q.get("q") or "").strip()
         if text:
             out.append({"q": text, "competency": str(q.get("competency") or "").strip() or "General"})
-        if len(out) >= 6:
+        if len(out) >= ROUND2_Q_MAX:
             break
     proj = [{"q": pr["questions"][0], "competency": "Project"} for pr in (facts or [])[:2] if pr.get("questions")]
     if proj:
-        out = (out[:2] + proj + out[2:])[:6]
+        out = (out[:2] + proj + out[2:])[:ROUND2_Q_MAX]
     return out
 
 
@@ -13299,7 +13402,7 @@ def _round2_briefing(prep: dict, profile: dict, facts: list[dict] | None = None)
         f"{_cvi_timing()['minutes']}-minute practice "
         "interview. Introduce yourself as the hiring manager for this team.",
         "Ask one question at a time, listen to the whole answer, probe with short follow-ups, and "
-        "keep to: intro, 4 to 6 questions, the candidate's questions, close.",
+        f"keep to: intro, {ROUND2_Q_MIN} to {ROUND2_Q_MAX} questions, the candidate's questions, close.",
     ]
     plan = _round2_plan(prep, facts)
     if plan:

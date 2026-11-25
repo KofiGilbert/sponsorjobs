@@ -5,10 +5,12 @@
 // Secrets (set once with `npx wrangler secret put <NAME>`, never written in this file):
 //   ANTHROPIC_API_KEY   the company Anthropic key; without it /health reports
 //                       real_providers:false and /llm/complete answers 503.
-//   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PASS30, STRIPE_PRICE_PASS90,
-//   STRIPE_PRICE_PACK_1, STRIPE_PRICE_PACK_3, STRIPE_PRICE_PACK_5
-//                       Stripe billing (docs/stripe-setup.md); without the key and a pass price
-//                       every /billing/* route answers "billing is not configured".
+//   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_STUDENT_MONTHLY,
+//   STRIPE_PRICE_STANDARD_MONTHLY, STRIPE_PRICE_PACK_1, STRIPE_PRICE_PACK_3
+//                       Stripe billing (docs/stripe-setup.md); without the key and a plan price
+//                       every /billing/* route answers "billing is not configured". The
+//                       STRIPE_PRICE_*_QUARTERLY, _PASS30/90 and _PACK_5 secrets are for things no
+//                       longer sold: leave any that are set, a subscription on one still needs it.
 //   RESEND_API_KEY      e-mail sign-in codes (docs/sign-in-setup.md) and mail forwarded from a
 //                       student's alias (docs/mail-alias.md); without it /account/email/*
 //                       answers "email sign-in is not configured" and aliases are not forwarded.
@@ -77,6 +79,11 @@
     "TAILOR_PASS_MODEL": "",
     // "1" accepts the X-Tailor-User dev header in place of a token. Never in production.
     "DEV_HEADER_AUTH": "0",
+    // What is on sale (src/metering.ts, owner decision 2026-11-25). "0" = only the two monthly
+    // plans are sold. "1" sells the every-3-months plans (or the retired one-time passes) again.
+    // Off stops NEW sales only: a subscription already on one of them keeps renewing as before.
+    "SELL_QUARTERLY": "0",
+    "SELL_PASSES": "0",
     // Admin dashboard (docs/admin-dashboard.md). Not secrets: the Zero Trust team name (e.g.
     // "sponsorjobs") and the Access application's AUD tag. Empty = the dashboard stays closed (403).
     "ACCESS_TEAM_DOMAIN": "sponsorjobs",

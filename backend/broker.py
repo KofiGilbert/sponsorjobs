@@ -201,6 +201,20 @@ def create_app(meter=None, provider=None, period_fn=_default_period, identify=_d
                            packages_left=0), 402
         return jsonify(model=meter.llm_model_for(user), **r)
 
+    @app.route("/interview/recorded", methods=["POST"])
+    def interview_recorded():
+        """The app calls this ONCE when a recorded practice interview is scored. The free plan
+        includes 1 a calendar month (402 recorded_limit after); paid plans are unlimited."""
+        user = identify(request)
+        if not user:
+            return jsonify(error="no user"), 401
+        try:
+            r = meter.start_recorded(user, period_fn())
+        except QuotaExceeded as exc:
+            return jsonify(error=str(exc), reason=exc.reason, tier=meter.tier_for(user),
+                           recorded_left=0), 402
+        return jsonify(**r)
+
     @app.route("/me/usage", methods=["GET"])
     def me_usage():
         user = identify(request)

@@ -27,12 +27,13 @@ implementation; it does not replace or change anything in `backend/`.
 | `GET /account/google/callback` | 302 to the app callback with `#token=...` (or `#error=cancelled` / `#error=signin_failed`) |
 | `POST /llm/complete` | one metered completion (`402 token_cap`, `503 free_busy`, `502` on upstream failure) |
 | `POST /llm/package` | counts one tailoring run (`402 package_limit`) |
-| `GET /me/usage` | plan, pass end date, interviews, packages, model |
-| `GET /billing/offers`, `GET /billing/packs` | plans (both tiers), the tier this caller pays, the student check, the running plan, and packs (only while a plan is active) |
+| `POST /interview/recorded` | counts one scored recorded practice interview: Free has 1 a calendar month (`402 recorded_limit`), paid plans are unlimited and not counted |
+| `GET /me/usage` | plan, pass end date, interviews, packages, `recorded_left` (null = unlimited), model |
+| `GET /billing/offers`, `GET /billing/packs` | the plans ON SALE (both tiers, monthly only unless `SELL_QUARTERLY` is `"1"`), the tier this caller pays, the student check, the running plan, and packs (only while a plan is active) |
 | `POST /billing/subscribe` | `{interval, consent: true}`: a renewing Stripe Checkout Session at the price the server picks (student or standard), `{url, plan}` |
 | `POST /billing/subscription/cancel`, `.../resume`, `POST /billing/portal` | cancel at period end in one call, undo it, or Stripe's billing portal `{url}` |
 | `GET /account/student`, `POST /account/student/start`, `.../verify` | the student price check: a 6-digit code to a school email, stored once (`src/student.ts`) |
-| `POST /billing/packs/<id>/checkout`, `POST /billing/passes/<id>/checkout` | a one-time Stripe Checkout Session, `{url}` (`402 pass_required` for a pack without a plan; passes only while their retired prices are still set) |
+| `POST /billing/packs/<id>/checkout`, `POST /billing/passes/<id>/checkout` | a one-time Stripe Checkout Session, `{url}` (`402 pass_required` for a pack without a plan; packs on sale are `pack_1` and `pack_3`; passes only with `SELL_PASSES` set to `"1"`) |
 | `POST /billing/webhook` | Stripe events (signature-checked): packs on `checkout.session.completed`; plans on `invoice.paid`, `invoice.payment_failed`, `invoice.upcoming` (renewal reminder email) and `customer.subscription.*` (`src/subscriptions.ts`) |
 | `POST /mail/alias` `{name?}` | the caller's `first.last@sponsorjobs.ai` alias for the apply agent, `{alias, forward_to}` (idempotent; `409 sign_in_first` without a verified e-mail) |
 | `GET /mail/alias`, `DELETE /mail/alias` | read or release the alias (`{alias, forward_to}`, both null when there is none) |

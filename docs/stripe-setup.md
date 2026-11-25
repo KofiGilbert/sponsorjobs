@@ -4,17 +4,26 @@ The broker at `https://api.sponsorjobs.ai` sells the plans that renew automatica
 interview packs. It stays switched off ("billing is not configured") until it has a few Stripe
 keys. This page walks you through it, one click at a time.
 
-What is on sale (decided 2026-11-20):
+What is on sale (decided 2026-11-25). The script creates exactly these four prices:
 
-| Plan | Price | Renews | Price id goes into |
+| What | Price | Renews | Price id goes into |
 | --- | --- | --- | --- |
-| Student, monthly | $29 | every month | `STRIPE_PRICE_STUDENT_MONTHLY` |
-| Student, every 3 months | $69 | every 3 months | `STRIPE_PRICE_STUDENT_QUARTERLY` |
-| Standard, monthly | $49 | every month | `STRIPE_PRICE_STANDARD_MONTHLY` |
-| Standard, every 3 months | $119 | every 3 months | `STRIPE_PRICE_STANDARD_QUARTERLY` |
-| 1 extra live interview | $9 | one-time | `STRIPE_PRICE_PACK_1` |
-| 3 extra live interviews | $24 | one-time | `STRIPE_PRICE_PACK_3` |
-| 5 extra live interviews | $39 | one-time | `STRIPE_PRICE_PACK_5` |
+| Student plan, monthly | $29 | every month | `STRIPE_PRICE_STUDENT_MONTHLY` |
+| Standard plan, monthly | $49 | every month | `STRIPE_PRICE_STANDARD_MONTHLY` |
+| 1 extra live interview | $12 | one-time | `STRIPE_PRICE_PACK_1` |
+| 3 extra live interviews | $33 | one-time | `STRIPE_PRICE_PACK_3` |
+
+Each plan includes 60 tailored applications and 3 live interviews of 20 minutes a period.
+
+Not sold any more: the every-3-months plans ($69 and $119), the 5-pack and the old one-time
+passes. The script no longer creates them. Prices an earlier run made stay in Stripe, and their
+Worker secrets stay where they are, so a subscription already on one keeps renewing. To sell the
+every-3-months plans again: run `python3 scripts/stripe_setup.py --sell-quarterly`, set
+`SELL_QUARTERLY` to `"1"` in `worker/wrangler.jsonc`, and deploy the Worker.
+
+The pack prices changed (they were $9 and $24). Re-running the script makes the new $12 and $33
+prices and points the Worker at them. Until it is re-run, the app would show $12 and $33 while
+Stripe still charges the old amounts, so run it before the Worker with this change is deployed.
 
 Plans renew until the person cancels. The student price is for students and graduates up to 24
 months after graduating, checked once with a code sent to a school email (free, built into the
@@ -129,8 +138,7 @@ from `~/sponsorjobs/worker`. That is part of the deploy step I will ask you to a
 ## Doing it by hand instead of the script
 
 If you ever need to: create each product in **Product catalog** → **+ Add product**. For a plan
-choose **Recurring**, **Monthly** for the monthly ones, and **Custom** → every **3 months** for
-the 3-month ones; for a pack choose **One-off**. Copy each price id (`price_...`) and store it
+choose **Recurring**, **Monthly**; for a pack choose **One-off**. Copy each price id (`price_...`) and store it
 with `npx wrangler secret put <name from the table>` in `~/sponsorjobs/worker`. Create the webhook
 in **Developers** → **Webhooks** for `https://api.sponsorjobs.ai/billing/webhook` with the six
 event types in the table above plus `checkout.session.async_payment_succeeded`, and store its

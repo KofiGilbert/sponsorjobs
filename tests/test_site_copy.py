@@ -129,14 +129,22 @@ def test_csp_allows_the_live_hosts():
 
 
 def test_prices_agree_with_the_broker():
-    """The pass and pack prices on the site are the ones the broker labels."""
+    """The plan and pack prices on the site are the ones the broker labels for what is SOLD:
+    the two monthly plans and the packs in SOLD_PACKS (owner decision 2026-11-25). A price the
+    broker still knows but no longer sells is not on the site."""
     metering = (ROOT / "worker" / "src" / "metering.ts").read_text(encoding="utf-8")
     pricing = _visible(SITE / "pricing.html")
-    for label in re.findall(r'priceLabel: "(\$\d+)"', metering):
-        if label:
-            assert label in pricing, f"pass price {label} missing from pricing.html"
-    for label in re.findall(r'pack_\d: "(\$\d+)"', metering):
-        assert label in pricing, f"pack price {label} missing from pricing.html"
+    plans = dict(re.findall(r'^  (\w+): \{ name: "\w+".*?priceLabel: "(\$\d+)"', metering, re.M | re.S))
+    packs = dict(re.findall(r'(pack_\d): "(\$\d+)"', re.search(r"PACK_PRICE_LABEL[^;]+;", metering).group(0)))
+    sold_packs = re.findall(r'"(pack_\d)"', re.search(r"SOLD_PACKS[^;]+;", metering).group(0))
+    assert plans["student_monthly"] == "$29" and plans["standard_monthly"] == "$49"
+    assert sold_packs == ["pack_1", "pack_3"]
+    sold = {plans["student_monthly"], plans["standard_monthly"], *(packs[p] for p in sold_packs)}
+    for label in sold:
+        assert label in pricing, f"price {label} missing from pricing.html"
+    not_sold = {plans["student_quarterly"], plans["standard_quarterly"], packs["pack_5"], "$9", "$24"} - sold
+    for label in not_sold:
+        assert not re.search(re.escape(label) + r"(?!\d)", pricing), f"{label} is not sold but is on pricing.html"
 
 
 # ---- the home page stays short and plain ---------------------------------------------------
