@@ -284,6 +284,15 @@ done it at once):
 The `/api/jobs` response says `"crawling": true` while the fallback crawl runs, and the client
 re-polls until rows arrive.
 
+### The search index (server-side search, off until go-live)
+
+After the build, the feed workflow can also write the list into the server-side search index
+(`scripts/load_search_index.py`, docs/server-search-plan.md). It runs only when the
+`SEARCH_D1_TOKEN` secret is set, writes only the rows that changed, stays inside a daily write
+budget (`SEARCH_D1_DAILY_WRITES`, default 80,000, for Cloudflare's free plan) and carries on next
+run, and never blocks publishing. Its state (`search-index-state.json.gz`) lives in the data dir, so
+the crawl-state save carries it. Apps read the index only with `JOBS_SEARCH=server`.
+
 ## Costs
 
 - **Cloudflare R2 free tier**: 10 GB storage, 1M Class A (writes) and 10M Class B (reads) operations
