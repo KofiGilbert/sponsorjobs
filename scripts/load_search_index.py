@@ -91,7 +91,8 @@ MIN_STEP = 4                        # when a crowded stretch is renumbered, leav
 MAX_VISA_CODES = 62                 # bits in jobs.vm
 
 DAILY_WRITES = 80_000               # of the free plan's 100,000 a day; the rest is the broker's
-EST_WRITES_PER_ROW = 2.0            # until D1 has reported real numbers in this run
+EST_WRITES_PER_ROW = 3.0            # until D1 has reported real numbers in this run (measured 2.5)
+RESERVE = 40                        # rows kept back for the run's bookkeeping (meta, usage, merge)
 
 
 # ---------------------------------------------------------------- one row -> one index record
@@ -428,18 +429,22 @@ def extras_statements(extras: dict[int, str], *, max_bytes: int = MAX_STATEMENT_
 
 
 def upsert_statements(upserts: list[tuple], dicts: Dicts, *,
-                      max_bytes: int = MAX_STATEMENT_BYTES):
-    """Yield (SQL, [source_id, ...]) for the rows, many a statement, in the order given."""
+                      max_bytes: int = MAX_STATEMENT_BYTES, max_rows=lambda: None):
+    """Yield (SQL, [source_id, ...]) for the rows, many a statement, in the order given.
+    `max_rows()` (None = no limit) is asked as each statement starts: the rows the write budget
+    still has room for, so a budget is filled to the last statement instead of stopping early."""
     budget = max_bytes - len(_UPSERT_HEAD) - len(_UPSERT_TAIL.encode())
     values, sids, size = [], [], 0
+    cap = max_rows()
     for sid, row, jid, x in upserts:
         rec = record(row, dicts)
         rec["id"], rec["x"] = jid, x
         v = "(" + ", ".join(lit(rec[c]) for c in COLUMNS) + ")"
         n = len(v.encode("utf-8")) + 2
-        if values and size + n > budget:
+        if values and (size + n > budget or (cap is not None and len(values) >= cap)):
             yield _UPSERT_HEAD + ", ".join(values) + _UPSERT_TAIL, sids
             values, sids, size = [], [], 0
+            cap = max_rows()
         values.append(v)
         sids.append(sid)
         size += n
@@ -649,14 +654,19 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client=None,
 
     budget = None                                   # rows this run may still write; None = no limit
     if daily_writes > 0:
-        budget = max(0, daily_writes - spent_today)
+        budget = max(0, daily_writes - spent_today - RESERVE)
     if max_writes > 0:
-        budget = max_writes if budget is None else min(budget, max_writes)
+        budget = max(0, max_writes - RESERVE) if budget is None else min(budget, max(0, max_writes - RESERVE))
     start_written = client.written
     cost = {"per_row": EST_WRITES_PER_ROW, "rows": 0, "written": 0}
 
     def room(n_rows: int) -> bool:
         return budget is None or (client.written - start_written) + n_rows * cost["per_row"] <= budget
+
+    def rows_left():
+        if budget is None:
+            return None
+        return max(1, int((budget - (client.written - start_written)) / cost["per_row"]))
 
     def learn_cost(n_rows: int) -> None:
         cost["rows"] += n_rows
@@ -700,7 +710,7 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client=None,
                 if not group:
                     stopped = "write budget"
                     break
-                for sql, sids in upsert_statements(group, dicts):
+                for sql, sids in upsert_statements(group, dicts, max_rows=rows_left):
                     if not room(len(sids)):
                         stopped = "write budget"
                         break
