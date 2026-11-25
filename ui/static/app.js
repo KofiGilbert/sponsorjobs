@@ -11554,6 +11554,15 @@
     paintPlan();
   }
   function closeUpgrade() { if (upgModal) upgModal.hidden = true; }
+  $("#menuUpgrade")?.addEventListener("click", openUpgrade);
+  // "Get an API key" opens the connect-AI picker in setup mode, so you choose Claude or
+  // OpenAI first; the "get your key" step then links to that provider's console.
+  $("#menuGetKey")?.addEventListener("click", () => { closeAcctMenu(); openAiModal(true); });
+  $("#upgClose")?.addEventListener("click", closeUpgrade);
+  upgModal?.addEventListener("click", (e) => { if (e.target === upgModal) closeUpgrade(); });
+  // Free stays unlimited on the person's own AI key.
+  $("#upgOwnKey")?.addEventListener("click", () => { closeUpgrade(); openAiModal(true); });
+
   // ---- Upgrade moments (owner decision 2026-11-25). Each is one plain line and a "See plans"
   // button that opens the ONE plans panel above. No price is repeated in any of them.
   const seePlansBtn = (cls) => {
@@ -11591,14 +11600,6 @@
     p.append(s, seePlansBtn("upg-link upg-moment-link"));
     gate.insertAdjacentElement("afterend", p);
   };
-  $("#menuUpgrade")?.addEventListener("click", openUpgrade);
-  // "Get an API key" opens the connect-AI picker in setup mode, so you choose Claude or
-  // OpenAI first; the "get your key" step then links to that provider's console.
-  $("#menuGetKey")?.addEventListener("click", () => { closeAcctMenu(); openAiModal(true); });
-  $("#upgClose")?.addEventListener("click", closeUpgrade);
-  upgModal?.addEventListener("click", (e) => { if (e.target === upgModal) closeUpgrade(); });
-  // Free stays unlimited on the person's own AI key.
-  $("#upgOwnKey")?.addEventListener("click", () => { closeUpgrade(); openAiModal(true); });
 
   // toast("Moved", {label: "Undo", run}) shows one action beside the message (Gmail's undo
   // toast) and stays up a little longer so there is time to reach it.

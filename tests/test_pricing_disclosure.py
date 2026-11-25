@@ -129,7 +129,7 @@ def test_the_upgrade_lines_are_the_decided_words_and_carry_no_price():
         assert EN[key] == text, key
         for code, d in LOCALES.items():
             assert d[key].strip() and "$" not in d[key], (code, key)
-    moments = APP_JS[APP_JS.index("// ---- Upgrade moments"):APP_JS.index("$(\"#menuUpgrade\")")]
+    moments = APP_JS[APP_JS.index("// ---- Upgrade moments"):APP_JS.index("// toast(\"Moved\"")]
     assert moments.count("openUpgrade") >= 2 and "$" not in re.sub(r"\$\(|\$\{", "", moments)
     assert "window.__upgradeMoment" in moments and "window.__recordedLimit" in moments
     assert "window.__r1FreeUpsell" in moments and 'ACCT_PLAN !== "free"' in moments
