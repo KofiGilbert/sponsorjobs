@@ -332,9 +332,9 @@ class Plan:
     """What one feed needs written, against the index's state.
 
     state / target: {source_id: [h, id, x]}. `deletes` are ids to remove (rows that left, and the
-    old id of a row that moved); `upserts` are (source_id, feed row, id, x) to insert or rewrite,
-    new rows first, each group newest first; `new_extras` maps an employer-fields id to its JSON
-    for values the index does not hold yet; `dead_extras` are ids no row will point at."""
+    old id of a row that moved); `new` and `moved` are (source_id, feed row, id, x) to insert and
+    to rewrite, each newest first; `new_extras` maps an employer-fields id to its JSON for values
+    the index does not hold yet; `dead_extras` are ids no row will point at."""
 
     def __init__(self, rows: list[dict], state: dict, extras: dict[str, int]):
         feed: dict[str, dict] = {}
@@ -371,16 +371,16 @@ class Plan:
                 if int(old[1]) != ids[sid]:
                     self.deletes.append(int(old[1]))    # it moved: the old id goes first
                 changed.append((sid, r, ids[sid], x))
-        new.sort(key=lambda t: t[2])
-        changed.sort(key=lambda t: t[2])
+        new.sort(key=lambda t: -t[2])               # newest first
+        changed.sort(key=lambda t: -t[2])
+        self.new, self.moved = new, changed
         self.added, self.changed = len(new), len(changed)
-        self.upserts = new + changed
         used = {v[2] for v in self.target.values()}
         self.dead_extras = sorted(x for x in set(extras.values()) if x not in used)
 
     @property
     def pending(self) -> int:
-        return len(self.deletes) + len(self.upserts)
+        return len(self.deletes) + len(self.new) + len(self.moved)
 
 
 # ---------------------------------------------------------------- SQL
@@ -445,6 +445,33 @@ def upsert_statements(upserts: list[tuple], dicts: Dicts, *,
         size += n
     if values:
         yield _UPSERT_HEAD + ", ".join(values) + _UPSERT_TAIL, sids
+
+
+WAVE = 5000
+
+
+def waves(plan: "Plan", first_load: bool, fits):
+    """The rows to write, in batches, each batch in ASCENDING id order: SQLite fills a table page
+    completely only when rows arrive in key order (measured: 456 bytes a row ascending, 908
+    descending, and the free plan stops at 500 MB a database).
+
+    The first load (nobody can search yet) goes oldest to newest in one pass. After that, new
+    rows go before changed ones and the newest before the rest: each batch is the newest rows
+    still waiting that `fits()` says the budget has room for (None = no limit), at most WAVE. An
+    empty batch means the budget is spent."""
+    if first_load:
+        yield sorted(plan.new + plan.moved, key=lambda t: t[2])
+        return
+    for group in (plan.new, plan.moved):
+        pos = 0
+        while pos < len(group):
+            n = fits()
+            take = WAVE if n is None else max(0, min(WAVE, n))
+            if take == 0:
+                yield []
+                return
+            yield group[pos:pos + take][::-1]
+            pos += take
 
 
 def meta_statement(values: dict[str, str]) -> str:
@@ -620,6 +647,7 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client=None,
         if cost["rows"] >= 200:
             cost["per_row"] = max(0.5, cost["written"] / cost["rows"])
 
+    first_load = meta.get("ready") != "1"
     work = bool(plan.pending or plan.new_extras or plan.dead_extras or dicts.dirty)
     token = meta.get("load_token") or ""
     done_deletes = done_upserts = 0
@@ -649,10 +677,13 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client=None,
                     sid = by_id.pop(i, None)
                     if sid is not None and int(live[sid][1]) == i:
                         del live[sid]
-            if not stopped:
-                # Statements are built one at a time (a few hundred rows each), so a run that
-                # stops at the budget never encodes rows it will not send.
-                for sql, sids in upsert_statements(plan.upserts, dicts):
+            for group in (() if stopped else waves(plan, first_load, lambda: (
+                    None if budget is None
+                    else int((budget - (client.written - start_written)) / cost["per_row"])))):
+                if not group:
+                    stopped = "write budget"
+                    break
+                for sql, sids in upsert_statements(group, dicts):
                     if not room(len(sids)):
                         stopped = "write budget"
                         break
@@ -661,6 +692,8 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client=None,
                     done_upserts += len(sids)
                     for sid in sids:
                         live[sid] = list(plan.target[sid])
+                if stopped:
+                    break
             if not stopped and plan.dead_extras:
                 client.query("DELETE FROM extras WHERE x IN ("
                              + ", ".join(map(str, plan.dead_extras)) + ")")
@@ -685,6 +718,10 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client=None,
             if complete:
                 new_meta["ready"] = "1"             # the first full load is in: the API may answer
             client.query(meta_statement(new_meta))
+            if wrote:
+                # Fold the keyword index's small new segments together, a bounded amount of work
+                # (D1 counts it as one row written), so the index stays compact as it is fed.
+                client.query("INSERT INTO jobs_fts(jobs_fts, rank) VALUES('merge', 2000)")
             if wrote and complete:
                 client.query("PRAGMA optimize")     # refresh the planner's statistics (cheap)
         written = client.written - start_written
