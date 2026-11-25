@@ -815,11 +815,12 @@
       <!-- ============ REVIEW & SUBMIT ============ -->
       <!-- ============ TRACKER (the job board) ============
            One stage per job you saved, tailored or applied to. Same rows as the Jobs page
-           (sourcing/board.py), local only. Laid out like a Jira board (2026-11-24): the title
-           and one quiet numbers line, one toolbar (search, the Follow-ups due filter, Board /
-           Table, Export), then columns that fill the window and scroll on their own. Cards are
-           compact (title, one chip, company and one date); a click opens the side panel, which
-           holds everything else. Ready to apply cards carry one "Apply" (autofill). -->
+           (sourcing/board.py), local only. A Jira-style board (2026-11-25): the title and one
+           quiet numbers line, one toolbar (search, the Follow-ups due and Resume ready filters,
+           Board / Table, Export), then five columns of STATES (To apply, Applied, Interviewing,
+           Offer, Closed) that fill the window and scroll on their own. A card carries
+           information only (title, lozenges, company and one date); a click opens the side
+           panel, which holds every action (Apply, Tailor resume, Continue tailoring). -->
       <section class="view view-tracker" id="view-tracker">
         <header class="page-head trk-head">
           <div>
@@ -828,8 +829,8 @@
           </div>
         </header>
 
-        <!-- From your inbox: shown only when there is something, one row per message. Move /
-             Not this; nothing moves without a click. Then the quiet closed-jobs line. -->
+        <!-- From your inbox: shown only when there is something, as ONE line (more on demand).
+             Move / Not this; nothing moves without a click. Then the quiet closed-jobs line. -->
         <div class="trk-inbox" id="trkInbox" hidden><!-- injected --></div>
         <p class="feed-notice trk-notice" id="trkClosed" role="status" hidden></p>
 
@@ -839,6 +840,7 @@
             <input class="jf-input" id="trkSearch" type="search" placeholder="Search company or job title" data-i18n-ph="tracker.searchPh" aria-label="Search company or job title" data-i18n-aria="tracker.searchPh" autocomplete="off" />
           </label>
           <button class="trk-chip" id="trkDueChip" type="button" aria-pressed="false" hidden><span data-i18n="tracker.dueChip">Follow-ups due</span> <span class="trk-chip-n" id="trkDueN"></span></button>
+          <button class="trk-chip trk-chip-ready" id="trkReadyChip" type="button" aria-pressed="false" hidden title="Jobs you can apply to right now" data-i18n-title="tracker.readyChipTip"><span data-i18n="tracker.readyChip">Resume ready</span> <span class="trk-chip-n" id="trkReadyN"></span></button>
           <div class="trk-toolbar-end">
             <div class="trk-seg" role="group" aria-label="View">
               <button class="trk-seg-btn is-on" id="trkViewBoard" type="button" data-i18n="tracker.board">Board</button>

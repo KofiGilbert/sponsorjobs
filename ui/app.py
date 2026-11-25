@@ -20812,7 +20812,7 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
             if w.stage_of(sid) == "archived":
                 w.mark_posting_closed(sid, CLOSED_POSTING)
             continue
-        note = {"applied": "Application submitted", "approved": "Ready to apply"}.get(rstage, "Tailored a resume")
+        note = {"applied": "Application submitted", "approved": "Resume ready"}.get(rstage, "Tailored a resume")
         if cur is None:
             existing = w.get_job(sid)
             w.track_job(sid, rstage, note=note,

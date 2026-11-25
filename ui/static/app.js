@@ -6342,21 +6342,24 @@
   $("#aaInboxClose")?.addEventListener("click", () => { $("#aaInboxSec").hidden = true; });
 
   /* ---------------------------------------------------------------- Tracker (the job board)
-     Huntr / Teal style, local-first: one stage per job you saved, tailored or applied to, on the
-     SAME rows the Jobs page uses (sourcing/board.py, /api/tracker/*). Kanban with plain HTML5
-     drag and drop, a table view, and a side panel per card (notes saved on blur, contacts, a
-     follow-up date, the timeline, links to the tailored resume and cover letter). The funnel at
-     the top is computed server-side so the numbers match the claims export. */
+     Local-first: one stage per job you saved, tailored or applied to, on the SAME rows the Jobs
+     page uses (sourcing/board.py, /api/tracker/*). A Jira-style board of five STATES (To apply,
+     Applied, Interviewing, Offer, Closed) with plain HTML5 drag and drop, a table view, and a
+     side panel per card. A card carries information only; every action (Apply, Tailor resume,
+     Continue tailoring, "Did you submit it?", notes, contacts, a follow-up date, the timeline,
+     the files) is in the panel. The numbers at the top are computed server-side so they match
+     the claims export. */
   const TRK_STAGES = ["saved", "in_progress", "approved", "applied", "interviewing", "offer", "rejected", "archived"];
-  const TRK_STAGE_EN = { saved: "Saved", in_progress: "In progress", approved: "Ready to apply", applied: "Applied", interviewing: "Interviewing",
+  const TRK_STAGE_EN = { saved: "Saved", in_progress: "In progress", approved: "Resume ready", applied: "Applied", interviewing: "Interviewing",
     offer: "Offer", rejected: "Rejected", archived: "Archived" };
   const trkT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   const trkStageName = (s) => trkT("tracker.stage." + s, TRK_STAGE_EN[s] || s);
   const TRK_VIEW_KEY = "tailor-tracker-view";
-  let TRK_CARDS = [], TRK_METRICS = null, TRK_VIEW = "board", TRK_OPEN = null, TRK_CLOSED = null;
-  // The toolbar's filters (2026-11-24, Jira's search box and quick filters): words matched against
-  // the company and the job title, and "Follow-ups due". Client side, on the cards already loaded.
-  const TRK_FILTER = { q: "", due: false };
+  let TRK_CARDS = [], TRK_METRICS = null, TRK_VIEW = "board", TRK_OPEN = null, TRK_CLOSED = null, TRK_PANEL_SEQ = 0;
+  // The toolbar's filters (Jira's search box and quick filters): words matched against the company
+  // and the job title, "Follow-ups due", and "Resume ready" (the jobs that can be applied to right
+  // now). Client side, on the cards already loaded.
+  const TRK_FILTER = { q: "", due: false, ready: false };
   try { TRK_VIEW = localStorage.getItem(TRK_VIEW_KEY) === "table" ? "table" : "board"; } catch { TRK_VIEW = "board"; }
 
   // "2026-10-05" -> "Oct 5". Built as a LOCAL date on purpose: new Date("2026-10-05") is UTC
@@ -6435,6 +6438,7 @@
     const words = TRK_FILTER.q.toLowerCase().split(/\s+/).filter(Boolean);
     return TRK_CARDS.filter(c => {
       if (TRK_FILTER.due && !c.follow_up_due) return false;
+      if (TRK_FILTER.ready && trkAction(c) !== "apply") return false;
       if (!words.length) return true;
       const hay = `${c.company || ""} ${c.display_name || ""} ${c.title || ""}`.toLowerCase();
       return words.every(w => hay.includes(w));
@@ -6452,16 +6456,19 @@
     if (none || TRK_VIEW === "board") renderTrackerBoard(); else renderTrackerTable();
   }
 
-  // "Follow-ups due 3": a quick filter, shown only while some are due.
+  // "Follow-ups due 3" and "Resume ready 5": quick filters, each shown only while it has some.
   function trkRenderDueChip() {
-    const chip = $("#trkDueChip");
-    if (!chip) return;
-    const n = TRK_CARDS.filter(c => c.follow_up_due).length;
-    if (!n) TRK_FILTER.due = false;
-    chip.hidden = !n;
-    chip.setAttribute("aria-pressed", TRK_FILTER.due ? "true" : "false");
-    const count = $("#trkDueN");
-    if (count) count.textContent = n ? String(n) : "";
+    const chip = (id, nId, key, n) => {
+      const el = $(id);
+      if (!el) return;
+      if (!n) TRK_FILTER[key] = false;
+      el.hidden = !n;
+      el.setAttribute("aria-pressed", TRK_FILTER[key] ? "true" : "false");
+      const count = $(nId);
+      if (count) count.textContent = n ? String(n) : "";
+    };
+    chip("#trkDueChip", "#trkDueN", "due", TRK_CARDS.filter(c => c.follow_up_due).length);
+    chip("#trkReadyChip", "#trkReadyN", "ready", TRK_CARDS.filter(c => trkAction(c) === "apply").length);
   }
 
   // Sponsorship chips for the side panel, quiet when there is nothing to say.
@@ -6478,145 +6485,176 @@
     return "";
   }
 
-  // The ONE small fact a card shows, chosen by its stage: {text, due}. A dated one also comes
-  // split as {pre: "Applied ", day: "Nov 23"}, so a narrow column can show just the date (the
-  // column already names the stage) with the whole line on hover.
-  function trkCardMeta(c) {
-    const d = (k, f, iso) => {
-      const t = trkT(k, f), i = t.indexOf("{d}"), day = trkDay(iso);
-      return { text: t.replace("{d}", day), pre: i > 0 ? t.slice(0, i) : "", day: i >= 0 ? t.slice(i).replace("{d}", day) : t };
-    };
-    const due = c.follow_up_at && c.follow_up_due;
-    if (c.closed_at) return d("tracker.jobClosedOn", "Job closed {d}", c.closed_at);
+  // One icon set for the whole Tracker (2026-11-25): inline SVG on a 16px grid, 1.5px round
+  // strokes, currentColor. No emoji, no second style.
+  const TRK_IC = {
+    calendar: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.75h11M5.5 2v3M10.5 2v3"/>',
+    flag: '<path d="M3.75 14V2.5M3.75 3h8.5l-2 2.75 2 2.75h-8.5"/>',
+    check: '<path d="M3 8.5l3.25 3.25L13 4.75"/>',
+    chevron: '<path d="M6 3.5 10.5 8 6 12.5"/>',
+    close: '<path d="M4 4l8 8M12 4l-8 8"/>',
+    file: '<path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3"/>',
+    chat: '<path d="M2.5 4.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H7.5l-3 2.5V10.5a2 2 0 0 1-2-2z"/>',
+    external: '<path d="M9.5 2.5h4V6.5M13.5 2.5 8 8M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>',
+    inbox: '<path d="M2.5 9.5 4.25 3.5h7.5L13.5 9.5v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><path d="M2.5 9.5h3.25l.75 1.5h3l.75-1.5h3.25"/>',
+  };
+  function trkIcon(name, size) {
+    const s = size || 14;
+    return `<svg class="trk-ic" width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TRK_IC[name] || ""}</svg>`;
+  }
+
+  // The board's five columns are STATES (2026-11-25, a Jira board: a column says where a job is,
+  // a card is moved between them, nothing on the board is an action). "To apply" is Jira's To do:
+  // every job the person wants to apply to, whether it is only saved, has a resume being
+  // tailored, or has one ready. The eight stage keys underneath (sourcing/board.py) and their
+  // data are unchanged; only the grouping is.
+  const TRK_COLS = [
+    { key: "todo", stages: ["saved", "in_progress", "approved"], name: ["tracker.col.todo", "To apply"], hint: ["tracker.hintTodo", "Jobs you save or tailor land here"] },
+    { key: "applied", stages: ["applied"], name: ["tracker.stage.applied", "Applied"], hint: ["tracker.hintApplied", "Moves here when you apply"] },
+    { key: "interviewing", stages: ["interviewing"], name: ["tracker.stage.interviewing", "Interviewing"], hint: ["tracker.hintInterview", "Drag a card here when they call"] },
+    { key: "offer", stages: ["offer"], name: ["tracker.stage.offer", "Offer"], check: true, hint: ["tracker.hintOffer", "Drag a card here when you get an offer"] },
+    { key: "closed", stages: ["rejected", "archived"], name: ["tracker.closed", "Closed"], hint: ["tracker.hintClosed", "Rejections and jobs you pass on"] },
+  ];
+  function trkColOf(stage) {
+    const col = TRK_COLS.find(c => c.stages.includes(stage));
+    return col ? col.key : "";
+  }
+  function trkColName(key) {
+    const col = TRK_COLS.find(c => c.key === key);
+    return col ? trkT(col.name[0], col.name[1]) : key;
+  }
+  // The stage a card takes when it is dropped on a column ("" = it is already there). To apply
+  // keeps the truth about the resume: ready when the job has one, being tailored when its chat is
+  // open, else saved. Closed: a job never applied to is archived, one that was is not selected.
+  function trkDropStage(c, col) {
+    if (!c || !col || trkColOf(c.stage) === col) return "";
+    if (col === "todo") return c.record ? "approved" : (c.has_session ? "in_progress" : "saved");
+    if (col === "closed") return trkColOf(c.stage) === "todo" ? "archived" : "rejected";
+    return col;
+  }
+
+  // Where a job is INSIDE its column, as one small lozenge: {key, tone, text}, or null when the
+  // column says it all. Tones: success, info, warn, neutral.
+  function trkState(c) {
+    const loz = (key, tone, k, f) => ({ key, tone, text: trkT(k, f) });
+    const col = trkColOf(c.stage);
+    if (col === "closed") {
+      if (c.closed_at) return loz("job_closed", "neutral", "tracker.loz.jobClosed", "Job closed");
+      return c.stage === "rejected" ? loz("not_selected", "neutral", "tracker.notSelected", "Not selected")
+        : loz("archived", "neutral", "tracker.stage.archived", "Archived");
+    }
+    if (col === "todo") {
+      if (c.ask_submitted && c.apply_id) return loz("ask", "warn", "tracker.loz.ask", "Did you submit?");
+      if (c.apply_id || (c.stage === "approved" && c.record)) return loz("ready", "success", "tracker.loz.ready", "Resume ready");
+      if (c.stage === "in_progress") return loz("tailoring", "info", "tracker.loz.tailoring", "Tailoring");
+      return loz("none", "neutral", "tracker.loz.none", "No resume yet");
+    }
+    if (c.follow_up_due) return loz("due", "warn", "tracker.loz.due", "Follow up due");
+    return null;
+  }
+  function trkLozHtml(st) {
+    return st ? `<span class="trk-loz trk-loz-${st.tone}" data-loz="${st.key}">${esc(st.text)}</span>` : "";
+  }
+  // What the side panel's ONE primary button does for this job: "apply" (a resume is ready),
+  // "continue" (one is being tailored), "tailor" (none yet), or "" outside To apply.
+  function trkAction(c) {
+    if (trkColOf(c.stage) !== "todo") return "";
+    if (c.apply_id) return "apply";
+    if (c.stage === "in_progress" || c.has_session) return "continue";
+    return "tailor";
+  }
+
+  // The ONE date a card shows, chosen by its stage: {icon, day, title, due}. A follow-up that is
+  // due replaces it (a flag, in amber). The words are on hover; the card shows icon and date.
+  function trkCardDate(c) {
+    const on = (k, f, iso, more) => (iso ? { icon: "calendar", day: trkDay(iso), title: trkT(k, f).replace("{d}", trkDay(iso)), ...more } : null);
+    if (c.closed_at) return on("tracker.jobClosedOn", "Job closed {d}", c.closed_at);
+    if (c.follow_up_due && c.follow_up_at) return on("tracker.followUpOn", "Follow up {d}", c.follow_up_at, { icon: "flag", due: true });
     switch (c.stage) {
-      case "saved": return d("tracker.savedOn", "Saved {d}", c.stage_at);
-      case "in_progress": {
-        const t = c.session && c.session.updated_at ? sessAgo(c.session.updated_at) : "";
-        return { text: t ? trkT("tracker.updatedAgo", "Updated {t}").replace("{t}", t) : trkStageName("in_progress") };
-      }
-      case "approved": return c.tailored_at ? { ...d("tracker.tailoredOn", "Tailored {d}", c.tailored_at), ready: true } : { text: "" };
-      case "applied":
-        if (due) return { ...d("tracker.followUpOn", "Follow up {d}", c.follow_up_at), due: true };
-        return c.applied_at ? d("tracker.appliedOnDay", "Applied {d}", c.applied_at) : { text: "" };
-      case "interviewing": case "offer":
-        if (due) return { ...d("tracker.followUpOn", "Follow up {d}", c.follow_up_at), due: true };
-        return c.stage_at ? d("tracker.sinceOn", "Since {d}", c.stage_at) : { text: "" };
-      case "rejected": return { text: trkT("tracker.notSelected", "Not selected") };
-      case "archived": return c.stage_at ? d("tracker.archivedOn", "Archived {d}", c.stage_at) : { text: "" };
-      default: return { text: "" };
+      case "saved": return on("tracker.savedOn", "Saved {d}", c.stage_at);
+      case "approved": return on("tracker.tailoredOn", "Tailored {d}", c.tailored_at || c.stage_at);
+      case "applied": return on("tracker.appliedOnDay", "Applied {d}", c.applied_at || c.stage_at);
+      case "archived": return on("tracker.archivedOn", "Archived {d}", c.stage_at);
+      default: return on("tracker.sinceOn", "Since {d}", c.stage_at);
     }
   }
-
-  // "Did you submit it?" Yes / Not yet, on a Ready to apply card after an Autofill (the engine's
-  // own ask_submitted, the same question the Applications list asks).
-  function trkAskHtml(c) {
-    if (!c.ask_submitted || !c.apply_id) return "";
-    return `<div class="trk-ask"><span>${esc(trkT("aa.askSubmitted", "Did you submit it?"))}</span>
-        <button class="btn btn-ghost btn-xs" type="button" data-trk-yes>${esc(trkT("ans.yes", "Yes"))}</button>
-        <button class="btn btn-ghost btn-xs" type="button" data-trk-notyet>${esc(trkT("aa.notYet", "Not yet"))}</button></div>`;
-  }
-  const trkApplyTip = () => trkT("tracker.applyTip", "Opens the application and fills it from your profile. You check it and submit.");
-  function trkApplyBtn(c, cls) {
-    if (c.stage !== "approved" || !c.apply_id) return "";
-    return `<button class="btn ${cls}" type="button" data-trk-apply title="${esc(trkApplyTip())}">${esc(trkT("tracker.apply", "Apply"))}</button>`;
+  function trkDateHtml(d) {
+    return d ? `<span class="trk-card-date${d.due ? " is-due" : ""}" title="${esc(d.title)}">${trkIcon(d.icon)}<span>${esc(d.day)}</span></span>` : "";
   }
 
-  // One compact card, the same shape in every column (Jira's card): the company (small, muted, its
-  // full name on one line), the job title, then one footer row: the New tag and at most one chip on
-  // the left, one date (or "Apply") on the right.
-  // Resume, cover letter, chat and notes live in the side panel a click opens.
+  // One card, the same anatomy in every column (the Jira card): the job title; one row of at most
+  // two lozenges (where it is inside its column, and one sponsorship tag); then a footer with the
+  // logo and company on the left and one date on the right. A card carries information, never a
+  // button or a link: the whole card opens the side panel, where the actions are.
   function trkCardHtml(c) {
-    const co = coName(c);
-    const meta = trkCardMeta(c);
-    const chip = trkChip(c);
-    const tag = c.stage === "approved" && c.new ? `<span class="trk-new">${esc(trkT("aa.new", "New"))}</span>` : "";
-    const apply = trkApplyBtn(c, "btn-ghost btn-xs trk-apply");
-    return `<div class="trk-card${c.stage === "approved" && c.new ? " is-new" : ""}" draggable="true" data-sid="${esc(c.source_id)}" role="button" tabindex="0"
-        aria-label="${esc(co ? `${co}, ${c.title || ""}` : c.title || "")}">
-      ${co ? `<div class="trk-card-co">${trkAvatar(c)}<span class="trk-card-co-n" title="${esc(co)}">${esc(co)}</span></div>` : ""}
+    const co = coName(c), st = trkState(c), tag = trkChip(c), date = trkCardDate(c);
+    const label = [c.title || co, co, st ? st.text : "", date ? date.title : ""].filter(Boolean).join(", ");
+    return `<div class="trk-card" draggable="true" data-sid="${esc(c.source_id)}" role="button" tabindex="0" aria-label="${esc(label)}">
       <div class="trk-card-t">${esc(c.title || co)}</div>
-      ${chip || tag || meta.text || apply ? `<div class="trk-card-foot">
-        <span class="trk-card-tags">${tag}${chip}</span>
-        ${meta.text || apply ? `<span class="trk-card-end">${meta.text ? trkMetaHtml(meta) : ""}${apply}</span>` : ""}
-      </div>` : ""}
-      ${trkAskHtml(c)}
+      ${st || tag ? `<div class="trk-card-loz">${trkLozHtml(st)}${tag}</div>` : ""}
+      <div class="trk-card-foot">
+        <span class="trk-card-co">${trkAvatar(c)}<span class="trk-card-co-n" title="${esc(co)}">${esc(co)}</span></span>
+        ${trkDateHtml(date)}
+      </div>
     </div>`;
-  }
-  function trkMetaHtml(m) {
-    const cls = `trk-card-meta${m.due ? " trk-due" : ""}${m.ready ? " is-ready" : ""}`;
-    const body = m.pre ? `<span class="trk-meta-l">${esc(m.pre)}</span>${esc(m.day)}` : esc(m.day || m.text);
-    return `<span class="${cls}" title="${esc(m.text)}">${body}</span>`;
   }
   // The company's logo (the Jobs page's own avatar), small, with its initials underneath.
   function trkAvatar(c) {
     return `<span class="trk-av">${companyAvatar(c)}</span>`;
   }
 
-  // The board's columns (2026-10-23, after Huntr's Wishlist / Applied / Interview / Offer /
-  // Rejected): Saved, Ready to apply, Applied, Interviewing, Offer, Closed. "In progress" shows only
-  // while a resume is being built; Closed holds rejected and archived jobs.
-  const TRK_COLS = [
-    { key: "saved", stages: ["saved"], hint: ["tracker.hintSaved", "Jobs you save from the Jobs page"] },
-    // A resume is being built for these (its session is open and not sent): shown while one is.
-    { key: "in_progress", stages: ["in_progress"], optional: true, hint: ["tracker.hintInProgress", "Resumes you are tailoring"] },
-    { key: "approved", stages: ["approved"], hint: ["tracker.hintApproved", "Tailored, ready for you to apply"] },
-    { key: "applied", stages: ["applied"], hint: ["tracker.hintApplied", "Moves here when you apply"] },
-    { key: "interviewing", stages: ["interviewing"], hint: ["tracker.hintInterview", "Drag a card here when they call"] },
-    { key: "offer", stages: ["offer"], hint: ["tracker.hintOffer", "Drag a card here when you get an offer"] },
-    { key: "rejected", stages: ["rejected", "archived"], name: ["tracker.closed", "Closed"], hint: ["tracker.hintClosed", "Rejections and jobs you pass on"] },
-  ];
   // The board fills the rest of the window and each column scrolls on its own (CSS: the view is a
   // flex column and the board takes what the title and toolbar leave); the page never scrolls.
+  // Always five columns, so they fit side by side; an empty one keeps its width and says one line.
   function renderTrackerBoard() {
     const host = $("#trkBoard");
     const shown = trkVisible();
-    const filtering = !!(TRK_FILTER.q || TRK_FILTER.due);
-    const cols = TRK_COLS.filter(c => !c.optional || TRK_CARDS.some(x => c.stages.includes(x.stage)));
-    host.style.setProperty("--trk-cols", cols.length);
-    host.innerHTML = cols.map(col => {
+    const filtering = !!(TRK_FILTER.q || TRK_FILTER.due || TRK_FILTER.ready);
+    host.innerHTML = TRK_COLS.map(col => {
       const cards = shown.filter(c => col.stages.includes(c.stage));
-      const name = col.name ? trkT(col.name[0], col.name[1]) : trkStageName(col.key);
-      // An empty column stays narrow (Jira collapses them) with a one-line hint.
+      // To apply reads top down by what can be done next: resumes that are ready, then the ones
+      // being tailored, then jobs only saved.
+      if (col.key === "todo") cards.sort((x, y) => col.stages.indexOf(y.stage) - col.stages.indexOf(x.stage));
+      const name = trkT(col.name[0], col.name[1]);
       const hint = filtering ? trkT("tracker.noMatch", "No matches") : trkT(col.hint[0], col.hint[1]);
-      return `<section class="trk-col${cards.length ? "" : " is-empty"}" data-stage="${col.key}" aria-label="${esc(name)}">
-        <h2 class="trk-col-h"><span class="trk-col-name">${esc(name)}</span><span class="trk-col-n">${cards.length}</span></h2>
+      return `<section class="trk-col${cards.length ? "" : " is-empty"}" data-col="${col.key}" aria-label="${esc(name)}">
+        <h2 class="trk-col-h"><span class="trk-col-name">${esc(name)}</span>${col.check ? `<span class="trk-col-ok">${trkIcon("check")}</span>` : ""}<span class="trk-col-n">${cards.length}</span></h2>
         <div class="trk-col-cards">${cards.length ? cards.map(trkCardHtml).join("") : `<div class="trk-col-hint">${esc(hint)}</div>`}</div>
       </section>`;
     }).join("");
     host.querySelectorAll(".trk-card").forEach(card => {
       const sid = card.dataset.sid;
-      // The whole card opens the side panel (Jira's issue view); its one button is Apply.
-      card.addEventListener("click", (e) => {
-        if (e.target.closest("[data-trk-apply]")) { e.stopPropagation(); trkApply(sid, e.target.closest("[data-trk-apply]")); return; }
-        if (e.target.closest("[data-trk-yes]")) { e.stopPropagation(); trkSubmittedYes(sid, e.target.closest("button")); return; }
-        if (e.target.closest("[data-trk-notyet]")) { e.stopPropagation(); trkSubmittedNotYet(sid); return; }
-        openTrackerPanel(sid);
-      });
+      // The whole card opens the side panel (Jira's issue view). It has no buttons of its own.
+      card.addEventListener("click", () => openTrackerPanel(sid));
       card.addEventListener("keydown", (e) => {
-        if (e.target !== card) return;            // Enter on the card's own buttons presses them
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openTrackerPanel(sid); }
       });
       card.addEventListener("dragstart", (e) => {
         e.dataTransfer.setData("text/plain", sid);
         e.dataTransfer.effectAllowed = "move";
-        card.classList.add("is-dragging");
+        // The picture that follows the pointer is taken now, lifted; the card left behind dims.
+        card.classList.add("is-lifted");
+        requestAnimationFrame(() => { card.classList.remove("is-lifted"); card.classList.add("is-dragging"); });
       });
-      card.addEventListener("dragend", () => card.classList.remove("is-dragging"));
+      card.addEventListener("dragend", () => card.classList.remove("is-lifted", "is-dragging"));
     });
     host.querySelectorAll(".trk-col").forEach(col => {
       col.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; col.classList.add("is-over"); });
       col.addEventListener("dragleave", (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove("is-over"); });
       col.addEventListener("drop", (e) => {
         e.preventDefault(); col.classList.remove("is-over");
-        const sid = e.dataTransfer.getData("text/plain");
-        const c = TRK_CARDS.find(x => x.source_id === sid);
-        // Closed holds rejected AND archived: an archived card dropped back there stays archived.
-        if (sid && !(c && col.dataset.stage === "rejected" && c.stage === "archived")) trkMove(sid, col.dataset.stage);
+        trkDropOn(e.dataTransfer.getData("text/plain"), col.dataset.col);
       });
     });
   }
+  // A card dropped on (or sent to) a column: nothing when it is already there.
+  function trkDropOn(sid, col) {
+    const stage = trkDropStage(TRK_CARDS.find(x => x.source_id === sid), col);
+    if (stage) trkMove(sid, stage);
+  }
 
-  // Apply (Ready to apply): exactly what the Applications row's "Autofill application" does. A new
+  // Apply (the panel's button on a job whose resume is ready): exactly what the Applications row's
+  // "Autofill application" does. A new
   // package is approved silently (aaSilentApprove), then the job opens in the Browser tab and is
   // filled from the profile (aaFill). The person checks it and submits on the site.
   async function trkApply(sid, btn) {
@@ -6654,42 +6692,43 @@
     if (!c || !c.apply_id) return;
     c.ask_submitted = false;
     renderTracker();
-    if (TRK_OPEN === sid) $("#trkPanel .trk-ask")?.remove();
+    if (TRK_OPEN === sid) { $("#trkPanel .trk-ask")?.remove(); $("#trkPanel .trk-p-loz [data-loz=ask]")?.remove(); }
     try { await api("/api/autoapply/not-yet", { record_id: c.apply_id }); } catch { /* it asks again next visit */ }
   }
 
-  function trkStageSelect(c, attr) {
-    return `<select class="fld trk-stage-sel" ${attr} aria-label="${esc(trkT("tracker.stageCol", "Stage"))}">${TRK_STAGES.map(s =>
-      `<option value="${s}"${s === c.stage ? " selected" : ""}>${esc(trkStageName(s))}</option>`).join("")}</select>`;
+  // The panel's Status picker: the five columns, with Closed split into its two outcomes.
+  function trkStatusSelect(c) {
+    const cur = trkColOf(c.stage) === "closed" ? c.stage : trkColOf(c.stage);
+    const opts = [["todo", trkColName("todo")], ["applied", trkColName("applied")], ["interviewing", trkColName("interviewing")],
+      ["offer", trkColName("offer")], ["rejected", trkT("tracker.notSelected", "Not selected")], ["archived", trkStageName("archived")]];
+    return `<select class="fld trk-stage-sel" id="trkPanelStage">${opts.map(([v, n]) =>
+      `<option value="${v}"${v === cur ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>`;
   }
 
-  // The table: the same cards (and the same filters), one compact row each. A row opens the side
-  // panel; a Ready to apply row has the same Apply.
+  // The table: the same cards (and the same filters), one compact row each, with the same
+  // lozenges. A row opens the side panel; its only mark is a quiet chevron.
   function renderTrackerTable() {
     const host = $("#trkTable");
-    const order = (c) => TRK_STAGES.indexOf(c.stage);
+    // The board's order: column by column, and To apply with its ready resumes first.
+    const order = (c) => { const i = TRK_STAGES.indexOf(c.stage); return i <= 2 ? 2 - i : i; };
     const rows = [...trkVisible()].sort((a, b) => order(a) - order(b) || String(b.stage_at).localeCompare(String(a.stage_at)));
     host.innerHTML = `<table class="trk-table"><thead><tr>
-        <th>${esc(trkT("tracker.company", "Company"))}</th><th>${esc(trkT("tracker.role", "Role"))}</th><th>${esc(trkT("tracker.stageCol", "Stage"))}</th>
-        <th>${esc(trkT("tracker.dateCol", "Date"))}</th><th aria-label="${esc(trkT("tracker.apply", "Apply"))}"></th>
+        <th>${esc(trkT("tracker.role", "Role"))}</th><th>${esc(trkT("tracker.company", "Company"))}</th><th>${esc(trkT("tracker.statusCol", "Status"))}</th>
+        <th></th><th class="trk-th-date">${esc(trkT("tracker.dateCol", "Date"))}</th><th></th>
       </tr></thead><tbody>${rows.map(c => {
-        const meta = trkCardMeta(c);
+        const date = trkCardDate(c);
         return `<tr data-sid="${esc(c.source_id)}" tabindex="0">
-        <td><span class="trk-td-co">${trkAvatar(c)}<span>${esc(coName(c))}</span></span></td><td class="trk-td-t">${esc(c.title)}</td>
-        <td>${trkStageSelect(c, `data-stage-for="${esc(c.source_id)}"`)}</td>
-        <td class="${meta.due ? "trk-due" : "trk-td-meta"}">${esc(meta.text)}</td>
-        <td class="trk-td-act">${trkApplyBtn(c, "btn-ghost btn-xs trk-apply")}</td>
-      </tr>`; }).join("") || `<tr><td colspan="5" class="trk-td-none">${esc(trkT("tracker.noMatch", "No matches"))}</td></tr>`}</tbody></table>`;
+        <td class="trk-td-t">${esc(c.title)}</td>
+        <td><span class="trk-td-co">${trkAvatar(c)}<span>${esc(coName(c))}</span></span></td>
+        <td class="trk-td-col">${esc(trkColName(trkColOf(c.stage)))}</td>
+        <td><span class="trk-td-loz">${trkLozHtml(trkState(c))}${trkChip(c)}</span></td>
+        <td class="trk-td-date">${trkDateHtml(date)}</td>
+        <td class="trk-td-go">${trkIcon("chevron")}</td>
+      </tr>`; }).join("") || `<tr><td colspan="6" class="trk-td-none">${esc(trkT("tracker.noMatch", "No matches"))}</td></tr>`}</tbody></table>`;
     host.querySelectorAll("tbody tr[data-sid]").forEach(tr => {
-      tr.addEventListener("click", (e) => {
-        const ap = e.target.closest("[data-trk-apply]");
-        if (ap) { trkApply(tr.dataset.sid, ap); return; }
-        if (e.target.closest("select, a, button")) return;
-        openTrackerPanel(tr.dataset.sid);
-      });
-      tr.addEventListener("keydown", (e) => { if (e.target === tr && e.key === "Enter") openTrackerPanel(tr.dataset.sid); });
+      tr.addEventListener("click", () => openTrackerPanel(tr.dataset.sid));
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") openTrackerPanel(tr.dataset.sid); });
     });
-    host.querySelectorAll("[data-stage-for]").forEach(s => s.addEventListener("change", () => trkMove(s.dataset.stageFor, s.value)));
   }
 
   // The numbers as ONE quiet line under the title (2026-11-24, after Jira: no tiles above the
@@ -6733,7 +6772,7 @@
       renderTrackerMetrics();
       renderTracker();
       if (TRK_OPEN === sid) openTrackerPanel(sid);
-      toast(trkT("tracker.movedTo", "Moved {company} to {stage}").replace("{company}", card.company || "").replace("{stage}", trkStageName(stage)),
+      toast(trkT("tracker.movedTo", "Moved {company} to {stage}").replace("{company}", coName(card)).replace("{stage}", trkColName(trkColOf(stage))),
         { label: trkT("tracker.undo", "Undo"), run: () => trkUndo(sid) });
     } catch {
       card.stage = prev;
@@ -6754,7 +6793,7 @@
       renderTrackerMetrics();
       if (TRK_OPEN === sid) { if (out.job) openTrackerPanel(sid); else closeTrackerPanel(); }
       const to = out.undone && out.undone.from_stage;
-      toast(to ? trkT("tracker.undoneTo", "Back in {stage}").replace("{stage}", trkStageName(to))
+      toast(to ? trkT("tracker.undoneTo", "Back in {stage}").replace("{stage}", trkColName(trkColOf(to)))
                : trkT("tracker.undoneOff", "Taken off the board"));
     } catch (err) {
       toast(err.message || trkT("tracker.undoFail", "Couldn't undo that, try again."));
@@ -6763,114 +6802,140 @@
 
   function closeTrackerPanel() {
     TRK_OPEN = null;
+    TRK_PANEL_SEQ++;                // a panel still loading must not open after this
     const panel = $("#trkPanel"), scrim = $("#trkScrim");
     if (panel) { panel.hidden = true; panel.innerHTML = ""; }
     if (scrim) scrim.hidden = true;
   }
 
-  // The panel's one row of actions: everything the card no longer carries. Apply (the primary
-  // action, Ready to apply only), the newest resume and cover letter, the resume chat, the posting.
+  // The panel's ONE primary action, named for where the job is: Apply (a resume is ready: the
+  // application opens in the Browser tab and is filled), Continue tailoring (its resume chat),
+  // or Tailor resume (start one). Then the quiet links: resume, cover letter, chat, the posting.
+  const trkApplyTip = () => trkT("tracker.applyTip", "Opens the application and fills it from your profile. You check it and submit.");
   function trkPanelActions(j) {
     const rec = j.record || null, sess = j.has_session ? j.session : null;
     const pdf = (rec && rec.pdf) || (sess && sess.pdf);
+    const act = trkAction(j);
+    const primary = act === "apply" ? `<button class="btn btn-primary btn-sm trk-p-main" type="button" data-trk-act="apply" title="${esc(trkApplyTip())}">${esc(trkT("tracker.apply", "Apply"))}</button>`
+      : act === "continue" ? `<button class="btn btn-primary btn-sm trk-p-main" type="button" data-trk-act="continue">${esc(trkT("tracker.continueTailoring", "Continue tailoring"))}</button>`
+      : act === "tailor" ? `<button class="btn btn-primary btn-sm trk-p-main" type="button" data-trk-act="tailor">${esc(trkT("tracker.tailorResume", "Tailor resume"))}</button>` : "";
+    const link = (href, icon, k, f) => `<a class="btn btn-ghost btn-sm trk-p-link" href="${href}" target="_blank" rel="noopener">${trkIcon(icon)}<span>${esc(trkT(k, f))}</span></a>`;
     const parts = [
-      trkApplyBtn(j, "btn-primary btn-sm trk-p-apply"),
-      pdf ? `<a class="btn btn-ghost btn-sm" href="${esc(pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}</a>` : "",
-      rec && rec.cover_letter ? `<a class="btn btn-ghost btn-sm" href="${esc(rec.cover_letter)}" target="_blank" rel="noopener">${esc(trkT("tracker.coverLetter", "Cover letter"))}</a>` : "",
-      sess ? `<button class="btn btn-ghost btn-sm" type="button" data-trk-chat>${esc(trkT("tracker.chat", "Chat"))}</button>` : "",
-      j.url ? `<a class="btn btn-ghost btn-sm" href="${safeHref(j.url)}" target="_blank" rel="noopener">${esc(trkT("tracker.posting", "Job posting"))}</a>` : "",
+      primary,
+      pdf ? link(esc(pdf), "file", "tracker.resume", "Resume") : "",
+      rec && rec.cover_letter ? link(esc(rec.cover_letter), "file", "tracker.coverLetter", "Cover letter") : "",
+      sess && act !== "continue" ? `<button class="btn btn-ghost btn-sm trk-p-link" type="button" data-trk-act="continue">${trkIcon("chat")}<span>${esc(trkT("tracker.chat", "Chat"))}</span></button>` : "",
+      j.url ? link(safeHref(j.url), "external", "tracker.posting", "Job posting") : "",
     ].filter(Boolean);
-    return parts.length ? `<div class="trk-p-row trk-p-acts">${parts.join("")}</div>` : "";
+    return parts.length ? `<div class="trk-p-acts">${parts.join("")}</div>` : "";
+  }
+  // "Did you submit it?" Yes / Not yet: asked in the panel after an Autofill (the engine's own
+  // ask_submitted, the same question the Applications list asks). The card only shows a lozenge.
+  function trkPanelAsk(j) {
+    if (!j.ask_submitted || !j.apply_id) return "";
+    return `<div class="trk-ask" role="group" aria-label="${esc(trkT("aa.askSubmitted", "Did you submit it?"))}"><span class="trk-ask-q">${esc(trkT("aa.askSubmitted", "Did you submit it?"))}</span>
+        <button class="btn btn-ghost btn-sm" type="button" data-trk-yes>${esc(trkT("ans.yes", "Yes"))}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-trk-notyet>${esc(trkT("aa.notYet", "Not yet"))}</button></div>`;
+  }
+  // Tailor resume: the Jobs page's own tailoring flow for this job. Continue tailoring: its chat.
+  async function trkTailor(sid) {
+    closeTrackerPanel();
+    await tailorJob(sid);
+  }
+  async function trkContinue(sid) {
+    closeTrackerPanel();
+    if (!(await openJobWorkspace(sid))) toast(trkT("tracker.loadFail", "Couldn't open that job."));
   }
 
   async function openTrackerPanel(sid) {
+    const seq = ++TRK_PANEL_SEQ;
     let j;
     try { j = await api("/api/tracker/job?source_id=" + encodeURIComponent(sid)); }
     catch { toast(trkT("tracker.loadFail", "Couldn't open that job.")); return; }
     try { INBOX_CONNECTED = !!(await api("/api/inbox/status")).configured; } catch { /* keep what we knew */ }
+    if (seq !== TRK_PANEL_SEQ) return;     // closed, or another job opened, while this one loaded
     TRK_OPEN = sid;
     const panel = $("#trkPanel"), scrim = $("#trkScrim");
     if (!panel) return;
+    const sec = (k, f, body, extra) => `<section class="trk-p-sec"><div class="trk-p-h">${esc(trkT(k, f))}${extra || ""}</div>${body}</section>`;
+    const none = (k, f) => `<p class="trk-p-none">${esc(trkT(k, f))}</p>`;
     const contacts = (j.contacts || []).map(c => `<div class="trk-contact">
         <div class="trk-contact-who"><b>${esc(c.name)}</b>${c.role ? ` <span class="prof-dim">${esc(c.role)}</span>` : ""}
           <div class="trk-contact-links">${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}${c.linkedin ? `<a href="${safeHref(c.linkedin)}" target="_blank" rel="noopener">LinkedIn</a>` : ""}</div>
         </div>
-        <button class="btn btn-danger-ghost btn-sm" data-rm-contact="${c.id}" type="button" aria-label="${esc(trkT("tracker.removeContact", "Remove contact"))}">&times;</button>
-      </div>`).join("") || `<p class="prof-dim">${esc(trkT("tracker.noContacts", "No contacts yet."))}</p>`;
+        <button class="trk-p-x" data-rm-contact="${c.id}" type="button" aria-label="${esc(trkT("tracker.removeContact", "Remove contact"))}" title="${esc(trkT("tracker.removeContact", "Remove contact"))}">${trkIcon("close")}</button>
+      </div>`).join("") || none("tracker.noContacts", "No contacts yet.");
     const files = (j.records || []).map(r => `<div class="trk-file">
-        <span>${esc(r.role || trkT("tracker.resume", "Resume"))} <span class="prof-dim">${esc(trkDay(r.when))}</span></span>
+        <span class="trk-file-n">${esc(r.role || trkT("tracker.resume", "Resume"))}</span>
         <span class="trk-file-links">${r.pdf ? `<a href="${esc(r.pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}</a>` : ""}${r.cover_letter ? `<a href="${esc(r.cover_letter)}" target="_blank" rel="noopener">${esc(trkT("tracker.coverLetter", "Cover letter"))}</a>` : ""}</span>
-      </div>`).join("") || `<p class="prof-dim">${esc(trkT("tracker.noFiles", "No tailored resume for this job yet."))}</p>`;
-    const timeline = (j.activity || []).map(a => `<div class="trk-tl-row">
-        <span class="trk-tl-dot" aria-hidden="true"></span>
-        <span class="trk-tl-what">${a.to_stage ? esc(trkStageName(a.to_stage)) : esc(trkT("tracker.removed", "Taken off the board"))}${a.note && String(a.note).trim().toLowerCase() !== String(a.to_stage ? trkStageName(a.to_stage) : "").toLowerCase() ? ` <span class="prof-dim">${esc(a.note)}</span>` : ""}</span>
-        <span class="trk-tl-when">${esc(trkDay(a.at))}</span>
-      </div>`).join("");
-    const chips = trkChips(j);
+        <span class="trk-tl-when">${esc(trkDay(r.when))}</span>
+      </div>`).join("") || none("tracker.noFiles", "No tailored resume for this job yet.");
+    // A note that only repeats the stage's name (today's or the one it had before the columns
+    // were renamed) is left out.
+    const plain = (s) => String(s || "").trim().toLowerCase();
+    const timeline = (j.activity || []).map(a => {
+      const what = a.to_stage ? trkStageName(a.to_stage) : trkT("tracker.removed", "Taken off the board");
+      const note = a.note && ![plain(what), "ready to apply"].includes(plain(a.note)) ? ` <span class="prof-dim">${esc(a.note)}</span>` : "";
+      return `<div class="trk-tl-row"><span class="trk-tl-dot" aria-hidden="true"></span>
+        <span class="trk-tl-what">${esc(what)}${note}</span><span class="trk-tl-when">${esc(trkDay(a.at))}</span></div>`;
+    }).join("");
+    const loz = trkLozHtml(trkState(j)) + trkChips(j);
+    const col = trkColName(trkColOf(j.stage));
     panel.innerHTML = `
-      <div class="trk-p-head">
+      <header class="trk-p-head">
+        <span class="trk-p-logo">${companyAvatar(j)}</span>
         <div class="trk-p-head-main">
           <div class="trk-p-co">${esc(coName(j))}${j.location ? ` · ${esc(j.location)}` : ""}</div>
           <h2 class="trk-p-title">${esc(j.title)}</h2>
-          ${chips ? `<div class="trk-p-chips">${chips}</div>` : ""}
         </div>
-        <button class="btn btn-ghost btn-sm" id="trkPanelClose" type="button" aria-label="${esc(trkT("tracker.close", "Close"))}">&times;</button>
-      </div>
+        <button class="trk-p-x" id="trkPanelClose" type="button" aria-label="${esc(trkT("tracker.close", "Close"))}" title="${esc(trkT("tracker.close", "Close"))}">${trkIcon("close", 16)}</button>
+      </header>
+      <div class="trk-p-loz"><span class="trk-p-col">${esc(col)}</span>${loz}</div>
+      ${trkPanelAsk(j)}
       ${trkPanelActions(j)}
-      ${trkAskHtml(j)}
-      <div class="trk-p-row trk-p-stage">
-        <label class="trk-p-stage-l" for="trkPanelStage">${esc(trkT("tracker.moveTo", "Move to"))}</label>
-        ${trkStageSelect(j, 'id="trkPanelStage"')}
+      <div class="trk-p-fields">
+        <label class="trk-p-field"><span class="trk-p-h">${esc(trkT("tracker.statusCol", "Status"))}</span>${trkStatusSelect(j)}</label>
+        <label class="trk-p-field"><span class="trk-p-h">${esc(trkT("tracker.followUp", "Follow-up"))}${j.follow_up_due ? `<span class="trk-p-due">${esc(trkT("tracker.dueNow", "Due now"))}</span>` : ""}</span>
+          <input class="fld" id="trkPanelFu" type="date" value="${esc(j.follow_up_at || "")}"></label>
       </div>
       <div class="trk-p-msgs" id="trkPanelMsgs" hidden></div>
-      <div class="trk-p-sec">
-        <div class="trk-p-h">${esc(trkT("tracker.followUp", "Follow-up"))}</div>
-        <div class="trk-p-row"><input class="fld" id="trkPanelFu" type="date" value="${esc(j.follow_up_at || "")}"><span class="prof-dim ${j.follow_up_due ? "trk-due" : ""}">${j.follow_up_due ? esc(trkT("tracker.dueNow", "Due now")) : ""}</span></div>
-      </div>
-      <div class="trk-p-sec">
-        <div class="trk-p-h">${esc(trkT("tracker.notes", "Notes"))}</div>
-        <textarea class="fld trk-notes" id="trkPanelNotes" rows="4" placeholder="${esc(trkT("tracker.notesPh", "Anything worth remembering about this one."))}">${esc(j.notes || "")}</textarea>
-        <span class="prof-dim" id="trkPanelNotesState"></span>
-      </div>
-      <div class="trk-p-sec">
-        <div class="trk-p-h">${esc(trkT("tracker.contacts", "Contacts"))}</div>
-        <div id="trkPanelContacts">${contacts}</div>
+      ${sec("tracker.notes", "Notes", `<textarea class="fld trk-notes" id="trkPanelNotes" rows="4" placeholder="${esc(trkT("tracker.notesPh", "Anything worth remembering about this one."))}">${esc(j.notes || "")}</textarea>
+        <span class="trk-p-state" id="trkPanelNotesState" role="status"></span>`)}
+      ${sec("tracker.contacts", "Contacts", `<div id="trkPanelContacts">${contacts}</div>
         <form class="trk-contact-form" id="trkContactForm">
           <input class="fld" name="name" placeholder="${esc(trkT("tracker.cName", "Name"))}" required autocomplete="off">
           <input class="fld" name="role" placeholder="${esc(trkT("tracker.cRole", "Role"))}" autocomplete="off">
           <input class="fld" name="email" type="email" placeholder="${esc(trkT("tracker.cEmail", "Email"))}" autocomplete="off">
           <input class="fld" name="linkedin" type="url" placeholder="${esc(trkT("tracker.cLinkedin", "LinkedIn URL"))}" autocomplete="off">
           <button class="btn btn-ghost btn-sm trk-contact-add" type="submit">${esc(trkT("tracker.addContact", "Add contact"))}</button>
-        </form>
-      </div>
+        </form>`)}
       ${trkMailSectionHtml(j)}
-      <div class="trk-p-sec">
-        <div class="trk-p-h">${esc(trkT("tracker.files", "Files"))}</div>
-        ${files}
-      </div>
+      ${sec("tracker.files", "Files", files)}
       ${trkPanelMailHtml(j)}
-      <div class="trk-p-sec">
-        <div class="trk-p-h trk-p-h-row"><span>${esc(trkT("tracker.timeline", "Timeline"))}</span>
-          ${(j.history || []).length ? `<button class="btn btn-ghost btn-sm" id="trkPanelUndo" type="button">${esc(trkT("tracker.undoLast", "Undo last change"))}</button>` : ""}</div>
-        ${j.furthest_stage && j.furthest_stage !== j.stage && TRK_STAGES.indexOf(j.furthest_stage) >= 0
+      ${sec("tracker.timeline", "Timeline", `${j.furthest_stage && j.furthest_stage !== j.stage && TRK_STAGES.indexOf(j.furthest_stage) >= 0
           ? `<div class="trk-furthest">${esc(trkT("tracker.furthest", "Got as far as {stage}").replace("{stage}", trkStageName(j.furthest_stage)))}</div>` : ""}
-        <div class="trk-tl">${timeline}</div>
-      </div>`;
+        <div class="trk-tl">${timeline}</div>`,
+        (j.history || []).length ? `<button class="link-btn trk-p-undo" id="trkPanelUndo" type="button">${esc(trkT("tracker.undoLast", "Undo last change"))}</button>` : "")}`;
     panel.hidden = false;
+    panel.scrollTop = 0;
     if (scrim) scrim.hidden = false;
     $("#trkPanelClose").addEventListener("click", closeTrackerPanel);
-    panel.querySelector("[data-trk-apply]")?.addEventListener("click", (e) => trkApply(sid, e.currentTarget));
-    panel.querySelector("[data-trk-chat]")?.addEventListener("click", async () => {
-      closeTrackerPanel();
-      if (!(await openJobWorkspace(sid))) toast(trkT("tracker.loadFail", "Couldn't open that job."));
-    });
+    panel.querySelectorAll("[data-trk-act]").forEach(b => b.addEventListener("click", (e) => {
+      const act = b.dataset.trkAct;
+      if (act === "apply") trkApply(sid, e.currentTarget);
+      else if (act === "continue") trkContinue(sid);
+      else trkTailor(sid);
+    }));
     panel.querySelector("[data-trk-yes]")?.addEventListener("click", (e) => trkSubmittedYes(sid, e.currentTarget));
     panel.querySelector("[data-trk-notyet]")?.addEventListener("click", () => trkSubmittedNotYet(sid));
-    (panel.querySelector("[data-trk-apply]") || $("#trkPanelClose")).focus();
+    (panel.querySelector(".trk-p-main") || $("#trkPanelClose")).focus();
     $("#trkPanelUndo")?.addEventListener("click", () => trkUndo(sid));
     trkBindMail(sid, j);
     trkPanelMessages(sid, j);
-    $("#trkPanelStage").addEventListener("change", (e) => trkMove(sid, e.target.value));
+    $("#trkPanelStage").addEventListener("change", (e) => {
+      const v = e.target.value;
+      if (v === "rejected" || v === "archived") trkMove(sid, v); else trkDropOn(sid, v);
+    });
     $("#trkPanelFu").addEventListener("change", async (e) => {
       try {
         const out = await api("/api/tracker/followup", { source_id: sid, date: e.target.value });
@@ -6910,7 +6975,7 @@
      an assessment or an application confirmation. One strip, shown on the Tracker and inside
      the Review page's inbox card. Move <stage> is the person's click; Not this settles it so
      the same mail never asks again. Nothing moves on its own. */
-  let INBOX_SUGG = [], INBOX_CONNECTED = false;
+  let INBOX_SUGG = [], INBOX_CONNECTED = false, INBOX_OPEN = false;
   // One label per message (inbox/replies.py). "kind" is the finer rules reading, kept so an
   // assessment still says Assessment.
   const INBOX_LABEL_EN = { interview_request: "Interview request", rejection: "Rejection", offer: "Offer",
@@ -6984,11 +7049,18 @@
       // the board). With Gmail connected the strip keeps its Scan button.
       if (!INBOX_SUGG.length) { host.hidden = true; host.innerHTML = ""; return; }
       host.hidden = false;
+      // ONE line above the board (2026-11-25): the label, the first message and its buttons. More
+      // messages wait behind "2 more"; a drafted reply opens the list so it is never hidden.
+      const more = INBOX_SUGG.length - 1;
+      if (INBOX_SUGG.some(x => x.draft)) INBOX_OPEN = true;
+      host.classList.toggle("is-open", INBOX_OPEN && more > 0);
       host.innerHTML = `<div class="trk-inbox-head">
-          <span class="trk-inbox-h">${esc(trkT("inbox.strip.title", "From your inbox"))} (${INBOX_SUGG.length})</span>
-          ${INBOX_CONNECTED ? `<button class="btn btn-ghost btn-xs" type="button" data-sugg-scan>${esc(trkT("inbox.strip.scan", "Scan inbox"))}</button>` : ""}
+          <span class="trk-inbox-h">${trkIcon("inbox")}<span>${esc(trkT("inbox.strip.title", "From your inbox"))}</span></span>
+          ${more > 0 ? `<button class="link-btn trk-inbox-more" type="button" data-sugg-more aria-expanded="${INBOX_OPEN ? "true" : "false"}">${esc(INBOX_OPEN ? trkT("inbox.strip.less", "Show less") : trkT("inbox.strip.more", "{n} more").replace("{n}", more))}</button>` : ""}
+          ${INBOX_CONNECTED ? `<button class="link-btn" type="button" data-sugg-scan>${esc(trkT("inbox.strip.scan", "Scan inbox"))}</button>` : ""}
         </div>
-        ${INBOX_SUGG.map(inboxSuggRow).join("")}`;
+        <div class="trk-inbox-rows">${INBOX_SUGG.map(inboxSuggRow).join("")}</div>`;
+      host.querySelector("[data-sugg-more]")?.addEventListener("click", () => { INBOX_OPEN = !INBOX_OPEN; renderInboxStrip(); });
       host.querySelectorAll("[data-sugg-accept]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggAccept, "accept")));
       host.querySelectorAll("[data-sugg-dismiss]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggDismiss, "dismiss")));
       host.querySelectorAll("[data-sugg-done]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggDone, "done")));
@@ -7151,6 +7223,7 @@
     if (e.key === "Escape" && e.target.value) { e.stopPropagation(); e.target.value = ""; TRK_FILTER.q = ""; renderTracker(); }
   });
   $("#trkDueChip")?.addEventListener("click", () => { TRK_FILTER.due = !TRK_FILTER.due; renderTracker(); });
+  $("#trkReadyChip")?.addEventListener("click", () => { TRK_FILTER.ready = !TRK_FILTER.ready; renderTracker(); });
   $("#trkViewBoard")?.addEventListener("click", () => trkSetView("board"));
   $("#trkViewTable")?.addEventListener("click", () => trkSetView("table"));
   $("#trkViewBoard")?.classList.toggle("is-on", TRK_VIEW === "board");
@@ -12777,9 +12850,9 @@
     return true;
   }
 
-  /* ---- Ready to apply (assisted apply, 2026-11-24): the page is ONE list. Every open, unsent job
+  /* ---- To apply (assisted apply, 2026-11-24): the page is ONE list. Every open, unsent job
      with a tailored resume (submit.stages.is_ready_to_apply), one row per job, the same jobs the
-     Tracker's "Ready to apply" column holds. No approve step: opening a row or pressing Autofill
+     Tracker shows as "Resume ready" in To apply. No approve step: opening a row or pressing Autofill
      moves a new one on by itself. Closed jobs leave the list with one quiet line; what was applied
      to lives on the Tracker ("22 applied. See them in Tracker."). */
   function aaMatchCell(it) {
@@ -12808,7 +12881,7 @@
   }
   function aaRenderReady() {
     const b = AA.board, items = b.ready || [];
-    $("#aaSecTitle").textContent = T("aa.ready", "Ready to apply");
+    $("#aaSecTitle").textContent = T("aa.ready", "To apply");
     $("#aaSecCount").textContent = items.length ? fmtN(items.length) : "";
     ["#aaApproveAll", "#aaTelegramSend", "#aaApplyAll"].forEach(sel => { const el = $(sel); if (el) el.hidden = true; });
     aaRenderClosed();
@@ -14436,7 +14509,7 @@
     const stagePill = { review: T("aa.tile.review", "To review"), waiting: it.queued ? T("aa.pill.queued", "Queued") : T("aa.pill.approved", "Approved"),
       submitted: T("aa.tile.submitted", "Submitted"), needs: T("aa.tile.needs", "Needs you") }[it.tile] || "";
     const ready = !APPLY_AGENT && it.ready;
-    const pill = ready ? (it.new ? T("aa.new", "New") : T("aa.ready", "Ready to apply")) : stagePill;
+    const pill = ready ? (it.new ? T("aa.new", "New") : T("aa.ready", "To apply")) : stagePill;
     const lane = it.lane === "auto" ? T("aa.lane.auto", "Sent for you") : T("aa.lane.you", "Your click");
     const posted = it.posted_at ? aaAgo(it.posted_at) : "";
     const markable = ready || it.tile === "waiting" || it.tile === "needs";
@@ -15398,7 +15471,7 @@
       // Zero is told as zero, with every reason; "They are in To review" is only true for 1+.
       msg.className = r.queued ? "aa-msg ok" : "aa-msg err";
       msg.innerHTML = esc(r.queued ? (APPLY_AGENT ? T("aa.queued", "Queued {n}. They are in To review.")
-          : T("aa.queuedReady", "Tailored {n}. They are in Ready to apply.")).replace("{n}", r.queued)
+          : T("aa.queuedReady", "Tailored {n}. They are in To apply on the Tracker.")).replace("{n}", r.queued)
                                    : T("aa.nothingQueued", "Nothing queued."))
         + aaRunReasons(r);
       AA_WANT = "review"; AA.next = null;

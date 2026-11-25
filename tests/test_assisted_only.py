@@ -215,7 +215,7 @@ def test_the_home_agent_promises_no_sending(A):
                   telegram=False, telegram_connected=False, packages_left=None, assisted=True)
     assert "sent for you" not in t and "I fill in the form for you to check and submit" in t
     r = result_text(3, 0, assisted=True)
-    assert "sent for you" not in r and "Applications" in r
+    assert "sent for you" not in r and "To apply on the Tracker" in r
 
 
 # --------------------------------------------------------------------------- the UI
