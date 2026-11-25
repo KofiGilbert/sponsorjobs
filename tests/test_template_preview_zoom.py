@@ -23,3 +23,17 @@ def test_preview_window_and_strip_use_the_rendered_image_not_the_pdf_viewer():
     assert body.index('$("#tplModal").hidden = false;') < body.index("renderTplModal();")
     assert "/thumb.png?w=" in body and "view=FitH" not in body
     assert '<iframe class="tpl-preview"' not in js and "/thumb.png?w=600" in js
+
+
+def test_the_preview_page_fits_any_window_and_clears_the_rail():
+    # (2026-11-25) The page floats with no box. Its width is the smaller of what the row and the
+    # height allow, so it is never cropped or stretched, and in the desktop app the arrows and
+    # the close button stay clear of the 42px panel rail.
+    from pathlib import Path
+    css = (Path(__file__).resolve().parents[1] / "ui" / "static" / "styles.css").read_text()
+    rule = css[css.index(".tpl-modal-paper {"):]
+    rule = rule[:rule.index("}")]
+    assert "aspect-ratio: 8.5 / 11" in rule and "width: min(calc(100% -" in rule and "100vh" in rule
+    assert "height: auto" in rule and "height: 100%;" not in rule.replace("max-height: 100%;", "")
+    assert ".in-shell .tpl-modal { padding-right: 66px; }" in css
+    assert ".tpl-modal-card { position: relative; flex: 1 1 auto;" in css   # no white box

@@ -4557,7 +4557,12 @@
   $("#tplPrev")?.addEventListener("click", () => tplStep(-1));
   $("#tplNext")?.addEventListener("click", () => tplStep(1));
   // Click on the backdrop (outside the card) closes; clicks inside do not.
-  $("#tplModal")?.addEventListener("click", (e) => { if (e.target.id === "tplModal") closeTplPreview(); });
+  // A click on the dimmed backdrop closes it (the page floats with no box, so the backdrop is the
+  // modal itself, its layout wrapper, or the empty stage around the paper).
+  $("#tplModal")?.addEventListener("click", (e) => {
+    const t = e.target;
+    if (t.id === "tplModal" || (t.classList && (t.classList.contains("tpl-modal-card") || t.classList.contains("tpl-modal-stage")))) closeTplPreview();
+  });
 
   // No section chips: the preview above already SHOWS the sections and the name already
   // states the shape, redundant secondary metadata that users scan straight past
