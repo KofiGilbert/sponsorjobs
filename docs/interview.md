@@ -34,7 +34,12 @@ until the person deletes the screen. Nothing of the person's is stored by us or 
 - `llm/anthropic_client.py` / `llm/base.py`: `generate_screen_questions(profile, role, company,
   jd, kinds)` asks for exactly N questions with kinds; `score_interview_answer` and
   `score_interview_screen` score both rounds.
-- `interview/transcribe.py`: local STT + delivery metrics (unchanged).
+- `interview/transcribe.py`: local STT + delivery metrics. Decodes the recording itself with PyAV
+  (16 kHz mono float32) and hands the array to faster-whisper (`base`, int8, VAD on, beam 2);
+  faster-whisper's own decoder is only a fallback (it passes a keyword newer PyAV rejects).
+  Failures go to `<data dir>/logs/engine.log` with their exception type. The model (~140 MB)
+  downloads once on first use into `<data dir>/models`, pinned to one revision. The
+  installers ship the engine (`.[interview]` in release.yml, collected by tailor.spec).
 
 ## API contract as implemented
 
@@ -79,14 +84,24 @@ The questions are exactly what the JD-grounded model produced; the fixed essenti
   takes, takes_left}`. The server enforces `retakes`: a second upload is allowed once, the third
   is `409 {error, no_takes_left: true, retakes: 1}`. A new take clears the earlier transcript and
   feedback for that question. 400 non-media, 413 over 32 MB, 404 bad index.
-- `POST .../answers/<i>/transcribe` (local STT; `{available: false, message}` when not
-  installed), `POST .../answers/<i>/transcript` `{transcript}` (typed fallback),
-  `POST .../answers/<i>/coach`, `GET .../report.docx`, `POST .../delete`: unchanged.
+- `POST .../answers/<i>/transcribe` (local STT, run right after each upload) -> `{available,
+  status: ok|silent|failed|unavailable|stale, transcript, delivery_metrics, error}`. There is NO
+  typed-transcript endpoint (removed 2026-11-25, owner: the person must not type or paste answers).
+- `POST /api/screens/<id>/finish` `{retry?}`: the end of the interview, and the rescue for an old
+  one. Transcribes every recorded answer still without words (a failed one tried again), then
+  scores like `/score`. When speech to text is not ready and nothing was heard: `{stt_unavailable:
+  true, message, model}` and nothing is scored; `retry: true` runs it again.
+- `GET /api/interview/stt` and `POST /api/interview/stt/prepare`: the model status
+  `{engine, model: ready|downloading|missing|error|unavailable, done_mb, total_mb, error}`; prepare
+  starts the one-time download in the background (the intro calls it).
+- `POST .../answers/<i>/coach`, `GET .../report.docx`, `POST .../delete`: unchanged.
 - `POST /api/screens/<id>/score` -> `{screen: {...}, result: {...}}` where `result` =
   `{score, passed, threshold: 70, why, improvements, competencies: [{name, score, count}],
-  answers: [{i, q, kind, competency, transcript, score, feedback, delivery_note,
+  answers: [{i, q, kind, competency, transcript, score, feedback, delivery_note, unheard, tip,
   delivery_metrics}], is_practice: true, assessment_disclaimer, disclaimer}` and `disclaimer` is
-  the HireVue text above. 400 until at least one answer has a transcript.
+  the HireVue text above. A recorded answer with no words is `unheard: true`, score 0, feedback
+  "We couldn't hear this answer." and a microphone tip: scored as not answered. 400 until at
+  least one answer is recorded.
 
 ### Round 2
 

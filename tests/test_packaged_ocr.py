@@ -79,11 +79,22 @@ def _collect_submodules(package):
     return [package] + [m.name for m in pkgutil.walk_packages(spec.submodule_search_locations, package + ".")]
 
 
+def _collect_dynamic_libs(package):
+    """What collect_dynamic_libs returns: the package's native libraries, with where they land."""
+    spec = importlib.util.find_spec(package)
+    if spec is None or not spec.submodule_search_locations:
+        return []
+    base = Path(list(spec.submodule_search_locations)[0])
+    return [(str(f), str(Path(package, *f.relative_to(base).parent.parts))) for f in base.rglob("*")
+            if f.is_file() and (f.suffix in (".dylib", ".dll") or ".so" in f.suffixes)]
+
+
 def _run_spec(monkeypatch):
     got: dict = {}
     hooks = types.ModuleType("PyInstaller.utils.hooks")
     hooks.collect_data_files = _collect_data_files
     hooks.collect_submodules = _collect_submodules
+    hooks.collect_dynamic_libs = _collect_dynamic_libs
     for name in ("PyInstaller", "PyInstaller.utils"):
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
     monkeypatch.setitem(sys.modules, "PyInstaller.utils.hooks", hooks)

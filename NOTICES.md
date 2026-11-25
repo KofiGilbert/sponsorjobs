@@ -34,6 +34,19 @@ still installed by Flask and the model SDKs, which this inventory does not cover
 - **No embedding model** is used or downloaded.
 - **No non-commercial licenses on any engine or model.**
 
+## Speech to text for the practice interview (the `[interview]` extra, shipped in the installers)
+
+- **Engine:** `faster-whisper` (MIT) on `ctranslate2` (MIT), `tokenizers` (Apache-2.0),
+  `huggingface-hub` (Apache-2.0, used only for the one-time model download) and `onnxruntime`
+  (MIT, its voice-activity filter). Runs on the person's computer; audio never leaves it.
+- **Audio decoding:** `av` (PyAV, BSD-3-Clause). Its wheels bundle **FFmpeg as shared libraries
+  under LGPL-3.0-or-later** (built with `--enable-version3`, no GPL parts). This is weak copyleft:
+  the libraries ship unmodified and dynamically linked, so they can be replaced, and the app's own
+  license (AGPL-3.0) is compatible. To do before a public release: put the LGPL-3.0 text in the
+  installer (the PyAV wheel carries no copy of it).
+- **Model:** OpenAI Whisper `base` converted by Systran (`Systran/faster-whisper-base`, MIT),
+  about 140 MB. Not in the installer: downloaded once on first use, pinned to one revision.
+
 ## Full runtime closure
 
 | Package | Version | License |

@@ -21,7 +21,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ROOT = Path(os.getcwd())
 
@@ -69,6 +69,21 @@ else:
 # and a photographed resume read as empty.
 datas += collect_data_files("rapidocr_onnxruntime", excludes=["**/__pycache__/*"])
 
+# Speech to text for the recorded practice interview (interview/transcribe.py): faster-whisper on
+# CTranslate2, with PyAV (FFmpeg) decoding the recording. faster-whisper's voice filter is an
+# .onnx file next to its module (faster_whisper/assets), so it ships as data; CTranslate2's and
+# PyAV's native libraries are collected explicitly. The Whisper model itself (~140 MB) is NOT in
+# the installer: it downloads once on first use into the data dir. Without this block every
+# answer came back unheard in the installed app.
+import importlib.util as _ilu
+_STT = ("faster_whisper", "ctranslate2", "av", "tokenizers", "huggingface_hub")
+_stt_missing = [m for m in _STT if _ilu.find_spec(m) is None]
+if _stt_missing:
+    print("WARNING: speech to text is missing from the build venv (" + ", ".join(_stt_missing) +
+          "); the practice interview cannot hear answers. Install: pip install -e \".[interview]\"")
+datas += collect_data_files("faster_whisper", excludes=["**/__pycache__/*"])
+binaries = collect_dynamic_libs("ctranslate2") + collect_dynamic_libs("av")
+
 hiddenimports = [
     # Flask/Werkzeug reach for these dynamically, so static analysis misses them.
     "flask", "jinja2", "werkzeug", "click", "itsdangerous", "markupsafe",
@@ -87,12 +102,17 @@ hiddenimports = [
     # The OCR stack, imported lazily inside intake/cv_import.py.
     "intake.cv_import", "numpy", "cv2", "onnxruntime", "shapely", "shapely.geometry", "pyclipper", "yaml",
     "pypdfium2", *collect_submodules("rapidocr_onnxruntime"),
+    # Speech to text, imported lazily inside interview/transcribe.py. PyAV is a set of Cython
+    # modules that import each other from C, which static analysis cannot follow.
+    "interview", "interview.transcribe", "interview.report",
+    "faster_whisper", "ctranslate2", "tokenizers", "huggingface_hub",
+    *collect_submodules("faster_whisper"), *collect_submodules("av"),
 ]
 
 a = Analysis(
     [str(ROOT / "packaging" / "launcher.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -101,8 +121,8 @@ a = Analysis(
     # here: OCR needs it. MemPalace and ChromaDB are no longer dependencies and nothing imports
     # them (the chat diary, intake/diary.py, is our own code; tests/test_diary_recall.py checks
     # the source tree). They stay listed as a guard for a build venv that still has them
-    # installed, so neither they nor their trees (grpc, opentelemetry, kubernetes, tokenizers,
-    # huggingface_hub) can ever be pulled in.
+    # installed, so neither they nor their trees (grpc, opentelemetry, kubernetes) can ever be
+    # pulled in. tokenizers and huggingface_hub DO ship now, for speech to text (above).
     # numpy's build and test tools are left out; OCR uses none of them.
     excludes=["tkinter", "matplotlib", "pandas", "PyQt5", "PySide6", "pytest",
               "chromadb", "mempalace",

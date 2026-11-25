@@ -80,8 +80,9 @@ async function stub(page, questions, opts) {
   });
   await page.route("**/api/screens/s1/practice*", (r) => json(r, { text: Q.short, kind: "practice" }));
   await page.route("**/api/screens/s1/answers/*", (r) => json(r, r.request().url().endsWith("/transcribe")
-    ? { available: true, transcript: "I learned it by doing it." } : { ok: true, takes_left: 0 }));
-  await page.route("**/api/screens/s1/score", () => { /* never answers: the All done screen stays up */ });
+    ? { available: true, status: "ok", transcript: "I learned it by doing it." } : { ok: true, takes_left: 0 }));
+  await page.route("**/api/screens/s1/finish", () => { /* never answers: the All done screen stays up */ });
+  await page.route("**/api/interview/stt**", (r) => json(r, { engine: true, model: "ready", done_mb: 140, total_mb: 140, error: "" }));
   await page.route("**/api/logo*", (r) => r.fulfill({ status: 404, body: "" }));   // the monogram, never the network
 }
 

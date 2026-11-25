@@ -66,9 +66,11 @@ jobs:
           cache: npm
           cache-dependency-path: shell-electron/package-lock.json
 
+      # [interview] is the on-device speech to text for the recorded practice interview. Without
+      # it every answer came back unheard in the installed app.
       - name: Install SponsorJobs and PyInstaller
         shell: bash
-        run: python -m pip install -e ".[llm]" pyinstaller
+        run: python -m pip install -e ".[llm,interview]" pyinstaller
 
       # Stages packaging/seed/sponsors.db (public US government sponsor data). Without it
       # the installer ships with no visa data and every job reads "No sponsor record".
