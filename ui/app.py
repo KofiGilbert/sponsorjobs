@@ -12676,6 +12676,20 @@ def interview_round2_status():
     return jsonify(_round2_status())
 
 
+# How many main questions the interviewer is briefed to ask (the briefing and the plan use these).
+ROUND2_Q_MIN, ROUND2_Q_MAX = 4, 6
+
+
+@app.get("/api/interview/round2/config")
+@_guard
+def interview_round2_config():
+    """What a live interview runs on, so the intro can state it before it starts (the call and its
+    own timing only exist once the person joins): its length in minutes and how many main questions
+    the interviewer is briefed to ask. Nothing about the account; that is /round2/status."""
+    return jsonify({"minutes": _cvi_timing()["minutes"], "questions_min": ROUND2_Q_MIN,
+                    "questions_max": ROUND2_Q_MAX})
+
+
 @app.post("/api/interview/round2/buy")
 @_guard
 def interview_round2_buy():
@@ -13278,11 +13292,11 @@ def _round2_plan(prep: dict, facts: list[dict] | None = None) -> list[dict]:
         text = str(q.get("q") or "").strip()
         if text:
             out.append({"q": text, "competency": str(q.get("competency") or "").strip() or "General"})
-        if len(out) >= 6:
+        if len(out) >= ROUND2_Q_MAX:
             break
     proj = [{"q": pr["questions"][0], "competency": "Project"} for pr in (facts or [])[:2] if pr.get("questions")]
     if proj:
-        out = (out[:2] + proj + out[2:])[:6]
+        out = (out[:2] + proj + out[2:])[:ROUND2_Q_MAX]
     return out
 
 
@@ -13299,7 +13313,7 @@ def _round2_briefing(prep: dict, profile: dict, facts: list[dict] | None = None)
         f"{_cvi_timing()['minutes']}-minute practice "
         "interview. Introduce yourself as the hiring manager for this team.",
         "Ask one question at a time, listen to the whole answer, probe with short follow-ups, and "
-        "keep to: intro, 4 to 6 questions, the candidate's questions, close.",
+        f"keep to: intro, {ROUND2_Q_MIN} to {ROUND2_Q_MAX} questions, the candidate's questions, close.",
     ]
     plan = _round2_plan(prep, facts)
     if plan:

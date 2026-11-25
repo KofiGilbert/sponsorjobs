@@ -3302,7 +3302,7 @@ body.cv-dragging * { cursor: grabbing !important; }
   border-radius: var(--r-md, 8px); font-size: 12.5px; color: var(--ink-2); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 .prep-live { max-width: 1040px; margin: 0 auto; }
-.prep-live > .mock-top, .prep-live > .live-stage { max-width: 880px; }
+.prep-live > .live-stage { max-width: 880px; }
 /* Career-memory capture box in Settings */
 .mem-add { margin: 10px 0; }
 .mem-add textarea { width: 100%; box-sizing: border-box; }
@@ -3328,36 +3328,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .rec-meter-track { flex: 1; height: 6px; border-radius: 999px; background: var(--surface-2, #f2f4f7); overflow: hidden; }
 .rec-meter-fill { display: block; height: 100%; width: 0; border-radius: 999px; background: #12b76a; transition: width .08s linear; }
 
-/* ============ Round 2, live interview: a video-call look (green room, then the pane) ============ */
-/* Green room: preview yourself, then Join */
-.zoom-cvi { background: #14161a; border-radius: var(--r-lg, 14px); overflow: hidden; box-shadow: 0 12px 34px rgba(16,24,40,.2); }
-.zoom-greenroom { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; align-items: center; }
-@media (max-width: 720px) { .zoom-greenroom { grid-template-columns: 1fr; } }
-.zoom-gr-preview { position: relative; background: #14161a; border-radius: var(--r-lg, 12px); overflow: hidden; aspect-ratio: 16 / 9; box-shadow: 0 10px 30px rgba(16,24,40,.18); }
-.zoom-gr-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
-.zoom-gr-off { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #9aa2ad; font-size: 13px; padding: 0 20px; text-align: center; }
-.zoom-gr-eyebrow { font-size: 11.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--accent, #4f46e5); }
-.zoom-gr-h { font-size: 22px; font-weight: 700; color: var(--ink); margin: 6px 0 0; }
-.zoom-gr-sub { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 8px 0 0; }
-.zoom-gr-note { font-size: 12px; color: var(--faint); line-height: 1.55; margin: 12px 0; }
-.zoom-gr-acts { display: flex; gap: 8px; }
-
-.zoom-topbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: rgba(255,255,255,.04); color: #e7e9ee; font-size: 12.5px; }
-.zoom-title { font-weight: 700; }
-.zoom-live { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; font-size: 11px; letter-spacing: .04em; color: #ff5b5b; }
-.zoom-live i { width: 8px; height: 8px; border-radius: 50%; background: #ff5b5b; box-shadow: 0 0 0 3px rgba(255,91,91,.25); animation: scrpulse 1.4s infinite; }
-.zoom-meta { margin-left: auto; color: #9aa2ad; }
-.zoom-controls { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; background: rgba(255,255,255,.03); }
-.zoom-ctrl { display: inline-flex; align-items: center; justify-content: center; min-width: 64px; padding: 8px 14px; border-radius: 10px;
-  border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: #e7e9ee; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
-.zoom-ctrl:hover { background: rgba(255,255,255,.12); }
-.zoom-ctrl.off { background: #f04438; border-color: #f04438; color: #fff; }
-.zoom-ctrl.zoom-leave { background: #f04438; border-color: #f04438; color: #fff; }
-.zoom-ctrl.zoom-leave:hover { background: #d92d20; }
-.zoom-cvi-note { color: #cfd3da; font-size: 13px; line-height: 1.55; padding: 16px 18px 4px; }
-.zoom-cvi-controls { justify-content: space-between; }
-.zoom-mins { color: #9aa2ad; font-size: 12.5px; }
-.zoom-mins b { color: #e7e9ee; }
 
 /* ============ Round 1 (one-way recorded interview): the stage ============ */
 /* Round 1 up to the report (welcome, notice, device check, practice, the questions, All done) runs
@@ -3382,19 +3352,19 @@ body.cv-dragging * { cursor: grabbing !important; }
    page title, the round tracker, the footer line and (when its pane is closed) the right-hand rail
    are hidden. Pure CSS on purpose: the chrome returns the moment the stage is gone (report, Exit,
    another view), with no flag that could be left on. */
-.app:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) { grid-template-columns: minmax(0, 1fr); }
-.app:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) > .sidebar { display: none; }
-.main:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) > .privacy-line { display: none; }
-body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .panel-rail { display: none; }
-body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .side-panel { visibility: hidden; }
-body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) .app { margin-right: 0; }
-#view-prep:has(#prepScreen:not([hidden]) .r1-stage) { padding: 0; overflow: hidden; scrollbar-gutter: auto; max-width: none; }
+.app:has(#view-prep.is-active :is(#prepScreen, #prepLive):not([hidden]) .r1-stage) { grid-template-columns: minmax(0, 1fr); }
+.app:has(#view-prep.is-active :is(#prepScreen, #prepLive):not([hidden]) .r1-stage) > .sidebar { display: none; }
+.main:has(#view-prep.is-active :is(#prepScreen, #prepLive):not([hidden]) .r1-stage) > .privacy-line { display: none; }
+body:not(.panel-open):has(#view-prep.is-active :is(#prepScreen, #prepLive):not([hidden]) .r1-stage) .panel-rail { display: none; }
+body:not(.panel-open):has(#view-prep.is-active :is(#prepScreen, #prepLive):not([hidden]) .r1-stage) .side-panel { visibility: hidden; }
+body:not(.panel-open):has(#view-prep.is-active :is(#prepScreen, #prepLive):not([hidden]) .r1-stage) .app { margin-right: 0; }
+#view-prep:has(:is(#prepScreen, #prepLive):not([hidden]) .r1-stage) { padding: 0; overflow: hidden; scrollbar-gutter: auto; max-width: none; }
 /* clip, not hidden: a hidden box can still be scrolled by a focus call, which would shift the stage. */
-.main:has(#view-prep.is-active #prepScreen:not([hidden]) .r1-stage) { overflow: clip; }
-#view-prep:has(#prepScreen:not([hidden]) .r1-stage) > .page-head,
-#view-prep:has(#prepScreen:not([hidden]) .r1-stage) > .prep-progress,
-#prepScreen:has(.r1-stage) > .mock-top { display: none; }
-#prepScreen:has(.r1-stage), #prepScreen:has(.r1-stage) > .scr-stage { max-width: none; height: 100%; margin: 0; }
+.main:has(#view-prep.is-active :is(#prepScreen, #prepLive):not([hidden]) .r1-stage) { overflow: clip; }
+#view-prep:has(:is(#prepScreen, #prepLive):not([hidden]) .r1-stage) > .page-head,
+#view-prep:has(:is(#prepScreen, #prepLive):not([hidden]) .r1-stage) > .prep-progress,
+:is(#prepScreen, #prepLive):has(.r1-stage) > .mock-top { display: none; }
+:is(#prepScreen, #prepLive):has(.r1-stage), :is(#prepScreen, #prepLive):has(.r1-stage) > :is(.scr-stage, .live-stage) { max-width: none; height: 100%; margin: 0; }
 
 .r1-stage { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; background: var(--r1-page); }
 /* The bar: Exit, nothing else. Everything about the question lives in the card. */
@@ -3546,6 +3516,7 @@ body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-sta
 /* The facts: four separate items, a large tabular number with a small label under it. */
 .r1-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: calc(var(--u) * 3.5); border-top: 1px solid var(--r1-line); border-bottom: 1px solid var(--r1-line); }
 .r1-stats[data-n="1"] { grid-template-columns: minmax(0, 1fr); }
+.r1-stats[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .r1-stat { display: grid; gap: .28em; padding: calc(var(--u) * 2.25) 0 calc(var(--u) * 2.25) calc(var(--u) * 2.5); border-left: 1px solid var(--r1-line); }
 .r1-stat:first-child { padding-left: 0; border-left: 0; }
 .r1-stat b { font-size: clamp(24px, 3.5cqi, 42px); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--r1-ink); white-space: nowrap; }
@@ -3603,11 +3574,72 @@ body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-sta
   .r1-pop { bottom: auto; top: calc(100% + 4px); }
   .r1-strip { flex-wrap: wrap; }
 }
-/* Round 2 gate: needs a live interviewer. Inline (under the Round 1 report) or as its own card. */
-.r2-gate-inline { display: block; }
-.r2-gate-h { font-size: 17px; font-weight: 650; color: var(--ink); margin: 0 0 6px; }
-.r2-gate-d { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 0 0 12px; max-width: 60ch; }
-.r2-gate .scr-welcome-acts, .r2-gate-inline .scr-welcome-acts { flex-wrap: wrap; }
+/* ============ Round 2 (the live interview) on the same stage ============ */
+/* The intro is Round 1's card. Its action area: one line when there is no live interview left (a
+   row with a hairline, like Round 1's setting row), then the buttons. "Not now" is a quiet text
+   button next to the one primary. No plans and no prices here: those live in the plans panel. */
+.r2-act-line { margin: calc(var(--u) * 3.5) 0 0; padding: calc(var(--u) * 2.25) 0 0; border-top: 1px solid var(--r1-line);
+  font-size: clamp(15.5px, 2.15cqi, 26px); font-weight: 600; line-height: 1.35; color: var(--r1-ink); }
+.r2-act-line + .r1-solo-acts { margin-top: calc(var(--u) * 2.5); }
+.r2-quiet { height: calc(var(--u) * 6); padding: 0 calc(var(--u) * 1.5); font: inherit; font-size: clamp(14.5px, 1.95cqi, 23px); font-weight: 600;
+  color: var(--r1-muted); background: transparent; border: 0; border-radius: calc(var(--u) * 1.2); cursor: pointer; }
+.r2-quiet:hover { color: var(--r1-ink); background: var(--r1-surface); }
+.r2-nostart-sub { margin: calc(var(--u) * 1.5) 0 0; }
+
+/* The call (HireVue's live layout; Google Meet and Zoom's one-to-one view). The bar keeps Exit in
+   its place and centres a "Live interview" pill with the time left. The interviewer fills one
+   large 16:9 tile sized to the window; you sit in a small tile in its bottom right corner; a thin
+   green outline marks whoever is speaking (Zoom's active-speaker cue). One row of round icon
+   buttons is centred under the video, the red end button last. */
+.r2-pill { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 8px;
+  height: 32px; padding: 0 14px; box-sizing: border-box; font-size: clamp(13px, .62vw + 4px, 15.5px); font-weight: 600; color: var(--r1-ink);
+  background: var(--r1-bg); border: 1px solid var(--r1-border); border-radius: 999px; white-space: nowrap; }
+.r2-pill b { min-width: 4.2ch; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--r1-ink-2); }
+.r2-pill-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--r1-rec); animation: scrpulse 1.4s infinite; }
+.in-shell .r2-pill { -webkit-app-region: no-drag; }
+.r1-main.r2-call-main { container: r2call / size; align-items: center; justify-content: center; padding: 0 24px 18px; overflow: visible; }
+.r1-main.r2-call-main::before, .r1-main.r2-call-main::after { flex: 1 1 0; }
+.r2-call { display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; }
+.r2-tile { position: relative; overflow: hidden; background: #14161a; transition: box-shadow .2s var(--ease); }
+.r2-tile-iv { width: min(100cqw, (100cqh - 80px) * 16 / 9, 2200px); aspect-ratio: 16 / 9; border-radius: 16px;
+  box-shadow: var(--r1-card-shadow), 0 0 0 0 transparent; }
+.r2-tile-iv.is-speaking { box-shadow: var(--r1-card-shadow), 0 0 0 2px var(--r1-good); }
+.r2-vid { display: block; width: 100%; height: 100%; object-fit: cover; }
+.r2-vid[hidden] { display: none; }
+.r2-tile-me { position: absolute; right: clamp(10px, 1.4%, 22px); bottom: clamp(10px, 1.4%, 22px); width: clamp(128px, 21%, 420px); aspect-ratio: 16 / 9;
+  border-radius: 10px; background: #2a2e36; box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 6px 18px rgba(0,0,0,.35); }
+.r2-tile-me[hidden] { display: none; }
+.r2-tile-me.is-speaking { box-shadow: 0 0 0 2px var(--r1-good), 0 6px 18px rgba(0,0,0,.35); }
+.r2-vid-me { transform: scaleX(-1); }
+.r2-me-off { position: absolute; inset: 0; display: none; place-items: center; color: #aab1bc; }
+.r2-me-off svg { width: 22px; height: 22px; }
+.r2-tile-me.is-off .r2-me-off { display: grid; }
+.r2-me-off.r2-nocam { display: grid; background: #1b1e24; }
+.r2-me-off.r2-nocam svg { width: 32px; height: 32px; }
+.r2-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 0 24px;
+  text-align: center; color: #e7e9ee; font-size: clamp(14px, 1.3cqi, 19px); }
+.r2-wait[hidden] { display: none; }
+.r2-wait b { font-weight: 600; }
+.r2-wait span:last-child { color: #9aa2ad; font-size: .86em; }
+.r2-spin { width: 22px; height: 22px; margin-bottom: 6px; border-radius: 50%; border: 2px solid rgba(255,255,255,.2); border-top-color: #e7e9ee; animation: r1spin .9s linear infinite; }
+.r2-ctrls { position: relative; flex: none; display: flex; align-items: center; justify-content: center; gap: 12px; height: 52px; }
+.r2-ctrl-wrap { position: relative; display: inline-flex; }
+.r2-ctrl { position: relative; display: inline-grid; place-items: center; width: 48px; height: 48px; padding: 0; font: inherit; color: var(--r1-ink);
+  background: var(--r1-bg); border: 1px solid var(--r1-border); border-radius: 50%; cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.r2-ctrl:hover { background: var(--r1-surface); }
+.r2-ctrl svg { width: 20px; height: 20px; }
+.r2-ctrl .r2-ic-on { display: contents; }
+.r2-ctrl .r2-ic-off, .r2-ctrl.is-off .r2-ic-on { display: none; }
+.r2-ctrl.is-off .r2-ic-off { display: contents; }
+.r2-ctrl.is-off { color: #fff; background: var(--r1-rec); border-color: var(--r1-rec); }
+.r2-ctrl.is-off:hover { background: var(--r1-rec-hover); }
+.r2-ctrl-end { width: 64px; border-radius: 24px; color: #fff; background: var(--r1-rec); border-color: var(--r1-rec); }
+.r2-ctrl-end:hover { background: var(--r1-rec-hover); }
+.r2-ctrl-end svg { width: 24px; height: 24px; }
+.r2-pop.r1-pop { left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%); width: min(380px, calc(100vw - 32px)); }
+.r1-leave.r2-confirm { top: auto; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%); max-width: none; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .r2-pill-dot, .r2-spin { animation: none; } }
 /* The Round 2 tile note (no pass yet, or interviews used up). */
 .prep-tile-note { margin-top: 8px; font-size: 12px; color: var(--faint); }
 
@@ -3745,27 +3777,6 @@ body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-sta
 .fd-stick-c { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fd-stick-in .btn { flex: none; }
 
-/* The live call: our own screen, not Daily's page in a box. The interviewer fills the stage, you
-   sit in the corner, the controls float at the bottom, and fitCviCall() sizes it to the window
-   so nothing scrolls. In a call the page drops the prep column limit and the Quit bar. */
-.prep-live.in-call, .prep-live.in-call > .live-stage { max-width: none; }
-.prep-live.in-call > .mock-top { display: none; }
-.zoom-call { position: relative; height: 70vh; min-height: 380px; background: #0d0f12; border-radius: var(--r-lg, 14px); overflow: hidden; }
-.zoom-call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
-.zoom-call-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #cfd3da; font-size: 14px; }
-.zoom-call-wait[hidden] { display: none; }
-.zoom-call-wait-row { display: flex; align-items: center; gap: 10px; }
-.zoom-call-wait-sub { color: #9aa2ad; font-size: 12.5px; }
-.zoom-call-spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.18); border-top-color: #e7e9ee; animation: zoomspin .8s linear infinite; }
-@keyframes zoomspin { to { transform: rotate(360deg); } }
-.zoom-call-top { position: absolute; top: 14px; left: 16px; right: 16px; display: flex; align-items: center; gap: 12px; color: #e7e9ee; font-size: 12.5px; }
-.zoom-call-top .zoom-mins { margin-left: auto; padding: 5px 10px; border-radius: 8px; background: rgba(0,0,0,.45); }
-.zoom-call-self { position: absolute; right: 16px; bottom: 76px; width: clamp(140px, 18%, 260px); aspect-ratio: 16 / 9; object-fit: cover; transform: scaleX(-1);
-  border-radius: 10px; border: 1px solid rgba(255,255,255,.18); background: #1b1e24; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
-.zoom-call-self[hidden] { display: none; }
-.zoom-call-bar { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; gap: 10px; }
-.zoom-call-bar .zoom-ctrl { background: rgba(20,22,26,.72); }
-.zoom-call-bar .zoom-ctrl.off, .zoom-call-bar .zoom-ctrl.zoom-leave { background: #f04438; }
 
 /* Official app: own-key options belong to the open-source edition and never show here. */
 .is-managed .byok-only { display: none !important; }
@@ -4817,7 +4828,7 @@ body:not(.panel-open):has(#view-prep.is-active #prepScreen:not([hidden]) .r1-sta
 /* ============ The interview report (design A2, 2026-10-23) ============
    Grey like the rest of the app. Colour only for status (--good / --flag), always with a word. */
 .prep-live.is-report, .prep-live.is-report > .live-stage, .prep-screen.is-report, .prep-screen.is-report > .scr-stage { max-width: 1320px; }
-.prep-live.is-report > .mock-top, .prep-screen.is-report > .mock-top { display: none; }
+.prep-screen.is-report > .mock-top { display: none; }
 #view-prep:has(.is-report:not([hidden])) .page-head, #view-prep:has(.is-report:not([hidden])) .prep-progress { display: none; }
 .a2 { padding-bottom: 24px; }
 .a2 .num { font-variant-numeric: tabular-nums; }

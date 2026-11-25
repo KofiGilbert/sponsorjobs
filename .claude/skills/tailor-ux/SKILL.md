@@ -140,14 +140,42 @@ by `tests/test_interview_stage.py`):
   line, "No sound from this microphone..." after five quiet seconds on the check). Settings is
   locked while recording.
 
-**Round 2 is one live interview with the Tavus interviewer (15 minutes)** in the Electron
-video pane (`renderCviStage`, `window.tailorShell.openBrowser`), then "End interview" leads to
-the scored report. It is PAID ONLY (2026-10-14): a pass or a prepaid pack, on the company
-Tavus key held by the broker; there is no own-key box anywhere. In the full mock, a PASS goes to
-"Start Round 2" when `GET /api/interview/round2/status` is available; otherwise to a gate screen
-("Live interviews come with a pass" with one button per pass on sale, names and prices from the
-broker; or the packs when a pass is used up; "Finish here"). "Round 2 only"
-calls cvi/start with `skip_screen: true`.
+**Round 2 is one live interview with the Tavus interviewer (20 minutes)** on the SAME stage as
+Round 1 (2026-11-25): focus mode, `r1Stage`, the `r1-*` card, labels, buttons and device menus,
+drawn into `#liveStage`. No second design system. The steps:
+1. **Intro** (Round 1's intro card): "ROUND 2 · LIVE INTERVIEW", the company mark, the role on ONE
+   line, the company on a quiet line; a stat row from `GET /api/interview/round2/config` ("20 min /
+   live, on video", "4 to 6 / questions, with follow-ups", "1 / scored report"); "N live interviews
+   left" as one quiet line; three TRUE points: the call runs live through our video partner, Tavus;
+   we don't keep your video, the report stays on this computer; no facial analysis. Never say the
+   call "stays on this computer": it does not. One primary, "Get started".
+2. **No live interview left**: the same card; the action area is one line and ONE primary. No plan
+   cards and no prices on this screen, ever (owner, 2026-11-25): prices live in ONE place, the
+   plans panel. No plan: "Live interviews are part of every plan." + "See plans" (opens the plans
+   panel) + a quiet "Not now". Used up: "You've used this period's live interviews. They refill on
+   <date>." + "Buy more interviews" (the same panel, which sells the packs) when packs are on sale.
+   Unreachable: "Check again" + "Not now". The panel closing, or the window regaining focus,
+   checks again.
+3. **Device check**: Round 1's card (`r1CheckBody`), "Join interview" where Round 1 has its
+   practice question. The camera and microphone remembered from either round (`sj.r1.cam/mic`)
+   open first, and the ones chosen here are handed to the call (`videoSource`/`audioSource`). No
+   camera: one line "No camera found. You can still join with your voice.", the preview shows the
+   crossed camera, and the call joins voice only with no camera control.
+4. **The call**: the bar keeps Exit and centres a "● Live interview 19:32" pill (time left); the
+   interviewer fills one 16:9 tile sized to the window; you are a small self view in its bottom
+   right corner (the one-to-one view of Google Meet and Zoom; HireVue's stacked tiles suit its
+   narrow widget, not a landscape window); a thin green outline marks whoever is speaking (from
+   the interviewer's own speaking events); one row of round icon buttons under the video:
+   microphone, camera, settings (the device menus, switched on the call and remembered), and a red
+   end button that asks first ("End the interview now?"). Exit and Escape ask too; Escape never
+   ends it. No question text: the engine does not know which question is being asked.
+5. **All done** on the same card ("Scoring your interview. This takes a minute."), then Round 1's
+   report layout. No typing anywhere. Nothing said: "The call closed before your interview began"
+   with "Join again".
+It is PAID ONLY (2026-10-14): a plan or a prepaid pack, on the company Tavus key held by the
+broker; there is no own-key box anywhere. In the full mock, a pass on Round 1 shows "Start Round 2"
+under the report, and the Round 2 intro says what a live interview needs. "Round 2 only" calls
+cvi/start with `skip_screen: true`.
 Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platform.tavus.io.
 
 ## 5. Verification workflow (how to prove a UI change, not guess)
@@ -744,3 +772,12 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   and number of questions as separate facts); LukeW on aligning the primary action with the
   content's left edge; NN/g toggle guidelines (a switch must take effect at once, so this is a
   checkbox); Apple HIG ("Aim to keep titles short enough to display on a single line").
+- 2026-11-25: **Live interview: the same stage as the recorded round** (owner: "give the live
+  interview the same uplift"). Round 2 left its own green room, its boxed call and its gate card
+  with four same-weight pills for Round 1's stage (§4). The paywall lists no plans and no prices:
+  every paid plan includes live interviews, so the screen sends the person to the plans panel, the
+  one place prices live. The call follows HireVue's live layout and the one-to-one view of Google
+  Meet and Zoom: a large interviewer tile, a small self view, a centred row of round icon buttons,
+  a red end button that asks first, a thin outline on the speaker (Zoom's green active-speaker
+  cue). The intro's button says "Get started", not "Join interview": joining happens on the device
+  check, and two "Join interview" buttons in a row would each claim to join.
