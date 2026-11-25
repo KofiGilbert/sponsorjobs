@@ -36,6 +36,7 @@ import {
   recordAvatarSession, recordLlm, takeFreePackage, takeFreeRecorded, takePassPackage,
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
+import { handleSearch } from "./search";
 import { studentEligible, studentGet, studentRow, studentStart, studentStatus, studentVerify } from "./student";
 import { applySubscriptionEvent, customerOf, liveSub, portalUrl, setCanceling, subView } from "./subscriptions";
 import { githubAvailable, githubCallback, githubClaim, githubConnect, githubRefresh, githubRevoke } from "./github";
@@ -67,7 +68,10 @@ function pyInt(v: unknown): number {
   throw new TypeError("max_tokens is not an integer");
 }
 
-interface Ctx { req: Request; env: Env; now: number /* unix seconds */; nowMs: number }
+interface Ctx {
+  req: Request; env: Env; now: number /* unix seconds */; nowMs: number;
+  exec?: { waitUntil(p: Promise<unknown>): void };
+}
 type Handler = (c: Ctx) => Promise<Response> | Response;
 
 // ---- phase 1 ---------------------------------------------------------------------------------- //
@@ -613,10 +617,14 @@ const ROUTES: Route[] = [
   ["GET", /^\/notify\/telegram\/inbox$/, tg.inbox],
   ["POST", /^\/notify\/telegram\/file$/, tg.file],
   ["POST", /^\/telegram\/webhook$/, tg.webhook],
+  // Server-side job search (src/search.ts, docs/server-search-plan.md). Public postings only.
+  // 503 no_index until the search database is bound and loaded.
+  ["GET", /^\/v1\/jobs\/search$/, ({ req, env, nowMs, exec }) => handleSearch(req, env, "search", nowMs, exec)],
+  ["GET", /^\/v1\/jobs\/candidates$/, ({ req, env, nowMs, exec }) => handleSearch(req, env, "candidates", nowMs, exec)],
 ];
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, exec?: ExecutionContext): Promise<Response> {
     const path = new URL(req.url).pathname;
     const nowMs = Date.now();
     // The admin host serves ONLY the read-only dashboard, and only behind a verified Cloudflare
@@ -636,7 +644,7 @@ export default {
     const route = matches.find(([m]) => m === method);
     if (!route) return json({ error: "method not allowed" }, 405);
     try {
-      return await route[2]({ req, env, now: Math.floor(nowMs / 1000), nowMs });
+      return await route[2]({ req, env, now: Math.floor(nowMs / 1000), nowMs, exec });
     } catch (err) {
       // A bug or a D1 hiccup: answer JSON the app can read, never a stack trace.
       console.error(`${req.method} ${path} failed:`, err instanceof Error ? err.stack ?? err.message : err);

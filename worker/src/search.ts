@@ -1,32 +1,58 @@
-// Server-side job search over the D1 index (docs/server-search-plan.md, phase 2):
+// Server-side job search over the D1 index (docs/server-search-plan.md):
 //   GET /v1/jobs/search      the Jobs page's board, at most 50 rows a page
 //   GET /v1/jobs/candidates  the Auto-apply picker's pool, at most 500 rows a page, plus titles=A|B
 //
 // The facets mean EXACTLY what sourcing/filters.apply_facets (and, for titles,
 // autoapply/picker._matches_focus) mean on the device, and the order is the board's: newest first
 // (feedfile.recency_key), or highest pay first with that order breaking ties. The loader
-// (scripts/load_search_index.py) precomputes every derived column in Python, so this file only
-// compares values. worker/test/search-parity.test.ts checks the two agree on ~50 facet mixes.
+// (scripts/load_search_index.py) precomputes every derived value in Python, so this file only
+// compares numbers. worker/test/search-parity.test.ts checks the two agree on ~60 facet mixes.
+//
+// Built for Cloudflare's FREE plan (5 million D1 rows read a day, for the whole account):
+//   * jobs.id IS the board's order, so a page is a short walk down the table, and the keyword
+//     index hands back matches newest first with no sort;
+//   * a request reads a bounded number of rows (SCAN_CAP). When a rare filter mix needs more, it
+//     answers the rows found so far with a cursor that carries on from where the scan stopped
+//     (the app follows it), so no single request can read the whole table;
+//   * no counting past the page: the count is exact when the scan reached the end, otherwise an
+//     estimate ("about N") from what the scan saw;
+//   * the rows read are added up per UTC day (search_usage) and search stops itself (503
+//     daily_budget) before it can use the allowance the broker's own database needs.
 //
 // Privacy: the request carries only the query, the facets and a cursor; nothing here logs them,
 // and the install token (X-Install-Token) is used only as a rate-limit key, never stored or logged.
 // Abuse: 60 requests a minute per install token and 300 per network (the Workers rate-limit
-// binding), at most 1,000 results deep per query, and counts capped at 200 ("200+").
+// binding, when bound), at most 1,000 results deep per query.
 
 import type { Env } from "./env";
 
 export const SEARCH_MAX = 50;
 export const CANDIDATES_MAX = 500;
 export const DEPTH_MAX = 1000;          // refine to see more; the API is not a bulk export
-export const COUNT_CAP = 200;           // "200+": counting further was most of a keyword search's cost
-const CACHE_SECONDS = 600;              // an index_version lives ~3 h; the cache at most 10 min
-const VERSION_TTL_MS = 30_000;          // how long an isolate trusts the index_version it read
+export const SCAN_CAP = 2000;           // index rows one search request may walk
+export const CANDIDATES_SCAN_CAP = 6000;
+export const FTS_COUNT_CAP = 250;       // a keyword's matches are counted up to here ("250+")
+export const FTS_SORT_MAX = 600;        // sort=pay: a keyword with fewer matches is sorted whole
+const CACHE_SECONDS = 600;              // an index_version lives hours; the cache at most 10 min
+const META_TTL_MS = 30_000;             // how long an isolate trusts the index info it read
+const FLUSH_ROWS = 25_000;              // add this isolate's reads to search_usage this often
+const FLUSH_REQUESTS = 500;
+export const DAILY_ROWS_READ = 3_500_000;   // of the free plan's 5,000,000; 0 = no limit
+export const DAILY_REQUESTS = 60_000;       // of the free plan's 100,000; 0 = no limit
+
+// jobs.f bits and the id layout: the same numbers as scripts/load_search_index.py.
+const F_SPONSOR = 1, F_ENTRY = 2, F_OFFERED = 4, F_VISA_ANY = 8, F_REMOTE_SHIFT = 4;
+const REMOTE_KINDS: Record<string, number> = { remote: 1, hybrid: 2, onsite: 3 };
+const LABEL_SPAN = 2 ** 24;
+const DATED = 2 ** 40;
+const DAY_MAX = 65535;
+const ID_END = Number.MAX_SAFE_INTEGER;
 
 type Mode = "search" | "candidates";
 
 export interface Facets {
   q: string; loc: string; days: number; remote: string; visa: string[]; level: string;
-  pay: number; sort: "recent" | "pay"; sponsored: boolean; titles: string[];
+  pay: number; sort: "recent" | "pay"; sponsored: boolean; scope: "sponsors" | "all"; titles: string[];
 }
 
 interface Parsed { facets: Facets; limit: number; cursor: string }
@@ -38,7 +64,7 @@ export class BadParam extends Error {
 // ---- Python's str.strip() and int() -------------------------------------------------------- //
 
 // Python's whitespace (str.isspace), which differs from JS \s: \x1c-\x1f and \x85 are space in
-// Python, ﻿ is not.
+// Python, the byte-order mark is not.
 const PY_WS = "\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
 const STRIP = new RegExp(`^[${PY_WS}]+|[${PY_WS}]+$`, "g");
 export const pyStrip = (s: string): string => s.replace(STRIP, "");
@@ -81,6 +107,11 @@ export function parseParams(a: URLSearchParams, mode: Mode): Parsed {
   }
   const level = pyStrip(text(a, "level", 20)).toLowerCase();
   if (level !== "" && level !== "entry") throw new BadParam("level", "level must be entry or empty");
+  // sourcing/filters.apply_facets: only "sponsors" narrows; anything else is every job.
+  const scope = pyStrip(text(a, "scope", 20)).toLowerCase();
+  if (scope !== "" && scope !== "sponsors" && scope !== "all") {
+    throw new BadParam("scope", "scope must be sponsors or all");
+  }
   const visa = text(a, "visa", 200).split(",").filter((v) => v);
   if (visa.length > 10) throw new BadParam("visa", "at most 10 visa codes");
   for (const v of visa) {
@@ -110,6 +141,7 @@ export function parseParams(a: URLSearchParams, mode: Mode): Parsed {
       sort: sort === "pay" ? "pay" : "recent",
       // apply_facets: str(sponsored).strip().lower() in ("1", "true", "yes", "on")
       sponsored: ["1", "true", "yes", "on"].includes(pyStrip(text(a, "sponsored", 10)).toLowerCase()),
+      scope: scope === "sponsors" ? "sponsors" : "all",
       titles: titles.map((t) => t.toLowerCase()),
     },
   };
@@ -117,86 +149,106 @@ export function parseParams(a: URLSearchParams, mode: Mode): Parsed {
 
 /** The facets as one canonical string: the cache key and the cursor's fingerprint. */
 export function facetKey(f: Facets): string {
-  return JSON.stringify([f.q, f.loc, f.days, f.remote, f.visa, f.level, f.pay, f.sort, f.sponsored, f.titles]);
+  return JSON.stringify([f.q, f.loc, f.days, f.remote, f.visa, f.level, f.pay, f.sort, f.sponsored,
+                         f.scope, f.titles]);
 }
 
 // ---- SQL ---------------------------------------------------------------------------------- //
 
-/** A user string as ONE literal FTS5 phrase. Inside double quotes every character is plain text
- * (NEAR, AND, OR, NOT, *, ^, column filters and parentheses lose their meaning); a double quote
- * is written twice. With the trigram tokenizer a phrase matches rows CONTAINING the string. */
-export const ftsPhrase = (s: string): string => `"${s.replace(/"/g, '""')}"`;
+const chars = (s: string) => [...s];   // code points, as the trigram tokenizer counts
+
+/** A user string as an FTS5 query: every 3-character window of it as its own quoted token,
+ * ANDed. Inside double quotes every character is plain text (NEAR, AND, OR, NOT, *, ^, column
+ * filters and parentheses lose their meaning); a double quote is written twice. The index
+ * (detail=none) then answers the rows holding all of those trigrams somewhere in their title,
+ * company or location, and the caller checks the real substring on each. null under 3 characters. */
+export function ftsAll(s: string): string | null {
+  const c = chars(s);
+  if (c.length < 3) return null;
+  const grams = new Set<string>();
+  for (let i = 0; i + 3 <= c.length; i++) grams.add(c.slice(i, i + 3).join(""));
+  return [...grams].map((g) => `"${g.replace(/"/g, '""')}"`).join(" AND ");
+}
 
 /** A substring as a GLOB pattern piece: *, ? and [ are the only special characters. */
 const globLiteral = (s: string): string => s.replace(/[*?[]/g, (c) => `[${c}]`);
 
-const chars = (s: string) => [...s].length;   // code points, as the trigram tokenizer counts
+const LOW = (col: string, low: string) => `coalesce(j.${low}, lower(j.${col}))`;
 
 export interface Query { where: string[]; binds: unknown[]; match: string | null }
 
-export function buildQuery(f: Facets, nowMs: number, useFts = true): Query {
+/** The row test for the facets (every condition is checked on the row itself, so the answer
+ * never depends on which index found the row) and the keyword index's query, when the text is
+ * long enough to use it. `visaBits` maps a visa code to its bit in jobs.vm. */
+export function buildQuery(f: Facets, nowMs: number, visaBits: Map<string, number>): Query {
   const where: string[] = [];
   const binds: unknown[] = [];
   const fts: string[] = [];
-  // Trigram phrases need 3+ characters; shorter strings fall back to a scan with instr(). The
-  // instr() checks stay on even when the index narrows, so the answer never depends on the index.
+  if (f.scope === "sponsors") where.push(`(j.f & ${F_SPONSOR}) != 0`);
   if (f.q) {
-    if (chars(f.q) >= 3) fts.push(`{title_l company_l} : ${ftsPhrase(f.q)}`);
-    where.push("(instr(j.title_l, ?) > 0 OR instr(j.company_l, ?) > 0)");
+    const m = ftsAll(f.q);
+    if (m) fts.push(`(${m})`);
+    where.push(`(instr(${LOW("title", "tl")}, ?) > 0 OR instr(${LOW("company", "cl")}, ?) > 0)`);
     binds.push(f.q, f.q);
   }
   if (f.loc) {
     if (f.loc === "remote") {
-      where.push("(instr(j.location_l, ?) > 0 OR j.remote_l = 'remote')");
+      where.push(`(instr(${LOW("location", "ll")}, ?) > 0 OR ((j.f >> ${F_REMOTE_SHIFT}) & 3) = 1)`);
     } else {
-      if (chars(f.loc) >= 3) fts.push(`location_l : ${ftsPhrase(f.loc)}`);
-      where.push("instr(j.location_l, ?) > 0");
+      const m = ftsAll(f.loc);
+      if (m) fts.push(`(${m})`);
+      where.push(`instr(${LOW("location", "ll")}, ?) > 0`);
     }
     binds.push(f.loc);
   }
   if (f.titles.length) {
-    if (f.titles.every((t) => chars(t) >= 3)) {
-      fts.push("(" + f.titles.map((t) => `title_l : ${ftsPhrase(t)}`).join(" OR ") + ")");
-    }
+    const ms = f.titles.map(ftsAll);
+    if (ms.every((m) => m)) fts.push("(" + ms.map((m) => `(${m})`).join(" OR ") + ")");
     // picker._matches_focus: the title appears with no letter or digit right before or after it.
     // The title is padded with spaces so the edges count as boundaries, as in the regex.
-    where.push("(" + f.titles.map(() => "(' ' || j.title_l || ' ') GLOB ?").join(" OR ") + ")");
+    where.push("(" + f.titles.map(() => `(' ' || ${LOW("title", "tl")} || ' ') GLOB ?`).join(" OR ") + ")");
     for (const t of f.titles) binds.push(`*[^a-z0-9]${globLiteral(t)}[^a-z0-9]*`);
   }
-  if (f.remote) { where.push("j.remote_l = ?"); binds.push(f.remote); }
-  if (f.level === "entry") where.push("j.entry = 1");
+  if (f.remote) {
+    const kind = REMOTE_KINDS[f.remote];
+    where.push(kind ? `((j.f >> ${F_REMOTE_SHIFT}) & 3) = ${kind}` : "0");
+  }
+  if (f.level === "entry") where.push(`(j.f & ${F_ENTRY}) != 0`);
   if (f.visa.length) {
     const parts: string[] = [];
+    let mask = 0;
     for (const v of f.visa) {
-      if (v === "SPONSORED") parts.push("j.visa_any = 1");
-      else { parts.push("instr(j.visa_codes, ?) > 0"); binds.push(`,${v},`); }
+      if (v === "SPONSORED") parts.push(`(j.f & ${F_VISA_ANY}) != 0`);
+      else if (visaBits.has(v)) mask += 2 ** visaBits.get(v)!;
     }
-    where.push("(" + parts.join(" OR ") + ")");
+    if (mask) { parts.push("(j.vm & ?) != 0"); binds.push(mask); }
+    where.push(parts.length ? "(" + parts.join(" OR ") + ")" : "0");
   }
-  if (f.sponsored) where.push("j.sponsored = 1");
+  if (f.sponsored) where.push(`(j.f & ${F_OFFERED}) != 0`);
   if (f.days > 0) {
-    // dt < now - days drops the row; undated rows (NULL) stay. dt is whole seconds.
-    where.push("(j.posted_ts IS NULL OR j.posted_ts * 1000 >= ?)");
+    // dt < now - days drops the row; rows with no readable date (NULL) stay. Whole seconds.
+    where.push("(j.ts IS NULL OR j.ts * 1000 >= ?)");
     binds.push(nowMs - f.days * 86_400_000);
   }
   if (f.pay > 0) { where.push("j.pay >= ?"); binds.push(f.pay); }
-  const match = fts.length ? fts.join(" AND ") : null;
-  if (match && useFts) {
-    where.unshift("j.id IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)");
-    binds.unshift(match);
-  }
-  return { where, binds, match };
+  return { where, binds, match: fts.length ? fts.join(" AND ") : null };
 }
 
 // ---- cursors ------------------------------------------------------------------------------ //
 
-interface CursorBody {
+/** Where a scan stands. `p`: W walking the table (or the keyword index) newest first, P walking
+ * the pay index, Z the rows with no pay after it, S a small keyword result sorted whole.
+ * `s`: which id range of a W / Z walk (the date facet has two). `b`: carry on below this id;
+ * `k`: and, for P and S, at or below this pay. */
+interface Pos { p: "W" | "P" | "Z" | "S"; s: number; b: number; k: number }
+
+interface CursorBody extends Pos {
   v: string;            // index_version it was issued against
   f: string;            // fingerprint of the facets
   n: number;            // results already served (the depth so far)
-  c: number;            // the count reported on page 1
-  k: [number, string];  // keyset: (pay, rkey) of the last row served; pay is 0 for sort=recent
-  p?: number;           // 1 when page 1 chose the FTS plan, so later pages need no probe
+  c: number;            // the count reported on page 1 ...
+  e: number | null;     // ... its estimate ...
+  x: 0 | 1;             // ... and whether it was exact
 }
 
 const enc = new TextEncoder();
@@ -209,7 +261,7 @@ async function hmacKey(env: Env): Promise<CryptoKey> {
   // Without SEARCH_CURSOR_SECRET a cursor is checked against a public key: it still cannot be
   // garbled by accident, but a determined caller could forge one past the depth limit. Set the
   // secret (`wrangler secret put SEARCH_CURSOR_SECRET`) before the API takes public traffic.
-  const secret = env.SEARCH_CURSOR_SECRET || "sponsorjobs-search-cursor-v1";
+  const secret = env.SEARCH_CURSOR_SECRET || "sponsorjobs-search-cursor-v2";
   return crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false,
                                  ["sign", "verify"]);
 }
@@ -231,7 +283,8 @@ export async function decodeCursor(env: Env, raw: string): Promise<CursorBody> {
   let body: CursorBody;
   try { body = JSON.parse(new TextDecoder().decode(payload)); } catch { throw bad; }
   if (typeof body?.v !== "string" || typeof body.f !== "string" || !Number.isInteger(body.n)
-      || !Number.isInteger(body.c) || !Array.isArray(body.k) || typeof body.k[1] !== "string") throw bad;
+      || !Number.isInteger(body.c) || !Number.isInteger(body.s) || !Number.isFinite(body.b)
+      || !Number.isFinite(body.k) || !["W", "P", "Z", "S"].includes(body.p)) throw bad;
   return body;
 }
 
@@ -240,165 +293,318 @@ async function fingerprint(f: Facets): Promise<string> {
   return b64url(d.slice(0, 9));
 }
 
-// ---- index version ------------------------------------------------------------------------ //
+// ---- the index's own information, and the day's usage --------------------------------------- //
 
-interface IndexInfo { v: string | null; g: string; rows: number }
-let versionCache: (IndexInfo & { at: number }) | null = null;
+export interface IndexInfo {
+  v: string | null;       // index_version; null until the first full load has finished
+  g: string;              // generated_at of the feed build it holds
+  rows: number; sponsorRows: number;
+  fields: string[]; tags: string[]; visaBits: Map<string, number>;
+}
+let metaCache: (IndexInfo & { at: number }) | null = null;
 
-/** The loaded index's version, feed time and size, re-read at most every 30 s per isolate. */
-async function indexVersion(env: Env, nowMs: number): Promise<IndexInfo> {
-  if (versionCache && nowMs - versionCache.at < VERSION_TTL_MS) return versionCache;
-  const rows = await env.SEARCH_DB.prepare("SELECT k, v FROM search_meta WHERE k IN ('index_version', 'generated_at', 'rows')")
-    .all<{ k: string; v: string }>();
-  const m = Object.fromEntries(rows.results.map((r) => [r.k, r.v]));
-  versionCache = { at: nowMs, v: m.index_version ?? null, g: m.generated_at ?? "",
-                   rows: Number.parseInt(m.rows ?? "0", 10) || 0 };
-  return versionCache;
+const usage = { day: "", read: 0, requests: 0,          // the day's totals as last read from D1
+                 newRead: 0, newRequests: 0 };           // this isolate's share not yet written
+
+const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+function list(raw: string | undefined): string[] {
+  try {
+    const v = JSON.parse(raw ?? "[]");
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch { return []; }
 }
 
-/** Plan sizes, from the row count N. The FTS plan reads each match about twice (the index, then
- * the rows it sorts); a walk down the ordered index reads about page * N / M rows to fill a page
- * of a term with M matches. They cost the same near M = sqrt(15.5 * N): ~1.7k matches at 184k
- * rows, ~2.8k at 500k. Below that the index answers; above it the walk does, and a probe that
- * stops counting there costs at most that many rows. Measured: docs/server-search-plan.md. */
-export const ftsLimit = (rows: number) => Math.max(COUNT_CAP + 1, Math.round(Math.sqrt(15.5 * Math.max(rows, 1))));
-/** How far a walk with no keyword reads looking for the capped count before going exact. */
-export const walkBudget = (rows: number) => Math.max(2000, Math.round(Math.sqrt(402 * Math.max(rows, 1))));
+/** The loaded index's version, sizes and lists, and today's usage, re-read at most every 30 s
+ * per isolate. */
+async function indexInfo(db: D1Database, nowMs: number): Promise<IndexInfo> {
+  if (metaCache && nowMs - metaCache.at < META_TTL_MS) return metaCache;
+  const day = utcDay(nowMs);
+  const [meta, used] = await db.batch<{ k: string; v: string }>([
+    db.prepare("SELECT k, v FROM search_meta"),
+    db.prepare("SELECT 'read' AS k, CAST(rows_read AS TEXT) AS v FROM search_usage WHERE day = ?1 "
+               + "UNION ALL SELECT 'requests', CAST(requests AS TEXT) FROM search_usage WHERE day = ?1").bind(day),
+  ]);
+  const m = Object.fromEntries(meta!.results.map((r) => [r.k, r.v]));
+  const u = Object.fromEntries(used!.results.map((r) => [r.k, Number(r.v) || 0]));
+  if (usage.day !== day) { usage.day = day; usage.newRead = 0; usage.newRequests = 0; }
+  usage.read = u.read ?? 0;
+  usage.requests = u.requests ?? 0;
+  metaCache = {
+    at: nowMs, v: m.ready === "1" ? (m.index_version ?? null) : null, g: m.generated_at ?? "",
+    rows: Number.parseInt(m.rows ?? "0", 10) || 0,
+    sponsorRows: Number.parseInt(m.sponsor_rows ?? "0", 10) || 0,
+    fields: list(m.fields), tags: list(m.tags),
+    visaBits: new Map(list(m.visa).map((c, i) => [c, i])),
+  };
+  return metaCache;
+}
 
 /** Tests load a new index and need the next request to see it at once. */
-export function forgetIndexVersion(): void { versionCache = null; }
+export function forgetIndexVersion(): void {
+  metaCache = null;
+  usage.day = ""; usage.read = 0; usage.requests = 0; usage.newRead = 0; usage.newRequests = 0;
+}
+
+const limitOf = (raw: string | undefined, fallback: number) => {
+  const n = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+};
+
+/** Is today's search allowance used up? (rows read, or requests; 0 = no limit.) */
+function overBudget(env: Env): boolean {
+  const rows = limitOf(env.SEARCH_DAILY_ROWS_READ, DAILY_ROWS_READ);
+  const reqs = limitOf(env.SEARCH_DAILY_REQUESTS, DAILY_REQUESTS);
+  return (rows > 0 && usage.read + usage.newRead >= rows)
+    || (reqs > 0 && usage.requests + usage.newRequests >= reqs);
+}
+
+/** Count one request and the rows it read; write this isolate's share to search_usage once it
+ * is worth a row written (every 25,000 rows read or 500 requests). */
+function noteUsage(db: D1Database, nowMs: number, rowsRead: number,
+                   ctx?: { waitUntil(p: Promise<unknown>): void }): void {
+  const day = utcDay(nowMs);
+  if (usage.day !== day) { usage.day = day; usage.read = 0; usage.requests = 0; usage.newRead = 0; usage.newRequests = 0; }
+  usage.newRead += rowsRead;
+  usage.newRequests += 1;
+  if (usage.newRead < FLUSH_ROWS && usage.newRequests < FLUSH_REQUESTS) return;
+  const read = usage.newRead, requests = usage.newRequests;
+  usage.newRead = 0; usage.newRequests = 0;
+  usage.read += read; usage.requests += requests;
+  const p = db.prepare(
+    "INSERT INTO search_usage (day, rows_read, rows_written, requests) VALUES (?, ?, 0, ?) "
+    + "ON CONFLICT(day) DO UPDATE SET rows_read = rows_read + excluded.rows_read, "
+    + "requests = requests + excluded.requests RETURNING rows_read, requests")
+    .bind(day, read, requests).first<{ rows_read: number; requests: number }>()
+    .then((r) => { if (r && usage.day === day) { usage.read = r.rows_read; usage.requests = r.requests; } })
+    .catch(() => { /* a lost count only makes the budget a little generous */ });
+  if (ctx) ctx.waitUntil(p);
+}
 
 // ---- the search itself -------------------------------------------------------------------- //
 
 export interface Page {
-  rows: string[];           // the slim rows as JSON strings
-  count: number;
-  count_capped: boolean;
+  rows: Record<string, unknown>[];   // the slim rows, as the feed carries them
+  count: number;                     // exact when count_exact, else the rows known so far
+  count_exact: boolean;
+  count_estimate: number | null;     // "about N" when not exact and the scan could tell
   next: CursorBody | null;
-  stats?: { rows_read: number; plan: string };
+  stats: { rows_read: number; plan: string; queries: number };
 }
 
-type Plan = "fts" | "scan" | "walk";
-interface Key { id: number; pay: number; rkey: string }
+interface Hit {
+  id: number; pay: number; title: string; company: string; location: string; r: string; xv: string | null;
+}
 
-/** A keyword / location phrase on the index matches exactly the rows instr() keeps, so with no
- * other facet the FTS match count IS the result count. */
-function textOnly(f: Facets): boolean {
-  return !f.titles.length && !f.remote && f.level !== "entry" && !f.visa.length && !f.sponsored
-    && !(f.days > 0) && !(f.pay > 0) && f.loc !== "remote"
-    && (!f.q || chars(f.q) >= 3) && (!f.loc || chars(f.loc) >= 3) && Boolean(f.q || f.loc);
+const COLS = "j.id AS id, j.pay AS pay, j.title AS title, j.company AS company, "
+  + "j.location AS location, j.r AS r, x.v AS xv";
+const EXTRAS = "LEFT JOIN extras x ON x.x = j.x AND j.x != 0";
+
+/** The id ranges a newest-first walk covers, newest range first: [low, high] inclusive. The date
+ * facet keeps a dated row only from the cut-off's day on, so the walk reads those days and then
+ * jumps to the rows with no readable date (undated rows sit below every dated one). */
+function ranges(f: Facets, nowMs: number): Array<[number, number]> {
+  if (!(f.days > 0)) return [[0, ID_END]];
+  const sec = Math.floor((nowMs - f.days * 86_400_000) / 1000);
+  const day = Math.max(0, Math.min(DAY_MAX, Math.floor(sec / 86_400)));
+  return [[DATED + day * LABEL_SPAN, ID_END], [0, DATED + LABEL_SPAN - 1]];
+}
+
+function toRow(h: Hit, info: IndexInfo): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  let rest: unknown[] = [];
+  try { rest = JSON.parse(h.r); } catch { /* an unreadable row keeps its text columns */ }
+  for (let i = 0; i < rest.length && i < info.fields.length; i++) {
+    let v = rest[i];
+    if (v === null || v === undefined) continue;
+    if (info.fields[i] === "tags" && Array.isArray(v)) {
+      v = v.map((t) => (typeof t === "number" ? info.tags[t] ?? String(t) : t));
+    }
+    out[info.fields[i]!] = v;
+  }
+  out.title = h.title; out.company = h.company; out.location = h.location;
+  if (h.xv) { try { Object.assign(out, JSON.parse(h.xv)); } catch { /* no employer fields */ } }
+  return out;
 }
 
 /** One page of results for parsed facets. `after` is a decoded, already-checked cursor.
  *
- * Plans, all answering the same rows (search-parity.test.ts runs each):
- *   fts   the trigram index finds the matches, which are then sorted: for terms with few matches
- *   walk  the ordered index, filtered as it goes; `budget` caps how far it may read looking for
- *         the capped count before the exact plan takes over (a keyword-only search needs no
- *         count from the walk: the probe gave it)
- *   scan  the ordered index with no budget (sponsored: its partial index is tiny)
- * Page 1 of a keyword search first counts the index's matches up to ftsLimit (a cheap probe).
- * Keys and the count come from one query, then the page's rows are read by id. */
+ * Plans, all answering the same rows in the same order (search-parity.test.ts runs each):
+ *   W  walk the table newest first, or, with a keyword / place / titles of 3+ characters, the
+ *      keyword index's matches newest first; each row is then tested against the facets
+ *   P  sort=pay: walk the pay index highest first, then (Z) the rows with no pay, newest first
+ *   S  sort=pay with a keyword that has few matches: read them all and sort them
+ * W, P and Z stop after `cap` index rows; the page is then short and the cursor carries on. */
 export async function searchPage(env: Env, f: Facets, limit: number, after: CursorBody | null,
-                                 version: string, nowMs: number,
-                                 opts: { rows?: number; plan?: Plan; budget?: number } = {}): Promise<Page> {
-  const db = env.SEARCH_DB;
-  const n = opts.rows ?? 0;
+                                 info: IndexInfo, nowMs: number,
+                                 opts: { cap?: number; noFts?: boolean; noSort?: boolean } = {}): Promise<Page> {
+  const db = env.SEARCH_DB!;
+  const version = info.v ?? "";
   const served = after?.n ?? 0;
   const take = Math.min(limit, DEPTH_MAX - served);
-  const desc = f.sort === "pay" ? "pay DESC, rkey DESC" : "rkey DESC";
-  const jdesc = desc.replace(/(pay|rkey)/g, "j.$1");
-  const keyset = !after ? null
-    : f.sort === "pay" ? { sql: "(pay, rkey) < (?, ?)", binds: [after.k[0], after.k[1]] }
-    : { sql: "rkey < ?", binds: [after.k[1]] };
-  const match = buildQuery(f, nowMs).match;
-  let read = 0;
+  const q = buildQuery(f, nowMs, info.visaBits);
+  const match = opts.noFts ? null : q.match;
+  const segs = ranges(f, nowMs);
+  let cap = opts.cap ?? SCAN_CAP;
+  let read = 0, queries = 0;
 
   const run = async <T>(sql: string, binds: unknown[]) => {
     const r = await db.prepare(sql).bind(...binds).all<T>();
     read += r.meta?.rows_read ?? 0;
-    return r.results;
+    queries += 1;
+    return { rows: r.results, read: r.meta?.rows_read ?? 0 };
   };
-  const keysFull = (useFts: boolean, want: number) => {
-    const q = buildQuery(f, nowMs, useFts);
-    const where = [...q.where, ...(keyset ? [keyset.sql.replace(/\b(pay|rkey)\b/g, "j.$1")] : [])];
-    return run<Key>(`SELECT j.id, j.pay, j.rkey FROM jobs j ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-                     ORDER BY ${jdesc} LIMIT ?`, [...q.binds, ...(keyset?.binds ?? []), want]);
-  };
-  const keysWalk = (budget: number, want: number) => {
-    const q = buildQuery(f, nowMs, false);
-    const inner = `SELECT * FROM jobs ${keyset ? `WHERE ${keyset.sql}` : ""} ORDER BY ${desc} LIMIT ?`;
-    return run<Key>(`SELECT j.id, j.pay, j.rkey FROM (${inner}) j ${q.where.length ? `WHERE ${q.where.join(" AND ")}` : ""}
-                     ORDER BY ${jdesc} LIMIT ?`, [...(keyset?.binds ?? []), budget, ...q.binds, want]);
-  };
+  const and = (conds: string[]) => (conds.length ? ` WHERE ${conds.join(" AND ")}` : "");
 
-  let plan: Plan;
-  let keys: Key[];
-  let count: number;
+  // ---- page 1: pick the plan, and count a keyword's matches ------------------------------- //
+  let pos: Pos;
+  let probe: number | null = null;
   if (after) {
-    // Later pages need no count: the plan page 1 chose, with no budget.
-    plan = opts.plan ?? (after.p === 1 && match ? "fts" : "scan");
-    keys = await keysFull(plan === "fts", take + 1);
-    count = after.c;
+    pos = { p: after.p, s: after.s, b: after.b, k: after.k };
   } else {
-    const want = Math.max(take + 1, COUNT_CAP + 1);
-    let probe: number | null = null;
-    if (match && !opts.plan && !f.sponsored) {
-      const lim = ftsLimit(n);
+    if (match) {
+      const lim = (f.sort === "pay" && !opts.noSort ? FTS_SORT_MAX : FTS_COUNT_CAP) + 1;
       probe = (await run<{ n: number }>(
-        "SELECT count(*) AS n FROM (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ? LIMIT ?)", [match, lim]))[0]?.n ?? 0;
-      if (probe < lim) plan = "fts";
-      else plan = "walk";
-    } else {
-      plan = opts.plan ?? (f.sponsored ? "scan" : "walk");
-      if (plan === "fts" && !match) plan = "scan";
+        "SELECT count(*) AS n FROM (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ? LIMIT ?)",
+        [match, lim])).rows[0]?.n ?? 0;
     }
-    if (plan === "walk" && probe !== null && textOnly(f)) {
-      // Many matches and nothing else to filter on: the probe already proved "200+", so the
-      // walk only fills the page.
-      keys = await keysFull(false, take + 1);
-      count = probe;
-      plan = "scan";
-    } else if (plan === "walk") {
-      const budget = opts.budget ?? walkBudget(n);
-      keys = await keysWalk(budget, want);
-      if (keys.length < want) {                 // the budget ran out, or the list ended
-        // A common keyword (the probe found more than ftsLimit) with a facet that has its own
-        // ordered index (entry level, work type): walking that index is cheaper than reading
-        // every match of the keyword twice. Otherwise the keyword's index answers.
-        const ownIndex = f.level === "entry" || Boolean(f.remote);
-        plan = match && (probe === null || probe < ftsLimit(n) || !ownIndex) ? "fts" : "scan";
-        keys = await keysFull(plan === "fts", want);
-      }
-      count = keys.length;
-    } else {
-      keys = await keysFull(plan === "fts", want);
-      count = keys.length;
+    const p = f.sort !== "pay" ? "W" : probe !== null && probe <= FTS_SORT_MAX && !opts.noSort ? "S" : "P";
+    pos = { p, s: 0, b: ID_END, k: Number.MAX_SAFE_INTEGER };
+  }
+
+  // ---- the scan -------------------------------------------------------------------------- //
+  const hits: Hit[] = [];
+  let ended = false;        // nothing is left below `pos`
+  let scanned = 0;          // index rows walked this request (for the estimate)
+  let matchedAll = 0;       // rows found this request, including one past the page
+  const want = () => take + 1 - hits.length;
+
+  /** One range of one walk. `sql(limit)` reads matching rows from `pos` down; `edge()` answers
+   * the last index row the capped window reaches, or null when the range ends inside it. */
+  const step = async (sql: () => { text: string; binds: unknown[] },
+                      edge: () => { text: string; binds: unknown[] },
+                      at: (h: { id: number; pay: number }) => void): Promise<"full" | "cap" | "end"> => {
+    const s = sql();
+    const got = await run<Hit>(s.text, s.binds);
+    for (const h of got.rows) { hits.push(h); at(h); }
+    matchedAll += got.rows.length;
+    const walked = Math.max(got.rows.length, Math.floor((got.read - got.rows.length) / 2));
+    if (want() <= 0) { scanned += walked; return "full"; }
+    const e = edge();
+    const last = (await run<{ id: number; pay: number }>(e.text, e.binds)).rows[0];
+    if (last) { scanned += cap; at(last); cap = 0; return "cap"; }
+    scanned += walked;
+    cap = Math.max(0, cap - Math.max(1, walked));
+    return "end";
+  };
+
+  if (pos.p === "S") {
+    // Few keyword matches: all of them, tested and sorted by pay, the board's order within a pay.
+    const where = [...q.where, "(j.pay, j.id) < (?, ?)"];
+    const got = await run<Hit>(
+      `SELECT ${COLS} FROM (SELECT rowid AS id FROM jobs_fts WHERE jobs_fts MATCH ?) c
+       CROSS JOIN jobs j ON j.id = c.id ${EXTRAS}${and(where)}
+       ORDER BY j.pay DESC, j.id DESC LIMIT ?`,
+      [match, ...q.binds, pos.k, pos.b, want()]);
+    hits.push(...got.rows);
+    matchedAll += got.rows.length;
+    if (want() > 0) ended = true;
+  }
+
+  while (pos.p === "P" && want() > 0 && cap > 0 && !ended) {
+    // The pay index, highest first. A minimum-pay facet ends the walk where pay drops below it.
+    const lo = f.pay > 0 ? "j.pay >= ?" : "j.pay > 0";
+    const loBind = f.pay > 0 ? [f.pay] : [];
+    const window = `SELECT id, pay FROM jobs j INDEXED BY jobs_pay WHERE ${lo} AND (j.pay, j.id) < (?, ?)
+                    ORDER BY j.pay DESC, j.id DESC LIMIT ?`;
+    const k = pos.k, b = pos.b, c = cap;
+    const r = await step(
+      () => ({ text: `SELECT ${COLS} FROM (${window}) c CROSS JOIN jobs j ON j.id = c.id ${EXTRAS}${and(q.where)}
+                      ORDER BY j.pay DESC, j.id DESC LIMIT ?`,
+               binds: [...loBind, k, b, c, ...q.binds, want()] }),
+      () => ({ text: `SELECT id, pay FROM jobs j INDEXED BY jobs_pay WHERE ${lo} AND (j.pay, j.id) < (?, ?)
+                      ORDER BY j.pay DESC, j.id DESC LIMIT 1 OFFSET ?`,
+               binds: [...loBind, k, b, c - 1] }),
+      (h) => { pos.k = h.pay; pos.b = h.id; });
+    if (r === "end") {
+      if (f.pay > 0) ended = true;                      // rows with no pay cannot clear a minimum
+      else pos = { p: "Z", s: 0, b: ID_END, k: 0 };
     }
   }
 
-  const page = keys.slice(0, take);
-  let rows: string[] = [];
-  if (page.length) {
-    const got = await run<{ id: number; row: string; extra: string | null }>(
-      `SELECT j.id, j.row, x.v AS extra FROM jobs j LEFT JOIN job_extras x ON x.h = j.xh AND j.xh != ''
-       WHERE j.id IN (SELECT value FROM json_each(?))`, [JSON.stringify(page.map((k) => k.id))]);
-    const byId = new Map(got.map((x) => [x.id, x]));
-    rows = page.map((k) => {
-      const x = byId.get(k.id)!;
-      return x.extra ? JSON.stringify({ ...JSON.parse(x.row), ...JSON.parse(x.extra) }) : x.row;
-    });
+  while ((pos.p === "W" || pos.p === "Z") && want() > 0 && cap > 0 && !ended) {
+    const seg = segs[pos.s];
+    if (!seg) { ended = true; break; }
+    const [low, high] = seg;
+    const below = Math.min(pos.b, high + 1);
+    const c = cap;
+    const extra = pos.p === "Z" ? ["j.pay = 0"] : [];
+    let from: string, edgeSql: string, head: unknown[];
+    if (match && pos.p === "W") {
+      const window = "SELECT rowid AS id FROM jobs_fts WHERE jobs_fts MATCH ? AND rowid < ? AND rowid >= ? "
+        + "ORDER BY rowid DESC LIMIT ?";
+      from = `(${window}) c CROSS JOIN jobs j ON j.id = c.id`;
+      edgeSql = `SELECT id, 0 AS pay FROM (${window.replace("LIMIT ?", "LIMIT 1 OFFSET ?")})`;
+      head = [match, below, low];
+    } else {
+      // "Ad offers sponsorship" is under 1% of rows and has its own small index.
+      const src = f.sponsored && pos.p === "W"
+        ? `jobs INDEXED BY jobs_offered WHERE (f & ${F_OFFERED}) != 0 AND` : "jobs WHERE";
+      const window = `SELECT id FROM ${src} id < ? AND id >= ? ORDER BY id DESC LIMIT ?`;
+      from = `(${window}) c CROSS JOIN jobs j ON j.id = c.id`;
+      edgeSql = `SELECT id, 0 AS pay FROM (${window.replace("LIMIT ?", "LIMIT 1 OFFSET ?")})`;
+      head = [below, low];
+    }
+    const r = await step(
+      () => ({ text: `SELECT ${COLS} FROM ${from} ${EXTRAS}${and([...extra, ...q.where])} ORDER BY j.id DESC LIMIT ?`,
+               binds: [...head, c, ...q.binds, want()] }),
+      () => ({ text: edgeSql, binds: [...head, c - 1] }),
+      (h) => { pos.b = h.id; });
+    if (r === "end") {
+      pos = { ...pos, s: pos.s + 1, b: ID_END };
+      if (!segs[pos.s]) ended = true;
+    }
   }
-  const last = page[page.length - 1];
-  const more = keys.length > take && served + page.length < DEPTH_MAX;
+
+  // ---- the page, the count, the cursor ---------------------------------------------------- //
+  const page = hits.slice(0, take);
+  const overflow = hits.length > take;
+  const lastHit = page[page.length - 1];
+  if (overflow && lastHit) {               // carry on right after the last row served
+    pos.b = lastHit.id;
+    if (pos.p === "P" || pos.p === "S") pos.k = lastHit.pay;
+  }
+  const depthLeft = served + page.length < DEPTH_MAX;
+  const more = (overflow || !ended) && depthLeft && take > 0;
+
+  let count: number, exact: boolean, estimate: number | null;
+  if (after) {
+    count = after.c; exact = after.x === 1; estimate = after.e;
+    if (!exact && !overflow && ended) { count = served + page.length; exact = true; estimate = null; }
+    else if (!exact) count = Math.max(count, served + page.length + (overflow ? 1 : 0));
+  } else if (!overflow && ended) {
+    count = page.length; exact = true; estimate = null;
+  } else {
+    count = page.length + (overflow ? 1 : 0);
+    exact = false;
+    estimate = null;
+    const onlyText = q.where.length === (f.q ? 1 : 0) + (f.loc ? 1 : 0) + (f.titles.length ? 1 : 0);
+    if (probe !== null && onlyText) {
+      // The keyword index's own count: the rows holding the text's trigrams, a close upper bound.
+      if (probe <= FTS_COUNT_CAP) estimate = Math.max(probe, count);
+    } else if (probe === null && !match && scanned >= 50 && !(f.days > 0)) {
+      // The share of the rows walked that matched, applied to the whole list: "about N".
+      const total = f.sponsored ? 0 : info.rows;
+      if (total > 0) estimate = Math.max(count, Math.round(total * Math.min(1, matchedAll / scanned)));
+    }
+  }
+
   return {
-    rows,
-    count: Math.min(count, COUNT_CAP),
-    count_capped: count > COUNT_CAP,
-    next: more && last ? { v: version, f: await fingerprint(f), n: served + page.length, c: count,
-                           k: [f.sort === "pay" ? last.pay : 0, last.rkey],
-                           ...(plan === "fts" ? { p: 1 } : {}) } : null,
-    stats: { rows_read: read, plan },
+    rows: page.map((h) => toRow(h, info)),
+    count, count_exact: exact, count_estimate: estimate,
+    next: more ? { v: version, f: await fingerprint(f), n: served + page.length,
+                   c: count, e: estimate, x: exact ? 1 : 0, ...pos } : null,
+    stats: { rows_read: read, plan: pos.p + (match && pos.p === "W" ? "+fts" : ""), queries },
   };
 }
 
@@ -409,7 +615,7 @@ const reply = (data: unknown, status: number, extra: Record<string, string> = {}
                { status, headers: { "content-type": "application/json", ...extra } });
 
 /** Rate limits from the Workers rate-limit binding. A deployment (or test) without the binding
- * simply has no limit here; the Cloudflare WAF rule is the backstop either way. */
+ * simply has no limit here; the daily budget above is the backstop either way. */
 async function limited(req: Request, env: Env): Promise<boolean> {
   const token = req.headers.get("X-Install-Token") ?? "";
   if (env.SEARCH_TOKEN_LIMITER && /^[A-Za-z0-9_-]{8,128}$/.test(token)) {
@@ -422,6 +628,8 @@ async function limited(req: Request, env: Env): Promise<boolean> {
 
 export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: number,
                                    ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
+  const noIndex = () => reply({ error: "the search index is not loaded yet", reason: "no_index" }, 503);
+  if (!env.SEARCH_DB) return noIndex();          // the search database is not bound in this deployment
   if (await limited(req, env)) {
     return reply({ error: "too many searches; wait a minute and try again", reason: "rate_limited" }, 429,
                  { "retry-after": "60" });
@@ -433,8 +641,16 @@ export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: nu
     if (e instanceof BadParam) return reply({ error: e.message, param: e.param }, 400);
     throw e;
   }
-  const { v: version, g: generatedAt, rows: indexRows } = await indexVersion(env, nowMs);
-  if (!version) return reply({ error: "the search index is not loaded yet", reason: "no_index" }, 503);
+  const info = await indexInfo(env.SEARCH_DB, nowMs);
+  if (!info.v) return noIndex();
+  const version = info.v;
+  if (overBudget(env)) {
+    // Search has used its share of the day's free allowance: the app shows its own recent list
+    // until tomorrow (UTC). Say when to come back, an hour at the most.
+    const untilMidnight = 86_400 - Math.floor((nowMs / 1000) % 86_400);
+    return reply({ error: "search has reached today's limit; try again later", reason: "daily_budget" }, 503,
+                 { "retry-after": String(Math.min(3600, untilMidnight)) });
+  }
 
   let after: CursorBody | null = null;
   if (p.cursor) {
@@ -463,13 +679,17 @@ export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: nu
     f: facetKey(p.facets), limit: String(p.limit), cursor: p.cursor, iv: version }).toString());
   if (cache) {
     const hit = await cache.match(key);
-    if (hit) return hit;
+    if (hit) { noteUsage(env.SEARCH_DB, nowMs, 0, ctx); return hit; }
   }
-  const page = await searchPage(env, p.facets, p.limit, after, version, nowMs, { rows: indexRows });
-  const body = `{"jobs":[${page.rows.join(",")}],"count":${page.count},"count_capped":${page.count_capped},`
-    + `"next_cursor":${page.next ? JSON.stringify(await encodeCursor(env, page.next)) : "null"},`
-    + `"index_version":${JSON.stringify(version)},"generated_at":${JSON.stringify(generatedAt)}}`;
-  const res = reply(body, 200, { "cache-control": `public, max-age=${CACHE_SECONDS}` });
+  const page = await searchPage(env, p.facets, p.limit, after, info, nowMs,
+                                { cap: mode === "candidates" ? CANDIDATES_SCAN_CAP : SCAN_CAP });
+  noteUsage(env.SEARCH_DB, nowMs, page.stats.rows_read, ctx);
+  const res = reply({
+    jobs: page.rows,
+    count: page.count, count_capped: !page.count_exact, count_estimate: page.count_estimate,
+    next_cursor: page.next ? await encodeCursor(env, page.next) : null,
+    index_version: version, generated_at: info.g,
+  }, 200, { "cache-control": `public, max-age=${CACHE_SECONDS}` });
   if (cache) {
     const put = cache.put(key, res.clone());
     if (ctx) ctx.waitUntil(put); else await put;

@@ -15,6 +15,13 @@ export default defineConfig(async () => {
           // A dummy key so the Worker believes a model is configured; every call to Anthropic
           // is stubbed in the tests, so this value never leaves the test runtime.
           bindings: { TEST_MIGRATIONS: migrations, TEST_SEARCH_MIGRATIONS: searchMigrations, ANTHROPIC_API_KEY: "sk-test-not-real" },
+          // The search database and its rate limits are not in wrangler.jsonc until go-live
+          // (docs/server-search-plan.md); the tests bind their own.
+          d1Databases: { SEARCH_DB: "sponsorjobs-search-test" },
+          ratelimits: {
+            SEARCH_TOKEN_LIMITER: { simple: { limit: 60, period: 60 } },
+            SEARCH_IP_LIMITER: { simple: { limit: 300, period: 60 } },
+          },
         },
       }),
     ],
