@@ -1,0 +1,92 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Workday-style form the site pre-filled (fixture)</title>
+<link rel="stylesheet" href="style.css">
+<style>.spin{width:40px}</style></head>
+<body>
+<!-- Modelled on a Workday application reached through "Autofill with Resume" and a saved draft
+     (2026-11-26; the ids are Workday's own, address--postalCode and so on): the site's own resume parse filled the email printed on the resume, a phone
+     with its country code next to the page's own Country Phone Code, the street in County, a
+     project as a job (wrong title and dates), and the real job with the parse's title. Every
+     name, address and date here is made up. -->
+<h3>My Information</h3>
+<div data-automation-id="formField"><label for="email">Email Address*</label>
+  <input type="text" id="email" name="email" aria-required="true" value="resume.person@example.org"></div>
+<div data-automation-id="formField"><label for="ref">Referrer Email</label>
+  <input type="text" id="ref" name="referrerEmail" value="friend@example.net"></div>
+<div data-automation-id="formField"><label for="cc">Country Phone Code*</label>
+  <button type="button" id="cc" data-automation-id="countryPhoneCode" aria-label="Country Phone Code United States of America (+1)">United States of America (+1)</button></div>
+<div data-automation-id="formField"><label for="phone">Phone Number*</label>
+  <input type="text" id="phone" name="phoneNumber" aria-required="true" value="+1 (555) 010-2000"></div>
+<div data-automation-id="formField"><label for="ext">Phone Extension</label>
+  <input type="text" id="ext" name="extension" value=""></div>
+<div data-automation-id="formField"><label for="address--addressLine1">Address Line 1*</label>
+  <input type="text" id="address--addressLine1" name="addressLine1" value="12 Sample Street"></div>
+<div data-automation-id="formField"><label for="address--city">City*</label>
+  <input type="text" id="address--city" name="city" value="Springfield"></div>
+<div data-automation-id="formField"><label for="address--regionSubdivision1">County</label>
+  <input type="text" id="address--regionSubdivision1" name="regionSubdivision1" value="12 Sample Street"></div>
+<div data-automation-id="formField"><label for="address--postalCode">Postal Code*</label>
+  <input type="text" id="address--postalCode" name="postalCode" value="60601"></div>
+
+<h3>My Experience</h3>
+<div id="workList"></div>
+<div id="eduList"></div>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+<script>
+  let seq = 0;
+  const h = (tag, attrs, kids) => { const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) { if (k === "text") e.textContent = v; else if (k === "value") e.value = v; else e.setAttribute(k, v); }
+    for (const c of kids || []) e.appendChild(c); return e; };
+  const field = (label, input) => { const id = "f" + (seq++); input.id = id;
+    return h("div", { "data-automation-id": "formField" }, [h("label", { for: id, text: label }), input]); };
+  function dateGroup(legend, aid, m, y) {
+    const fs = h("fieldset", { "data-automation-id": aid }, [h("legend", { text: legend + "*" })]);
+    fs.appendChild(h("input", { type: "text", role: "spinbutton", class: "spin", "aria-label": "Month", value: m }));
+    fs.appendChild(h("input", { type: "text", role: "spinbutton", class: "spin", "aria-label": "Year", value: y }));
+    return fs;
+  }
+  function workSection(n, title, company, from, to) {
+    const g = h("div", { role: "group", "aria-labelledby": "w" + n, "data-n": String(n) }, [h("h5", { id: "w" + n, text: "Work Experience " + n })]);
+    g.appendChild(h("button", { type: "button", "data-automation-id": "panel-set-delete-button", text: "Delete" }));
+    g.appendChild(field("Job Title*", h("input", { type: "text", "aria-required": "true", name: "jobTitle", value: title })));
+    g.appendChild(field("Company*", h("input", { type: "text", "aria-required": "true", name: "companyName", value: company })));
+    g.appendChild(dateGroup("From", "formField-startDate", from[0], from[1]));
+    g.appendChild(dateGroup("To", "formField-endDate", to[0], to[1]));
+    g.querySelector("[data-automation-id=panel-set-delete-button]").addEventListener("click", () => { g.remove(); renumber("workList", "Work Experience "); });
+    document.getElementById("workList").appendChild(g);
+  }
+  function eduSection(n, school) {
+    const g = h("div", { role: "group", "aria-labelledby": "e" + n }, [h("h5", { id: "e" + n, text: "Education " + n })]);
+    g.appendChild(h("button", { type: "button", "data-automation-id": "panel-set-delete-button", text: "Delete" }));
+    g.appendChild(field("School or University*", h("input", { type: "text", "aria-required": "true", name: "schoolName", value: school })));
+    g.querySelector("[data-automation-id=panel-set-delete-button]").addEventListener("click", () => { g.remove(); renumber("eduList", "Education "); });
+    document.getElementById("eduList").appendChild(g);
+  }
+  function renumber(list, word) {
+    [...document.getElementById(list).children].forEach((g, i) => { g.querySelector("h5").textContent = word + (i + 1); });
+  }
+  // the parse: the real job (its title wrong), a project read as a job, the real school, a course read as a school
+  workSection(1, "Analyst Intern", "Northwind Labs Inc.", ["1", "2025"], ["", ""]);
+  workSection(2, "Capstone Project Lead", "Personal Projects", ["6", "2024"], ["12", "2024"]);
+  workSection(3, "Business Analyst", "Contoso Bank", ["2", "2018"], ["9", "2024"]);
+  workSection(4, "", "", ["", ""], ["", ""]);              // an empty one left by an earlier fill
+  eduSection(1, "Example State University");
+  eduSection(2, "Online Data Course");
+  window.fxValues = () => ({
+    email: document.getElementById("email").value,
+    referrer: document.getElementById("ref").value,
+    phone: document.getElementById("phone").value,
+    ext: document.getElementById("ext").value,
+    line1: document.getElementById("address--addressLine1").value,
+    city: document.getElementById("address--city").value,
+    county: document.getElementById("address--regionSubdivision1").value,
+    zip: document.getElementById("address--postalCode").value,
+    titles: [...document.querySelectorAll("[name=jobTitle]")].map((e) => e.value),
+    companies: [...document.querySelectorAll("[name=companyName]")].map((e) => e.value),
+    dates: [...document.querySelectorAll("input[role=spinbutton]")].map((e) => e.value),
+    schools: [...document.querySelectorAll("[name=schoolName]")].map((e) => e.value),
+  });
+  // the site's own parse arriving after the upload (Ashby): the resume's email again
+  window.fxParseAgain = () => { const e = document.getElementById("email"); e.value = "resume.person@example.org"; e.dispatchEvent(new Event("input", { bubbles: true })); };
+</script>
+</body></html>

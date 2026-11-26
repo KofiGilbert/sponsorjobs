@@ -179,7 +179,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         # The standing decline first and alone: while it is on, a saved answer is never used.
         # The page's decline choice, else the question stays open (the person is asked).
         if eeo_decline:
-            v = decline_option(opts)
+            v = EEO.decline_pick(opts, EEO.topic_key(q), q)
             return (v, "eeo_decline") if v else None
         # Then their own saved answers on the form's own wording (autoapply/eeo.py), never a guess.
         qkey, answers, _rows = EEO.saved(library, q)

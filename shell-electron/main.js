@@ -769,7 +769,44 @@ async function attachResume(wc, filePath) {
     release();
   }
   if (attached) uploads.noteUpload(uploadLog, d.file);
+  if (attached) armContactGuard(wc);
   return uploadFate(d, attached);
+}
+
+// (2026-11-26) The agent's checks on what the SITE filled (docs/apply-agent.md section 34).
+// fixPhone: the page still rejects the phone's format; the box is emptied and the digits typed
+// with real keys, once per box. checkPrefill: the final check before Ready to send; puts right
+// what it can on this page (the contact boxes, the work history), then says in words what is
+// still wrong (labels only, never a value).
+async function fixPhone(wc, recordId) {
+  const p = await fetchAutofillPayload(recordId);
+  if (!p || !p.fields || wc.isDestroyed()) return { typed: 0 };
+  await wc.executeJavaScript(autofillCore(), true).catch(() => null);
+  const keys = await wc.executeJavaScript(`window.TailorAutofill.phoneRetype(${JSON.stringify(p.fields)})`, true).catch(() => []);
+  if (!Array.isArray(keys) || !keys.length) return { typed: 0 };
+  const r = await typeKeyOps(wc, keys, 8000);
+  return { typed: r.landed || 0, of: keys.length };
+}
+async function checkPrefill(wc, recordId) {
+  const p = await fetchAutofillPayload(recordId);
+  if (!p || !p.fields || wc.isDestroyed()) return { ok: false, issues: [] };
+  await wc.executeJavaScript(autofillCore(), true).catch(() => null);
+  const fixed = await wc.executeJavaScript(`(async () => { const T = window.TailorAutofill;
+    const c = T.enforceContact(${JSON.stringify(p.fields)}); const h = await T.checkHistory(${JSON.stringify(p)}, true);
+    return { contact: c.email + c.phone + c.address, history: h.fixed, labels: c.labels }; })()`, true).catch(() => null);
+  const issues = await wc.executeJavaScript(`window.TailorAutofill.prefillIssues(${JSON.stringify(p)})`, true).catch(() => []);
+  return { ok: true, fixed: fixed || { contact: 0, history: 0, labels: [] }, issues: Array.isArray(issues) ? issues : [] };
+}
+
+// (2026-11-26) After a resume goes in, the site may parse it and fill the contact boxes over ours
+// (Ashby, a Workday "Autofill with Resume"): the application's own email, phone and address are
+// put back in the page for a while. Nothing waits for it.
+function armContactGuard(wc) {
+  fetchAutofillPayload().then((p) => {
+    if (!p || !p.fields || wc.isDestroyed()) return;
+    return wc.executeJavaScript("!!window.TailorAutofill", true).then((has) => has ? wc.executeJavaScript(
+      `window.TailorAutofill.guardContact && window.TailorAutofill.guardContact(${JSON.stringify(p.fields)}, 15000)`, true) : null);
+  }).catch(() => null);
 }
 
 // (2026-11-19, iCIMS) An upload box with no file input of its own until its button is pressed:
@@ -1244,6 +1281,12 @@ async function runAutoApplyOnPane(recordId, opts) {
     lap("leftover", "finishing");
     const filled = pre.filled + applied.filled;
 
+    // (2026-11-26) A resume went in: the site's own parse may fill the contact boxes again over
+    // ours a few seconds later (Ashby put the resume's email back). Guarded in the page for a
+    // while; nothing waits for it.
+    if (applied.uploaded && havePayload) {
+      wc.executeJavaScript(`window.TailorAutofill.guardContact(${JSON.stringify(payload.fields || {})}, 15000)`, true).catch(() => null);
+    }
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
     if (fr) { fr.close(); fr = null; }
     const sig = await mainSignature(wc);
@@ -1485,6 +1528,7 @@ const agent = createAgent({
   getPane: () => pane, openInPane: (url) => openInPane(url, true), waitPaneLoad, autofillCore, agentViewSource,
   runAutoApplyOnPane, fillPhase, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
   isNewPage, attachResume, attachViaChooser, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
+  fixPhone, checkPrefill,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
   stopSuccessWatch: () => disarmSuccessWatch(),          // the agent's own watch recorded the send
 });

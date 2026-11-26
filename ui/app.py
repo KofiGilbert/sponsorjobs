@@ -7070,6 +7070,10 @@ def profile_autofill():
     from autoapply.history import form_history, form_languages, language_default
     hist = {"history": [], "education": [], "skills": []}
     langs, lang_default = [], None
+    # (2026-11-26) The person's OTHER addresses: the one printed on the resume and the profile's
+    # own when forms get another (the alias). The final check before Ready to send flags a page
+    # that shows one of them where the application email belongs; never filled anywhere.
+    others = {str(ident.get("email") or "").strip().lower()}
     try:
         prof = {}
         rid = request.args.get("record_id")
@@ -7078,6 +7082,7 @@ def profile_autofill():
             if rec:
                 d = _record_data(rec)
                 prof = d.get("render_profile") or d.get("profile") or {}
+                others.add(str(((prof.get("identity") or {}).get("email")) or "").strip().lower())
         full = _saved_full_profile() or {}
         if not prof.get("experience"):
             prof = dict(prof, experience=full.get("experience") or [])
@@ -7096,6 +7101,7 @@ def profile_autofill():
         "ok": True,
         "loaded": bool(name or fields["email"]),
         "fields": {k: v for k, v in fields.items() if v},
+        "other_emails": sorted(e for e in others if e and "@" in e and e != str(fields["email"] or "").lower()),
         "history": hist["history"],
         "education": hist["education"],
         "skills": hist["skills"],
@@ -7191,6 +7197,29 @@ def _brain():
     except Exception:          # noqa: BLE001 - the legacy stores always work
         traceback.print_exc()
         return None
+
+
+def _selfid_model(system: str, user: str) -> str:
+    """The self-identification options' meanings (autoapply/selfid.py): one short call on the
+    cheaper model when the app runs on the person's own Anthropic key, else the app's model. Only
+    the site's public question and options are in it, never a saved answer."""
+    llm = _make_llm()
+    try:
+        from llm.anthropic_client import AnthropicLLM
+        if isinstance(llm, AnthropicLLM):
+            llm = AnthropicLLM(model=os.environ.get("RESUME_AGENT_SELFID_MODEL") or "claude-haiku-4-5",
+                               api_key=getattr(llm, "api_key", None) or _cred("ANTHROPIC_API_KEY"))
+    except Exception:                                    # noqa: BLE001 - the app's model then
+        pass
+    return llm._complete(system, user, max_tokens=500, effort="none")
+
+
+def _selfid_setup() -> None:
+    from autoapply import selfid
+    selfid.configure(_DATA / "selfid_options.json", model=_selfid_model)
+
+
+_selfid_setup()
 
 
 def _answer_lib():
@@ -15993,30 +16022,6 @@ _GROUNDED_CACHE: dict = {}
 _GROUNDED_MAX = 500
 
 
-def _eeo_values(lib) -> list:
-    """Every saved self-identification value (the answer library's and the brain's), so the
-    grounded call's payload can be checked to carry none."""
-    from applicant import keys as _K
-    from applicant import redact as _R
-    from autoapply.asks import is_eeo
-    vals = []
-    try:
-        for r in lib.list() if hasattr(lib, "list") else []:
-            if _K.sensitivity(_K.fact_key(str(r.get("key") or "")), str(r.get("question") or "")) == _K.EEO \
-                    or is_eeo(str(r.get("question") or "")):
-                vals.append(str(r.get("answer") or ""))
-    except Exception:          # noqa: BLE001
-        pass
-    out = _R.plain_values(vals)
-    st = _brain()
-    if st is not None:
-        try:
-            out += [v for v in _R.sensitive_values(st, kinds=(_K.EEO,)) if v not in out]
-        except Exception:      # noqa: BLE001
-            pass
-    return out
-
-
 def _grounded_answers(items: list, data: dict, lib, recall: dict, company: str) -> dict:
     """{question: {answer, fact, kind}} for the open questions the person's saved facts answer
     (autoapply/grounded.py). ``items`` = [{question, options}]. Empty when nothing is open, no
@@ -16037,7 +16042,7 @@ def _grounded_answers(items: list, data: dict, lib, recall: dict, company: str) 
             return {}
         if len(_GROUNDED_CACHE) > _GROUNDED_MAX:
             _GROUNDED_CACHE.clear()
-        return G.answer_page(_make_llm, items, facts, company=company, eeo_values=_eeo_values(lib),
+        return G.answer_page(_make_llm, items, facts, company=company, eeo_values=(),
                              cache=_GROUNDED_CACHE)
     except Exception:          # noqa: BLE001 - a hiccup only means the person is asked
         traceback.print_exc()
@@ -16206,6 +16211,7 @@ def _ask_set(ask: dict, i: int, value: str):
     items = _ask_items(ask)
     items[i].pop("left", None)
     items[i]["answer"] = value
+    _selfid_learn(items[i], value)
     if (ask.get("kind") or "") != "terms" and value:
         # Yes to a required consent whose only choice is yes (on the page, a tap, a typed reply):
         # the person's standing answer to those, so the next form's is accepted without asking.
@@ -16215,6 +16221,29 @@ def _ask_set(ask: dict, i: int, value: str):
             _forced_standing("Yes")
     if len(items) == 1:
         ask["answer"] = value                      # the older single-question shape
+
+
+def _selfid_learn(it: dict, value: str) -> None:
+    """(autoapply/selfid.py) The person answered a self-identification question the saved answer
+    could not be matched to: the option they picked means their saved category on this question
+    and these options, so the same wording is never asked again. Kept on this machine."""
+    try:
+        from autoapply import eeo as _E, selfid
+        from autoapply.asks import is_eeo
+        q = str(it.get("question") or "")
+        opts = list(it.get("all_options") or it.get("options") or [])
+        if not is_eeo(q) or value not in opts:
+            return
+        lib = _answer_lib()
+        try:
+            key, answers, _rows = _E.saved(lib, q)
+        finally:
+            lib.close()
+        if key in _E.KEYS and answers.get(key):
+            hint = " ".join(str(it.get("hint") or "").split())[:400]
+            selfid.learn(key, " ".join((q + " " + hint).split()), opts, answers[key], value)
+    except Exception:                                    # noqa: BLE001 - only a memory, never a failure
+        pass
 
 
 def _ask_item_view(items: list, i: int) -> dict:

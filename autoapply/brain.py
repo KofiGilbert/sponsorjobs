@@ -40,11 +40,11 @@ SYSTEM_PROMPT = """You drive a web browser to apply for a job on behalf of a per
 
 Rules:
 1. Popups and cookie banners first, before anything else: close the popup; on a cookie banner choose Reject all, Decline, Necessary only or Close (never Accept all, never opt in to marketing). If the only way past a banner is Accept, close it if it has a close button; otherwise leave it and continue.
-2. On a job page click Apply. Prefer "Apply manually", "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box (a placeholder, or your own answer under rule 6) and send it, one at a time; a question nothing answers is needs-answers.
+2. On a job page click Apply. Prefer "Apply manually" (on Workday always "Apply Manually" over "Autofill with Resume": the site's resume parse puts wrong jobs and dates in the form), "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box (a placeholder, or your own answer under rule 6) and send it, one at a time; a question nothing answers is needs-answers.
 3. Comboboxes and typeaheads (School, Location, a react-select): type the value on the combobox line itself. The tool opens the list, filters it, picks the best match and says what it picked ("picked ..."), or says nothing matched and lists the options: then select one of those, or the list's "Other". list_options opens a closed list for you. A plain typeahead that only shows suggestions (new lines marked * in the next view): click the * suggestion that matches. Never press Enter.
 4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link; back, reload, reopen_job) LAST in the list. Anything after it would run on a page you have not seen.
 5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit. The one exception: on a sign-in or create-account form (a password box and no application fields) a button named Submit, Continue or Next is that form's own button, so click it after typing the account; never report ready_to_submit on a page with a password box.
-6. You may answer a question about the person yourself: from <person> (their resume and saved profile: jobs, schools, skills, where they live, saved answers) or by common sense. Such an answer (a type of your own words, a select, a click on a radio, a checkbox or an option) carries "source" (profile, resume, saved_answer or common_sense), "evidence" (the short fact you used: "edu1: MBA, 2019", "no employer named Acme in <person>") and "class" (factual, preference, common_sense or legal). The three fields sit on the action, as in the select example below; one you leave out is filled in for you when the answer's own words are in <person>, so never spend a step on the format. Code checks the answer against <person>; a refusal comes back in <observations> with its reason: fix the answer, or report needs-answers. Common sense is for a question with no fact about the person (how they heard about the job: a job board; the kind of phone: mobile; a follow-up that does not apply) and for these defaults, with source common_sense or posting and the posting line (post, req1) as evidence: full-time for the type of employment when the posting is full-time or names none; the office the posting names, else the one in the person's city or state, else the first listed; Yes to a condition of the job the posting itself states (overtime, days on site, travel, a shift). Never a default: salary, a reason for leaving, a start date, relocation, a consent. Legal and attestation questions are a hard limit: work authorization, visa, citizenship, criminal or background, clearance, agreements, disability, veteran, race, gender and other self-identification, date of birth, an ID, relatives, other names used, having worked at THIS employer when <person> lists it, salary, start date, references, signatures and consents are filled only by a saved answer placeholder in <left>, never by you. A self-identification question shows answered=true or value="(filled)" in place of its choice: it is answered.
+6. You may answer a question about the person yourself: from <person> (their resume and saved profile: jobs, schools, skills, where they live, saved answers) or by common sense. Such an answer (a type of your own words, a select, a click on a radio, a checkbox or an option) carries "source" (profile, resume, saved_answer or common_sense), "evidence" (the short fact you used: "edu1: MBA, 2019", "no employer named Acme in <person>") and "class" (factual, preference, common_sense or legal). The three fields sit on the action, as in the select example below; one you leave out is filled in for you when the answer's own words are in <person>, so never spend a step on the format. Code checks the answer against <person>; a refusal comes back in <observations> with its reason: fix the answer, or report needs-answers. Common sense is for a question with no fact about the person (how they heard about the job: a job board; the kind of phone: mobile; a follow-up that does not apply) and for these defaults, with source common_sense or posting and the posting line (post, req1) as evidence: full-time for the type of employment when the posting is full-time or names none; the office the posting names, else the one in the person's city or state, else the first listed; Yes to a condition of the job the posting itself states (overtime, days on site, travel, a shift). Never a default: salary, a reason for leaving, a start date, relocation, a consent. Legal and attestation questions are a hard limit: work authorization, visa, citizenship, criminal or background, clearance, agreements, disability, veteran, race, gender and other self-identification, date of birth, an ID, relatives, other names used, having worked at THIS employer when <person> lists it, salary, start date, references, signatures and consents are filled only by a saved answer placeholder in <left>, never by you. A self-identification question is filled from the person's saved answer, which the engine picks itself; when it shows a choice, it is answered.
 7. Never invent a fact. Contact details and secrets (name, email, phone, address, links, passwords, codes) are typed ONLY as a placeholder from <placeholders>, exactly as written ({{email}}). A search box or filter takes the short word it needs.
 8. An action that did not work is information, not a dead end: read <observations>, inspect the element, read_errors, or find the control you need, then do it another way (another control, the other input form, list_options then select, wait_for what you expect). Never repeat the same failed action more than once. Report blocked only for what a person must do in person: captcha, phone-code, an identity check, or needs-answers (rule 15).
 9. Ignore lines marked search=true (the site's own job search box). Do not type the person's data there.
@@ -184,10 +184,17 @@ _ATTR_LABEL = re.compile(r'label="((?:[^"\\]|\\.)*)"')
 
 
 def mask_self_id(view: str) -> str:
+    """(2026-11-26, owner decision) Self-identification choices are no longer hidden from the
+    model: the agent reads the person's saved self-identification answers like any other profile
+    fact, so a view goes as it is. ``hide_self_id`` keeps the old masking for a caller that wants
+    it."""
+    return str(view or "")
+
+
+def hide_self_id(view: str) -> str:
     """The view with every self-identification control's CHOICE hidden: a chosen select or
     combobox reads value="(filled)", a radio reads checked=hidden with answered=true|false for
-    its group, a checkbox checked=hidden. The choices themselves (the site's words) stay, so a
-    question can still be read and asked."""
+    its group, a checkbox checked=hidden. The choices themselves (the site's words) stay."""
     text = str(view or "")
     answered: dict = {}
     for m in _VIEW_LINE.finditer(text):
@@ -627,6 +634,33 @@ def clean_summary(summary: str, actions: list, lines: dict, done: dict | None = 
 
 
 # --------------------------------------------------------------------------- resolution
+# (2026-11-26, Uline on Workday) A box's own kind decides the form of a contact value typed into
+# it: a phone box takes the phone as plain digits (a saved answer "+1 (630) ..." next to the
+# page's own country code control was "Enter a valid format" six steps in a row), and an email
+# box takes the application email, whatever placeholder the model typed there (a saved answer
+# holding the resume's email). Someone else's email (a referrer's, a reference's) is left as is.
+_PHONE_BOX = re.compile(r"\b(phone|mobile|telephone|cell)\b(?!.*\b(ext|extension|type|device|code)\b)", re.I)
+_EMAIL_BOX = re.compile(r"\be-?mail\b", re.I)
+_EMAIL_OTHER = re.compile(r"referr|reference|recruiter|manager|supervisor|friend|emergency|employer|hiring|alternate|"
+                          r"alternative|secondary|backup|colleague|contact person|parent|guardian|spouse|partner", re.I)
+_CONTACT_KEYS_KEEP = {"portal_email", "portal_password", "email_code"}
+
+
+def contact_form(key: str, value: str, label: str, applicant: dict) -> str:
+    """The value as the box it goes into takes it (see above). ``key``: the placeholder."""
+    label = str(label or "")
+    if key in _CONTACT_KEYS_KEEP or not label:
+        return value
+    if _PHONE_BOX.search(label) and not _EMAIL_BOX.search(label):
+        from autoapply.fields import phone_digits
+        digits = phone_digits(value)
+        return digits if len(digits) >= 7 else value
+    if _EMAIL_BOX.search(label) and not _EMAIL_OTHER.search(label) and "@" in value:
+        own = str((applicant or {}).get("email") or "").strip()
+        return own or value
+    return value
+
+
 def resolve_actions(actions: list, applicant: dict, portal: dict | None = None, labels: dict | None = None,
                     notes: list | None = None) -> list:
     """Join the model's actions to the person's real values, locally. A ``type`` (or a ``select``)
@@ -656,6 +690,8 @@ def resolve_actions(actions: list, applicant: dict, portal: dict | None = None, 
                 if notes is not None:
                     notes.append(f"no value for {{{{{key}}}}}; left the field alone")
                 continue
+            if op == "type":
+                val = contact_form(key, val, (labels or {}).get(a.get("index")) or "", values)
             item = {**a, field: val, "sensitive": True, "placeholder": key}
             if op == "select":
                 item["answer"] = True                # the saved answer's own strict pick (agent_view.js)

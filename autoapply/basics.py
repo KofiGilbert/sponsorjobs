@@ -15,7 +15,8 @@ the card's two halves, pure apart from the library it is handed:
   removes the answer the card showed for it; a field they saved replaces older wordings of the
   same question. Nothing the card does not show is touched.
 
-Personal data: nothing here leaves the machine (no model, no broker, no Telegram, no log).
+Personal data: this module sends nothing anywhere. (2026-11-26) The self-identification answers
+reach the AI only to fill application forms (autoapply/selfid.py).
 """
 from __future__ import annotations
 

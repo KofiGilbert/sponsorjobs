@@ -182,8 +182,8 @@ test("select shows its options count and first four; select() picks by text, lis
   const hit = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "i do not wish to self-identify"})`);
   assert.strictEqual(hit.ok, true, JSON.stringify(hit));
   const w = await page.evaluate("window.TailorAgent.view()");
-  // a self-identification choice reads as filled, never which one
-  assert.ok(line(w.text, sel).includes('value="(filled)"'), line(w.text, sel));
+  // (2026-11-26, owner decision) a self-identification choice reads like any other choice
+  assert.ok(/value="I do not wish to self-identify"/i.test(line(w.text, sel)), line(w.text, sel));
   // click on a select is refused: the brain must use select.
   const c = await page.evaluate(`window.TailorAgent.act({op: "click", index: ${sel}})`);
   assert.deepStrictEqual([c.ok, c.note], [false, "use select"]);
@@ -1177,12 +1177,12 @@ test("the fixture widgets: a Workday listbox and react-select keep a 'Choose not
     r = await readLikeShell(page, pi, () => page.click("input[placeholder='Search'] >> nth=-1"));
     assert.deepStrictEqual(r.read.options, ["Asian", "Hispanic or Latino", "Choose not to self-identify"]);
     assert.ok(!r.open);
-    // the person's decline, once chosen, is a value: the field no longer looks unanswered (a
-    // self-identification choice reads as filled, never which one)
+    // the person's decline, once chosen, is a value: the field no longer looks unanswered (since
+    // 2026-11-26 a self-identification choice reads like any other choice)
     await page.click("[data-automation-id='gender']");
     await page.click("text=Choose not to disclose");
     v = await page.evaluate("window.TailorAgent.view()");
-    assert.ok(/<combobox label="Gender" value="\(filled\)"/i.test(v.text), v.text);
+    assert.ok(/<combobox label="Gender" value="Choose not to disclose"/i.test(v.text), v.text);
     await page.close();
   }
   const page = await open("react_select.html");
@@ -1356,7 +1356,9 @@ test("a form in a modal dialog stays open: one Escape closes only the dropdown, 
   await page.close();
 });
 
-test("a self-identification answer never leaves the page: answered, never which choice", async ({ open }) => {
+// (Updated 2026-11-26, owner decision: the agent reads self-identification answers like any other
+// profile fact, so the view shows the choice made, as for any other question.)
+test("a self-identification choice reads like any other choice", async ({ open }) => {
   const page = await open("job_page.html");
   await page.evaluate(() => {
     document.body.insertAdjacentHTML("beforeend", `
@@ -1375,18 +1377,13 @@ test("a self-identification answer never leaves the page: answered, never which 
   });
   await page.evaluate(AGENT);
   const v = await page.evaluate("window.TailorAgent.view()");
-  // the choices are the site's list (first="..."); the CHOICE made is never printed
-  const self = v.text.split("\n").filter((l) => /label="(Gender|Ethnicity|Veteran Status|Race)"|label="Yes, I have a disability/.test(l));
-  for (const word of ['value="Male"', 'value="Asian', "checked=true", "checked=false", 'value="Black']) {
-    assert.ok(!self.some((l) => l.includes(word)), word + " leaked: " + self.join("\n"));
-  }
-  assert.ok(/<select label="Gender" value="\(filled\)" options=3/.test(v.text), v.text);
-  assert.ok(/<select label="Ethnicity" value="\(filled\)"/.test(v.text), v.text);
-  assert.ok(/<radio label="Veteran Status" option="I am not a protected veteran" checked=hidden answered=true/.test(v.text), v.text);
-  // a box of a group says whether the GROUP is answered (so a filled group is not re-asked), never which box
-  assert.ok(/<checkbox label="Yes, I have a disability, or have had one in the past" checked=hidden answered=true/.test(v.text), v.text);
-  assert.ok(/<checkbox label="No, I do not have a disability" checked=hidden answered=true/.test(v.text), v.text);
-  assert.ok(/<combobox label="Race" value="\(filled\)"/.test(v.text) || !/label="Race"/.test(v.text), v.text);
+  const sid = v.text.split("\n").filter((l) => /Gender|Ethnicity|Veteran|disability|Race/.test(l)).join("\n");
+  assert.ok(/<select label="Gender" value="Male" options=3/.test(v.text), sid);
+  assert.ok(/<select label="Ethnicity" value="Asian/.test(v.text), sid);
+  assert.ok(/<radio label="Veteran Status" option="I identify as one or more of the classifications of protected veterans" checked=true/.test(v.text), sid);
+  assert.ok(/<checkbox label="Yes, I have a disability, or have had one in the past" checked=true/.test(v.text), sid);
+  assert.ok(/<checkbox label="No, I do not have a disability" checked=false/.test(v.text), sid);
+  assert.ok(!/checked=hidden|answered=/.test(v.text), sid);
   assert.ok(/<select label="Country" value="Canada"/.test(v.text), "a site's ordinary choice still shows");
   await page.close();
 });
@@ -1462,7 +1459,7 @@ test("Phenom (Lam): another control's still-open list is never this one's choice
   await page.close();
 });
 
-test("Phenom (Lam): the shell picks a saved choice with real clicks, checks it stuck, and the view says only (filled)", async ({ open }) => {
+test("Phenom (Lam): the shell picks a saved choice with real clicks, checks it stuck, and the view shows it", async ({ open }) => {
   const page = await open("phenom_lam.html");
   await page.evaluate(CORE);
   await page.evaluate(AGENT);
@@ -1483,8 +1480,7 @@ test("Phenom (Lam): the shell picks a saved choice with real clicks, checks it s
   }
   assert.strictEqual((await page.evaluate("fxLog()")).filter((x) => x.startsWith("pick:")).length, 4);
   v = await page.evaluate("window.TailorAgent.view()");
-  for (const label of Object.keys(want)) assert.ok(new RegExp(`<combobox label="${label}" value="\\(filled\\)"`).test(v.text), label + "\n" + v.text);
-  for (const word of ['value="Male"', 'value="Black', 'value="No"']) assert.ok(!v.text.includes(word), word + " leaked");
+  for (const label of Object.keys(want)) assert.ok(new RegExp(`<combobox label="${label}" value="[^"]+"`).test(v.text), label + "\n" + v.text.split("\n").filter((l) => /combobox/.test(l)).join("\n"));
   // a near miss is never an option index ("Man" is not "Male")
   const gi = indexOf(v.text, /<combobox label="Gender"/);
   await realClick(page, gi);

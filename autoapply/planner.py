@@ -721,7 +721,7 @@ def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None)
             return None
         group = list((groups or {}).get(q) or [opt])
         if ctx.eeo_decline:
-            v = decline_option(group)
+            v = eeo.decline_pick(group, eeo.topic_key(q), q)
             return (FillAction(f.ref, "check", value="Yes", origin="eeo", sensitive=True), []) if v and v == opt else None
         key, answers, rows = _saved_for(ctx.library, q, group)
         v = eeo_option(answers.get(key, ""), group, key, answers, question=q) if answers else None
@@ -732,7 +732,7 @@ def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None)
         return None
     if f.options or t in ("select", "radio"):
         if ctx.eeo_decline:
-            v = decline_option(f.options)
+            v = eeo.decline_pick(f.options, eeo.topic_key(label), label)
             return (FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True), []) if v else None
         key, answers, rows = _saved_for(ctx.library, label, f.options)
         v = eeo_option(answers.get(key, ""), f.options, key, answers, question=label) if answers else None
@@ -879,7 +879,7 @@ def mapped_value(key: str, f: FormField, ctx: KnownContext) -> tuple | None:
         return (v, "workauth", []) if v else None
     if key in eeo.KEYS:
         if ctx.eeo_decline:
-            v = decline_option(f.options) if f.options else None
+            v = eeo.decline_pick(f.options, key, label) if f.options else None
             return (v, "eeo", []) if v else None
         _k, answers, rows = eeo.saved(ctx.library)
         own = answers.get(key, "")

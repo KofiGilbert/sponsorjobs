@@ -683,6 +683,290 @@ function qsaSafe(sel, root) {
     return count;
   }
 
+  // ---- (2026-11-26) Contact boxes the SITE filled: its own resume parse (Ashby, Workday's
+  // "Autofill with Resume") or a saved draft put the email printed on the resume, a phone with its
+  // country code, or the street in County. The application's own values win in these boxes:
+  //   * every email box holds the application email (the address the app applies with), read back;
+  //   * a phone box holds the profile's digits, without a country code when the page has its own
+  //     country code control (Workday: "Enter a valid format for Phone Number", the retype loop);
+  //   * an address box that holds ANOTHER part of the profile's address (County holding the
+  //     street) gets its own part, or is emptied when the profile has none for it.
+  // A box someone else's email belongs in (a referrer, a reference, a manager) is never touched.
+  const EMAIL_OTHER_RE = /referr|reference|recruiter|manager|supervisor|friend|emergency|employer|hiring|alternate|alternative|secondary|backup|colleague|contact person|parent|guardian|spouse|partner|invite|sponsor/;
+  const PHONE_CODE_RE = /country\s*(phone|calling|dial(l)?ing)?\s*code|countryphonecode|phone\s*(country\s*)?code|phonecode|dial(l)?ing code|calling code/;
+  // Most specific first, read from the box's own label before its name and id: Workday's ids all
+  // start "address--" (address--postalCode, address--regionSubdivision1), so an id alone would
+  // call every one of them the street (measured at Uline, 2026-11-26).
+  const ADDR_PARTS = [
+    { key: "county", re: /\bcounty\b|regionsubdivision1/ },
+    { key: "zip", re: /\bzip\b|postal|post.?code/ },
+    { key: "city", re: /\bcity\b|\btown\b/ },
+    { key: "street", re: /street|address.?line.?1|addressline1|\baddress\b/ },
+  ];
+  const STREETISH_RE = /^\s*\d+[a-z]?\s+\S+.*\S/i;
+  function boxSig(el) {
+    return norm(cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || "") + " " + (el.name || "") + " " + (el.id || "")
+      + " " + (el.getAttribute("data-automation-id") || ""));
+  }
+  function textBoxes() {
+    return qsaDeep("input").filter((el) => FILLABLE_TYPES.has(String(el.type || "").toLowerCase()) && !el.disabled && !el.readOnly
+      && !honeypot(el) && boxShown(el));
+  }
+  function emailBox(el) {
+    const sig = signature(el) + " " + boxSig(el);
+    if (EMAIL_OTHER_RE.test(sig)) return false;
+    if (String(el.type || "").toLowerCase() === "email") return true;
+    return categorize(el, signature(el)) === "email" && labelFits(el, "email");
+  }
+  function phoneCodeOnPage() {
+    return qsaDeep("input, select, button, [role='combobox'], [role='button'], [data-automation-id]").some((el) => {
+      const sig = norm([cleanLabel(rawLabel(el) || ""), el.getAttribute("aria-label"), el.getAttribute("data-automation-id"),
+        el.name, el.id].filter(Boolean).join(" "));
+      return PHONE_CODE_RE.test(sig);
+    });
+  }
+  function setBox(el, value) {
+    setNativeValue(el, value);
+    try { el.dispatchEvent(new (viewOf(el).Event || Event)("blur", { bubbles: false })); } catch (e) { /* fine */ }
+  }
+  function enforceContact(fields) {
+    const f = fields || {};
+    const out = { email: 0, email_wrong: 0, phone: 0, address: 0, labels: [] };
+    const label = (el) => cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || el.name || "").slice(0, 60);
+    const want = String(f.email || "").trim();
+    const boxes = textBoxes();
+    if (want) {
+      for (const el of boxes) {
+        const have = String(el.value || "").trim();
+        if (!have || have.toLowerCase() === want.toLowerCase() || !emailBox(el)) continue;
+        setBox(el, want);
+        const back = String(el.value || "").trim().toLowerCase();
+        if (back === want.toLowerCase()) { out.email++; markFilled(el, "profile"); noteFilled(el, "email", want); out.labels.push(label(el) || "Email"); }
+        else out.email_wrong++;
+      }
+    }
+    // The phone keeps the person's own saved form ("555-100-2000") wherever the page takes it. It
+    // is rewritten only where it is wrong: another number than the profile's (the resume's), or
+    // the same number carrying its own "+1" next to the page's own country code control, or a box
+    // the page marks invalid (Workday's "Enter a valid format": then plain digits, which every ATS
+    // takes). A box holding only a country code ("+31", put there by the site) is never touched.
+    const raw = String(f.phone || "").trim();
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length >= 7) {
+      const coded = phoneCodeOnPage();
+      for (const el of boxes) {
+        const have = String(el.value || "").trim();
+        if (!have || have === raw) continue;
+        const sig = signature(el);
+        if (categorize(el, sig) !== "phone" || !labelFits(el, "phone")) continue;
+        const hd = have.replace(/\D/g, "");
+        if (hd.length < 7) continue;                                    // a country code alone: the site's
+        const invalid = String(el.getAttribute("aria-invalid") || "") === "true";
+        const same = hd === digits || hd.endsWith(digits);
+        if (same && !invalid && !(coded && /^\s*\+/.test(have))) continue;   // the same number, as it stands
+        const want = same || coded ? digits : raw;
+        if (have === want) continue;
+        setBox(el, want);
+        if (String(el.value || "").replace(/\D/g, "") === want.replace(/\D/g, "")) { out.phone++; markFilled(el, "profile"); out.labels.push(label(el) || "Phone"); }
+      }
+    }
+    const nv = (v) => norm(String(v || "")).replace(/[^\p{L}\p{N} ]+/gu, "");
+    for (const el of boxes) {
+      const have = nv(el.value);
+      if (!have) continue;
+      const sig = boxSig(el);
+      if (STREET_EXTRA_RE.test(sig) && !/address.?line.?1|addressline1/.test(sig)) continue;   // line 2 is theirs
+      const lab = norm(cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || ""));
+      const own = (lab && ADDR_PARTS.find((p) => p.re.test(lab))) || ADDR_PARTS.find((p) => p.re.test(sig));
+      if (own && own.key === "street" && /email|e-mail/.test(sig)) continue;
+      if (!own) continue;
+      const mine = nv(f[own.key]);
+      if (mine && have === mine) continue;
+      // what it holds is another part of the person's address, or (in County) a street address
+      const other = ADDR_PARTS.some((p) => p.key !== own.key && nv(f[p.key]) && nv(f[p.key]) === have);
+      const streetInCounty = own.key === "county" && (STREETISH_RE.test(String(el.value || "")) || (nv(f.street) && have === nv(f.street)));
+      if (!other && !streetInCounty) continue;
+      setBox(el, String(f[own.key] || ""));
+      out.address++; out.labels.push(label(el) || own.key);
+    }
+    return out;
+  }
+
+  // (2026-11-26) The page still says the phone's format is wrong after a fill (Workday kept
+  // "Enter a valid format for Phone Number" while the box showed the digits): the box is emptied
+  // and handed to the shell to type with real keys, once per box. [{ref, text}] (the digits).
+  const _phoneRetyped = new WeakSet();
+  function phoneRetype(fields) {
+    const digits = String((fields && fields.phone) || "").replace(/\D/g, "");
+    if (digits.length < 7) return [];
+    const out = [];
+    for (const el of textBoxes()) {
+      if (_phoneRetyped.has(el)) continue;
+      if (categorize(el, signature(el)) !== "phone" || !labelFits(el, "phone")) continue;
+      _phoneRetyped.add(el);
+      setNativeValue(el, "");
+      out.push({ ref: fieldRef(el), text: digits });
+    }
+    return out.slice(0, 2);
+  }
+
+  // A site that parses the resume AFTER it is attached (Ashby, Lam's portal) fills the contact
+  // boxes a few seconds later, over ours. For ``ms`` after an upload the boxes are checked twice a
+  // second and put right again; the fill does not wait for it. Returns how many were put right
+  // so far ({ fixed }, read with guardContact.count()).
+  let _guard = null;
+  function guardContact(fields, ms) {
+    if (_guard) clearInterval(_guard.timer);
+    const g = _guard = { fixed: 0, until: Date.now() + Math.max(1000, Math.min(30000, Number(ms) || 12000)), timer: null };
+    g.timer = setInterval(() => {
+      if (Date.now() > g.until) { clearInterval(g.timer); if (_guard === g) _guard = null; return; }
+      try { const c = enforceContact(fields); g.fixed += c.email + c.phone + c.address; } catch (e) { /* next tick */ }
+    }, 500);
+    return { armed: true };
+  }
+  guardContact.count = () => (_guard ? _guard.fixed : 0);
+
+  // ---- (2026-11-26) Work history and schools the SITE filled (Workday's "Autofill with Resume"
+  // or a saved draft): each section is checked against the profile's own jobs and schools.
+  //   * a job section whose company is none of the profile's employers (a project the parser read
+  //     as a job) is removed with its own Delete;
+  //   * a job the profile has, with the wrong title or From / To month, gets the profile's;
+  //   * a school none of the profile's is removed.
+  // Never with an empty profile (nothing to check against). ``fix`` false: only the list of what
+  // is wrong, for the final check before Ready to send. Returns { fixed, issues: [plain words] }.
+  const DEL_RE = /^(?:delete|remove)\b/i;
+  const orgWords = (s) => canon(s).split(" ").filter((w) => w.length > 1 && !/^(inc|llc|ltd|co|corp|corporation|company|the|group|plc|gmbh|of|and|university|college|school)$/.test(w));
+  function sameOrg(a, b) {
+    const x = canon(a), y = canon(b);
+    if (!x || !y) return false;
+    if (x === y || x.includes(y) || y.includes(x)) return true;
+    const wa = orgWords(a), wb = new Set(orgWords(b));
+    return wa.length > 0 && wa.filter((w) => wb.has(w)).length >= Math.max(1, Math.ceil(Math.min(wa.length, wb.size) / 2));
+  }
+  function sectionBoxes(sec, re) {
+    return qsaSafe("input, textarea", sec.box).filter((el) => !/^(hidden|file|radio|checkbox|submit|button)$/i.test(el.type || "")
+      && el.getAttribute("role") !== "spinbutton" && re.test(boxLabel(el)));
+  }
+  function sectionValue(sec, re) {
+    const el = sectionBoxes(sec, re)[0];
+    if (!el) return { el: null, value: "" };
+    const pills = isWidgetInput(el) || isPromptInput(el) ? chosenPills(el) : [];
+    return { el, value: pills.length ? pills.join(" ") : String(el.value || "").trim() };
+  }
+  function dateRead(group) {
+    if (!group) return null;
+    const spins = qsaSafe(SPIN_SEL, group);
+    if (!spins.length) return null;
+    const out = {};
+    for (const sp of spins) { const p = spinPart(sp); if (p) out[p] = Number(spinDigits(sp)) || 0; }
+    return out;
+  }
+  function deleteButton(sec) {
+    return qsaSafe("button, [role='button']", sec.box).find((b) => DEL_RE.test(cleanText(b.textContent || b.getAttribute("aria-label") || ""))
+      && boxShown(b) && !b.disabled) || null;
+  }
+  async function checkHistory(payload, fix) {
+    const out = { fixed: 0, issues: [] };
+    const jobs = (payload && payload.history) || [], schools = (payload && payload.education) || [];
+    for (const kind of ["work", "edu"]) {
+      const list = kind === "work" ? jobs : schools;
+      if (!list.length) continue;
+      for (let round = 0; round < 8; round++) {
+        let removed = false;
+        const secs = sectionsOf(kind);
+        for (const sec of secs) {
+          const head = cleanText(sec.heading.textContent);
+          if (kind === "edu") {
+            const school = sectionValue(sec, HIST_LABELS.school).value;
+            if (!school) {
+              const del = fix && secs.length > Math.min(list.length, 3) && sec === secs[secs.length - 1] ? deleteButton(sec) : null;
+              if (del) { press(del); out.fixed++; trace(null, "history-removed-empty-" + kind); await sleep(STEP_MS * 6); removed = true; break; }
+              continue;
+            }
+            if (list.some((s) => sameOrg(s.school, school))) continue;
+            const del = fix ? deleteButton(sec) : null;
+            if (del) { press(del); out.fixed++; trace(null, "history-removed-" + kind); await sleep(STEP_MS * 6); removed = true; break; }
+            out.issues.push(head + " is a school that is not in your profile");
+            continue;
+          }
+          const company = sectionValue(sec, HIST_LABELS.company);
+          const title = sectionValue(sec, HIST_LABELS.title);
+          if (!company.value && !title.value) {
+            // an empty section past the profile's jobs (left by an earlier fill or a draft): its
+            // required boxes would hold Save and Continue, so it goes with its own Delete
+            const del = fix && secs.length > Math.min(list.length, 5) && sec === secs[secs.length - 1] ? deleteButton(sec) : null;
+            if (del) { press(del); out.fixed++; trace(null, "history-removed-empty-" + kind); await sleep(STEP_MS * 6); removed = true; break; }
+            continue;                                                     // an empty section: fillHistory's
+          }
+          const item = list.find((j) => company.value && sameOrg(j.company, company.value))
+            || (!company.value && list.find((j) => canon(j.title) === canon(title.value)));
+          if (!item) {
+            const del = fix ? deleteButton(sec) : null;
+            if (del) { press(del); out.fixed++; trace(null, "history-removed-" + kind); await sleep(STEP_MS * 6); removed = true; break; }
+            out.issues.push(head + " is not a job in your profile");
+            continue;
+          }
+          if (item.title && title.el && canon(title.value) !== canon(item.title) && !isWidgetInput(title.el)) {
+            if (fix) { setBox(title.el, item.title); markFilled(title.el, "history"); out.fixed++; }
+            else out.issues.push(head + " has a job title that is not your profile's");
+          }
+          for (const [re, when] of [[HIST_LABELS.from, item.start], [HIST_LABELS.to, item.current ? null : item.end]]) {
+            if (!when || !when.y) continue;
+            const g = dateGroup(sec.box, re);
+            const got = dateRead(g);
+            if (!got || (!got.y && !got.m)) continue;                         // empty: fillHistory's
+            if (got.y === Number(when.y) && (!when.m || !("m" in got) || got.m === Number(when.m))) continue;
+            if (!fix) { out.issues.push(head + " has dates that are not your profile's"); continue; }
+            const parts = qsaSafe(SPIN_SEL, g).map((sp) => ({ el: sp, text: spinPart(sp) === "m" ? String(when.m || "") : spinPart(sp) === "y" ? String(when.y) : "" }))
+              .filter((p) => p.text);
+            await commitSpins(parts);
+            out.fixed++;
+          }
+        }
+        if (!removed) break;
+      }
+    }
+    return out;
+  }
+  // The final check before Ready to send (the shell's ready gate): what the page still shows wrong
+  // against the profile, in plain words (labels only, never a value). Works on a form page (its
+  // boxes) and on a review page (its text: an email that is not the application's).
+  async function prefillIssues(payload) {
+    const f = (payload && payload.fields) || {};
+    const issues = [];
+    const want = String(f.email || "").trim().toLowerCase();
+    if (want) {
+      for (const el of textBoxes()) {
+        const have = String(el.value || "").trim().toLowerCase();
+        if (have && have !== want && emailBox(el)) { issues.push((cleanLabel(rawLabel(el) || "") || "Email") + " is not your application email"); break; }
+      }
+      if (!issues.length) {
+        // a review page: the person's OTHER addresses (the profile's own one when the app applies
+        // with its alias, the one printed on the resume) shown where the application email belongs
+        const text = String((document.body && document.body.innerText) || "").toLowerCase();
+        const others = (Array.isArray(payload && payload.other_emails) ? payload.other_emails : []).map((x) => String(x || "").trim().toLowerCase())
+          .filter((x) => x && x !== want && x.includes("@"));
+        if (others.some((x) => text.includes(x))) issues.push("The page shows an email that is not your application email");
+      }
+    }
+    try {
+      const nv = (v) => norm(String(v || "")).replace(/[^\p{L}\p{N} ]+/gu, "");
+      for (const el of textBoxes()) {
+        const have = nv(el.value);
+        if (!have) continue;
+        const lab = norm(cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || ""));
+        const own = (lab && ADDR_PARTS.find((p) => p.re.test(lab))) || null;
+        if (!own || (nv(f[own.key]) && have === nv(f[own.key]))) continue;
+        const other = ADDR_PARTS.find((p) => p.key !== own.key && nv(f[p.key]) && nv(f[p.key]) === have);
+        if (other || (own.key === "county" && STREETISH_RE.test(String(el.value || "")))) {
+          issues.push((cleanLabel(rawLabel(el) || "") || own.key) + " holds another part of your address");
+        }
+      }
+    } catch (e) { /* the rest stands */ }
+    try { issues.push(...(await checkHistory(payload, false)).issues); } catch (e) { /* the rest stands */ }
+    return issues.slice(0, 6);
+  }
+
   function applyFill(plan) {
     let filled = 0;
     for (const { el, key, value } of plan) {
@@ -1359,6 +1643,9 @@ function qsaSafe(sel, root) {
     try { cleared += clearMisplacedName(fields); } catch (e) { /* nothing cleared */ }
     const plan = planFill(fields, { recipe });
     const filled = applyFill(plan);
+    // what the site itself put in the contact boxes (its resume parse, a saved draft)
+    let contact = { email: 0, email_wrong: 0, phone: 0, address: 0, labels: [] };
+    try { contact = enforceContact(fields); } catch (e) { /* the fill stands */ }
     const was = _from;
     _from = "workauth";
     const screening = fillScreening(payload && payload.screening);
@@ -1378,7 +1665,7 @@ function qsaSafe(sel, root) {
     const cont = continueButton(recipe);
     const next_page = !!(recipe && recipe.multipage && cont);
     const remaining = extractForm({ onlyEmpty: true }).length;
-    return { ok: true, cleared, filled: filled + answers, total, screening, answers, eeo, resume_upload,
+    return { ok: true, cleared, filled: filled + answers, total, screening, answers, eeo, resume_upload, contact,
              via_recipe: plan.filter((p) => p.via === "recipe").length,
              system: recipe ? recipe.id : "", system_name: recipe ? recipe.name : "",
              submit_highlighted, next_page,
@@ -4081,6 +4368,10 @@ function qsaSafe(sel, root) {
     try { w = await fillWidgets(payload); } catch (e) { /* a widget threw: the rest stands */ }
     trace(null, "widgets-filled-" + (w.filled || 0), Date.now() - tw);
     let h = { filled: 0 };
+    // (2026-11-26) The site's own parse or draft first: a job the profile does not have, a wrong
+    // title or dates, a school that is not theirs. Then the empty sections are filled as before.
+    let fixedHistory = { fixed: 0, issues: [] };
+    try { fixedHistory = await checkHistory(payload, true); } catch (e) { /* the rest stands */ }
     try { h = await fillHistory(payload); } catch (e) { /* the rest stands */ }
     _from = "today";
     try { h.filled += await fillSignatureDate(); } catch (e) { /* the rest stands */ }
@@ -4088,6 +4379,14 @@ function qsaSafe(sel, root) {
     // nothing this pass opened stays open (a list, or a prompt's popup dialog over the form)
     try { r.left_open = await closeOpened(); } catch (e) { r.left_open = 0; }
     if (_traceOn) { trace(null, "keys-queued-" + _keyOps.length + "-searches-" + _searchOps.length); r.trace = takeTrace(); }
+    // and the contact boxes once more: a widget or a section may have redrawn them
+    try {
+      const c2 = enforceContact((payload && payload.fields) || {});
+      const c = r.contact || {};
+      r.contact = { email: (c.email || 0) + c2.email, email_wrong: c2.email_wrong, phone: (c.phone || 0) + c2.phone,
+                    address: (c.address || 0) + c2.address, labels: (c.labels || []).concat(c2.labels).slice(0, 12) };
+    } catch (e) { /* the fill stands */ }
+    r.history_fixed = fixedHistory.fixed;
     r.filled += w.fields + h.filled;
     r.history = h.filled;
     r.keys = _keyOps.slice(0, 60);
@@ -4249,5 +4548,7 @@ function qsaSafe(sel, root) {
     detectSuccess, watchSuccess, stopSuccessWatch, watchCorrections, takeCorrections,
     // the agent's page view leaves out what a person cannot see or must not fill
     honeypot, parkedOffCanvas,
+    // (2026-11-26) what the site's own parse or draft filled, checked against the profile
+    enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype,
   };
 })();

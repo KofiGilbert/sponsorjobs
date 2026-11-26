@@ -126,7 +126,7 @@ def test_a_key_the_model_invents_becomes_ask():
 
 
 # --------------------------------------------------------------------------- the payload
-def test_a_payload_never_contains_a_stored_value(st):
+def test_a_payload_never_contains_a_stored_legal_value(st):
     from applicant.library import BrainLibrary
     lib = BrainLibrary(st)
     lib.save("Gender", "Female", "you")
@@ -140,7 +140,8 @@ def test_a_payload_never_contains_a_stored_value(st):
     MP.map_page(st, llm, items)
     assert len(llm.sent) == 1
     vals = redact.sensitive_values(st)
-    assert {"Female", "Ghana", "f1_opt"} <= set(vals)
+    # (2026-11-26, owner decision) self-identification values are no longer withheld; legal ones are
+    assert {"Ghana", "f1_opt"} <= set(vals) and "Female" not in vals
     options = [o for it in items for o in it.get("options", [])]
     payload = json.loads(llm.sent[0].split("<questions>\n")[1].split("\n</questions>")[0])
     assert redact.leaks(payload, vals, options) == []              # only the form's own choices carry them

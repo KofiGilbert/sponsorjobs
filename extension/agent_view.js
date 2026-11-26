@@ -44,8 +44,8 @@
   const PROMPT_RE = /^[\s\-_*.\u2013\u2014]*(?:(?:please )?(?:select|choose)\b|please (?:enter|type|pick)\b|make a selection\b)|^-{2,}|^(?:none selected|no selection|nothing selected)\W*$|^(?:search|start typing|type to search)(?:\W*$|\s*(?:\.{3}|\u2026)|\s+(?:for|by|here)\b)/i;
   const isPlaceholder = (t) => { const s = norm(t); return !!s && PROMPT_RE.test(s) && !DECLINE_RE.test(s); };
   // A voluntary self-identification question (the planner's _EEO; autoapply/brain.py _SELF_ID).
-  // Its chosen option is the person's gender, race, veteran or disability answer, and it never
-  // leaves the machine: the view says such a control is answered, never which choice it holds.
+  // (2026-11-26, owner decision) Its chosen option shows like any other choice: the agent reads the
+  // person's saved self-identification answers to answer these questions on any wording.
   const SELF_ID_RE = /gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|lgbt|queer|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)/i;
   const TEXT_TYPES = new Set(["text", "email", "tel", "url", "search", "password", "number", "date", "datetime-local",
                               "month", "week", "time", "color", "range", ""]);
@@ -392,27 +392,23 @@
       const opts = Array.from(el.options || []);
       const first = opts.slice(0, 4).map((o) => cleanText(o.textContent).slice(0, 40)).join("|");
       const label = labelOf(el), v = selectValue(el);
-      return `<select label=${q(label)} value=${q(v && SELF_ID_RE.test(label) ? "(filled)" : v)} options=${opts.length} first=${q(first)}${tail}>`;
+      return `<select label=${q(label)} value=${q(v)} options=${opts.length} first=${q(first)}${tail}>`;
     }
     if (kind === "combobox") {
       const expanded = attrOf(el, "aria-expanded") === "true";
       const search = isSiteSearch(el) ? " search=true" : "";
       const label = labelOf(el), v = comboValue(el);
-      return `<combobox label=${q(label)} value=${q(v && SELF_ID_RE.test(label) ? "(filled)" : v)} expanded=${expanded}${search}${tail}>`;
+      return `<combobox label=${q(label)} value=${q(v)} expanded=${expanded}${search}${tail}>`;
     }
     if (kind === "checkbox") {
       const on = tagOf(el) === "INPUT" ? !!el.checked : attrOf(el, "aria-checked") === "true";
       const label = (tagOf(el) === "INPUT" ? ownLabel(el) : "") || labelOf(el);
-      const selfId = SELF_ID_RE.test(label) || SELF_ID_RE.test(groupLabel(el));
-      const ans = selfId ? boxGroupAnswered(el) : null;
-      const state = selfId ? "hidden" + (ans === null ? "" : ` answered=${ans}`) : on;
-      return `<checkbox label=${q(cleanLabel(label).slice(0, MAX_LABEL))} checked=${state}${tail}>`;
+      return `<checkbox label=${q(cleanLabel(label).slice(0, MAX_LABEL))} checked=${on}${tail}>`;
     }
     if (kind === "radio") {
       const on = tagOf(el) === "INPUT" ? !!el.checked : attrOf(el, "aria-checked") === "true";
       const group = groupLabel(el);
-      const state = SELF_ID_RE.test(group) ? `checked=hidden answered=${groupAnswered(el)}` : `checked=${on}`;
-      return `<radio label=${q(group)} option=${q(optionLabel(el))} ${state}${tail}>`;
+      return `<radio label=${q(group)} option=${q(optionLabel(el))} checked=${on}${tail}>`;
     }
     if (kind === "file") {
       const chosen = el.files && el.files.length ? "chosen" : "none";
@@ -1250,7 +1246,6 @@
     else if (isFileInput(el)) o.file = el.files && el.files.length ? "chosen" : "none";
     else if ("value" in el && tagOf(el) !== "BUTTON") o.value = String(el.value || "") !== "" ? "(filled)" : "";
     else o.text = textOf(el).slice(0, 120);
-    if (SELF_ID_RE.test(label || "") || SELF_ID_RE.test(groupLabel(el) || "")) { if (o.value) o.value = "(filled)"; delete o.checked; }
     const near = nearText(el);
     o.errors = describedErrors(el).map((n) => cleanText(n.textContent).slice(0, 160)).concat(near.errors);
     o.before = near.before; o.after = near.after;

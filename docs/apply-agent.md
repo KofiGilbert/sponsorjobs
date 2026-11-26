@@ -1951,3 +1951,61 @@ Auto. That would have misstated the person's legal status to an employer.
   stays: a best guess flagged "your work authorization is saved but this form words it differently".
 - The engine attaches the saved work authorization to the material (`Material.work_auth`).
 - Tests: tests/test_work_auth_never_guessed.py.
+
+## 34. What the site fills, checked against the profile (2026-11-26, Ashby, Workday, Lam)
+
+A site's own resume parse (Workday's "Autofill with Resume", Ashby's parse after the upload, Lam's
+portal) or a saved draft fills the form before or after the engine. On the real runs that put the
+email printed on the resume in place of the application email, the parse's job list (a project as
+a job, a wrong title and dates) and the street in County, and none of it was corrected.
+
+- **The contact boxes** (`enforceContact`, autofill_core.js): after every fill, every email box
+  holds the application email (`_application_email`: the alias with the agent on, else the
+  profile's own) and is read back; a referrer's, reference's or manager's email box is never
+  touched. A phone box holds the profile's digits, without the country code when the page has its
+  own Country Phone Code control. An address box holding another part of the address (County with
+  the street) gets its own part, or is emptied. After a resume upload `guardContact` keeps these
+  right in the page for 15 s, since the site's parse lands seconds later.
+- **The work history** (`checkHistory`): each "Work Experience N" whose company is none of the
+  profile's employers is removed with its own Delete; a profile job with the wrong title or From /
+  To month gets the profile's; an "Education N" school the profile does not have is removed. Never
+  with an empty profile.
+- **Workday's two ways in**: with "Apply Manually" next to "Autofill with Resume" the shell clicks
+  Apply Manually itself, once per run, with no model call (`manualOverParse`). The brain's rule 2
+  says the same.
+- **The phone loop**: a phone the brain types takes plain digits (`brain.contact_form`; a saved
+  answer "+1 (...)" was refused six steps in a row), an email box the application email. When the
+  page still names the phone in an error, the shell empties the box and types the digits with real
+  keys, once per page (`fixPhone`, `phoneRetype`), and tells the brain not to type it again.
+- **The final check** before Ready to send (`checkPrefill`, `prefillIssues`): puts right what it
+  can on the page; what is still wrong (in words, never a value: "Work Experience 2 is not a job in
+  your profile", "The page shows an email that is not your application email") goes back to the
+  brain once, then is named at Ready to send under "Check noted".
+- Tests: tests/test_autofill_site_fills.py (fixture tests/fixtures/forms/workday_prefilled.html),
+  tests/js/test_agent_site_fills.js.
+
+## 36. Self-identification on any wording; the AI reads the saved answers (2026-11-26, owner decision)
+
+At Lam Research the agent asked for "Veteran" although the person's veteran status was saved: the
+site asked a plain Yes / No under the Title 38 notice, and the word rules did not read it. Word
+lists break on the next site, so:
+
+- `autoapply/eeo.py` stays the instant first pass (no model call when it is sure). It now also
+  reads the federal notice (`4212`, VEVRAA, Vietnam era) as the protected veteran question, the
+  protected veteran classifications by name, "I don't identify as a protected veteran", "Male /
+  Man" and "I am Hispanic or Latino".
+- When it is not sure, `autoapply/selfid.py` gives the model the question (with its notice text),
+  the site's options and the person's saved answer, and it picks the option or says none fits. The
+  pick is cached on this computer (`selfid_options.json`) by question, options and saved answer, so
+  a repeat costs nothing. When none fits the person is asked once, and their pick is kept for that
+  wording (`learn`, from the ask's answer).
+- The standing "Decline to self-identify" always wins (`eeo.decline_pick`): the page's decline
+  choice, found by the model only when the words are unusual.
+- Self-identification answers are no longer withheld from the AI: the agent's view shows the
+  choice a self-identification question holds like any other (`agent_view.js`,
+  `brain.mask_self_id` passes the view as it is; the old masking stays as `hide_self_id`), saved
+  self-identification answers are facts in `<person>` (`grounded.build_facts`), and
+  `redact.sensitive_values` withholds legal values only by default. The Memory page's old promise
+  ("no model, server or chat ever does") is removed; the privacy policy says the profile data,
+  self-identification answers included, is sent to the AI provider to fill application forms.
+- Tests: tests/test_selfid.py (fixtures: real systems' wordings, tests/fixtures/selfid/wordings.json).
