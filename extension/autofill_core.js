@@ -4692,13 +4692,23 @@ function qsaSafe(sel, root) {
       .r.cur { border-width: 3px; opacity: 1;
                box-shadow: 0 0 0 4px rgba(121,87,252,.28), 0 0 22px 6px rgba(121,87,252,.55); }
       .r.off { display: none; }
+      .chip { position: fixed; pointer-events: auto; cursor: pointer; padding: 3px 12px; border-radius: 999px;
+              background: ${GLOW}; color: #fff; border: 1px solid rgba(255,255,255,.6);
+              font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+      .chip[hidden] { display: none; }
       @keyframes sjpulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.45); } }
       @media (prefers-reduced-motion: reduce) { .r { animation: none; } }
     `;
     _glowRoot.appendChild(st);
     (document.body || document.documentElement).appendChild(_glowHost);
     try { window.addEventListener("scroll", placeGlows, true); window.addEventListener("resize", placeGlows); } catch (e) { /* fine */ }
-    if (!_glowTimer) _glowTimer = setInterval(() => { dropAnswered(); placeGlows(); }, 500);
+    if (!_glowTimer) _glowTimer = setInterval(() => {
+      const cur = needsCurEl();
+      const moveOn = !!(cur && needsKind(cur) === "choice" && filledNow(cur));
+      dropAnswered(); placeGlows();
+      if (moveOn) needsNext();                              // a list or a choice answered: on by itself
+    }, 400);
     return _glowRoot;
   }
   /** Ring ``el`` (its visible box); ``cur``: the one to go to now. */
@@ -4718,6 +4728,7 @@ function qsaSafe(sel, root) {
     if (!_glowEls.size) stopGlows();
   }
   function stopGlows() {
+    if (_chip) { try { _chip.remove(); } catch (e) { /* fine */ } _chip = null; }
     for (const r of _glowEls.values()) r.remove();
     _glowEls.clear();
     clearInterval(_glowTimer); _glowTimer = null;
@@ -4725,6 +4736,12 @@ function qsaSafe(sel, root) {
     _glowHost = _glowRoot = null;
   }
   function placeGlows() {
+    if (_chip && _chip.isConnected && !_chip.hidden) {
+      const c = needsCurEl();
+      const b = c ? visibleBox(c).getBoundingClientRect() : null;
+      if (b && (b.width || b.height) && !coveredBy(c)) { _chip.style.left = Math.max(4, b.right - 60) + "px"; _chip.style.top = (b.bottom + 8) + "px"; _chip.style.display = ""; }
+      else _chip.style.display = "none";
+    }
     for (const [el, r] of _glowEls) {
       if (!el.isConnected) { r.classList.add("off"); continue; }
       const b = visibleBox(el).getBoundingClientRect();
@@ -4739,8 +4756,22 @@ function qsaSafe(sel, root) {
   function dropAnswered() {
     for (const el of [..._glowEls.keys()]) if (!el.isConnected || (filledNow(el) && !el.__sjFlash)) unglow(el);
   }
+  let _chip = null;
+  function chipFor(el) {
+    const root = glowRoot();
+    if (!_chip || !_chip.isConnected) {
+      _chip = document.createElement("button");
+      _chip.type = "button"; _chip.className = "chip"; _chip.textContent = "Next";
+      _chip.addEventListener("mousedown", (e) => e.preventDefault());       // the box keeps the caret
+      _chip.addEventListener("click", (e) => { e.preventDefault(); const c = needsCurEl(); if (c) needsEnter(c); });
+      root.appendChild(_chip);
+    }
+    _chip.hidden = !(el && needsKind(el) === "multi");
+    placeGlows();
+  }
   function currentGlow(ref) {
     for (const r of _needs) { const el = elByRef(r); if (el && _glowEls.has(el)) _glowEls.get(el).classList.toggle("cur", r === ref); }
+    try { chipFor(elByRef(ref)); } catch (e) { /* fine */ }
   }
   function markNeeds(ref) {
     const el = elByRef(ref);
@@ -4767,12 +4798,82 @@ function qsaSafe(sel, root) {
     const w = walkStart(ref);
     const el = elByRef(ref);
     if (w.scrolled && el) await settled(visibleBox(el));
+    _needsCur = ref;
     currentGlow(ref);
     try { if (el && el.focus) el.focus({ preventScroll: true }); } catch (e) { /* fine */ }
     const P = window.TailorPointer;
-    if (P && el) P.at(visibleBox(el), "Needs you" + (w.label ? ": " + w.label : ""), { now: true, stay: true });
+    if (P && el) P.at(visibleBox(el), needsSay(el), { now: true, stay: true });
     return { n: list.length, i: _needsAt, label: w.label || "" };
   }
+  // (2026-11-26, the owner) The fields that need the person, one after another: the caret in the
+  // first, with the strong ring and "Fill this, then press Enter". Enter in a one-line box (the form
+  // is never sent, armSubmitGuard) with a valid answer moves the caret, ring and pointer to the
+  // next one; an empty or invalid answer stays and says so. A list, a choice or a tick box moves
+  // on by itself once answered. A multi-line box keeps Enter for a new line: its "Next" chip (or
+  // Cmd/Ctrl+Enter) moves on. Tab works as always. After the last one: the pointer ON the site's
+  // Submit, "All done. Press Submit when you're happy". The bar's Previous / Next still work.
+  let _needsCur = "";
+  function needsKind(el) {
+    const t = tagOf(el);
+    if (t === "TEXTAREA") return "multi";
+    if (t === "INPUT" && /^file$/i.test(el.type || "")) return "file";
+    if (t === "SELECT" || isWidgetInput(el) || el.getAttribute("role") === "combobox" || /^(checkbox|radio)$/i.test(el.type || "")) return "choice";
+    return "line";
+  }
+  function needsSay(el) {
+    return { line: "Fill this, then press Enter", multi: "Fill this, then press Next", choice: "Choose an answer", file: "Add the file here" }[needsKind(el)];
+  }
+  function answerValid(el) {
+    if (!filledNow(el)) return false;
+    try { return typeof el.checkValidity === "function" ? el.checkValidity() : true; } catch (e) { return true; }
+  }
+  async function restOnSubmit(label) {
+    const recipe = recipeFor();
+    try { highlightSubmit(recipe); } catch (e) { /* fine */ }
+    let sub = qsaDeep(".tailor-submit-hint")[0];
+    if (!sub) {                       // no recipe for this site: the page's own Submit by its words
+      const SUBMIT_WORDS = /^(submit( (my )?application)?|send( (my )?application)?|review and submit|complete application|apply( now)?)$/i;
+      const cands = qsaDeep("button, input[type='submit'], [role='button'], a").filter((b) => shown(b)
+        && SUBMIT_WORDS.test(String(b.innerText || b.value || b.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
+      sub = cands[cands.length - 1] || null;
+      if (sub) { injectStyle(); try { sub.classList.add("tailor-submit-hint"); } catch (e) { /* fine */ } }
+    }
+    if (!sub) return null;
+    try { sub.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { sub.scrollIntoView(); }
+    await settled(sub);
+    try { window.TailorPointer && window.TailorPointer.at(sub, label, { now: true, stay: true, on: true }); } catch (e) { /* fine */ }
+    return sub;
+  }
+  let _needsMoving = false;
+  /** The current field is answered: on to the next one that needs the person, else to Submit. */
+  async function needsNext() {
+    if (_needsMoving) return null;
+    _needsMoving = true;
+    try {
+      const was = elByRef(_needsCur);
+      const list = needsList();
+      if (!list.length) {
+        _needsCur = ""; stopGlows();
+        await restOnSubmit("All done. Press Submit when you're happy");
+        return { done: true };
+      }
+      let i = was ? list.findIndex((r) => { const e = elByRef(r); return e && was.compareDocumentPosition(e) & 4; }) : 0;
+      if (i < 0) i = 0;
+      _needsAt = i - 1;
+      return await needsStep(1);
+    } finally { _needsMoving = false; }
+  }
+  // Enter (or the chip, or Cmd/Ctrl+Enter in a multi-line box) on the current field.
+  function needsEnter(el) {
+    if (answerValid(el)) { needsNext(); return true; }
+    const P = window.TailorPointer;
+    if (P) {
+      P.at(visibleBox(el), "This one still needs an answer", { now: true, stay: true });
+      setTimeout(() => { try { if (_needsCur && elByRef(_needsCur) === el) P.at(visibleBox(el), needsSay(el), { now: true, stay: true }); } catch (e) { /* fine */ } }, 1600);
+    }
+    return false;
+  }
+  function needsCurEl() { return _needsCur ? elByRef(_needsCur) : null; }
   // (2026-11-26) The site's own window over the page (a privacy notice), as {title}, or null.
   function siteModal() {
     const P = window.TailorPointer;
@@ -4840,7 +4941,7 @@ function qsaSafe(sel, root) {
   }
   function clearNeeds() {
     stopGlows();
-    _needs = []; _needsAt = -1;
+    _needs = []; _needsAt = -1; _needsCur = "";
     try { if (window.TailorPointer) window.TailorPointer.hide(); } catch (e) { /* fine */ }
     return true;
   }
@@ -4849,22 +4950,7 @@ function qsaSafe(sel, root) {
   async function guideEnd() {
     const list = needsList();
     if (list.length) { _needsAt = -1; const r = await needsStep(1); return { where: "needs", n: list.length, label: r.label }; }
-    const recipe = recipeFor();
-    try { highlightSubmit(recipe); } catch (e) { /* fine */ }
-    let sub = qsaDeep(".tailor-submit-hint")[0];
-    if (!sub) {                       // no recipe for this site: the page's own Submit by its words
-      const SUBMIT_WORDS = /^(submit( (my )?application)?|send( (my )?application)?|review and submit|complete application|apply( now)?)$/i;
-      const cands = qsaDeep("button, input[type='submit'], [role='button'], a").filter((b) => shown(b)
-        && SUBMIT_WORDS.test(String(b.innerText || b.value || b.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
-      sub = cands[cands.length - 1] || null;
-      if (sub) { injectStyle(); try { sub.classList.add("tailor-submit-hint"); } catch (e) { /* fine */ } }
-    }
-    if (sub) {
-      try { sub.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { sub.scrollIntoView(); }
-      await settled(sub);
-      try { window.TailorPointer && window.TailorPointer.at(sub, "Your turn: check and submit", { now: true, stay: true, on: true }); } catch (e) { /* fine */ }
-      return { where: "submit", n: 0 };
-    }
+    if (await restOnSubmit("Your turn: check and submit")) return { where: "submit", n: 0 };
     return { where: "none", n: 0 };
   }
 
@@ -4895,6 +4981,12 @@ function qsaSafe(sel, root) {
     window.__sjSubmitGuard = true;
     document.addEventListener("keydown", (e) => {
       try {
+        const cur = e.key === "Enter" && !e.isComposing ? needsCurEl() : null;
+        if (cur && (e.target === cur || cur.contains(e.target))) {
+          const kind = needsKind(cur);
+          if (kind === "multi" && !(e.metaKey || e.ctrlKey)) return;     // a new line, as always
+          if (kind === "line" || kind === "multi") { e.preventDefault(); needsEnter(cur); return; }
+        }
         if (e.key !== "Enter" || e.isComposing || e.shiftKey || !enterWouldSubmit(e.target)) return;
         e.preventDefault();                                 // the box keeps its words; the form is not sent
         window.__sjEnterStopped = (window.__sjEnterStopped || 0) + 1;
@@ -5003,6 +5095,6 @@ function qsaSafe(sel, root) {
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
     orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
-    siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike,
+    siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike, needsNext, needsKind,
   };
 })();

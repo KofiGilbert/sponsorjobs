@@ -674,6 +674,34 @@ def _op_for(f: FormField) -> str:
     return "fill"
 
 
+# (2026-11-26, Meriton) "How did you hear about us?" got "Other (please specify)" and its "Please
+# specify" box was left empty. Whenever "Other" is picked for a saved answer no choice says, the
+# specify box next to it gets that answer ("Job board"). Filled per plan_known call.
+_OTHER_PICK = re.compile(r"^(other|others|something else|not listed|none of the above)\b")
+_SPECIFY = re.compile(r"^\W*(please |if (other|yes|so)\W*(please )?)?(specify|explain|describe|tell us)\b|\bplease specify\W*$"
+                      r"|^\W*other\W*(please specify|specify)?\W*$", re.I)
+_OTHER_TEXT: dict = {}
+
+
+def _fill_specify_boxes(fields: list, out) -> None:
+    """The "please specify" text box right after a choice answered with "Other" (the next one to
+    three fields, before any other question with options) gets the saved answer behind it."""
+    acted = {a.ref for a in out.actions}
+    for i, f in enumerate(fields):
+        text = _OTHER_TEXT.get(f.ref)
+        if not text:
+            continue
+        for g in fields[i + 1:i + 4]:
+            if g.options or (g.type or "text").lower() in ("select", "radio", "checkbox", "file"):
+                break
+            if g.ref in acted or not _SPECIFY.search(str(g.label or "")):
+                continue
+            out.actions.append(FillAction(g.ref, "fill", value=text, origin="library", sensitive=True))
+            out.left = [x for x in out.left if x.ref != g.ref]
+            out.rest = [x for x in out.rest if x.ref != g.ref]
+            break
+
+
 def _literal(f: FormField, text: str, key: str = "") -> str | None:
     """Fit a known answer to this field: an exact option for a choice field (a country by name
     or alias on a country question), Yes for a checkbox the answer affirms, the text itself for a
@@ -683,7 +711,11 @@ def _literal(f: FormField, text: str, key: str = "") -> str | None:
         return None
     t = (f.type or "text").lower()
     if f.options or t in ("select", "radio"):
-        return literal_for(key, text, f.options)
+        v = literal_for(key, text, f.options)
+        # an "Other" picked for an answer no choice says: its "please specify" box gets the answer
+        if v and _OTHER_PICK.match(_n(v)) and _n(v) != _n(text):
+            _OTHER_TEXT[f.ref] = text
+        return v
     if t == "checkbox":
         return "Yes" if workauth.polarity(text) is True else None
     return text
@@ -915,6 +947,7 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
     """Answer every field the person's own material answers, in the planner's order; return the
     rest for the model and the fact questions nothing answered for the person."""
     out = KnownResult()
+    _OTHER_TEXT.clear()
     drafted = {}
     for qa in ctx.drafted or []:
         if isinstance(qa, dict) and str(qa.get("answer") or "").strip():
@@ -1242,6 +1275,7 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             out.left.append(f)
             continue
         out.rest.append(f)
+    _fill_specify_boxes(fields, out)
     return out
 
 

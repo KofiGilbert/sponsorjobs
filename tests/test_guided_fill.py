@@ -110,3 +110,31 @@ def test_a_preferred_name_box_is_never_asked():
     # no first name on file: the required one is the person's, the optional one still is not
     res2 = plan_known([opt, req], KnownContext(applicant={}))
     assert {f.ref for f in res2.left} == {"q"}
+
+
+def test_other_please_specify_gets_its_box_filled(tmp_path):
+    """(Meriton, 2026-11-26) "How did you hear about us?" has no job board choice: "Other (please
+    specify)" is picked for the saved "Job board" AND its "Please specify" box gets "Job board"
+    (it was left empty). A list with a job board choice takes that one, nothing to specify."""
+    from autoapply.answers import AnswerLibrary
+    from autoapply.fields import FormField
+    from autoapply.planner import KnownContext, plan_known
+    meriton = ["College Recruiting/Job Fair", "Company Website", "LinkedIn", "Indeed", "Military Program/SkillBridge",
+               "Referred by a Current Employee (please specify)", "Referred by a Non-Employee (please specify)",
+               "Other (please specify)"]
+    lib = AnswerLibrary(tmp_path / "a.db")
+    try:
+        lib.save("How did you hear about us?", "Job board", "you")
+        heard = FormField("h", "How did you hear about us?", "select", options=meriton, required=True)
+        spec = FormField("s", "Please specify", "text")
+        cur = FormField("c", "Are you a current or former employee of Example Co?", "select", options=["Yes", "No"], required=True)
+        res = plan_known([heard, spec, cur], KnownContext(library=lib))
+        acts = {a.ref: a.value for a in res.actions}
+        assert acts.get("h") == "Other (please specify)" and acts.get("s") == "Job board", acts
+        # a list that has a job board choice: that one, the specify box untouched
+        heard2 = FormField("h2", "How did you hear about us?", "select", options=["LinkedIn", "Online Job Board", "Other (please specify)"])
+        res2 = plan_known([heard2, FormField("s2", "Please specify", "text")], KnownContext(library=lib))
+        acts2 = {a.ref: a.value for a in res2.actions}
+        assert acts2.get("h2") == "Online Job Board" and "s2" not in acts2, acts2
+    finally:
+        lib.close()

@@ -2168,6 +2168,16 @@ and a redesign:
 - **Optional fields never trigger an ask**: the walk flags only required fields the plan could not
   answer. A preferred first name or nickname: optional, left empty; required, the profile's first
   name (asked only when the profile has none).
+- **The fields that need the person, one after another** (the owner): the caret goes into the first
+  one, with the strong ring and "Fill this, then press Enter". Enter in a one-line box (the form is
+  never sent) with a valid answer moves the caret, ring and pointer to the next; an empty or
+  invalid answer stays ("This one still needs an answer"). A list, a choice or a tick box moves on
+  by itself once answered. A multi-line box keeps Enter for a new line; its "Next" chip (or
+  Cmd/Ctrl+Enter) moves on. Tab works as always; the bar's Previous / Next still work. After the
+  last one the pointer is ON the site's Submit: "All done. Press Submit when you're happy".
+- **"Other (please specify)"**: whenever "Other" is picked for a saved answer no choice says ("Job
+  board" on Meriton's "How did you hear about us?"), the "please specify" box next to it gets the
+  answer. A list with a job board choice takes that one.
 - **The end on Submit**: the pointer's tip is ON the button (its left centre), the label just past
   its right edge, or under it when there is no room; never over it.
 - **The bar says one short line** (`app.js aaBarShort`): the agent's Ready line is "Your turn:

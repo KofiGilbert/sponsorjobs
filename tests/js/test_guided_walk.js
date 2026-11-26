@@ -98,7 +98,7 @@ async function run(o) {
   assert(r.waits.filter((w) => w > 0).length >= 5, "paced " + JSON.stringify(r.waits));
   // the end: on the first field that needs the person, outlined, resting (never hidden)
   assert(r.end.where === "needs" && r.end.n === 1 && r.outlined === 1, "ends on the person's field " + JSON.stringify(r.end));
-  assert(r.rest && /^Needs you/.test(r.rest.label), "the pointer rests there " + JSON.stringify(r.rest));
+  assert(r.rest && r.rest.label === "Choose an answer", "the pointer rests there, saying what to do " + JSON.stringify(r.rest));
   assert(r.steps[0].n === 1 && r.steps[0].i === 0, "Next steps through them " + JSON.stringify(r.steps));
   assert(r.glow.n === 1 && r.glow.cur === 1 && r.glow.layout === "fixed", "a glow ring, the current one bright, in an overlay " + JSON.stringify(r.glow));
   assert(r.after === 0, "the ring goes once the field is answered: " + r.after);
@@ -271,6 +271,57 @@ async function run(o) {
     assert(hint === null || hint === "Press Submit yourself when you are ready", "the pointer, when Submit is in view: " + hint);
     assert(scripted === 1, "a script's click on Submit is stopped");
     assert(person === 2, "the person's own click on Submit sends it");
+  }
+
+  // ---- (2026-11-26, the owner) the fields that need the person, one after another: Enter moves
+  // on from a box with a valid answer and stays on an empty one; a list moves on by itself; a
+  // multi-line box keeps Enter for a new line and moves on with its Next chip or Ctrl+Enter; after
+  // the last one the pointer is ON Submit. The form is never sent.
+  {
+    const b = await chromium.launch();
+    const page = await b.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.setContent(`<form id="f" onsubmit="window.__sent=(window.__sent||0)+1; return false">
+      <div><label for="a">Your city *</label><input id="a" type="text" required></div>
+      <div><label for="m">Email for updates *</label><input id="m" type="email" required></div>
+      <div><label for="c">Shift *</label><select id="c" required><option value="">Select...</option><option>Day</option><option>Night</option></select></div>
+      <div><label for="t">Why this role? *</label><textarea id="t" required></textarea></div>
+      <div><button type="submit" id="sub">Submit application</button></div></form>`);
+    await page.evaluate(CORE); await page.evaluate(POINTER);
+    const js = (e) => page.evaluate(`(async () => (${e}))()`);
+    await js(`(() => { const T = window.TailorAutofill; T.armSubmitGuard(); for (const f of T.extractForm({ onlyEmpty: true })) T.markNeeds(f.ref); return true; })()`);
+    await js("window.TailorAutofill.guideEnd()");
+    const lab = () => page.evaluate("window.TailorPointer.state() && window.TailorPointer.state().label");
+    const focused = () => page.evaluate("document.activeElement && document.activeElement.id");
+    const s0 = [await focused(), await lab()];
+    await page.keyboard.press("Enter");                          // empty: stays, says so
+    const s1 = [await focused(), await lab()];
+    await page.keyboard.type("Springfield"); await page.keyboard.press("Enter");
+    await page.waitForTimeout(400);
+    const s2 = [await focused(), await lab()];
+    await page.keyboard.type("not-an-email"); await page.keyboard.press("Enter");   // invalid: stays
+    const s3 = [await focused(), await lab()];
+    await page.fill("#m", ""); await page.focus("#m"); await page.keyboard.type("a@example.com"); await page.keyboard.press("Enter");
+    await page.waitForTimeout(400);
+    const s4 = [await focused(), await lab()];
+    await page.selectOption("#c", "Night");                      // a list moves on by itself
+    await page.waitForTimeout(1200);
+    const s5 = [await focused(), await lab()];
+    const chip = await page.evaluate(() => { const h = document.querySelector("[data-sj-glow]"); const c = h && h.shadowRoot.querySelector(".chip"); return c ? !c.hidden : false; });
+    await page.keyboard.type("Line one"); await page.keyboard.press("Enter"); await page.keyboard.type("Line two");
+    const s6 = [await focused(), await page.evaluate("document.getElementById('t').value")];
+    await page.keyboard.press("Control+Enter");
+    await page.waitForTimeout(900);
+    const end = await page.evaluate(() => { const st = window.TailorPointer.state(); const r = document.getElementById("sub").getBoundingClientRect();
+      return { label: st && st.label, on: !!st && st.x >= r.left && st.x <= r.right && st.y >= r.top && st.y <= r.bottom, sent: window.__sent || 0 }; });
+    await b.close();
+    assert(s0[0] === "a" && s0[1] === "Fill this, then press Enter", "the caret in the first, the words " + JSON.stringify(s0));
+    assert(s1[0] === "a" && s1[1] === "This one still needs an answer", "empty: stays and says so " + JSON.stringify(s1));
+    assert(s2[0] === "m" && s2[1] === "Fill this, then press Enter", "Enter moves on " + JSON.stringify(s2));
+    assert(s3[0] === "m" && s3[1] === "This one still needs an answer", "an invalid answer stays " + JSON.stringify(s3));
+    assert(s4[0] === "c" && s4[1] === "Choose an answer", "on to the list " + JSON.stringify(s4));
+    assert(s5[0] === "t" && s5[1] === "Fill this, then press Next" && chip, "a choice moves on by itself; the Next chip " + JSON.stringify([s5, chip]));
+    assert(s6[0] === "t" && s6[1] === "Line one\nLine two", "Enter is a new line in a multi-line box " + JSON.stringify(s6));
+    assert(end.label === "All done. Press Submit when you're happy" && end.on && end.sent === 0, "the end ON Submit, never sent " + JSON.stringify(end));
   }
 
   // ---- reduced motion: no glide, still in order ---------------------------------------------
