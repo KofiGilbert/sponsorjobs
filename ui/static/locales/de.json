@@ -2186,5 +2186,6 @@
   "fill.needsOne": "1 braucht Sie: {q}",
   "fill.needsMany": "{n} brauchen Sie. Jetzt: {q}",
   "fill.allDone": "Fertig. Drücken Sie Absenden, wenn alles passt",
-  "fill.submitted": "Abgeschickt. Als beworben markiert"
+  "fill.submitted": "Abgeschickt. Als beworben markiert",
+  "jd.readingLink": "Ich lese die Stellenanzeige…"
 }

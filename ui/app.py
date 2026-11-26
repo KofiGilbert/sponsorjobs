@@ -3708,6 +3708,20 @@ def start():
     jd = body.get("jd", "").strip()
     if not jd:
         return jsonify({"error": "Paste a job description to begin."}), 400
+    # (2026-11-26) A pasted LINK is read first (sourcing/posting_read.py, the feed's own public
+    # JSON or the page itself, robots.txt obeyed, never LinkedIn): the resume is tailored to the
+    # posting's description, never to the bare link. A link that cannot be read is said so
+    # plainly and the person is asked for the text, before any model call or package count.
+    from sourcing import posting_read
+    posting = None
+    link = posting_read.link_in(jd)
+    if link:
+        posting = posting_read.read_posting(link)
+        if not posting.get("ok"):
+            return jsonify({"error": posting_read.failure_message(posting), "need_text": True,
+                            "url": posting.get("url") or link,
+                            "why": posting.get("reason") or ""}), 422
+        jd = posting_read.as_jd(posting)
     llm = _count_package(_make_llm())  # one tailoring run = one package; clear error if no key
     # Pick the template FROM the JD unless the person deliberately chose one in the picker.
     # Choosing is work, and someone who just pasted a job wants a CV, not a decision about
@@ -3720,9 +3734,55 @@ def start():
     jobname = "cv" + uuid.uuid4().hex[:8]
     session = WebIntake(jd, tex, llm, _memory(), _records(), WORKDIR,
                         jobname=jobname, palace_dir=PALACE_DIR, template_name=tname)
-    _attach_session_job(session)        # a pasted description gets its own tracker job
+    job = _start_job_for(session, posting, body)
+    _attach_session_job(session, job=job)   # a pasted description gets its own tracker job
     _SESSION["s"] = session
     return jsonify(session.start())
+
+
+def _start_job_for(session, posting: dict | None, body: dict) -> dict | None:
+    """The tracker job a /api/session/start chat belongs to. A link that was read: the posting
+    (its own title, company and link, under the feed's id when it has one, so a job already on
+    the board is that job). A description pasted after a link could not be read: the job the
+    link names when it is on the board, else a pasted job that keeps the link. None for a plain
+    pasted description (``_attach_session_job`` makes its job)."""
+    from sourcing.board import PASTED_SOURCE, now_iso
+    if posting:
+        from sourcing.posting_read import confirmation
+        session.company = posting.get("company") or session.company
+        session.role = posting.get("title") or session.role
+        session.posting_note = confirmation(posting)
+        sid = posting.get("source_id") or f"{PASTED_SOURCE}:{session.jobname}"
+        session.source_job = {"url": posting.get("url") or "", "source": posting.get("source") or "",
+                              "source_id": sid}
+        return {"source_id": sid, "source": posting.get("source") if posting.get("source_id") else PASTED_SOURCE,
+                "company": session.company or "", "title": session.role or "",
+                "location": posting.get("location") or _jd_location(session.jd),
+                "remote": "", "url": posting.get("url") or "", "jd_text": session.jd,
+                "posted_at": now_iso()[:10], "salary": ""}
+    sid = str(body.get("source_id") or "").strip()
+    if sid:
+        w = _watchlist()
+        try:
+            known = w.get_job(sid)
+        finally:
+            w.close()
+        known = known or _job_from_feed(sid)
+        if known:
+            session.company = known.get("company") or session.company
+            session.role = known.get("title") or session.role
+            session.source_job = {"url": known.get("url") or "", "source": known.get("source") or "",
+                                  "source_id": sid}
+            return {**known, "source_id": sid}
+    from sourcing.posting_read import clean_url
+    url = clean_url(str(body.get("url") or ""))
+    if url:
+        session.source_job = {**(getattr(session, "source_job", None) or {}), "url": url}
+        sid = f"{PASTED_SOURCE}:{session.jobname}"
+        return {"source_id": sid, "source": PASTED_SOURCE, "company": session.company or "",
+                "title": session.role or "", "location": _jd_location(session.jd), "remote": "",
+                "url": url, "jd_text": session.jd, "posted_at": now_iso()[:10], "salary": ""}
+    return None
 
 
 @app.post("/api/session/template")
@@ -15743,8 +15803,19 @@ def start_from_job():
     # or package count, and the job leaves the board.
     if _job_closed_check({**job, "source_id": sid}):
         return jsonify({"error": JOB_CLOSED_MSG, "closed": True}), 409
-    jd = (job.get("jd_text") or "").strip() or (
-        f"{job.get('title', '')} at {job.get('company', '')}. {job.get('location', '')}.")
+    jd = (job.get("jd_text") or "").strip()
+    if not jd:
+        # (2026-11-26) No stored description: read it from the posting's link (the same reader a
+        # pasted link uses). A role with no readable description is never tailored from its title
+        # alone: the person is asked for the text, before any model call or package count.
+        from sourcing import posting_read
+        res = posting_read.read_posting(job.get("url") or "") if job.get("url") else \
+            {"ok": False, "reason": "no_link", "why": "this job has no description or link saved"}
+        if not res.get("ok"):
+            return jsonify({"error": posting_read.failure_message(res), "need_text": True,
+                            "url": job.get("url") or "", "source_id": sid,
+                            "why": res.get("reason") or ""}), 422
+        jd = posting_read.as_jd(res)
     llm = _count_package(_make_llm())   # one tailoring run = one package
     tex, tname = _load_template(body.get("template"))
     jobname = "cv" + uuid.uuid4().hex[:8]

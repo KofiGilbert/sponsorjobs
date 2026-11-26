@@ -2186,5 +2186,6 @@
   "fill.needsOne": "1 precisa de você: {q}",
   "fill.needsMany": "{n} precisam de você. Agora: {q}",
   "fill.allDone": "Pronto. Toque em Enviar quando estiver tudo certo",
-  "fill.submitted": "Enviada. Marcada como candidatada"
+  "fill.submitted": "Enviada. Marcada como candidatada",
+  "jd.readingLink": "Lendo a vaga…"
 }
