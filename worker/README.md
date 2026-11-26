@@ -137,3 +137,15 @@ large conversation histories (hundreds of KB) are the one case to watch in the d
 locked job list (`/v1/feed/*`) costs one request per file the app reads, ~25 to 80 a day per
 install with the app open (docs/feed.md, "Worker requests per install"), and almost no CPU (the body
 is streamed from R2 untouched).
+
+The admin dashboard tracks how close the whole account is to these limits: the Health page's
+**Cloudflare Free Plan** card (Workers requests, D1 rows read and written, D1 storage, each as used
+/ limit and a percentage, latest day and 7-day peak) and a banner on every admin page, "Time to
+switch to Workers Paid ($5 a month)", once any 7-day peak reaches 70% or search answered
+`daily_budget` in the last 7 days ("Getting close" from 50%). While search's first load runs,
+rows written are judged without the loader's own planned writes (against the 20,000 its budget
+leaves), so the load alone never raises it. The numbers are a daily snapshot the
+feed workflow writes into the search database from Cloudflare's GraphQL Analytics API
+(`src/admin_cf.ts`, `scripts/cf_usage_snapshot.py`, `migrations-search/0002_cf_usage.sql`), so
+the Worker writes nothing per request for it. Its Cloudflare token (`SEARCH_D1_TOKEN`) needs **D1
+Edit** and **Account Analytics Read**; details in docs/server-search-plan.md ("Watching it").

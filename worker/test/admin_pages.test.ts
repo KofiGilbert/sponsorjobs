@@ -440,3 +440,39 @@ describe("the kit's controls", () => {
     expect(r.text.match(/<script>/g)).toHaveLength(1);                // only the ⌘K shortcut
   });
 });
+
+describe("Cloudflare free plan (src/admin_cf.ts)", () => {
+  const db = env.SEARCH_DB!;
+  const yesterday = () => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const clear = () => db.exec("DELETE FROM cf_usage; DELETE FROM search_budget_days; DELETE FROM search_usage;");
+
+  it("no snapshot: the Health card says so and no page has the banner", async () => {
+    await clear();
+    const h = await get("/health");
+    expect(h.text).toContain("Cloudflare Free Plan");
+    expect(h.text).toContain("No snapshot yet");
+    expect((await get("/")).text).not.toContain("Time to switch to Workers Paid");
+  });
+
+  it("a limit at 72%: the banner on top of every page, the card, and a notification", async () => {
+    await clear();
+    await db.prepare("INSERT INTO cf_usage (day, taken_at, worker_requests, d1_rows_read, d1_rows_written, d1_storage_bytes, " +
+      "d1_largest_bytes, load_rows, load_total, load_per_day, load_ready) VALUES (?, ?, 72000, 1000, 1000, 1000, 1000, 10, 100, 30, 0)")
+      .bind(yesterday(), new Date().toISOString()).run();
+    for (const path of ["/", "/users", "/feed", "/audit"]) {
+      const r = await get(path);
+      expect(r.text, path).toContain("Time to switch to Workers Paid ($5 a month)");
+      expect(r.text, path).toContain("Workers requests reached 72% of the free 100,000 a day");
+      expect(r.text, path).toContain("https://www.cloudflare.com/plans/developer-platform/");
+    }
+    const h = await get("/health");
+    expect(h.text).toContain("72,000 (72%)");
+    expect(h.text).toContain("10 of 100 jobs loaded, about 3 days left");
+    expect(h.text).toContain('class="nbadge"');                  // a count beside Health
+    await db.prepare("UPDATE cf_usage SET worker_requests = 55000").run();
+    const close = await get("/");
+    expect(close.text).not.toContain("Time to switch");
+    expect(close.text).toContain("Getting close to the Cloudflare free plan");
+    await clear();
+  });
+});

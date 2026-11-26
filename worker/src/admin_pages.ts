@@ -8,6 +8,7 @@ import {
   type Runs, type Spender, type UserDetail, type UserFilter, type UserRow, type UserSort, USERS_PER_PAGE, netSince,
 } from "./admin_data";
 import { MAX_INTERVIEWS } from "./admin_actions";
+import { type CfUsage, type CfVerdict, cfCard } from "./admin_cf";
 import type { Env } from "./env";
 import { INTERVIEW_SECONDS, PLANS, SUBSCRIPTION_PLANS } from "./metering";
 import {
@@ -28,9 +29,11 @@ const shortName = (email: string | null, id: string) => (email ? maskEmail(email
 export interface Attention { level: "bad" | "warn" | "ok"; text: string; sub?: string; href?: string; icon?: string }
 
 export function attention(o: { stats: Stats; pool: PoolSetting; revenue: Revenue; feed: Feed; runs: Runs; env: Env;
-                               now: number; suspended: number }): Attention[] {
+                               now: number; suspended: number; cf?: CfVerdict }): Attention[] {
   const out: Attention[] = [];
   const { stats: s, now } = o;
+  if (o.cf?.level === "pay") out.push({ level: "bad", icon: "card", text: "Time to switch to Workers Paid ($5 a month)", sub: o.cf.reasons[0], href: "/health#cloudflare" });
+  else if (o.cf?.level === "close") out.push({ level: "warn", icon: "card", text: "Getting close to the Cloudflare free plan", sub: o.cf.reasons[0], href: "/health#cloudflare" });
   if (s.ai.state === "company_outage") out.push({ level: "bad", icon: "bug", text: "The company AI key is failing", sub: ago(s.ai.since, now), href: "/alerts" });
   else if (s.ai.state === "transient") out.push({ level: "warn", icon: "bug", text: "The last AI call was rate limited", sub: ago(s.ai.since, now), href: "/alerts" });
   if (!o.feed.ok) out.push({ level: "bad", icon: "broadcast", text: "The job feed could not be read", href: "/feed" });
@@ -321,7 +324,8 @@ export function usagePage(o: { stats: Stats; pool: PoolSetting; poolDays: Array<
 
 // ---- Health ------------------------------------------------------------------------------------- //
 
-export function healthPage(o: { stats: Stats; revenue: Revenue; env: Env; now: number; emailDays: Array<{ label: string; value: number }> }): string {
+export function healthPage(o: { stats: Stats; revenue: Revenue; env: Env; now: number; emailDays: Array<{ label: string; value: number }>;
+                                cf?: { usage: CfUsage; verdict: CfVerdict } }): string {
   const { stats: s, env } = o;
   const e = s.sign_in_emails;
   const ok = (v: unknown) => (v ? badge("On", "ok") : badge("Off", "bad"));
@@ -341,7 +345,8 @@ export function healthPage(o: { stats: Stats; revenue: Revenue; env: Env; now: n
     kpi("Interview Min", num(s.usage_month.interviews.minutes), { tone: "b" }) +
     card("Services", table(["Service", "Status"], rows, ""), { span: 2 }) +
     card("Sign-in E-mails", barChart(o.emailDays.map((d) => ({ label: d.label.slice(5), value: d.value })),
-      { aria: "Sign-in e-mails sent per day, last 14 days", single: true }), { span: 2, aside: `<span class="muted small">limit ${num(e.daily_cap)} a day</span>` });
+      { aria: "Sign-in e-mails sent per day, last 14 days", single: true }), { span: 2, aside: `<span class="muted small">limit ${num(e.daily_cap)} a day</span>` }) +
+    (o.cf ? cfCard(o.cf.usage, o.cf.verdict, o.now) : "");
 }
 
 // ---- Job feed ----------------------------------------------------------------------------------- //

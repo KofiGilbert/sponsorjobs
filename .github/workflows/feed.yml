@@ -278,6 +278,9 @@ jobs:
       # sponsorjobs-search), inside the free plan's daily write allowance. The loader keeps its
       # state in the data dir (search-index-state.json.gz), so the state save below carries it to
       # the next run; a load cut short by the budget carries on there. It never blocks the feed.
+      # After the load it also writes yesterday's Cloudflare usage (one row a day, for the admin
+      # dashboard's free plan card: scripts/cf_usage_snapshot.py). The token needs D1 Edit AND
+      # Account Analytics Read; without the second the load still runs and this step warns.
       - name: Is the search index configured?
         id: search-index
         env:

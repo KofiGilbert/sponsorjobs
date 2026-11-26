@@ -312,6 +312,7 @@ let metaCache: (IndexInfo & { at: number }) | null = null;
 
 const usage = { day: "", read: 0, requests: 0,          // the day's totals as last read from D1
                  newRead: 0, newRequests: 0 };           // this isolate's share not yet written
+let budgetNoted = "";                                    // the day this isolate last noted a 503 daily_budget
 
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
@@ -363,6 +364,7 @@ async function indexInfo(db: D1Database, nowMs: number): Promise<IndexInfo> {
 export function forgetIndexVersion(): void {
   metaCache = null;
   usage.day = ""; usage.read = 0; usage.requests = 0; usage.newRead = 0; usage.newRequests = 0;
+  budgetNoted = "";
 }
 
 const limitOf = (raw: string | undefined, fallback: number) => {
@@ -398,6 +400,19 @@ function noteUsage(db: D1Database, nowMs: number, rowsRead: number,
     .then((r) => { if (r && usage.day === day) { usage.read = r.rows_read; usage.requests = r.requests; } })
     .catch(() => { /* a lost count only makes the budget a little generous */ });
   if (ctx) ctx.waitUntil(p);
+}
+
+/** Note, once per isolate per UTC day, that search turned requests away (503 daily_budget), so
+ * the admin dashboard can say the free plan is too small (src/admin_cf.ts). One row written per
+ * isolate on such a day, never one per request. */
+async function noteBudgetHit(db: D1Database, nowMs: number, ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+  const day = utcDay(nowMs);
+  if (budgetNoted === day) return;
+  budgetNoted = day;
+  const p = db.prepare("INSERT INTO search_budget_days (day, hits) VALUES (?, 1) "
+                       + "ON CONFLICT(day) DO UPDATE SET hits = hits + 1").bind(day).run()
+    .then(() => undefined, () => { /* not migrated yet, or D1 refused: the dashboard also reads the counters */ });
+  if (ctx) ctx.waitUntil(p); else await p;
 }
 
 // ---- the search itself -------------------------------------------------------------------- //
@@ -707,6 +722,7 @@ export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: nu
     // Search has used its share of the day's free allowance: the app shows its own recent list
     // until tomorrow (UTC). Say when to come back, an hour at the most.
     const untilMidnight = 86_400 - Math.floor((nowMs / 1000) % 86_400);
+    await noteBudgetHit(env.SEARCH_DB, nowMs, ctx);
     return reply({ error: "search has reached today's limit; try again later", reason: "daily_budget" }, 503,
                  { "retry-after": String(Math.min(3600, untilMidnight)) });
   }

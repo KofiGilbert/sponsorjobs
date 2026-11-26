@@ -334,18 +334,64 @@ Not verified: that production D1 counts rows read and written exactly as the loc
 (same engine, but check the dashboard in the first week), and the 500 MB free database limit
 (read it on Cloudflare's D1 limits page before relying on it).
 
+### Watching it: the admin dashboard says when to pay
+
+The admin dashboard (`admin.sponsorjobs.ai`, Health page) has a **Cloudflare Free Plan** card, and
+every admin page shows a banner on top once it is time to upgrade (`worker/src/admin_cf.ts`):
+
+* **Where the numbers come from.** After each load, the loader asks Cloudflare's GraphQL Analytics
+  API for the *previous* UTC day's totals for the whole account (`scripts/cf_usage_snapshot.py`):
+  Workers requests (every script), D1 rows read and written (every database) and D1 storage (per
+  database). It writes ONE row a day to `cf_usage` in the search database
+  (`migrations-search/0002_cf_usage.sql`), with the first load's progress (jobs loaded, jobs in the
+  feed, about how many a day the write budget loads). The runs every 3 hours refresh the same row.
+  Nothing is written per request; the only other write is one row per Worker isolate on a day
+  search answers `daily_budget` (`search_budget_days`).
+* **The card:** each limit as used / limit with a percentage, for the latest day and the peak of
+  the last 7 days; "X of Y jobs loaded, about N days left"; the date of the last snapshot; and
+  "No snapshot yet" until the first one.
+* **The banner:** "Time to switch to Workers Paid ($5 a month)" when any limit's 7-day peak is at
+  or above **70%** (storage: 70% of 500 MB for a database, or of 5 GB in all), or search answered
+  `daily_budget` on any of the last 7 days. It names the limit and links to Cloudflare's plans
+  page. From **50%** a softer "Getting close" note. Below 50%, nothing. The same line goes to the
+  right sidebar's Notifications.
+* **During the first load, rows written are judged without the loader's own writes.** The loader
+  spends its daily budget (`SEARCH_D1_DAILY_WRITES`, 80,000) on purpose, so until the first load is
+  done "D1 rows written" counts everyone else's writes (the day's total less the loader's, which
+  the snapshot stores as `load_written`) against what the budget leaves (100,000 less 80,000 =
+  20,000), at the same 50% / 70%. 80,000 + 5,000 is fine; 80,000 + 15,000 (75% of 20,000) says to
+  pay, because the broker is squeezing the load. The card shows the loader's own writes on a line
+  of their own ("Search first load ... rows, planned"). Once the load is done: the plain total
+  against 100,000.
+* **If analytics cannot be read** (the token lacks Account Analytics Read, or an outage), the load
+  still succeeds: the step logs a GitHub warning (`[cf-usage]`), the row keeps the progress and a
+  "Not read" note, and a later run fills in the numbers. `SEARCH_CF_USAGE=0` switches it off.
+
+Limits as checked on 2026-11-26: https://developers.cloudflare.com/workers/platform/limits/ (100,000
+requests a day), https://developers.cloudflare.com/d1/platform/limits/ (500 MB a database, 5 GB an
+account on Free), https://developers.cloudflare.com/d1/platform/pricing/ (5 million rows read and
+100,000 rows written a day, reset at 00:00 UTC), https://developers.cloudflare.com/workers/platform/pricing/
+(Workers Paid from $5 a month). The GraphQL datasets: https://developers.cloudflare.com/d1/observability/metrics-analytics/
+and https://developers.cloudflare.com/analytics/graphql-api/tutorials/querying-workers-metrics/.
+
 ## Go-live checklist
 
 1. **Create the database:** `cd worker && npx wrangler d1 create sponsorjobs-search`. Uncomment
    the `SEARCH_DB` block in `wrangler.jsonc` (inside `"d1_databases"`) and paste the id it printed.
-2. **Apply its migrations:** `npx wrangler d1 migrations apply SEARCH_DB --remote`.
+2. **Apply its migrations:** `npx wrangler d1 migrations apply SEARCH_DB --remote`. Run it again
+   whenever a new file lands in `migrations-search/` (0002 adds the free plan snapshot table; until
+   it is applied the dashboard card says the search database could not be read).
 3. **Rate limits and cursor secret:** uncomment the two `SEARCH_*` lines in the `"ratelimits"`
    block (`SEARCH_ACCOUNT_LIMITER`, `SEARCH_IP_LIMITER`; the feed's two are already live);
    `npx wrangler secret put SEARCH_CURSOR_SECRET` (any long random string). No other new secret:
    search checks the same account tokens as the rest of the broker. Deploy the Worker.
    `/v1/jobs/search` answers 401 without a token, and 503 `no_index` with one until step 5 finishes.
-4. **Loader credentials (GitHub, repo settings):** secret `SEARCH_D1_TOKEN` (a Cloudflare API
-   token with D1 Edit), variables `SEARCH_D1_ACCOUNT_ID` and `SEARCH_D1_DATABASE_ID` (from step 1).
+4. **Loader credentials (GitHub, repo settings):** secret `SEARCH_D1_TOKEN`, a Cloudflare API
+   token (My Profile, API Tokens, Create Custom Token) with TWO account permissions: **D1 Edit**
+   (the load) and **Account Analytics Read** (the dashboard's free plan snapshot; without it the
+   load still runs and the step shows a warning). Variables `SEARCH_D1_ACCOUNT_ID` and
+   `SEARCH_D1_DATABASE_ID` (from step 1). A token made earlier with D1 Edit only can be edited to
+   add the second permission; the secret does not change.
    Optional: `SEARCH_D1_DAILY_WRITES` ("0" for a paid month).
 5. **First load:** the feed workflow loads after each build; watch its `[search-index]` lines
    (`left=` counts down). About 16 days on free at today's size, or a day on a paid month. Done when
