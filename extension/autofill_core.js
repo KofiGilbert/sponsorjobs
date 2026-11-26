@@ -568,8 +568,24 @@ function qsaSafe(sel, root) {
     return false;
   }
 
+  // (2026-11-26) The visible pointer (extension/pointer_overlay.js), while the desktop shell
+  // asks for it: each field this fill sets, named beside the drawn pointer.
+  let _pointerOn = false;
+  let _pacing = false;                   // the paced pass moves the pointer itself
+  // (2026-11-26) The whole fast fill's pointer time is capped: a 30-field form adds about 6 s.
+  const PACE_TOTAL_MS = 6000, PACE_MIN_MS = 60, PACE_MAX_MS = 200;
+  function pointTo(el, verb, now) {
+    if (!_pointerOn || !el || (_pacing && !now)) return;
+    try {
+      const P = window.TailorPointer;
+      if (!P) return;
+      const lab = cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40);
+      P.at(el, (verb || "Filling") + (lab ? ": " + lab : ""), now ? { now: true } : undefined);
+    } catch (e) { /* only a picture */ }
+  }
   function markFilled(el, from) {
     _gen++; tick(1);                         // the form changed; one more field done
+    pointTo(el);
     el.classList.add("tailor-filled");
     setTimeout(() => el.classList.remove("tailor-filled"), 2500);
     logFill(el, from);
@@ -4348,8 +4364,11 @@ function qsaSafe(sel, root) {
   // The keyword fill plus the custom widgets: what the desktop shell runs.
   // ``opts.budgetMs``: past it the engine starts no further widget and returns what it filled,
   // with ``timed_out`` (the shell carries on from the page as it stands).
+  // the shell turns the pointer on (or off) for the fill that follows
+  function setPointer(on) { _pointerOn = !!on; return _pointerOn; }
   async function fillAsync(payload, opts) {
     const base = startBudget("engine", opts && opts.budgetMs);
+    if (opts && "pointer" in opts) _pointerOn = !!opts.pointer;
     _keyOps = [];
     _searchOps = [];
     _keyGroups = [];
@@ -4359,6 +4378,23 @@ function qsaSafe(sel, root) {
     if (opts && "debug" in opts) setTrace(opts.debug);
     _trace = [];                               // this pass's own lines only
     _promptScale = opts && Number(opts.promptMs) > 0 ? Number(opts.promptMs) / PROMPT_MS.results : 1;
+    // (2026-11-26) With the pointer on, the label pass is filled as the pointer arrives at each box,
+    // one box at a time; the rest of the fill below finds them filled and goes on as before.
+    if (_pointerOn && window.TailorPointer && pageVisible()) {
+      try {
+        const fields = (payload && payload.fields) || {};
+        const todo = withRoots(() => planFill(fields, {})).filter((p) => !String(p.el.value || "").trim() && boxShown(p.el));
+        const step = Math.max(PACE_MIN_MS, Math.min(PACE_MAX_MS, Math.floor(PACE_TOTAL_MS / Math.max(1, todo.length))));
+        _pacing = true;
+        for (const p of todo) {
+          if (over()) break;
+          pointTo(p.el, "Filling", true);
+          await plainSleep(step);
+          applyFill([p]);
+        }
+      } catch (e) { /* the plain fill below does the rest */ }
+      finally { _pacing = false; }
+    }
     const r = fill(payload);
     if (!r || !r.ok) { endBudget(base); return r; }
     tick(0);
@@ -4549,6 +4585,6 @@ function qsaSafe(sel, root) {
     // the agent's page view leaves out what a person cannot see or must not fill
     honeypot, parkedOffCanvas,
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
-    enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype,
+    enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
   };
 })();

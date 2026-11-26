@@ -24,6 +24,12 @@ export interface Plan {
   // Scored recorded practice interviews per calendar month (2026-11-25). Absent = unlimited (every
   // paid plan); the free plan states 1 a month.
   recordedInterviews?: number;
+  // Applications the apply agent finishes per calendar month (2026-11-26, owner decision): when the
+  // fast Autofill leaves required fields, more pages, or a job page, the agent steps in, and that
+  // application counts once. The same number as the plan's tailored resumes a month. When it is
+  // used up, Autofill still works, fast only. Extra packs hold live interviews only, so they add
+  // none (PACKS).
+  agentFinishes: number;
   priceLabel: string; // display only; the real price lives in Stripe
   // Plans that renew (2026-11-20): which price tier and how often. Absent on free and on the
   // retired one-time passes.
@@ -34,11 +40,11 @@ export interface Plan {
 
 export const PLANS: Record<string, Plan> = {
   free: { name: "free", avatarSecondsIncluded: 0, llmModel: FREE_MODEL,
-          llmTokenCap: 400_000, packages: 3, days: 0, priceLabel: "", recordedInterviews: 1 },
+          llmTokenCap: 400_000, packages: 3, days: 0, priceLabel: "", recordedInterviews: 1, agentFinishes: 3 },
   pass30: { name: "pass30", avatarSecondsIncluded: 3 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
-            llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$29" },
+            llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$29", agentFinishes: 60 },
   pass90: { name: "pass90", avatarSecondsIncluded: 9 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
-            llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$69" },
+            llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$69", agentFinishes: 50 },
   // WHAT IS SOLD (owner decision 2026-11-25): only the two MONTHLY plans, Student $29 and Standard
   // $49, each with 3 live interviews of 20 minutes a period. Student includes 40 tailored
   // applications a month, Standard 60 (owner decision 2026-11-25, later the same day). The
@@ -52,16 +58,16 @@ export const PLANS: Record<string, Plan> = {
   // every-3-months plans keep the same proportion, 100 against 150); who may pay the student
   // price is decided server-side (src/student.ts).
   student_monthly: { name: "student_monthly", avatarSecondsIncluded: 3 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
-                     llmTokenCap: 8_000_000, packages: 40, days: 30, priceLabel: "$29",
+                     llmTokenCap: 8_000_000, packages: 40, days: 30, priceLabel: "$29", agentFinishes: 40,
                      tier: "student", interval: "monthly", months: 1 },
   student_quarterly: { name: "student_quarterly", avatarSecondsIncluded: 9 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
-                       llmTokenCap: 8_000_000, packages: 100, days: 90, priceLabel: "$69",
+                       llmTokenCap: 8_000_000, packages: 100, days: 90, priceLabel: "$69", agentFinishes: 40,
                        tier: "student", interval: "quarterly", months: 3 },
   standard_monthly: { name: "standard_monthly", avatarSecondsIncluded: 3 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
-                      llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$49",
+                      llmTokenCap: 8_000_000, packages: 60, days: 30, priceLabel: "$49", agentFinishes: 60,
                       tier: "standard", interval: "monthly", months: 1 },
   standard_quarterly: { name: "standard_quarterly", avatarSecondsIncluded: 9 * INTERVIEW_SECONDS, llmModel: PASS_MODEL,
-                        llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$119",
+                        llmTokenCap: 8_000_000, packages: 150, days: 90, priceLabel: "$119", agentFinishes: 60,
                         tier: "standard", interval: "quarterly", months: 3 },
 };
 export const DEFAULT_PLAN = "free";
@@ -142,11 +148,12 @@ export interface AccountState {
   llmTokens: number; // this calendar month
   packagesUsed: number; // free packages this calendar month
   recordedUsed: number; // free scored recorded practice interviews this calendar month
+  finishesUsed: number; // applications the apply agent finished this calendar month (every plan)
 }
 
 export const EMPTY_STATE: AccountState = {
   plan: DEFAULT_PLAN, passUntil: 0, passSeconds: 0, passPackages: 0, creditSeconds: 0,
-  llmTokens: 0, packagesUsed: 0, recordedUsed: 0,
+  llmTokens: 0, packagesUsed: 0, recordedUsed: 0, finishesUsed: 0,
 };
 
 /** A pass counts only while its end time is in the future; an unknown or retired plan name is
@@ -188,6 +195,17 @@ export function recordedLeft(s: AccountState, now: number): number | null {
   return Math.max(0, allowance - s.recordedUsed);
 }
 
+/** Applications the apply agent may still finish this calendar month, on the account's plan now. */
+export function finishesLeft(s: AccountState, now: number): number {
+  return Math.max(0, planFor(s, now).agentFinishes - s.finishesUsed);
+}
+
+/** When the monthly counters start again: the first day of next calendar month, UTC, "YYYY-MM-DD". */
+export function monthResets(nowMs: number): string {
+  const d = new Date(nowMs);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+}
+
 /** The pre-check before a model call: the monthly token safety net, including the estimated size
  * of THIS request, so one oversized prompt cannot overshoot a capped plan on the company key. */
 export function requireLlm(s: AccountState, now: number, estTokens: number): void {
@@ -209,6 +227,10 @@ export function status(s: AccountState, now: number, env: { TAILOR_FREE_MODEL?: 
     interviews_left: Math.floor(secs / INTERVIEW_SECONDS),
     packages_left: packagesLeft(s, now),
     recorded_left: recordedLeft(s, now),   // null = unlimited (paid plans)
+    // the apply agent's finishes this month: "N of M left", and the day they start again
+    finishes_left: finishesLeft(s, now),
+    finishes_limit: planFor(s, now).agentFinishes,
+    finishes_reset: monthResets(now * 1000),
     avatar_seconds_left: secs,
     llm_model: modelFor(planFor(s, now), env),
   };

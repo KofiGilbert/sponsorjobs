@@ -18,6 +18,9 @@
 // Budgets (docs/apply-agent.md section 15): steps and dollars per application, both overridable.
 const MAX_STEPS = Math.max(10, Number(process.env.SJ_AGENT_MAX_STEPS) || 60);
 const COST_CAP_USD = Number(process.env.SJ_AGENT_COST_CAP_USD) > 0 ? Number(process.env.SJ_AGENT_COST_CAP_USD) : 0.80;
+// (2026-11-26) "Autofill, then the agent finishes": one application's whole AI cost (the Autofill
+// plan, the agent's steps, any letter or written answer) stops at this; what is filled stays.
+const FINISH_CAP_USD = Number(process.env.SJ_FINISH_COST_CAP_USD) > 0 ? Number(process.env.SJ_FINISH_COST_CAP_USD) : 0.30;
 const MAX_FAILED_STEPS = 4;          // in a row, then the recovery ladder (section 13)
 const STEP_BRAIN_MS = 90000;
 const ACTION_MS = 25000;
@@ -563,7 +566,8 @@ function createAgent(deps) {
     // ``quiet``, so the page shows no bar, opens no Browser tab and asks nothing.
     return deps.sendProgress(Object.assign({ agent: true, record_id: recordId == null ? null : recordId,
                                              state, message }, feed ? { activity: feed.snap() } : {},
-                                           batchOn && batchOn.quiet ? { quiet: true } : {}, extra || {}));
+                                           batchOn && batchOn.quiet ? { quiet: true } : {},
+                                           current && current.finish && String(current.recordId) === key ? { finish: true } : {}, extra || {}));
   };
   // A step on the feed, sent at once as a running update.
   const say = (recordId, phase, verb, summary, o) => {
@@ -618,6 +622,25 @@ function createAgent(deps) {
       await wc.executeJavaScript(deps.agentViewSource(), true);
     }
     await wc.executeJavaScript(QUIET_JS, true);
+  }
+
+  // (2026-11-26) The visible pointer (extension/pointer_overlay.js): before each action in the
+  // page, the drawn pointer moves beside the element with what is being done ("Clicking: Next",
+  // "Filling: First name", "Uploading resume"). Never in a quiet (Auto) run, never in a frame.
+  const POINT_WORDS = { click: "Clicking", type: "Filling", select: "Choosing" };
+  async function pointAt(wc, a, line) {
+    if (!deps.pointerSource || (batchOn && batchOn.quiet) || !a || !POINT_WORDS[a.op] && a.op !== "upload") return false;
+    const name = String(lineName(line || "") || "").replace(/\s*\*\s*$/, "").slice(0, 40);
+    const label = a.op === "upload" ? "Uploading resume" : POINT_WORDS[a.op] + (name ? ": " + name : "");
+    try {
+      if (!(await wc.executeJavaScript("!!window.TailorPointer", true))) {
+        const src = deps.pointerSource();
+        if (!src) return false;
+        await wc.executeJavaScript(src, true);
+      }
+      return !!(await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${Number(a.index)});
+        return !!(el && window.TailorPointer && window.TailorPointer.at(el, ${JSON.stringify(label)})); })()`, true));
+    } catch (e) { return false; }
   }
 
   // Wait for the page to settle after an action: a navigation finished, or no DOM change for
@@ -1018,6 +1041,7 @@ function createAgent(deps) {
     }
     const expr = `window.TailorAgent.act(${JSON.stringify(a)})`;
     const ctx = v.frameOf.get(a.index);
+    if (!ctx) await pointAt(wc, a, viewLine(v.text, a.index));
     if (a.op === "upload") return upload(wc, fr, ctx, a.index, resumePath, a);
     // (2026-11-19) The person's name and street go in their own boxes only: a Workday candidate
     // account came out "Kofi Kofi Gilbert Gilbert" and the street twice (Sidley, Home Depot).
@@ -1648,7 +1672,7 @@ function createAgent(deps) {
     const decision = await deps.applyDecision(applyUrl, "");
     if (!decision.fill) { deps.openInPane(applyUrl); return { ok: false, reason: "fill-by-hand" }; }
 
-    const st = { recordId, stop: false, disarmSigning: () => {} };
+    const st = { recordId, stop: false, disarmSigning: () => {}, finish: !!opts.finish };
     current = st;
     disarmReadyWatch();                       // the pane is this run's now
     // The saved mode, asked once per run: only Hybrid sends the run's questions to Telegram as
@@ -1658,7 +1682,7 @@ function createAgent(deps) {
     const telegramAsks = !quiet && !!(modeInfo && modeInfo.telegram_asks);
     // The live feed: a fresh one per run; a parked job carrying on keeps its timeline.
     const fkey = String(recordId);
-    let feed = R ? feeds.get(fkey) : null;
+    let feed = R && !opts.finish ? feeds.get(fkey) : null;
     if (!feed) { feed = createFeed({ autonomous: !!opts.autonomous, batchAt: batch ? opts.batchAt : null }); feeds.set(fkey, feed); }
     else { feed.batchAt = batch ? opts.batchAt || null : null; feed.autonomous = !!opts.autonomous; }
     while (feeds.size > 20) feeds.delete(feeds.keys().next().value);
@@ -1699,7 +1723,7 @@ function createAgent(deps) {
     // (Section 15) The plan the brain keeps (pages done, now, todo) and the dollars spent so far:
     // both carry over a park, so a resumed run continues from where it was.
     let plan = (S && S.plan) || [];
-    let spent = (S && S.spent) || 0;
+    let spent = (S && S.spent) || Number(opts.startCost) || 0;
     const checkedPages = (S && S.checkedPages) || new Set();   // pages whose Next was held once for a check
     let awaitInfo = (S && S.await) || null;  // the mail a parked run was waiting on (re-checked on resume)
     // Terms the site requires: per site, the person's yes this run (via "always" | "all" |
@@ -2016,12 +2040,31 @@ function createAgent(deps) {
     let wcNow = null;
     const runStart = Date.now();
     feed.plan = plan; feed.cost = spent;
-    const finish = (res) => { if (fr) { fr.close(); fr = null; } disarmSigning(); current = null; return res; };
+    const finish = (res) => {
+      if (fr) { fr.close(); fr = null; }
+      disarmSigning(); current = null;
+      // the drawn pointer goes with the run
+      if (wcNow && !wcNow.isDestroyed()) wcNow.executeJavaScript("window.TailorPointer && window.TailorPointer.hide()", true).catch(() => null);
+      return res;
+    };
     const stopped = (reason, message, extra) => {
       feed.close();
       feed.push("stop", "Stopped", reason === "stopped" ? "as you asked" : "", { state: "parked", detail: reason === "stopped" ? "" : message });
       progress(recordId, "stopped", message, Object.assign({ reason, steps: history.length }, extra));
       return finish({ ok: false, reason, steps: history.length });
+    };
+    // (2026-11-26) The finish's cost cap: the run stops, everything filled stays on the page, and
+    // the person is told in plain words what is left.
+    const capStop = (left) => {
+      const open = [...new Set(deferredOpen().map((d) => d.question).concat((left || []).map((x) => (typeof x === "string" ? x : (x && x.label) || ""))))]
+        .filter(Boolean);
+      const what = open.length ? " Left for you: " + open.slice(0, 3).join(", ") + (open.length > 3 ? ", and " + (open.length - 3) + " more." : ".")
+                               : " Check the page and click Next or Submit yourself.";
+      const msg = "I stopped here to keep this application's AI cost under $" + FINISH_CAP_USD.toFixed(2) + ". Everything I filled stays." + what;
+      feed.close();
+      feed.push("stop", "Stopped", "at the cost limit", { state: "done", detail: msg });
+      progress(recordId, "stopped", msg, { reason: "cost-cap", steps: history.length, left: open.slice(0, 12), url: where() });
+      return finish({ ok: false, reason: "cost-cap", steps: history.length, left: open });
     };
     // A closed job: nothing was sent and nothing more is spent; the record is already in the
     // closed-posting state ("Job closed") when `marked` (the engine's check did it).
@@ -2059,6 +2102,16 @@ function createAgent(deps) {
     // an answer (or Continue) re-runs it. ``kind`` "questions" | "terms" (the engine already parked
     // the ask) or "captcha" | "person" (parked here, nothing to answer).
     const park = async (kind, message, extra) => {
+      // (2026-11-26) After Autofill nothing is set aside to carry on by itself later: the page
+      // stays as it is and the person is told what is left. Autofill again carries on from it.
+      if (opts.finish) {
+        const msg = String(message || "This page needs you.").replace(/ (Do the step on the page, then )?press Continue\.?$/, "")
+          + " Everything I filled stays. Press Autofill again when you want me to carry on.";
+        feed.close();
+        feed.push("stop", "Your turn", "", { state: "parked", detail: msg });
+        progress(recordId, "stopped", msg, Object.assign({ reason: "needs-you", kind, steps: history.length }, extra || {}));
+        return finish({ ok: false, reason: "needs-you", kind, steps: history.length });
+      }
       // ``extra.pageUrl``: the page Continue opens again (a survey's park: the application's own
       // page before it left, never the survey's)
       const pageUrl = (extra && extra.pageUrl) || where();
@@ -2161,6 +2214,9 @@ function createAgent(deps) {
     }
     // Run one strategy from the menu. Returns what happened, as an observation line.
     async function runStrategy(wc, name) {
+      // (2026-11-26) After Autofill the agent carries on from the page it filled: opening the job
+      // again would start the application over and fill it from scratch.
+      if (opts.finish && name === "reopen_job") { ladder.tried.push(name); return "not done: carrying on from this page"; }
       ladder.tried.push(name);
       const before = wc.getURL() || "";
       ladderSay(STRATEGY_WORDS[name] || name);
@@ -2255,6 +2311,7 @@ function createAgent(deps) {
       if (name === "reset password") return !!(curV && buttonIndex(curV.text, FORGOT_NAME_RE)) && !auth(h).reset && resetAllowed(auth(h), curV.text);
       if (name === "wait for the site's email") return !mailOpened.has(h) && !auth(h).waited && !auth(h).noAccount;
       if (name === "sign in again") return portals.size > 0;
+      if (name === "reopen_job" && opts.finish) return false;
       if (name === "fill the field myself") return !toolFill;
       return true;
     };
@@ -2305,8 +2362,15 @@ function createAgent(deps) {
       let pane = null;
       if (R && R.samePage && deps.getPane()) {
         pane = deps.getPane();
-        feed.push("resume", "Carrying on", "where I paused");
-        progress(recordId, "running", "Thanks. Carrying on where I paused");
+        if (opts.finish) {
+          // (2026-11-26) Autofill filled this page; the agent finishes it from here, never again
+          // from the job page.
+          feed.push("resume", "Finishing", "what Autofill left", { detail: opts.finishWhy || "" });
+          progress(recordId, "running", "Autofill is done. Finishing the rest");
+        } else {
+          feed.push("resume", "Carrying on", "where I paused");
+          progress(recordId, "running", "Thanks. Carrying on where I paused");
+        }
         { disarmSigning = armSigning(pane.webContents, hosts); st.disarmSigning = disarmSigning; }
       } else {
         if (resend) feed.push("open", "Filling", "it in again to send it");
@@ -2462,7 +2526,7 @@ function createAgent(deps) {
           toolFill = false;                                   // the brain fills this page itself
           left = [];
         } else {
-          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true }), FILL_MS, "fill")
+          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true, pointer: !quiet }), FILL_MS, "fill")
             .catch((e) => {
               // say where the fill stood when it ran out of time (section 13)
               const ph = e && e.hang && typeof deps.fillPhase === "function" ? deps.fillPhase() : "";
@@ -2471,6 +2535,8 @@ function createAgent(deps) {
             });
           dlog("step " + step + " fill:", rep);
           dlog("step " + step + " fill cost: " + fillLogLine(rep));
+          // the Autofill plan's model call (none when the page did not change), in the run's cost
+          if (rep && Number(rep.cost) > 0) { spent += Number(rep.cost); feed.cost = spent; }
           // (2026-11-18) Out of time is not a hang. Only a fill whose page stopped answering (no
           // heartbeat) goes to the reload ladder; one that was still filling keeps its work and
           // the run carries on from the page as it stands, using none of the ladder's tries.
@@ -2496,6 +2562,7 @@ function createAgent(deps) {
             const cl = await guard(deps.postApp("/api/autoapply/agent/cover-letter", { record_id: recordId }), LETTER_MS, "cover letter")
               .catch((e) => { if (e && e.stopped) throw e; return null; });
             dlog("step " + step + " cover letter:", cl);
+            if (cl && Number(cl.cost) > 0) { spent += Number(cl.cost); feed.cost = spent; }
             if (cl && cl.ok) {
               const again = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true }), FILL_MS, "fill")
                 .catch((e) => { if (e && e.stopped) throw e; return null; });
@@ -2764,6 +2831,7 @@ function createAgent(deps) {
           if (r.park) return park("person", r.park, { url });
           hashes.length = 0;
         } else if (worst >= 3) nudges.push("You repeated the same action " + worst + " times and it is not working. Inspect it, read_errors, and do it another way.");
+        if (opts.finish && spent >= FINISH_CAP_USD) return capStop(left);
         const overBudget = spent >= COST_CAP_USD;
         if (overBudget) nudges.push("The budget for this application is used up.");
         feed.page = page;
@@ -3649,7 +3717,8 @@ function createAgent(deps) {
     const guessed = rows0.filter((r) => r && r.from === "best_guess").length;
     const guessedLegal = rows0.filter((r) => r && r.from === "best_guess" && r.klass === "legal").length;
     const stillOpen = (((wrote && wrote.answers) || {}).needs || []).length;
-    const auto = !!opts.autonomous && now.click_submit === true && !holdsDraft && !guessedLegal && !stillOpen;
+    // (2026-11-26) After Autofill the person clicks Submit on the site: never sent from here.
+    const auto = !opts.finish && !!opts.autonomous && now.click_submit === true && !holdsDraft && !guessedLegal && !stillOpen;
     const sig = viewText ? reviewSig(viewText) : (opts.expectSig || "");
     const keep = { url: opts.url || url, resumePath: opts.resumePath || "", lane: opts.lane || "assisted",
                    autonomous: !!opts.autonomous, company: opts.company || "" };
@@ -3657,14 +3726,15 @@ function createAgent(deps) {
     const answers = readyAnswers(wrote && wrote.answers, { recordId });
     // ``lines``: the review page as read, in this app only (never posted), for the log's diff when
     // a Send's refill reads it differently.
-    ready.set(recordId, { url, lane: auto ? "auto" : "assisted", epoch: paneEpoch, sig, opts: keep, answers, lines: viewText ? reviewLines(viewText).slice(0, 400) : null });
+    ready.set(recordId, { url, lane: auto ? "auto" : "assisted", epoch: paneEpoch, sig, opts: keep, answers, lines: viewText ? reviewLines(viewText).slice(0, 400) : null,
+                          finish: !!opts.finish });
     const said = acceptedLine(opts.company || "", accepted);
     // The person's own Send on a job whose page was gone: the form came out the same, so their
     // click submits it (on every site: it is their Send, not an auto-submit).
     const fd = feedOf(recordId);
     // (Section 29) What the agent answered itself is kept on the application, sent or not.
     const chosen = agentAnswers(answers);
-    if (auto || opts.mode === "resend") {
+    if (!opts.finish && (auto || opts.mode === "resend")) {
       if (chosen.length) deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, answers_only: true, agent_answers: chosen, guessed, guessed_legal: guessedLegal }).catch(() => null);
       if (fd) fd.push("send", "Sending", "your application", { detail: said });
       progress(recordId, "running", "Sending" + (said ? ". " + said : ""), { step });
@@ -3681,7 +3751,7 @@ function createAgent(deps) {
     // shell (engineAnswers).
     deps.postApp("/api/autoapply/agent/ready", Object.assign({ record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep), agent_answers: chosen, guessed, guessed_legal: guessedLegal,
                                                                answers: engineAnswers(answers) },
-                 opts.quiet ? {} : { notice: readyNotice(answers, wrote && wrote.startedAt) })).catch(() => null);
+                 opts.quiet || opts.finish ? {} : { notice: readyNotice(answers, wrote && wrote.startedAt) })).catch(() => null);
     const notes = (noted || []).slice(0, 3);
     // The bar stays ONE short line (2026-11-16, the owner: the Gusto line ran on for five
     // sentences). What the agent wrote or chose and what the check noted go to Steps, one line
@@ -3691,11 +3761,17 @@ function createAgent(deps) {
       fd.close();
       for (const w of wroteLines(wrote)) fd.push("wrote", w.verb, w.summary, { state: "done", detail: w.detail });
       for (const n of notes) fd.push("check", "Check noted", n, { state: "done" });
-      fd.push("ready", "Ready to send", "", { state: "done", detail: said || "check it, then press Send" });
+      fd.push("ready", "Ready to send", "", { state: "done", detail: said || (opts.finish ? "check it, then click Submit on the site" : "check it, then press Send") });
+    }
+    try { wc.executeJavaScript("window.TailorPointer && window.TailorPointer.hide()", true).catch(() => null); } catch (e) { /* gone */ }
+    if (opts.finish) {
+      // the site's own Submit, outlined for the person (never clicked from here)
+      try { await wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.highlightSubmit ? window.TailorAutofill.highlightSubmit(window.TailorAutofill.recipeFor()) : false", true); } catch (e) { /* the words say it */ }
     }
     progress(recordId, "ready", (opts.mode === "batch" && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "")
-             + "Ready to send. " + (said ? said + " " : "") + (notedLine ? notedLine + " " : "") + "Check it, then press Send.",
-             { step, ready: true, accepted: (accepted || []).slice(), noted: notes, letter: !!(wrote && wrote.letter), answers });
+             + "Ready to send. " + (said ? said + " " : "") + (notedLine ? notedLine + " " : "")
+             + (opts.finish ? "Check it, then click Submit on the site." : "Check it, then press Send."),
+             { step, ready: true, accepted: (accepted || []).slice(), noted: notes, letter: !!(wrote && wrote.letter), answers, finish: !!opts.finish });
     current = null;
     armReadyWatch(recordId, wc);
     setTimeout(() => { pollParked().catch(() => {}); }, 50);     // a parked job may be waiting its turn
@@ -3711,6 +3787,9 @@ function createAgent(deps) {
   async function send(recordId, o, by) {
     const pane = deps.getPane();
     const r = ready.get(recordId);
+    // (2026-11-26) An application the agent finished after Autofill is the person's to submit on
+    // the site: nothing here presses its Submit, whatever asks.
+    if (r && r.finish) return { ok: false, reason: "your-click" };
     const inSendAll = !!(o && o.inSendAll);
     if (!r || !pane || r.epoch !== paneEpoch) {
       const job = (r && r.opts) || o || {};

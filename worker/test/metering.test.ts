@@ -49,6 +49,7 @@ describe("plans", () => {
     const st = status(onPass("pass30"), T0, NO_ENV);
     expect(st).toEqual({ tier: "pass30", pass_until: T0 + 30 * DAY_SECONDS, interviews_left: 3,
                          packages_left: 60, recorded_left: null, avatar_seconds_left: 3600,
+                         finishes_left: 60, finishes_limit: 60, finishes_reset: "2026-06-01",
                          llm_model: "claude-sonnet-5-5" });
     expect(status(onPass("pass90"), T0, NO_ENV).interviews_left).toBe(9);
   });

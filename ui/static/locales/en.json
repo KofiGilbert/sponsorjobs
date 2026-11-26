@@ -328,6 +328,7 @@
   "signin.keepPass": "This device has a plan that isn't linked to an email yet. Sign in with your email so the plan stays with you.",
   "acct.planUntil": "{plan} until {date}",
   "acct.planLeft": "{i} live interviews and {p} tailored packages left",
+  "acct.finishLeft": "Agent finishes: {f} of {m} left",
   "acct.freeLeft": "{p} tailored packages left this month",
   "acct.yourPass": "Your plan",
   "upg.freePlan": "Free plan",

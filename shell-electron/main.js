@@ -499,6 +499,30 @@ function agentViewSource() {
   return _agentViewSource;
 }
 
+// The visible pointer over the pane while Autofill or the agent works (extension/pointer_overlay.js).
+let _pointerSource = null;
+function pointerSource() {
+  if (_pointerSource) return _pointerSource;
+  const p = app.isPackaged
+    ? path.join(process.resourcesPath, "pointer_overlay.js")
+    : path.join(__dirname, "..", "extension", "pointer_overlay.js");
+  try { _pointerSource = fs.readFileSync(p, "utf8"); } catch (e) { _pointerSource = ""; }
+  return _pointerSource;
+}
+// The drawn pointer beside the resume box (its visible area: the file input itself is often hidden).
+const POINT_UPLOAD_JS = `(() => { const P = window.TailorPointer, T = window.TailorAutofill; if (!P || !T || !T.resumeInput) return false;
+  let el = T.resumeInput(); for (let i = 0; el && i < 5; i++) { const b = el.getBoundingClientRect();
+    if (b.width > 20 && b.height > 10) return P.at(el, "Uploading resume"); el = el.parentElement; } return false; })()`;
+async function pointerOn(wc) {
+  const src = pointerSource();
+  if (!src || !wc || wc.isDestroyed()) return false;
+  try { await wc.executeJavaScript(src, true); return true; } catch (e) { return false; }
+}
+function pointerOff(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  wc.executeJavaScript("window.TailorPointer && window.TailorPointer.hide()", true).catch(() => null);
+}
+
 function getApp(path) {
   return net.fetch(SERVER + path, { headers: { "X-Tailor-Extension": "1", ...SESSION_HEADER } })
     .then((r) => (r.ok ? r.json() : null)).catch(() => null);
@@ -1046,6 +1070,7 @@ async function runAutoApplyOnPane(recordId, opts) {
                          message: "The page has no size yet (" + vp.width + " wide)." };
     await wc.insertCSS(FILLED_CSS);
     await wc.executeJavaScript(autofillCore(), true);
+    const pointer = !!opts.pointer && !opts.quietPane && await pointerOn(wc);
     const page = opts.page || pageNumberFor(wc, recordId, await mainSignature(wc));
     const blocker = await wc.executeJavaScript("window.TailorAutofill.pageBlocker()", true);
     if (blocker === "auth") {                              // never fight an auth wall
@@ -1106,7 +1131,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     lap("payload", "filling the page");
     const havePayload = !!(payload && payload.loaded !== false);
     const fillExpr = (budgetMs) => (havePayload
-      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
+      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.setPointer(${pointer}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
     const pres = [];
     let searchTrouble = [];                              // labels of lists whose search did not finish
     if (havePayload) {
@@ -1193,8 +1218,14 @@ async function runAutoApplyOnPane(recordId, opts) {
 
     let applied = { filled: 0, uploaded: 0, pending_upload: 0, skipped: 0 };
     const files = [];                                     // the agent's Review answers list
-    let planReason = "", wantsLetter = false, letterAttached = false, declined = 0;
-    if (fields.length && !(cut && cut.stalled) && fillBudget.room(C, "plan", Date.now() - t0)) {
+    let planReason = "", wantsLetter = false, letterAttached = false, declined = 0, planCost = 0;
+    // (2026-11-26) The AI plan only for fields it has not planned on this page yet: an agent step
+    // on a page that did not change asks the model nothing (6 to 17 plan calls an application).
+    const pkey = finishRules.planKey(recordId, url);
+    const unplanned = finishRules.unplannedFields(_planned.get(pkey), fields);
+    const skipPlan = !!opts.samePlanSkip && fields.length > 0 && unplanned.length === 0;
+    if (skipPlan) { counts.plan_skipped = 1; planReason = "already-planned"; }
+    if (fields.length && !skipPlan && !(cut && cut.stalled) && fillBudget.room(C, "plan", Date.now() - t0)) {
       let plan = null;
       try {
         // Capped (PLAN_MS): a slow model call ends this page's plan with a reason instead of
@@ -1206,6 +1237,9 @@ async function runAutoApplyOnPane(recordId, opts) {
           signal: AbortSignal.timeout(fillBudget.room(C, "plan", Date.now() - t0) || 1000),
         });
         plan = resp.ok ? await resp.json() : null;
+        _planned.set(pkey, finishRules.notePlanned(_planned.get(pkey), fields));
+        while (_planned.size > 40) _planned.delete(_planned.keys().next().value);
+        planCost = (plan && Number(plan.cost)) || 0;
       } catch (e) {
         plan = (e && (e.name === "TimeoutError" || e.name === "AbortError"))
           ? { ok: false, reason: "The AI planner took longer than " + Math.round(PLAN_MS / 1000) + " s on " + fields.length + " fields." } : null;
@@ -1227,6 +1261,7 @@ async function runAutoApplyOnPane(recordId, opts) {
           const rep = await run("filling the planned fields", "ops", (b) => wc.executeJavaScript(runOps(routed.main, b), true), beatMain);
           reports.push(rep);
           if (rep && (rep.uploads || []).length && resumePath) {
+            if (pointer) wc.executeJavaScript(POINT_UPLOAD_JS, true).catch(() => null);
             const seen = [];
             applied.uploaded += await cdpUploadFiles(wc, rep.uploads, resumePath, seen);
             for (const x of seen) files.push({ kind: uploadFrom.get(x.ref) || "resume", path: x.path, how: x.how, earlier: !!x.earlier });
@@ -1261,7 +1296,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     // asked of it. The agent treats this, and only this, as a hang (its reload ladder).
     if (cut && cut.stalled) {
       lap("leftover", "");
-      const stalled = { ok: false, reason: "stalled", timed_out: true, stalled: true, timed_out_phase: cut.phase, page,
+      const stalled = { ok: false, reason: "stalled", timed_out: true, stalled: true, timed_out_phase: cut.phase, page, cost: planCost,
                         filled: pre.filled + applied.filled, left: [], ms, counts };
       console.log("[fill] " + fillBudget.fillLogLine(stalled));
       return stalled;
@@ -1300,7 +1335,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     // one line per fill: the phase timings and the counts (never a value or a label)
     const cost = { filled, left, ms, counts, timed_out: !!cut, timed_out_phase: cut ? cut.phase : "", stalled: false };
     console.log("[fill] " + fillBudget.fillLogLine(cost));
-    if (!filled && !applied.uploaded && planReason) return { ok: false, reason: planReason, page, left, wants_letter: wantsLetter, ms, counts,
+    if (!filled && !applied.uploaded && planReason && planReason !== "already-planned") return { ok: false, reason: planReason, page, left, wants_letter: wantsLetter, ms, counts, cost: planCost,
                                                              timed_out: !!cut, timed_out_phase: cut ? cut.phase : "" };
     const report = { page, url: wc.getURL() || url, filled, left, system: pre.system };
     recordFillReport(recordId, report);
@@ -1310,7 +1345,7 @@ async function runAutoApplyOnPane(recordId, opts) {
              declined,
              system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
              continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
-             captcha: pre.captcha, ms, counts,
+             captcha: pre.captcha, ms, counts, cost: planCost,
              // a phase ran out of time while the page was still answering: what was filled
              // stands, and the caller carries on from the page as it is (fill_budget.js)
              timed_out: !!cut, timed_out_phase: cut ? cut.phase : "",
@@ -1332,6 +1367,10 @@ async function runAutoApplyOnPane(recordId, opts) {
 function sendProgress(info) {
   // A quiet (Auto) run: every line is marked, so the page shows no bar for it.
   if (paneQuiet && info && !info.quiet) info = Object.assign({}, info, { quiet: true });
+  if (info && info.agent && info.finish && info.record_id != null) {
+    _finishMsg.set(String(info.record_id), { message: info.message || "", state: info.state || "",
+                                             cost: info.activity && info.activity.cost != null ? info.activity.cost : null });
+  }
   if (win && !win.isDestroyed()) win.webContents.send("autoapply:progress", info);
 }
 function recordFillReport(recordId, report) {
@@ -1349,6 +1388,8 @@ async function mainSignature(wc) {
 
 
 let _pageWatch = null;
+const _planned = new Map();          // record + page -> the fields the AI plan was asked about (finish.js)
+const finishRules = require("./finish");
 function pageNumberFor(wc, recordId, sig) {
   const w = _pageWatch;
   if (!w || w.wc !== wc || w.recordId !== recordId) return 1;
@@ -1384,7 +1425,7 @@ function armPageWatch(wc, recordId, page, sig) {
       }
       if (!framed && !s.empty) { st.labels = new Set(s.labels); return; }   // nothing to fill
       const next = st.page + 1;
-      const res = await runAutoApplyOnPane(recordId, { page: next, fromWatch: true });
+      const res = await runAutoApplyOnPane(recordId, { page: next, fromWatch: true, pointer: true });
       const after = await mainSignature(wc);
       if (framed && !(res && res.ok)) return;            // an ad or widget frame reloading
       st.page = next;
@@ -1442,7 +1483,60 @@ async function applyDecision(url, pageUrl) {
 // opts: { url, recordId, resumePath, submit, here }
 //   here   -> fill the page already open in the pane (after the person pressed Next / signed in)
 //   submit -> the caller is an Apply button; the engine still has the final say per site
+// (2026-11-26) The Autofill button's second half (preload's assistApply calls it with the fill's
+// own result): the agent finishes only what the fast fill left (finish.js needsFinish), or, for a
+// plain fill, the drawn pointer goes. The site's Submit is never pressed on this path.
+ipcMain.handle("assist:finish", async (_e, opts, report) => {
+  const o = opts || {};
+  if (!o.finish) { if (pane) pointerOff(pane.webContents); return report; }
+  return finishAfterAutofill(o, report);
+});
+
+// After the fast Autofill: hand the page to the agent when it left required fields, more pages or
+// a job page, and the month's agent finishes allow it (the broker keeps the count). The agent
+// carries on from THIS page (samePage), never from the job again, under its own cost cap, and
+// stops at Ready to send for the person's own Submit. Assisted only: no queue, no auto mode, no
+// auto-submit, whatever is saved.
+async function finishAfterAutofill(o, r) {
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  const done = (x) => { if (wc) pointerOff(wc); return x; };
+  if (!wc || o.recordId === undefined || o.recordId === null || o.recordId === "" || agent.busy()) return done(r);
+  let invalid = 0;
+  try {
+    invalid = await wc.executeJavaScript(`[...document.querySelectorAll('[aria-invalid="true"]')].filter((e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; }).length`, true);
+  } catch (e) { invalid = 0; }
+  const d = finishRules.needsFinish(r, { invalid });
+  if (debugLine) debugLine("autofill finish: " + JSON.stringify({ go: d.go, why: d.why, left: ((r && r.left) || []).length, invalid, next: !!(r && r.next_page), reason: r && r.reason }));
+  if (!d.go) return done(r);
+  const claim = await postApp("/api/autoapply/finish/start", { record_id: o.recordId });
+  if (!claim) return done(r);
+  if (claim.ok === false) return done(Object.assign({}, r || {}, { finish_note: claim.note || "" }));
+  _finishMsg.delete(String(o.recordId));
+  let res = null;
+  try {
+    res = await agent.run(o.recordId, {
+      url: o.url || wc.getURL() || "", resumePath: o.resumePath || "", lane: "assisted", autonomous: false,
+      company: o.company || "", finish: true, finishWhy: finishRules.WHY_WORDS[d.why] || "", startCost: Number(r && r.cost) || 0,
+      resume: { entry: null, state: null, samePage: true },
+    });
+  } catch (e) {
+    res = { ok: false, reason: "error" };
+  } finally {
+    await postApp("/api/autoapply/finish/end", {});
+  }
+  const last = _finishMsg.get(String(o.recordId)) || {};
+  return done(Object.assign({}, r && r.ok !== false ? r : { filled: 0 }, {
+    ok: true,
+    agent: { ok: !!(res && res.ok), ready: !!(res && res.ready), reason: (res && res.reason) || "", why: d.why,
+             message: last.message || "", state: last.state || "", cost: last.cost == null ? null : last.cost,
+             left: claim.left, limit: claim.limit, counted: !!claim.counted },
+  }));
+}
+const _finishMsg = new Map();        // record -> the finish run's last line, for the caller's note
+
 ipcMain.handle("assist:apply", async (_e, opts) => {
+  // an Autofill the agent may finish never clicks the site's Submit, whatever else it says
+  if (opts && opts.finish) opts = Object.assign({}, opts, { submit: false });
   const { url, recordId, resumePath, submit, here } = opts || {};
   let startUrl = url || "";
   if (here) {
@@ -1473,7 +1567,7 @@ ipcMain.handle("assist:apply", async (_e, opts) => {
   if (!pane) return { ok: false, reason: "no-page" };
   const wc = pane.webContents;
 
-  const report = await runAutoApplyOnPane(recordId);
+  const report = await runAutoApplyOnPane(recordId, { pointer: true });
   const filledOk = !!(report && report.ok !== false);
   if (report && report.reason === "blocked") return report;   // never fight an auth wall
   let attached = !!(report && report.uploaded);
@@ -1530,6 +1624,7 @@ const agent = createAgent({
   isNewPage, attachResume, attachViaChooser, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
   fixPhone, checkPrefill,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
+  pointerSource,
   stopSuccessWatch: () => disarmSuccessWatch(),          // the agent's own watch recorded the send
 });
 ipcMain.handle("agent:run", async (_e, opts) => {

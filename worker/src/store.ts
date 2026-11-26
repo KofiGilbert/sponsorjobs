@@ -9,7 +9,7 @@ import { AccountState, DAY_SECONDS, DEFAULT_PLAN, EMPTY_STATE, ONE_TIME_PASSES, 
 export const FREE_POOL_USER = "__free_pool__"; // the free tier's shared daily budget lives here
 
 interface UserRow { plan: string; pass_until: number; pass_seconds: number; pass_packages: number; credit_seconds: number }
-interface UsageRow { llm_tokens: number; packages: number; recorded_interviews?: number }
+interface UsageRow { llm_tokens: number; packages: number; recorded_interviews?: number; agent_finishes?: number }
 
 /** The admin dashboard's free-pool override (admin_settings "free_pool_cap"): a token count, or
  * null for the deploy's FREE_POOL_DAILY_TOKENS. 0 pauses the free AI. */
@@ -27,7 +27,7 @@ export async function loadState(db: D1Database, user: string, period: string, da
   const [u, use, pool, cap] = await db.batch([
     db.prepare("SELECT plan, pass_until, pass_seconds, pass_packages, credit_seconds FROM users WHERE user = ?")
       .bind(user),
-    db.prepare("SELECT llm_tokens, packages, recorded_interviews FROM usage WHERE user = ? AND period = ?").bind(user, period),
+    db.prepare("SELECT llm_tokens, packages, recorded_interviews, agent_finishes FROM usage WHERE user = ? AND period = ?").bind(user, period),
     db.prepare("SELECT llm_tokens, packages FROM usage WHERE user = ? AND period = ?").bind(FREE_POOL_USER, day),
     db.prepare("SELECT value FROM admin_settings WHERE key = ?").bind(FREE_POOL_CAP_KEY),
   ]);
@@ -38,9 +38,9 @@ export async function loadState(db: D1Database, user: string, period: string, da
     ? { plan: ur.plan, passUntil: ur.pass_until, passSeconds: ur.pass_seconds,
         passPackages: ur.pass_packages, creditSeconds: ur.credit_seconds,
         llmTokens: us?.llm_tokens ?? 0, packagesUsed: us?.packages ?? 0,
-        recordedUsed: us?.recorded_interviews ?? 0 }
+        recordedUsed: us?.recorded_interviews ?? 0, finishesUsed: us?.agent_finishes ?? 0 }
     : { ...EMPTY_STATE, llmTokens: us?.llm_tokens ?? 0, packagesUsed: us?.packages ?? 0,
-        recordedUsed: us?.recorded_interviews ?? 0 };
+        recordedUsed: us?.recorded_interviews ?? 0, finishesUsed: us?.agent_finishes ?? 0 };
   const capRow = (cap!.results[0] as { value: string } | undefined);
   return { state, freePoolTokens: pr?.llm_tokens ?? 0, freePoolCap: poolCapOverride(capRow?.value) };
 }
@@ -104,6 +104,20 @@ export async function takeFreeRecorded(db: D1Database, user: string, period: str
     "WHERE recorded_interviews < ? RETURNING recorded_interviews")
     .bind(user, period, allowance).first<{ recorded_interviews: number }>();
   return row ? row.recorded_interviews : null;
+}
+
+/** Count one application the apply agent finishes this month, unless the plan's allowance is
+ * already used up (the conflict UPDATE is skipped then and RETURNING yields no row). One
+ * statement, so two applications starting at once cannot both take the last one. Returns how many
+ * are used this month, or null when none was left. */
+export async function takeFinish(db: D1Database, user: string, period: string, allowance: number): Promise<number | null> {
+  if (allowance <= 0) return null;
+  const row = await db.prepare(
+    "INSERT INTO usage(user, period, agent_finishes) VALUES(?, ?, 1) " +
+    "ON CONFLICT(user, period) DO UPDATE SET agent_finishes = agent_finishes + 1 " +
+    "WHERE agent_finishes < ? RETURNING agent_finishes")
+    .bind(user, period, allowance).first<{ agent_finishes: number }>();
+  return row ? row.agent_finishes : null;
 }
 
 /** Store a pass on an account (the same contract as UsageStore.set_pass). A purchase goes through

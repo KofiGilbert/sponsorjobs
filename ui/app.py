@@ -1982,7 +1982,96 @@ def _apply_agent_gate():
         return None
     if request.method == "GET" and p == "/api/autoapply/agent/parked":
         return jsonify({"ok": True, "parked": [], "agent": False})
+    # (2026-11-26) "Autofill, then the agent finishes": while the person's own Autofill has handed
+    # ONE application to the agent (``_finish_active``), the agent's page routes answer, for that
+    # run only. Auto mode's queue and release never do, the parked list above stays empty (no
+    # parked job is ever carried on by itself), and Submit stays the person's: the decision route
+    # never allows a click with the agent switched off.
+    if _finish_active() and not p.startswith("/api/autoapply/auto/"):
+        return None
     return jsonify({"ok": False, "error": _APPLY_AGENT_OFF, "reason": "apply_agent_off"}), 403
+
+
+# ---- "Autofill, then the agent finishes" (docs/apply-agent.md section 35) -------------------------------
+# The Autofill button fills fast first; the shell hands the page to the agent only when the fill
+# left required fields, more pages, or a job page. One application at a time, and only while the
+# person's own Autofill run is open (20 minutes at most). Each such application counts once a
+# month against the plan's agent finishes, on the broker (POST /apply/finish), where the limit is
+# kept; on the person's own AI key nothing is counted.
+_FINISH = {"rid": None, "until": 0.0}
+_FINISH_MAX_S = 20 * 60
+FINISH_USED_LINE = "The agent finish for this month is used up, so I filled what I could. It resets on {date}."
+
+
+def _finish_active() -> bool:
+    import time as _t
+    return _FINISH["rid"] is not None and _t.time() < _FINISH["until"]
+
+
+def _finish_claims_file():
+    return _DATA / "finish_claims.json"
+
+
+def _finish_claimed(rid, period: str) -> bool:
+    """Was this application already counted this month (a second Autofill on it counts no more)?"""
+    try:
+        d = json.loads(_finish_claims_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return str(rid) in (d.get(period) or [])
+
+
+def _finish_note_claim(rid, period: str) -> None:
+    try:
+        d = json.loads(_finish_claims_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    d = {period: sorted(set((d.get(period) or []) + [str(rid)]))}     # this month only
+    _finish_claims_file().parent.mkdir(parents=True, exist_ok=True)
+    _finish_claims_file().write_text(json.dumps(d), encoding="utf-8")
+
+
+def _nice_date(iso: str) -> str:
+    import datetime as _d
+    try:
+        return _d.date.fromisoformat(str(iso)[:10]).strftime("%B %-d")
+    except (ValueError, TypeError):
+        return "the first of next month"
+
+
+@app.post("/api/autoapply/finish/start")
+@_guard
+def autofill_finish_start():
+    """The shell asks before the agent steps in after Autofill. {ok, counted, left, limit, resets}
+    or {ok: false, reason: "used_up", note}: the fast Autofill stands, the note says when it
+    resets. A broker that is unreachable or too old to know the route never blocks it."""
+    import time as _t
+    b = request.json or {}
+    rid = b.get("record_id")
+    period = _t.strftime("%Y-%m", _t.gmtime())
+    out = {"ok": True, "counted": False, "left": None, "limit": None, "resets": ""}
+    if _on_bundled_ai() and not (rid not in (None, "") and _finish_claimed(rid, period)):
+        st, data = _broker_post("/apply/finish", {})
+        d = data if isinstance(data, dict) else {}
+        if st == 402:
+            return jsonify({"ok": False, "reason": "used_up", "left": 0, "limit": d.get("finishes_limit"),
+                            "resets": d.get("finishes_reset") or "",
+                            "note": FINISH_USED_LINE.replace("{date}", _nice_date(d.get("finishes_reset") or ""))})
+        if st == 200:
+            out.update({"counted": True, "left": d.get("finishes_left"), "limit": d.get("finishes_limit"),
+                        "resets": d.get("finishes_reset") or ""})
+            if rid not in (None, ""):
+                _finish_note_claim(rid, period)
+    _FINISH.update({"rid": rid if rid not in (None, "") else "", "until": _t.time() + _FINISH_MAX_S})
+    return jsonify(out)
+
+
+@app.post("/api/autoapply/finish/end")
+@_guard
+def autofill_finish_end():
+    """The agent's run after Autofill is over: its page routes close again."""
+    _FINISH.update({"rid": None, "until": 0.0})
+    return jsonify({"ok": True})
 
 
 # ---- App Lock endpoints (a passcode for a shared machine). Reachable while locked ON PURPOSE
@@ -13084,6 +13173,9 @@ def account_status():
     u = usage if st2 == 200 and isinstance(usage, dict) else {}
     extra = {"plan": u.get("tier") or u.get("plan"), "pass_until": u.get("pass_until"),
              "interviews_left": u.get("interviews_left"), "packages_left": u.get("packages_left"),
+             # the apply agent's finishes this month ("N of M left") and the day they reset
+             "finishes_left": u.get("finishes_left"), "finishes_limit": u.get("finishes_limit"),
+             "finishes_reset": u.get("finishes_reset"),
              # A renewing plan: whether and when it renews (or when it ends), for "Renews on ...".
              "subscription": u.get("subscription") if isinstance(u.get("subscription"), dict) else None}
     if st != 200 or not data:
@@ -15459,6 +15551,7 @@ def autoapply_plan():
     if not fill_permitted(url):
         return jsonify({"ok": False, "needs_assist": True,
                         "reason": "This site is fill-by-hand only. Open it and apply yourself."})
+    plan_cost = 0.0                                   # the plan's model call, when one is made
     rec = _get_record(b.get("record_id")) if b.get("record_id") not in (None, "") else None
     data = _record_data(rec) if rec else {}
     fields = []
@@ -15511,8 +15604,17 @@ def autoapply_plan():
             except Exception:                            # no model: what we know still fills
                 llm = None
             if llm is not None:
+                try:
+                    llm.last_usage = None
+                except Exception:                        # noqa: BLE001 - a client without the field
+                    pass
                 ai = build_fill_plan(res.rest, llm, role=role, company=company, jd=jd)
                 res.actions.extend(ai)
+                # (2026-11-26) what the plan's one model call cost, for the run's cost figure
+                from autoapply.brain import estimate_cost
+                plan_cost = estimate_cost(getattr(llm, "last_usage", None),
+                                          4000 + sum(len(f.label or "") + 20 * len(f.options or []) for f in res.rest),
+                                          60 * len(res.rest), getattr(llm, "model", ""))
         for k in res.used_library:
             lib.mark_used(k)
         for q, a in res.drafted_used:                    # a generic drafted answer, kept to confirm
@@ -15526,7 +15628,7 @@ def autoapply_plan():
     wants_letter = bool(rec) and not str(data.get("cover_letter") or "").strip() and any(
         _LETTER.search(f.label or "") and (f.type or "").lower() in ("file", "textarea", "text") for f in fields)
     if not plan:
-        return jsonify({"ok": False, "needs_assist": True, "wants_letter": wants_letter,
+        return jsonify({"ok": False, "needs_assist": True, "wants_letter": wants_letter, "cost": plan_cost,
                         "reason": "Could not plan this form confidently. Fill it in and I'll help.",
                         "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
     ops = resolve_plan(plan, applicant, resume_path=resume, letter_path=letter)
@@ -15536,7 +15638,7 @@ def autoapply_plan():
         _brain_do(_Pg.record_fills, rec.get("id"),
                   [(by_ref.get(o.ref, ""), o.origin) for o in ops
                    if o.origin in ("library", "eeo", "workauth", "derived", "eeo_decline") and o.ref in by_ref])
-    return jsonify({"ok": True, "filled": len(ops), "wants_letter": wants_letter,
+    return jsonify({"ok": True, "filled": len(ops), "wants_letter": wants_letter, "cost": plan_cost,
                     "ops": [{"ref": o.ref, "op": o.op, "text": o.text, "path": o.path,
                              "sensitive": o.is_sensitive, "from": o.origin} for o in ops],
                     "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
@@ -19001,12 +19103,17 @@ def autoapply_agent_cover_letter():
         data = _record_data(rec)
         text = str(data.get("cover_letter") or "").strip()
         drafted = False
+        cost = 0.0
         if not text:
             jd = data.get("jd_text") or rec.get("jd_label") or rec.get("role") or ""
             try:
                 from drafting import cover_letter as _cover_letter
-                text = str(_cover_letter(jd, _saved_full_profile(), _make_llm(), role=rec.get("role") or "",
+                from autoapply.brain import estimate_cost
+                llm = _make_llm()
+                text = str(_cover_letter(jd, _saved_full_profile(), llm, role=rec.get("role") or "",
                                          company=rec.get("company") or "").get("cover_letter") or "").strip()
+                # (2026-11-26) what the letter cost, for the run's one cost figure
+                cost = estimate_cost(getattr(llm, "last_usage", None), len(jd) + 6000, len(text), getattr(llm, "model", ""))
             except Exception as e:   # noqa: BLE001 - no letter: the box stays empty
                 return jsonify({"ok": False, "reason": "draft-failed", "error": str(e)[:200]})
             if not text:
@@ -19017,7 +19124,7 @@ def autoapply_agent_cover_letter():
         pdf = _render_cover_pdf(rid, text) if drafted or not (WORKDIR / f"cover-{rid}.pdf").exists() else True
     finally:
         recs.close()
-    return jsonify({"ok": True, "drafted": drafted, "pdf": bool(pdf), "words": len(text.split())})
+    return jsonify({"ok": True, "drafted": drafted, "pdf": bool(pdf), "words": len(text.split()), "cost": cost})
 
 
 @app.get("/api/autoapply/agent/portal-account")

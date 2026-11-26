@@ -45,7 +45,12 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // the engine's policy says the site is on the verified AUTO allowlist (submit.policy
   // .apply_decision); everywhere else it stops and outlines the submit button for the person.
   // here: true fills the page already open in the pane (multi-page forms, after Next).
-  assistApply: (opts) => ipcRenderer.invoke("assist:apply", opts || {}),
+  // opts.finish (2026-11-26): then the agent finishes what the fill left (main.js assist:finish).
+  assistApply: async (opts) => {
+    const o = opts || {};
+    const r = await ipcRenderer.invoke("assist:apply", o);
+    return ipcRenderer.invoke("assist:finish", o, r);
+  },
   // AI autonomous apply: open the application page and AI-fill it for one saved application
   // (record id). The person's data never reaches the model; the submit click stays human.
   autoApplyRun: (url, recordId) => ipcRenderer.invoke("autoapply:run", url, recordId),

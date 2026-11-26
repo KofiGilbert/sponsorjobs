@@ -328,6 +328,7 @@
   "signin.keepPass": "Dieses Gerät hat einen Plan, der noch mit keiner E-Mail verknüpft ist. Melde dich mit deiner E-Mail an, damit der Plan bei dir bleibt.",
   "acct.planUntil": "{plan} bis {date}",
   "acct.planLeft": "{i} Live-Interviews und {p} maßgeschneiderte Pakete übrig",
+  "acct.finishLeft": "Vom Agenten fertig ausgefüllt: noch {f} von {m}",
   "acct.freeLeft": "{p} maßgeschneiderte Pakete diesen Monat übrig",
   "acct.yourPass": "Dein Plan",
   "upg.freePlan": "Kostenloser Plan",

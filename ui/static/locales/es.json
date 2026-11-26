@@ -328,6 +328,7 @@
   "signin.keepPass": "Este dispositivo tiene un plan que aún no está vinculado a un correo. Inicia sesión con tu correo para conservarlo.",
   "acct.planUntil": "{plan} hasta el {date}",
   "acct.planLeft": "Te quedan {i} entrevistas en vivo y {p} paquetes adaptados",
+  "acct.finishLeft": "Te quedan {f} de {m} formularios que termina el agente",
   "acct.freeLeft": "Te quedan {p} paquetes adaptados este mes",
   "acct.yourPass": "Tu plan",
   "upg.freePlan": "Plan gratuito",

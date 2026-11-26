@@ -103,6 +103,10 @@ async function freePort() {
     await page.waitForTimeout(150);
     for (const st of sc.steps) {
       if (st.do === "inject") { await page.evaluate(core); continue; }
+      // another script of ours into the page (extension/pointer_overlay.js), by its path
+      if (st.do === "script") { await page.evaluate(require("fs").readFileSync(path.resolve(st.file), "utf8")); continue; }
+      // the person's own setting for motion (prefers-reduced-motion)
+      if (st.do === "media") { await page.emulateMedia({ reducedMotion: st.reduced ? "reduce" : "no-preference" }); continue; }
       if (st.do === "eval") {
         const v = await page.evaluate(st.js.trim().startsWith("(") || /^await|return/.test(st.js)
           ? `(async () => (${st.js}))()` : `(async () => (${st.js}))()`);
