@@ -17046,11 +17046,11 @@
       bubble("agent", esc(list.length === 1 ? OT("orb.oneWaits", "One thing waits on you:") : OT("orb.fewWait", "Here is what waits on you:"))
         + "<br>" + list.map((n) => "&bull; " + esc(n.text)).join("<br>"));
       const wrap = el("div", "agent-acts");
-      const labels = new Set();
+      const labelSet = new Set();
       list.forEach((n) => {
-        if (!n.action || !n.action.label || labels.has(n.action.label)) return;   // one button per place
-        labels.add(n.action.label);
-        const b = el("button", "btn btn-sm " + (labels.size === 1 ? "btn-primary" : "btn-ghost"));
+        if (!n.action || !n.action.label || labelSet.has(n.action.label)) return;   // one button per place
+        labelSet.add(n.action.label);
+        const b = el("button", "btn btn-sm " + (labelSet.size === 1 ? "btn-primary" : "btn-ghost"));
         b.type = "button"; b.textContent = n.action.label;
         b.addEventListener("click", () => { wrap.remove(); orbNudgeAct(n); });
         wrap.appendChild(b);
