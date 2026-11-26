@@ -394,3 +394,25 @@ def test_sqlite_columns_exist_on_a_fresh_db():
     cols = {r[1] for r in raw.execute("PRAGMA table_info(sourced_job)")}
     raw.close()
     assert {"close_reason", "accepted_at", "kept_at", "untracked_at", "live_status", "live_at"} <= cols
+
+
+def test_a_card_never_shows_blank(A):
+    """A resume chat started from a pasted description before its role was known left a board
+    row with no title or company; the card takes the resume's role and the board's employer."""
+    rid = _add_record(A, "Senior Analyst", "pasted:blank1", url="https://jobs.lever.co/acme-consulting/abc-123")
+    w = A._watchlist()
+    try:
+        w.upsert_jobs([{"source_id": "pasted:blank1", "source": "pasted", "company": "", "title": "", "location": "",
+                        "remote": "", "url": "", "jd_text": "", "posted_at": "", "salary": ""}])
+        w.track_job("pasted:blank1", "applied")
+    finally:
+        w.close()
+    recs = CVRecords(A.DB_PATH)
+    try:
+        recs._conn.execute("UPDATE cv_record SET company='' WHERE id=?", (rid,))
+        recs._conn.commit()
+    finally:
+        recs.close()
+    card = _card(A.app.test_client(), "pasted:blank1")
+    assert (card["title"], card["company"], card["has_link"]) == ("Senior Analyst", "Acme Consulting", True)
+    assert A._company_from_link("https://www.example.com/careers/123") == ""

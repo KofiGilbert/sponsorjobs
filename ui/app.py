@@ -21723,6 +21723,13 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
         r2, c2 = _record_label(latest, _record_data(latest))
         if c2 and title.strip().lower() == c2.lower():
             company, title = c2, r2
+    if latest and not title.strip():
+        # A resume chat started before its role was known (a pasted description): the card takes
+        # the tailored resume's role, and the employer from its application link when the board
+        # names it (jobs.lever.co/<employer>/...), never a blank card.
+        r3, c3 = _record_label(latest, _record_data(latest))
+        title = r3 or title
+        company = company or c3 or _company_from_link(_card_link(j, records))
     return {
         "source_id": j["source_id"], "company": company, "title": title,
         "display_name": j.get("display_name") or "",
@@ -21747,6 +21754,26 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
 
 
 _HTTP_LINK = re.compile(r"^https?://[^\s/]+\.[^\s]+$", re.I)
+
+
+_BOARD_SLUG_HOSTS = ("jobs.lever.co", "boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.ashbyhq.com",
+                     "apply.workable.com")
+
+
+def _company_from_link(url: str) -> str:
+    """The employer a job board's own link names: jobs.lever.co/acme-consulting/... -> "Acme
+    Consulting". "" for any other link (a company's own site says nothing reliable here)."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(str(url or ""))
+    except ValueError:
+        return ""
+    if (u.hostname or "").lower() not in _BOARD_SLUG_HOSTS:
+        return ""
+    slug = next((p for p in u.path.split("/") if p), "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,60}", slug) or slug.lower() in ("embed", "v1", "jobs"):
+        return ""
+    return " ".join(w.capitalize() for w in re.split(r"[-_]+", slug) if w)
 
 
 def _usable_link(url) -> bool:
