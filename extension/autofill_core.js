@@ -4797,7 +4797,7 @@ function qsaSafe(sel, root) {
   }
   // a field that now holds an answer loses its ring (and leaves the list)
   function dropAnswered() {
-    for (const el of [..._glowEls.keys()]) if (!el.isConnected || (filledNow(el) && !el.__sjFlash)) unglow(el);
+    for (const el of [..._glowEls.keys()]) if (!el.isConnected || (!stillNeeds(el) && !el.__sjFlash && !el.__sjGate)) unglow(el);
   }
   let _chip = null;
   function chipFor(el) {
@@ -4825,8 +4825,15 @@ function qsaSafe(sel, root) {
     if (!_needs.includes(ref)) _needs.push(ref);
     return true;
   }
+  // a field still needs the person: empty, or (the final check) still marked wrong / holding two files
+  function stillNeeds(el) {
+    if (!el) return false;
+    if (el.__sjGate === "invalid") { if (errorTied(el)) return true; el.__sjGate = ""; }
+    if (el.__sjGate === "dup") { if (deleteButtons(uploadArea(el) || el.parentElement || el).length > 1) return true; el.__sjGate = ""; }
+    return !filledNow(el);
+  }
   function needsList() {
-    _needs = orderRefs(_needs.filter((r) => { const el = elByRef(r); return el && !filledNow(el); }));
+    _needs = orderRefs(_needs.filter((r) => stillNeeds(elByRef(r))));
     return _needs.slice();
   }
   function filledNow(el) {
@@ -5275,6 +5282,101 @@ function qsaSafe(sel, root) {
     return true;
   }
 
+  // ---- (2026-11-26, the owner) The final check before "Check it, then submit" -----------------
+  // Read every answerable field of this document (and its same-origin frames) fresh from the page:
+  // required by the form (required, aria-required, an asterisk label, or the shell's reading of
+  // Chrome's accessibility tree: data-sj-ax-required), what it holds (text, a pick, a tick in its
+  // group, a file), and whether the site marks it wrong (aria-invalid, the browser's own check, an
+  // error line tied to it). A required field that is empty or wrong becomes a needs-you item; a file
+  // box with more than one file and a one-answer group with more than one tick are flagged too. The
+  // end message is made from this alone: "Filled N" counts the fields that hold an answer NOW.
+  function requiredNow(el, f) {
+    if (f && f.required) return true;
+    try {
+      if (el.required || el.getAttribute("aria-required") === "true" || el.getAttribute("data-sj-ax-required") === "1") return true;
+      const g = el.closest && el.closest("[role='radiogroup'], [role='group'], fieldset");
+      if (g && (g.getAttribute("aria-required") === "true" || g.getAttribute("data-sj-ax-required") === "1")) return true;
+      return /\*\s*$/.test(String(rawLabel(el) || widgetLabel(el) || "").trim());
+    } catch (e) { return false; }
+  }
+  function holdsAnswer(el, f) {
+    const t = tagOf(el), type = String(el.type || "").toLowerCase();
+    if (t === "INPUT" && type === "file") return !!(el.files && el.files.length) || (deleteButtons(uploadArea(el) || el.parentElement || el).length > 0);
+    if (t === "INPUT" && type === "radio") {
+      const root = rootOf(el);
+      return el.name ? qsaSafe(`input[type="radio"][name="${CSS.escape(el.name)}"]`, root).some((r) => r.checked) : el.checked;
+    }
+    if (t === "INPUT" && type === "checkbox") return el.checked || checkboxGroup(el).some((c) => c.checked);
+    if (el.getAttribute && el.getAttribute("role") === "checkbox") return el.getAttribute("aria-checked") === "true";
+    if (el.getAttribute && el.getAttribute("role") === "radiogroup") return !!qsaSafe("[role='radio'][aria-checked='true']", el).length;
+    if (t === "SELECT") {
+      const o = el.options[el.selectedIndex];
+      return !!(o && String(o.value || "").trim() && !/^(select|choose|--|please)/i.test(String(o.text || "").trim()));
+    }
+    if (isWidgetInput(el) || (el.getAttribute && el.getAttribute("role") === "combobox")) return !!(comboValue(el) || chosenPills(el).length);
+    return !!String(el.value || "").trim();
+  }
+  function errorTied(el) {
+    try {
+      if (el.getAttribute("aria-invalid") === "true") return true;
+      const ids = [el.getAttribute("aria-errormessage"), el.getAttribute("aria-describedby")].filter(Boolean).join(" ").split(/\s+/);
+      for (const id of ids) {
+        const n = id && byId(el, id);
+        if (n && shown(n) && /error|invalid|required|must|please/i.test((n.className || "") + " " + (n.getAttribute("role") || "") + " " + (n.textContent || ""))) return true;
+      }
+    } catch (e) { /* fine */ }
+    return false;
+  }
+  function verifyForm() {
+    return withRoots(() => {
+      const out = { needs: [], invalid: [], dup_uploads: [], multi_ticked: [], filled: 0, total: 0 };
+      const seen = new Set();
+      for (const f of extractForm({})) {
+        const el = elByRef(f.ref);
+        if (!el || seen.has(el)) continue;
+        seen.add(el);
+        if (!shown(visibleBox(el)) && !(tagOf(el) === "INPUT" && /^file$/i.test(el.type || ""))) continue;
+        const has = holdsAnswer(el, f);
+        out.total++;
+        if (has) out.filled++;
+        const label = shortName(el) || cleanLabel(f.label || "");
+        if (requiredNow(el, f) && !has) { out.needs.push({ ref: f.ref, label }); continue; }
+        let bad = false;
+        try { bad = errorTied(el) || (has && typeof el.checkValidity === "function" && !el.checkValidity()); } catch (e) { bad = false; }
+        if (bad) out.invalid.push({ ref: f.ref, label });
+        if (tagOf(el) === "INPUT" && /^file$/i.test(el.type || "") && !el.multiple) {
+          const n = deleteButtons(uploadArea(el) || el.parentElement || el).length;
+          if (n > 1) out.dup_uploads.push({ ref: f.ref, label, files: n });
+        }
+      }
+      for (const r of searchRoots()) {
+        for (const g of qsaSafe("[role='radiogroup']", r)) {
+          const on = qsaSafe("[role='radio'][aria-checked='true']", g);
+          if (on.length > 1) out.multi_ticked.push({ label: cleanText(g.getAttribute("aria-label") || g.textContent || "").slice(0, 70) });
+        }
+      }
+      return out;
+    });
+  }
+  /** The check, and every required field it found empty or wrong outlined as needs-you (ring),
+   * in page order. {needs: n, filled, total, items: [labels], invalid, dup_uploads, multi_ticked}. */
+  function verifyAndMark() {
+    const v = verifyForm();
+    for (const x of v.needs) markNeeds(x.ref);
+    for (const [list, kind] of [[v.invalid, "invalid"], [v.dup_uploads, "dup"]]) {
+      for (const x of list) {
+        const el = elByRef(x.ref);
+        if (!el) continue;
+        el.__sjGate = kind;
+        try { glow(el, false); } catch (e) { /* fine */ }
+        if (!_needs.includes(x.ref)) _needs.push(x.ref);
+      }
+    }
+    const items = v.needs.concat(v.invalid, v.dup_uploads).map((x) => x.label).concat(v.multi_ticked.map((x) => x.label));
+    return { needs: items.length, filled: v.filled, total: v.total, items: items.slice(0, 20),
+             invalid: v.invalid.length, dup_uploads: v.dup_uploads.length, multi_ticked: v.multi_ticked.length };
+  }
+
   function leftover() {
     const out = [];
     for (const f of extractForm({ onlyEmpty: true })) {
@@ -5333,7 +5435,7 @@ function qsaSafe(sel, root) {
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
-    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, topRect, setSight, armFrameSubmitWatch, formFill, refPlaces, frameBox, pointFrom, relayPointer, relayTake, refRect, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
+    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, topRect, setSight, verifyForm, verifyAndMark, armFrameSubmitWatch, formFill, refPlaces, frameBox, pointFrom, relayPointer, relayTake, refRect, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
     siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike, needsNext, needsKind,
     // (2026-11-26) the apply agent's guided ask: what a field holds, the pointer on it, then Submit
     fieldValue, pointNeeds, allDone,

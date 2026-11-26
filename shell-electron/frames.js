@@ -199,6 +199,29 @@ async function reopenFrame(cdp, ctx) {
   } catch (e) { return null; }
 }
 
+// (2026-11-26, the owner) Chrome's own reading of the page (its accessibility tree) says which
+// fields are required even where the markup does not say it on the field (a custom list whose
+// wrapper carries aria-required): each is tagged data-sj-ax-required for the final check
+// (TailorAutofill.verifyForm). Read only, best effort; returns how many were tagged.
+async function axTagRequired(cdp, sessionId) {
+  let n = 0;
+  try {
+    const t = await cdp.send("Accessibility.getFullAXTree", {}, sessionId);
+    for (const node of (t && t.nodes) || []) {
+      const req = (node.properties || []).some((p) => p && p.name === "required" && p.value && p.value.value === true);
+      if (!req || !node.backendDOMNodeId) continue;
+      try {
+        const r = await cdp.send("DOM.resolveNode", { backendNodeId: node.backendDOMNodeId }, sessionId);
+        const objectId = r && r.object && r.object.objectId;
+        if (!objectId) continue;
+        await cdp.send("Runtime.callFunctionOn", { objectId, functionDeclaration: "function () { if (this.setAttribute) this.setAttribute('data-sj-ax-required', '1'); }" }, sessionId);
+        n++;
+      } catch (e) { /* the node went away */ }
+    }
+  } catch (e) { /* no accessibility domain here */ }
+  return n;
+}
+
 // Electron's webContents.debugger as the adapter above.
 function electronCdp(dbg) {
   const fns = new Set();
@@ -214,4 +237,4 @@ function electronCdp(dbg) {
 }
 
 module.exports = { WORLD, crossOriginFrames, evalIn, injectEngine, injectAgentView, uploadInFrame, routeOps,
-                   prefixFor, electronCdp, originOf, tagOwner, injectPointerRelay, walkContexts, reopenFrame };
+                   prefixFor, electronCdp, originOf, tagOwner, injectPointerRelay, walkContexts, reopenFrame, axTagRequired };

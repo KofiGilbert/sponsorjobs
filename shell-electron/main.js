@@ -1189,7 +1189,7 @@ function holdGuideFrames(wc, fr, ctxs, info) {
         const n = got.needs;
         if (n && n.seq && n.seq !== st.needsSeq.get(c.prefix)) {
           st.needsSeq.set(c.prefix, n.seq);
-          if (win && !win.isDestroyed()) win.webContents.send("assist:needs", n.d || {});
+          sayNeeds(wc, n.d || {});
         }
       }
       st.misses = answered ? 0 : st.misses + 1;
@@ -1240,7 +1240,7 @@ function watchSnapshots(wc) {
     const msg = typeof args[0] === "object" && args[0] && "message" in args[0] ? args[0].message : args[2];
     if (typeof msg === "string" && msg.startsWith("__sj_needs__")) {
       // the item that needs the person now (autofill_core tellNeeds): the bar names the same one
-      try { const d = JSON.parse(msg.slice("__sj_needs__".length)); if (win && !win.isDestroyed()) win.webContents.send("assist:needs", d); } catch (e) { /* not ours */ }
+      try { const d = JSON.parse(msg.slice("__sj_needs__".length)); sayNeeds(wc, d); } catch (e) { /* not ours */ }
       return;
     }
     if (typeof msg !== "string" || !msg.startsWith("__sj_snapshot__")) return;
@@ -1748,11 +1748,49 @@ ipcMain.handle("assist:finish", async (_e, opts, report) => {
 const GUIDE_END_JS = `(async () => { const T = window.TailorAutofill; if (!T || !T.guideEnd) return null;
       await T.tidyMenus(); return T.guideEnd(); })()`;
 const NEEDS_N_JS = "window.TailorAutofill && window.TailorAutofill.needsList ? window.TailorAutofill.needsList().length : 0";
+const GATE_JS = "window.TailorAutofill && window.TailorAutofill.verifyAndMark ? window.TailorAutofill.verifyAndMark() : null";
+
+// THE final verification gate (top page + every frame): fresh from the page, never the walk's own
+// count. Every required field empty or marked wrong becomes a needs-you item (ring; the pointer and
+// the bubble go to it), duplicate uploads and multi-ticked one-answer groups too. Returns
+// {needs, filled, total, items} summed over the page and its frames.
+async function finalGate(wc) {
+  const sum = { needs: 0, filled: 0, total: 0, items: [], invalid: 0, dup_uploads: 0, multi_ticked: 0 };
+  const add = (g) => {
+    if (!g || g === fillKeys.TIMED_OUT) return;
+    for (const k of ["needs", "filled", "total", "invalid", "dup_uploads", "multi_ticked"]) sum[k] += Number(g[k]) || 0;
+    sum.items = sum.items.concat(g.items || []).slice(0, 20);
+  };
+  // the frames: the walk's held ones, else opened now (and held, so Next can reach them)
+  let gf = guideFramesFor(wc);
+  if (!gf) {
+    const fr = await openFrameSession(wc);
+    if (fr) {
+      const ctxs = await prepareWalkFrames(fr);
+      if (ctxs.length) { holdGuideFrames(wc, fr, ctxs, { url: wc.getURL() || "", recordId: null }); gf = guideFramesFor(wc); }
+      else fr.close();
+    }
+  }
+  const release = acquireDebugger(wc);
+  if (release) {
+    const cdp = frames.electronCdp(wc.debugger);
+    try {
+      await frames.axTagRequired(cdp, undefined);
+      for (const c of (gf ? gf.ctxs : [])) if (c.raw && c.raw.sessionId) await frames.axTagRequired(cdp, c.raw.sessionId);
+    } finally { cdp.dispose(); release(); }
+  }
+  add(await fillKeys.capped(wc.executeJavaScript(GATE_JS, true).catch(() => null), 8000));
+  for (const c of (gf ? gf.ctxs : [])) add(await c.js(GATE_JS, 8000));
+  return sum;
+}
 async function guideEnd(r) {
   const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
   if (!wc) return r;
   const top = (e, ms) => fillKeys.capped(wc.executeJavaScript(e, true).catch(() => null), ms || 8000);
   const ok = (g) => g && g !== fillKeys.TIMED_OUT;
+  // the final check first: what the page holds NOW decides the end, never the walk's count
+  let gate = null;
+  try { gate = await finalGate(wc); } catch (e) { gate = null; }
   // (2026-11-26) a walk that went into frames: the first place that needs the person may be in a
   // frame (its own pointer relayed to the top page), and an iCIMS Submit sits in its frame
   const gf = guideFramesFor(wc);
@@ -1774,14 +1812,41 @@ async function guideEnd(r) {
       if (ok(g2) && g2.where !== "none") { g = g2; break; }
     }
   }
-  if (!ok(g)) return r;
-  return Object.assign({}, r || {}, { guide: { where: g.where, needs: g.n || 0, label: g.label || "" } });
+  const guide = ok(g) ? { where: g.where, needs: g.n || 0, label: g.label || "" } : { where: "none", needs: 0, label: "" };
+  if (gate) {
+    // the gate's numbers are the end message's: "Filled N" is N fields holding an answer now, and
+    // never "check it, then submit" while a required field is empty or wrong
+    guide.verified = gate.filled; guide.total = gate.total; guide.items = gate.items;
+    guide.needs = Math.max(guide.needs, gate.needs);
+    if (gate.needs && guide.where !== "needs") { guide.where = "needs"; guide.label = guide.label || gate.items[0] || ""; }
+  }
+  if (!ok(g) && !gate) return r;
+  return Object.assign({}, r || {}, { guide });
+}
+// The bar / the Orb hear which item needs the person now. "All done" (n 0, from the place the
+// person just finished: the page or one frame) is said only after the final check over the page
+// AND every frame finds nothing left; else the pointer goes to what is left and the bar names it.
+let _needsGateBusy = false;
+async function sayNeeds(wc, d) {
+  const send = (x) => { if (win && !win.isDestroyed()) win.webContents.send("assist:needs", x); };
+  if (!d || d.n) { send(d || {}); return; }
+  if (_needsGateBusy) return;
+  _needsGateBusy = true;
+  try {
+    const gate = await finalGate(wc).catch(() => null);
+    if (!gate || !gate.needs) { send(d); return; }
+    const step = await guideStepIn(wc, 0);
+    send({ n: gate.needs, i: 0, label: (step && step.label) || gate.items[0] || "" });
+  } finally { _needsGateBusy = false; }
 }
 // Next / Previous / Done on the status line: the pointer and the page go to each field that needs
 // the person, in page order; Done takes the outlines and the pointer away.
 ipcMain.handle("assist:guide-step", async (_e, dir) => {
   const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
   if (!wc) return { n: 0 };
+  return guideStepIn(wc, dir);
+});
+async function guideStepIn(wc, dir) {
   const d = dir === "done" ? "done" : Number(dir) || 0;
   const gf = guideFramesFor(wc);
   try {
@@ -1803,7 +1868,7 @@ ipcMain.handle("assist:guide-step", async (_e, dir) => {
     }
     return await wc.executeJavaScript(`window.TailorAutofill ? window.TailorAutofill.needsStep(${d}) : { n: 0 }`, true);
   } catch (e) { return { n: 0 }; }
-});
+}
 
 // After the fast Autofill: hand the page to the agent when it left required fields, more pages or
 // a job page, and the month's agent finishes allow it (the broker keeps the count). The agent

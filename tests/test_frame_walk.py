@@ -38,6 +38,32 @@ def test_the_walk_inside_cross_origin_and_same_origin_frames_in_a_real_page():
     assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stdout[-2000:] + out.stderr[-2000:]
 
 
+@browser
+def test_the_final_check_in_a_real_page_and_frame():
+    env = dict(os.environ, SJ_PLAYWRIGHT_DIR=str(_playwright_dir()))
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_final_gate.js")], capture_output=True,
+                         text=True, timeout=300, env=env)
+    assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stdout[-2000:] + out.stderr[-2000:]
+
+
+def test_the_end_message_comes_from_the_final_check_only():
+    """Instacart's Canada posting: the bubble said "Filled 18. Check it, then submit" while a required
+    question inside the frame was still empty. The end is now made from the final check (top page +
+    every frame): any required field empty or wrong makes it a needs-you end, and "Filled N" is the
+    check's count; "All done" from one place waits for the check too."""
+    main = MAIN.read_text(encoding="utf-8")
+    end = _between(main, "async function guideEnd(r) {", "\n}\n")
+    assert "gate = await finalGate(wc)" in end and "guide.verified = gate.filled" in end
+    assert 'if (gate.needs && guide.where !== "needs") { guide.where = "needs";' in end
+    gate = _between(main, "async function finalGate(wc) {", "\n}\n")
+    assert "frames.axTagRequired(cdp, undefined)" in gate and "c.js(GATE_JS" in gate
+    say = _between(main, "async function sayNeeds(wc, d) {", "\n}\n")
+    assert "await finalGate(wc)" in say and "guideStepIn(wc, 0)" in say
+    app = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    line = _between(app, "function guideLine(r) {", "\n  }\n")
+    assert "g.verified != null ? Number(g.verified)" in line
+
+
 def _between(text: str, start: str, end: str) -> str:
     i = text.index(start)
     return text[i:text.index(end, i)]
@@ -61,7 +87,7 @@ def test_a_walked_page_fills_nothing_in_its_frames_out_of_sight():
     assert "holdGuideFrames(wc, fr, held, { url, recordId })" in run
     # a fill that does not walk (the agent's plain retry) keeps the person's frame fields reachable
     assert "releaseGuideFrames()" not in run
-    step = _between(main, 'ipcMain.handle("assist:guide-step"', "\n});")
+    step = _between(main, "async function guideStepIn(wc, dir) {", "\n}\n")
     assert "c.js(`window.TailorAutofill.needsStep(${d})`" in step
     assert "guided.bringIntoSight(top, c, r.ref)" in step      # Next / Previous scroll the top page too
 

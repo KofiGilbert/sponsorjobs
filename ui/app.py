@@ -16135,7 +16135,7 @@ def autoapply_plan():
                     "left": [{"ref": f.ref, "label": f.label, **({"suggest": res.suggest[f.ref]} if f.ref in res.suggest else {})} for f in res.left]})
 
 
-@app.get("/api/autoapply/country-note")
+@app.route("/api/autoapply/country-note", methods=["GET", "POST"])
 @_guard
 def autoapply_country_note():
     """(2026-11-26, the owner) Before Autofill starts: a job in a country the saved work
@@ -16144,9 +16144,10 @@ def autoapply_country_note():
     and when nothing is saved (the questions are asked as before)."""
     from autoapply import workauth as _wa
     from applicant.expiry import COUNTRY_NAMES
+    body = (request.get_json(silent=True) or {}) if request.method == "POST" else {}
     try:
-        rid = int(request.args.get("id") or 0)
-    except ValueError:
+        rid = int(body.get("id") or request.args.get("id") or 0)
+    except (TypeError, ValueError):
         return jsonify({"note": ""})
     recs = _records()
     try:
@@ -16155,7 +16156,20 @@ def autoapply_country_note():
         recs.close()
     if not rec:
         return jsonify({"note": ""})
-    return jsonify({"note": _country_note(_job_country(_record_data(rec)), _work_auth())})
+    cc = _job_country(_record_data(rec))
+    # (2026-11-26, Instacart's Canada posting) the record may not say where the job is; the page open
+    # in the Browser does (its JobPosting: a remote job names its country only there). Read from
+    # the page's own HTML, no request.
+    html = str(body.get("html") or "")
+    if cc == "US" and html:
+        from sourcing.posting_read import from_html
+        try:
+            res = from_html(str(body.get("url") or ""), html[:2_000_000]) or {}
+        except Exception:  # noqa: BLE001 - the record's answer stands
+            res = {}
+        if res.get("ok") and res.get("location"):
+            cc = _job_country({"location": res["location"]})
+    return jsonify({"note": _country_note(cc, _work_auth())})
 
 
 def _country_note(job_cc: str, wa: dict) -> str:

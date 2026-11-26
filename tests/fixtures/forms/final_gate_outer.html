@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (final check fixture)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script></head>
+<body>
+<!-- The final check before "Check it, then submit" (made-up job, no person's values): a required box
+     the walk did not answer, a custom list whose wrapper alone says it is required, a box the site
+     clears after the walk, a one-answer group with two ticks, and the rest of the form inside a
+     frame another origin serves (?inner=<url>). -->
+<form id="top-form" onsubmit="return false">
+  <div class="field"><label for="first">First Name *</label><input type="text" id="first"></div>
+  <div class="field"><label for="colour">Do you identify as a Person of Colour?<span class="req">*</span></label><input type="text" id="colour"></div>
+  <div class="field"><label for="city">City *</label><input type="text" id="city"></div>
+  <div role="group" aria-required="true" aria-labelledby="ws-l"><span id="ws-l">Work setting</span><div id="w1"></div></div>
+  <div role="radiogroup" aria-label="Preferred shift">
+    <div role="radio" aria-checked="true" tabindex="0">Day</div><div role="radio" aria-checked="true" tabindex="-1">Night</div>
+  </div>
+  <button type="submit" id="submit">Submit application</button>
+</form>
+<iframe id="icims_content_iframe" title="More questions" width="700" height="400"></iframe>
+<script>
+  window.fx = { ws: window.FixtureWidgets.ReactSelect(document.getElementById("w1"), { id: "ws-q", label: "Work setting", options: ["Remote", "Office"] }) };
+  const p = new URLSearchParams(location.search);
+  document.getElementById("icims_content_iframe").src = p.get("inner") || "final_gate_inner.html";
+</script>
+</body></html>
