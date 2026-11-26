@@ -1324,9 +1324,24 @@
     const g = (r && r.guide) || null;
     const filled = Number((r && r.filled) || 0) + (r && r.resume_attached ? 1 : 0);
     const needs = g ? Number(g.needs || 0) : ((r && r.left) || []).length;
+    // (2026-11-26, the owner) the bar names the same item the pointer is on
+    if (needs && g && g.label) return needsLine(needs, g.label);
     if (!needs) return filled ? T("fill.doneAll", "Filled {f}. Check it, then submit on the site").replace("{f}", filled)
                               : T("fill.doneNone", "Nothing new to fill here");
     return T("fill.doneSome", "Filled {f} of {t}. {n} need you").replace("{f}", filled).replace("{t}", filled + needs).replace("{n}", needs);
+  }
+  function needsLine(n, label) {
+    return T(n === 1 ? "fill.needsOne" : "fill.needsMany", n === 1 ? "1 needs you: {q}" : "{n} need you. Now: {q}")
+      .replace("{n}", n).replace("{q}", label);
+  }
+  let GUIDE_MSG = null;                  // the bar's last guided message (its buttons), for needs updates
+  // The page moved to another item that needs the person (Enter, a choice, the chip): the bar says it.
+  if (window.tailorShell && window.tailorShell.onNeeds) {
+    window.tailorShell.onNeeds((d) => {
+      if (!d || !GUIDE_MSG) return;
+      if (!d.n) { say(Object.assign(GUIDE_MSG(), { line: T("fill.allDone", "All done. Press Submit when you're happy"), actions: [] })); return; }
+      say(Object.assign(GUIDE_MSG(), { line: needsLine(d.n, d.label || "") }));
+    });
   }
   function guideSay(r) {
     if (!r) return;
@@ -1338,8 +1353,7 @@
     const step = async (dir) => {
       let s2 = null;
       try { s2 = await window.tailorShell.guideStep(dir); } catch { s2 = null; }
-      if (s2 && s2.n) say(Object.assign(msg(), { line: T("fill.needsAt", "Needs you: {q} ({i} of {n})")
-        .replace("{q}", s2.label || "").replace("{i}", s2.i + 1).replace("{n}", s2.n) }));
+      if (s2 && s2.n) say(Object.assign(msg(), { line: needsLine(s2.n, s2.label || "") }));
     };
     const msg = () => ({
       line: head,
@@ -1350,6 +1364,7 @@
         try { window.tailorShell.guideStep("done"); } catch { /* fine */ } say(null); } }] : []),
       details: [said, applyMessage(r)].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join("\n"),
     });
+    GUIDE_MSG = msg;
     say(msg());
   }
 

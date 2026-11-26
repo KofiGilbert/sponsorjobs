@@ -874,6 +874,7 @@ class KnownResult:
     left: list = field(default_factory=list)     # FormFields only the person can answer
     used_library: list = field(default_factory=list)   # library keys used (to mark last used)
     drafted_used: list = field(default_factory=list)   # (question, answer) drafted answers used
+    suggest: dict = field(default_factory=dict)  # ref -> a suggestion for a field left for the person
 
 
 def _newer(hit: dict | None, ended) -> bool:
@@ -1278,6 +1279,12 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             continue
         out.rest.append(f)
     _fill_specify_boxes(fields, out)
+    # a suggestion for an acknowledgement left for the person (typed in and selected on the page,
+    # never committed by the app); a background or legal question never gets one
+    for f in out.left:
+        v = consents.suggestion(f.label, f.options, (f.type or "text").lower())
+        if v:
+            out.suggest[f.ref] = v
     return out
 
 

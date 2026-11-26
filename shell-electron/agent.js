@@ -56,6 +56,8 @@ const MAX_LADDERS = 4;               // recovery ladders per application, then i
 const GUIDE_POLL_MS = Math.max(5, Number(process.env.SJ_AGENT_GUIDE_MS) || 1000);
 // The outline on the field the person is asked to fill, and its removal. Styles only, on the
 // element itself; what was there before is put back.
+// (2026-11-26, Vestmark) The notice to accept is a box on the page, marked for the person.
+const NOTICE_IN_BOX = "The site asks you to acknowledge its notice in the box marked on the page.";
 const HL_ON = (i) => `(() => { /*sj-highlight*/ const el = window.TailorAgent.element(${Number(i)}); if (!el) return false;
   el.scrollIntoView({ block: "center", inline: "nearest" });
   // (2026-11-26) the guided fill's violet glow ring when the engine is there (an overlay: the site's
@@ -3190,7 +3192,28 @@ function createAgent(deps) {
           const t = await handleTerms(wc, terms, true);
           if (t.stop) return stopped(t.stop.reason, t.stop.message, { url });
           if (t.park) return park("terms", t.park.question, { url, ask: batch ? undefined : t.park.ask });
-          if (!t.accepted) return stopped("needs-consent", blockedMessage("needs-consent"), { url });
+          if (!t.accepted && !terms.ackRetried) {
+            // (2026-11-26, Vestmark) a notice acknowledged in a box the model can see (a typed "I
+            // acknowledge" under a privacy notice): the fill's rules answer it under the person's
+            // standing consent to required notices; the boxes left for the person are tried once more
+            terms.ackRetried = true;
+            const again = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true,
+                                                                          pointer: !quiet, guided: !quiet, retryAsked: true }), FILL_MS, "fill")
+              .catch((e) => { if (e && e.stopped) throw e; return null; });
+            dlog("step " + step + " needs-consent: the boxes left for the person tried again ->", again && { filled: again.filled, left: (again.left || []).length });
+            if (again && again.ok && again.filled > 0) {
+              pendingNudges.push("The notice's acknowledgement box was answered from the person's standing consent to required notices. Carry on.");
+              history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                             actions: ["(the notice's box answered from the person's standing consent)"], results: ["filled; continue"] });
+              continue;
+            }
+          }
+          if (!t.accepted) {
+            // a box the page marks for the person (the ring, the pointer): never "could not find where"
+            let marked = 0;
+            try { marked = Number(await wc.executeJavaScript("window.TailorAutofill.needsList ? window.TailorAutofill.needsList().length : 0", true)) || 0; } catch (e) { marked = 0; }
+            return stopped("needs-consent", marked ? NOTICE_IN_BOX : blockedMessage("needs-consent"), { url });
+          }
           history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
                          actions: ["(the person accepted the site's terms)"], results: ["accepted; continue"] });
           continue;

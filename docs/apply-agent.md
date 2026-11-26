@@ -2178,6 +2178,19 @@ and a redesign:
 - **"Other (please specify)"**: whenever "Other" is picked for a saved answer no choice says ("Job
   board" on Meriton's "How did you hear about us?"), the "please specify" box next to it gets the
   answer. A list with a job board choice takes that one.
+- **A typed acknowledgement of a notice** (Vestmark's California privacy notice): with the person's
+  standing "always accept" for required notices, a required box under a notice that only
+  acknowledges it is filled in the walk ("I acknowledge", or the exact words the notice asks
+  for); without that setting it stays a box that needs the person. Never a signature, initials, a
+  name or a date. Before the agent stops on "needs consent", the boxes left for the person on that
+  page are tried once more (`retryAsked`), so a box it can see never ends the run that way.
+- **Suggestions, and one item in two places** (the owner, Vestmark): a box left for the person that
+  only acknowledges a notice gets a suggestion (`consents.suggestion`, the plan's `left[].suggest`),
+  typed in and left selected ("Suggested: I acknowledge. Press Enter to accept, or type your own"):
+  Enter accepts it, typing replaces it; a list's suggestion is named, never picked. A background
+  or legal question never gets one. The bar and the pointer name the SAME current item in plain
+  words ("1 needs you: the privacy notice"): the page tells the shell each time it moves
+  (`__sj_needs__`). With a box marked on the page the agent never says it "could not find where".
 - **The end on Submit**: the pointer's tip is ON the button (its left centre), the label just past
   its right edge, or under it when there is no room; never over it.
 - **The bar says one short line** (`app.js aaBarShort`): the agent's Ready line is "Your turn:

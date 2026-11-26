@@ -2183,5 +2183,8 @@
   "fill.yourTurn": "Sua vez: confira e envie",
   "fill.readySend": "Pronto para enviar. Confira e toque em Enviar",
   "fill.submittedOnly": "Enviada",
+  "fill.needsOne": "1 precisa de você: {q}",
+  "fill.needsMany": "{n} precisam de você. Agora: {q}",
+  "fill.allDone": "Pronto. Toque em Enviar quando estiver tudo certo",
   "fill.submitted": "Enviada. Marcada como candidatada"
 }

@@ -37,7 +37,7 @@
     .p.on { opacity: 1; }
     .p.still { transition: opacity 120ms ease; }
     svg { width: 34px; height: 42px; flex: none; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
-    .t { margin-top: 24px; max-width: 280px; padding: 4px 11px; border-radius: 999px;
+    .t { margin-top: 24px; max-width: min(460px, calc(100vw - 60px)); padding: 4px 11px; border-radius: 999px;
          background: var(--sj-pointer); color: #ffffff; border: 1px solid rgba(255,255,255,.35);
          font: 600 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -183,7 +183,7 @@
   function show(m) {
     if (!ensure()) return;
     wrap.classList.toggle("still", reduced());
-    tag.textContent = String(m.label || "").slice(0, 60);
+    tag.textContent = String(m.label || "").slice(0, 100);
     // beside the button it points into (see spot), else the usual place
     tag.style.marginLeft = m.shift ? Math.max(0, m.shift) + "px" : "";
     tag.style.marginTop = m.side === "on" ? (m.shift ? "-6px" : Math.max(24, 24 + (m.drop || 0)) + "px") : "";

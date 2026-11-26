@@ -4773,9 +4773,11 @@ function qsaSafe(sel, root) {
     for (const r of _needs) { const el = elByRef(r); if (el && _glowEls.has(el)) _glowEls.get(el).classList.toggle("cur", r === ref); }
     try { chipFor(elByRef(ref)); } catch (e) { /* fine */ }
   }
-  function markNeeds(ref) {
+  const _needsSuggest = new Map();       // ref -> the suggestion for it (an acknowledgement), never committed
+  function markNeeds(ref, suggest) {
     const el = elByRef(ref);
     if (!el || filledNow(el)) return false;
+    if (suggest) _needsSuggest.set(ref, String(suggest).slice(0, 120));
     try { glow(el, false); } catch (e) { return false; }
     if (!_needs.includes(ref)) _needs.push(ref);
     return true;
@@ -4801,9 +4803,33 @@ function qsaSafe(sel, root) {
     _needsCur = ref;
     currentGlow(ref);
     try { if (el && el.focus) el.focus({ preventScroll: true }); } catch (e) { /* fine */ }
+    // (2026-11-26, the owner) a suggestion (an acknowledgement's words) is typed in and left
+    // selected, so typing replaces it and Enter accepts it; a list's suggestion is only named
+    const sug = _needsSuggest.get(ref) || "";
+    if (sug && el && /^(line|multi)$/.test(needsKind(el)) && !filledNow(el)) {
+      await typeVisibly(ref, sug, { perChar: 30, burst: 14 });
+      try { el.focus({ preventScroll: true }); el.select(); } catch (e) { /* fine */ }
+    }
     const P = window.TailorPointer;
-    if (P && el) P.at(visibleBox(el), needsSay(el), { now: true, stay: true });
-    return { n: list.length, i: _needsAt, label: w.label || "" };
+    if (P && el) P.at(visibleBox(el), needsSay(el, sug), { now: true, stay: true });
+    const name = shortName(el);
+    tellNeeds({ n: list.length, i: _needsAt, label: name, suggest: sug });
+    return { n: list.length, i: _needsAt, label: name };
+  }
+  // The item's name in plain words, the same on the bar and beside the pointer: a long notice is
+  // "the privacy notice" (or "the terms"), anything else its own question, cut at a word.
+  function shortName(el) {
+    const raw = cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").replace(/\s+/g, " ").trim();
+    if (raw.length > 70 && /privacy|personal information|ccpa|data protection|gdpr/i.test(raw)) return "the privacy notice";
+    if (raw.length > 70 && /terms|conditions|agreement|acknowledg/i.test(raw)) return "the terms";
+    if (raw.length <= 70) return raw;
+    const cut = raw.slice(0, 70);
+    return cut.slice(0, Math.max(40, cut.lastIndexOf(" "))) + "...";
+  }
+  // The shell hears which item is current (a console line only it reads): the app's bar names the
+  // same item the pointer does.
+  function tellNeeds(d) {
+    try { console.debug("__sj_needs__" + JSON.stringify(d)); } catch (e) { /* fine */ }
   }
   // (2026-11-26, the owner) The fields that need the person, one after another: the caret in the
   // first, with the strong ring and "Fill this, then press Enter". Enter in a one-line box (the form
@@ -4820,8 +4846,11 @@ function qsaSafe(sel, root) {
     if (t === "SELECT" || isWidgetInput(el) || el.getAttribute("role") === "combobox" || /^(checkbox|radio)$/i.test(el.type || "")) return "choice";
     return "line";
   }
-  function needsSay(el) {
-    return { line: "Fill this, then press Enter", multi: "Fill this, then press Next", choice: "Choose an answer", file: "Add the file here" }[needsKind(el)];
+  function needsSay(el, sug) {
+    const k = needsKind(el);
+    if (sug && (k === "line" || k === "multi")) return "Suggested: " + sug + ". Press Enter to accept, or type your own";
+    if (sug && k === "choice") return "Suggested: " + sug + ". Pick it, or choose another";
+    return { line: "Fill this, then press Enter", multi: "Fill this, then press Next", choice: "Choose an answer", file: "Add the file here" }[k];
   }
   function answerValid(el) {
     if (!filledNow(el)) return false;
@@ -4854,6 +4883,7 @@ function qsaSafe(sel, root) {
       const list = needsList();
       if (!list.length) {
         _needsCur = ""; stopGlows();
+        tellNeeds({ n: 0, i: -1, label: "" });
         await restOnSubmit("All done. Press Submit when you're happy");
         return { done: true };
       }
@@ -4869,7 +4899,7 @@ function qsaSafe(sel, root) {
     const P = window.TailorPointer;
     if (P) {
       P.at(visibleBox(el), "This one still needs an answer", { now: true, stay: true });
-      setTimeout(() => { try { if (_needsCur && elByRef(_needsCur) === el) P.at(visibleBox(el), needsSay(el), { now: true, stay: true }); } catch (e) { /* fine */ } }, 1600);
+      setTimeout(() => { try { if (_needsCur && elByRef(_needsCur) === el) P.at(visibleBox(el), needsSay(el, _needsSuggest.get(_needsCur)), { now: true, stay: true }); } catch (e) { /* fine */ } }, 1600);
     }
     return false;
   }
@@ -4941,7 +4971,7 @@ function qsaSafe(sel, root) {
   }
   function clearNeeds() {
     stopGlows();
-    _needs = []; _needsAt = -1; _needsCur = "";
+    _needs = []; _needsAt = -1; _needsCur = ""; _needsSuggest.clear();
     try { if (window.TailorPointer) window.TailorPointer.hide(); } catch (e) { /* fine */ }
     return true;
   }

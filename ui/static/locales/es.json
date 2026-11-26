@@ -2183,5 +2183,8 @@
   "fill.yourTurn": "Tu turno: revisa y envía",
   "fill.readySend": "Listo para enviar. Revísalo y pulsa Enviar",
   "fill.submittedOnly": "Enviada",
+  "fill.needsOne": "1 te necesita: {q}",
+  "fill.needsMany": "{n} te necesitan. Ahora: {q}",
+  "fill.allDone": "Listo. Pulsa Enviar cuando estés conforme",
   "fill.submitted": "Enviada. Marcada como aplicada"
 }

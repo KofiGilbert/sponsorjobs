@@ -324,6 +324,67 @@ async function run(o) {
     assert(end.label === "All done. Press Submit when you're happy" && end.on && end.sent === 0, "the end ON Submit, never sent " + JSON.stringify(end));
   }
 
+  // ---- (Vestmark, 2026-11-26, the owner) a suggestion is typed in and left selected ("Suggested: I
+  // acknowledge. Press Enter to accept, or type your own"); Enter accepts it; typing replaces it. A
+  // background question gets no suggestion. The bar hears the same item the pointer is on.
+  {
+    const b = await chromium.launch();
+    const page = await b.newPage({ viewport: { width: 1000, height: 700 } });
+    const told = [];
+    page.on("console", (m) => { const t = m.text(); if (t.startsWith("__sj_needs__")) told.push(JSON.parse(t.slice(12))); });
+    await page.setContent(`<form id="f" onsubmit="window.__sent=(window.__sent||0)+1; return false">
+      <div><label for="k">California law requires that we provide you this notice about the collection and use of your personal information under the California Consumer Privacy Act (the CCPA). *</label><input id="k" type="text" required></div>
+      <div><label for="n">Nickname to print on your badge *</label><input id="n" type="text" required></div>
+      <div><label for="c">Have you ever been convicted of a felony? *</label><select id="c" required><option value="">Select...</option><option>Yes</option><option>No</option></select></div>
+      <div><button type="submit" id="sub">Submit application</button></div></form>`);
+    await page.evaluate(CORE); await page.evaluate(POINTER);
+    const js = (e) => page.evaluate(`(async () => (${e}))()`);
+    await js(`(() => { const T = window.TailorAutofill; T.armSubmitGuard(); const fs = T.extractForm({ onlyEmpty: true });
+      T.markNeeds(fs[0].ref, "I acknowledge"); T.markNeeds(fs[1].ref, "Pat"); T.markNeeds(fs[2].ref, ""); return true; })()`);
+    const end = await js("window.TailorAutofill.guideEnd()");
+    const lab = () => page.evaluate("window.TailorPointer.state() && window.TailorPointer.state().label");
+    const sel = () => page.evaluate("(() => { const e = document.activeElement; return [e.id, e.value, e.selectionStart, e.selectionEnd]; })()");
+    const a0 = [await lab(), await sel()];
+    await page.keyboard.press("Enter");                                   // accepts the suggestion
+    await page.waitForTimeout(900);
+    const a1 = [await lab(), await sel()];
+    await page.keyboard.type("Sam"); await page.keyboard.press("Enter");  // typing replaces it
+    await page.waitForTimeout(500);
+    const a2 = [await lab(), await page.evaluate("[document.getElementById('n').value, document.activeElement.id]")];
+    const sent = await page.evaluate("window.__sent || 0");
+    await b.close();
+    assert(end.label === "the privacy notice", "the item's plain name " + JSON.stringify(end));
+    assert(a0[0] === "Suggested: I acknowledge. Press Enter to accept, or type your own" && a0[1][0] === "k" && a0[1][1] === "I acknowledge"
+           && a0[1][2] === 0 && a0[1][3] === "I acknowledge".length, "typed in and selected " + JSON.stringify(a0));
+    assert(a1[1][0] === "n" && a1[1][1] === "Pat" && /^Suggested: Pat\./.test(a1[0]), "Enter accepted it, on to the next " + JSON.stringify(a1));
+    assert(a2[1][0] === "Sam" && a2[1][1] === "c" && a2[0] === "Choose an answer", "typing replaced it; the felony question has no suggestion " + JSON.stringify(a2));
+    assert(sent === 0, "the form was never sent");
+    const names = told.filter((d) => d.n).map((d) => d.label);
+    assert(JSON.stringify(names) === JSON.stringify(["the privacy notice", "Nickname to print on your badge", "Have you ever been convicted of a felony?"]),
+           "the bar hears each item the pointer is on " + JSON.stringify(told));
+  }
+
+  // ---- (Vestmark, 2026-11-26) a box left for the person is not walked again on the same page,
+  // unless the caller asks for those boxes again (a rule may answer one now)
+  {
+    const b = await chromium.launch();
+    const page = await b.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.goto(FIX);
+    await page.evaluate(CORE); await page.evaluate(POINTER);
+    const js = (e) => page.evaluate(`(async () => (${e}))()`);
+    const done = new Set(), asked = new Set();
+    const quick = () => new Promise((res) => setTimeout(res, 5));
+    const first = await guided.walk({ js, done, asked, plan: async (f) => planFor(f, {}), upload: async () => ({ n: 0, seen: [] }), wait: quick });
+    const again = await guided.walk({ js, done, asked, plan: async (f) => planFor(f, {}), upload: async () => ({ n: 0, seen: [] }), wait: quick });
+    // a rule now answers the fugitive question (here: the plan knows it), and the caller asks again
+    const answer = async (f) => { const p = planFor(f, {}); for (const x of f) if (/fugitive/i.test(x.label)) p.ops.push({ ref: x.ref, op: "select", text: "No" }); p.left = []; return p; };
+    const retry = await guided.walk({ js, done, asked: new Set(), plan: answer, upload: async () => ({ n: 0, seen: [] }), wait: quick });
+    const v = await page.evaluate("window.fxValues()");
+    await b.close();
+    assert(first.needs.length === 1 && again.needs.length === 0 && again.walked === 0, "not walked again " + JSON.stringify([first.needs, again]));
+    assert(retry.walked === 1 && v.fugitive === "No", "tried again when asked " + JSON.stringify([retry, v]));
+  }
+
   // ---- reduced motion: no glide, still in order ---------------------------------------------
   const rr = await run({ reduced: true });
   const fm = rr.moves.filter((m) => /^(Clicking|Needs you)/.test(m.label));

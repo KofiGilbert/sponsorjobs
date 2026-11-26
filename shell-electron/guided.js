@@ -25,7 +25,8 @@ const TIMING = {
 const q = (v) => JSON.stringify(v);
 
 // deps: { js(expr, ms), plan(fields) -> {ok, ops, left, cost}, upload(refs, pathOf) -> {n, seen},
-//         say?(info), alive?(), done?(Set of refs walked on this page), notePlanned?(fields),
+//         say?(info), alive?(), done?(Set of refs filled on this page), asked?(Set of refs left for
+//         the person), notePlanned?(fields),
 //         wait?(ms), timing? }
 //
 // (2026-11-26, the owner, after Lam) Nothing is ever filled out of sight:
@@ -43,6 +44,9 @@ async function walk(deps) {
   const wait = deps.wait || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const js = deps.js;
   const done = deps.done || new Set();
+  // the boxes left for the person: not walked again on this page, unless the caller asks for them
+  // again (a rule may answer one now: the agent, before it stops on a notice, 2026-11-26)
+  const asked = deps.asked || new Set();
   const out = { filled: 0, uploaded: 0, needs: [], cost: 0, files: [], walked: 0, order: [], modal: "" };
   const modalNow = async () => { const m = await js("window.TailorAutofill.siteModal()", 3000); return (m && m.title) || ""; };
   const stopFor = async (title) => { out.modal = title; return out; };
@@ -62,7 +66,7 @@ async function walk(deps) {
   for (let round = 0; round < 3; round++) {
     if (deps.alive && !deps.alive()) break;
     const got = await js(`window.TailorAutofill.extractFormAsync(${q({ onlyEmpty: round > 0, budgetMs: 15000 })})`, 20000);
-    const fields = (Array.isArray(got) ? got : []).filter((f) => f && f.ref && !done.has(f.ref));
+    const fields = (Array.isArray(got) ? got : []).filter((f) => f && f.ref && !done.has(f.ref) && !asked.has(f.ref));
     if (!fields.length) break;
     const plan = await deps.plan(fields);
     if (deps.notePlanned) deps.notePlanned(fields);
@@ -72,6 +76,7 @@ async function walk(deps) {
     // optional "Preferred First Name" was flagged "Needs you"); an optional one is left empty
     const required = new Set(fields.filter((f) => f.required).map((f) => f.ref));
     const left = ((plan && plan.left) || []).map((l) => l.ref).filter((r) => r && required.has(r));
+    const suggest = new Map(((plan && plan.left) || []).filter((l) => l && l.ref && l.suggest).map((l) => [l.ref, String(l.suggest)]));
     const uploadPath = new Map(ops.filter((o) => o.op === "upload" && o.path).map((o) => [o.ref, o.path]));
     const byRef = new Map();
     for (const o of ops) if (!byRef.has(o.ref) && !done.has(o.ref)) byRef.set(o.ref, o);
@@ -93,8 +98,8 @@ async function walk(deps) {
       const op = byRef.get(ref);
       if (!op) {
         // the person's: only when it is still empty (a box the site filled is left as it is)
-        done.add(ref);
-        if (!(await js(`window.TailorAutofill.markNeeds(${q(ref)})`, 3000))) continue;
+        asked.add(ref);
+        if (!(await js(`window.TailorAutofill.markNeeds(${q(ref)}, ${q(suggest.get(ref) || "")})`, 3000))) continue;
         if (w.scrolled) { await pt("Scrolling"); await wait(t.scroll); }
         await pt("Needs you: " + name);
         out.needs.push(name);

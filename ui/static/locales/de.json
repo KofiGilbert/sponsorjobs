@@ -2183,5 +2183,8 @@
   "fill.yourTurn": "Jetzt Sie: prüfen und absenden",
   "fill.readySend": "Bereit zum Senden. Prüfen, dann Senden drücken",
   "fill.submittedOnly": "Gesendet",
+  "fill.needsOne": "1 braucht Sie: {q}",
+  "fill.needsMany": "{n} brauchen Sie. Jetzt: {q}",
+  "fill.allDone": "Fertig. Drücken Sie Absenden, wenn alles passt",
   "fill.submitted": "Abgeschickt. Als beworben markiert"
 }

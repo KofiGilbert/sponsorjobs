@@ -162,3 +162,61 @@ def test_the_state_question_in_its_longer_wordings():
     assert contact_key("What state do you currently live in?") == "state"
     assert contact_key("State") == "state" and contact_key("State/Province") == "state"
     assert contact_key("State your reason for applying") == "" and contact_key("State why you want this role") == ""
+
+
+CCPA = ("California law requires that we provide you this notice about the collection and use of your "
+        "personal information. Our Privacy Policy describes the categories of personal information that "
+        "Example, Inc. collects about California residents who apply. For purposes of this notice, personal "
+        "information has the meaning given in the California Consumer Privacy Act of 2018 (the CCPA). This "
+        "notice does not create or form part of any contract for employment or otherwise.")
+
+
+def test_a_typed_acknowledgement_under_the_standing_consent():
+    """(Vestmark, 2026-11-26) A required box under a privacy notice that only acknowledges it: with
+    the person's standing "always accept" for required notices it is filled ("I acknowledge", or
+    the exact words the notice asks for); without it, it stays the person's. Never a signature,
+    initials or a name."""
+    from autoapply import consents as C
+    from autoapply.fields import FormField
+    from autoapply.planner import KnownContext, plan_known
+    assert C.standing_answer(CCPA, [], "text", True, accept_notices=True) == (C.PICK, "I acknowledge", "consent")
+    assert C.standing_answer(CCPA, [], "text", True, accept_notices=False) is None
+    assert C.standing_answer('I have read the Privacy Notice. Please type "I agree" to confirm.', [], "text", True,
+                             accept_notices=True)[1] == "I agree"
+    assert C.standing_answer("By typing your full name below you certify the information provided is true. Signature",
+                             [], "text", True, accept_notices=True) is None
+    box = FormField("k", CCPA, "text", required=True)
+    on = plan_known([box], KnownContext(accept_notices=True))
+    off = plan_known([box], KnownContext(accept_notices=False))
+    assert [(a.ref, a.value, a.origin) for a in on.actions] == [("k", "I acknowledge", "consent")]
+    assert not off.actions and [f.ref for f in off.left] == ["k"]
+
+
+def test_the_agent_tries_the_boxes_left_for_the_person_before_a_needs_consent_stop():
+    agent = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
+    i = agent.index('done.reason === "needs-consent"')
+    block = agent[i:i + 2600]
+    assert "retryAsked: true" in block and block.index("retryAsked: true") < block.index('stopped("needs-consent"')
+    walk = (ROOT / "shell-electron" / "guided.js").read_text(encoding="utf-8")
+    assert "asked.add(ref)" in walk and "!asked.has(f.ref)" in walk
+    main = (ROOT / "shell-electron" / "main.js").read_text(encoding="utf-8")
+    assert "!!opts.retryAsked" in main
+
+
+def test_suggestions_only_for_acknowledgements_and_the_bar_names_the_same_item():
+    """(Vestmark, 2026-11-26, the owner) A box left for the person gets a suggestion when it only
+    acknowledges a notice ("I acknowledge", typed in and selected on the page, never committed);
+    a background or legal question never gets one. The bar says "1 needs you: <the item>", the
+    same item the pointer is on (the page tells the shell, __sj_needs__)."""
+    from autoapply.fields import FormField
+    from autoapply.planner import KnownContext, plan_known
+    res = plan_known([FormField("k", CCPA, "text", required=True),
+                      FormField("b", "Have you ever been convicted of a felony?", "select", options=["Yes", "No"], required=True),
+                      FormField("o", "Are you subject to any court order?", "text", required=True)], KnownContext())
+    assert res.suggest == {"k": "I acknowledge"}
+    app = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "if (needs && g && g.label) return needsLine(needs, g.label);" in app and "onNeeds((d)" in app
+    main = (ROOT / "shell-electron" / "main.js").read_text(encoding="utf-8")
+    assert '"__sj_needs__"' in main and '"assist:needs"' in main
+    agent = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
+    assert "marked ? NOTICE_IN_BOX : blockedMessage(\"needs-consent\")" in agent

@@ -1081,12 +1081,14 @@ function fillPhase() { return _fillPhase; }
 // same page (after the site's window was acknowledged, or the agent's next step) carries on where
 // the first stopped and never fills a box twice.
 const _walkDone = new Map();
-async function guidedWalk(wc, recordId, url, page, say) {
+const _walkAsked = new Map();          // the boxes the walk left for the person, per page
+async function guidedWalk(wc, recordId, url, page, say, retryAsked) {
   const pkey = finishRules.planKey(recordId, url);
   return guided.walk({
     js: (e, ms) => fillKeys.capped(wc.executeJavaScript(e, true), ms || 15000),
     alive: () => !wc.isDestroyed(),
     done: (() => { let d = _walkDone.get(pkey); if (!d) { d = new Set(); _walkDone.set(pkey, d); while (_walkDone.size > 40) _walkDone.delete(_walkDone.keys().next().value); } return d; })(),
+    asked: (() => { let d = _walkAsked.get(pkey); if (!d || retryAsked) { d = new Set(); _walkAsked.set(pkey, d); while (_walkAsked.size > 40) _walkAsked.delete(_walkAsked.keys().next().value); } return d; })(),
     notePlanned: (fields) => { _planned.set(pkey, finishRules.notePlanned(_planned.get(pkey), fields)); },
     plan: async (fields) => {
       try {
@@ -1114,6 +1116,11 @@ function watchSnapshots(wc) {
   wc.__sjSnapWatch = true;
   wc.on("console-message", (...args) => {
     const msg = typeof args[0] === "object" && args[0] && "message" in args[0] ? args[0].message : args[2];
+    if (typeof msg === "string" && msg.startsWith("__sj_needs__")) {
+      // the item that needs the person now (autofill_core tellNeeds): the bar names the same one
+      try { const d = JSON.parse(msg.slice("__sj_needs__".length)); if (win && !win.isDestroyed()) win.webContents.send("assist:needs", d); } catch (e) { /* not ours */ }
+      return;
+    }
     if (typeof msg !== "string" || !msg.startsWith("__sj_snapshot__")) return;
     try { const d = JSON.parse(msg.slice("__sj_snapshot__".length)); _snapshots.set(wc.id, Object.assign({ at: Date.now() }, d)); } catch (e) { /* not ours */ }
   });
@@ -1210,9 +1217,10 @@ async function runAutoApplyOnPane(recordId, opts) {
     // after Lam): when the walk ran, the engine's own fast pass and the second plan do not touch
     // the page; a site window over the form stops the walk and is handed back (``modal``).
     let walked = null;
+    watchSnapshots(wc);
     if (opts.guided && pointer && havePayload) {
       _fillPhase = "walking the form";
-      walked = await guidedWalk(wc, recordId, url, page, (t) => sendProgress(Object.assign({ record_id: recordId || null, page }, t)));
+      walked = await guidedWalk(wc, recordId, url, page, (t) => sendProgress(Object.assign({ record_id: recordId || null, page }, t)), !!opts.retryAsked);
       lap("walk", "filling the page");
     }
     const fillExpr = (budgetMs) => (havePayload

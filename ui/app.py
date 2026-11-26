@@ -15869,7 +15869,7 @@ def autoapply_plan():
     if not plan:
         return jsonify({"ok": False, "needs_assist": True, "wants_letter": wants_letter, "cost": plan_cost,
                         "reason": "Could not plan this form confidently. Fill it in and I'll help.",
-                        "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
+                        "left": [{"ref": f.ref, "label": f.label, **({"suggest": res.suggest[f.ref]} if f.ref in res.suggest else {})} for f in res.left]})
     ops = resolve_plan(plan, applicant, resume_path=resume, letter_path=letter)
     if rec:                                 # (Phase 6) the memory page's history: filled from memory
         from applicant import page as _Pg
@@ -15880,7 +15880,7 @@ def autoapply_plan():
     return jsonify({"ok": True, "filled": len(ops), "wants_letter": wants_letter, "cost": plan_cost,
                     "ops": [{"ref": o.ref, "op": o.op, "text": o.text, "path": o.path,
                              "sensitive": o.is_sensitive, "from": o.origin} for o in ops],
-                    "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
+                    "left": [{"ref": f.ref, "label": f.label, **({"suggest": res.suggest[f.ref]} if f.ref in res.suggest else {})} for f in res.left]})
 
 
 def _job_country(data: dict) -> str:

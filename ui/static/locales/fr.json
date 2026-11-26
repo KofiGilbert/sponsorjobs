@@ -2183,5 +2183,8 @@
   "fill.yourTurn": "À vous : vérifiez et envoyez",
   "fill.readySend": "Prêt à envoyer. Vérifiez, puis appuyez sur Envoyer",
   "fill.submittedOnly": "Envoyée",
+  "fill.needsOne": "1 vous attend : {q}",
+  "fill.needsMany": "{n} vous attendent. Maintenant : {q}",
+  "fill.allDone": "Terminé. Appuyez sur Envoyer quand tout vous convient",
   "fill.submitted": "Envoyée. Marquée comme postulée"
 }

@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // The fill engine saw the site's "application received" page after the person submitted;
   // the shell already told the app to mark the job applied, this is the UI's cue.
   onApplied: (cb) => ipcRenderer.on("assist:applied", (_e, info) => cb(info)),
+  onNeeds: (cb) => ipcRenderer.on("assist:needs", (_e, info) => cb(info)),
   // The ONE apply path (Fill application, Review "Apply", Auto-apply "Open application"): open
   // the application in the pane and run the best fill (recipe, AI plan, resume upload).
   // opts = { url, recordId, resumePath, submit, here }. The site's submit is clicked ONLY when

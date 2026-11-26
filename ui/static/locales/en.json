@@ -2183,5 +2183,8 @@
   "fill.yourTurn": "Your turn: check and submit",
   "fill.readySend": "Ready to send. Check it, then press Send",
   "fill.submittedOnly": "Submitted",
+  "fill.needsOne": "1 needs you: {q}",
+  "fill.needsMany": "{n} need you. Now: {q}",
+  "fill.allDone": "All done. Press Submit when you're happy",
   "fill.submitted": "Submitted. Marked as applied"
 }
