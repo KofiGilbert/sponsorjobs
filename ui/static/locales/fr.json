@@ -328,6 +328,7 @@
   "signin.keepPass": "Cet appareil a une formule qui n'est pas encore liée à un e-mail. Connecte-toi avec ton e-mail pour la garder.",
   "acct.planUntil": "{plan} jusqu'au {date}",
   "acct.planLeft": "Il te reste {i} entretiens en direct et {p} dossiers personnalisés",
+  "acct.finishLeft": "Il te reste {f} formulaires sur {m} que l'agent termine",
   "acct.freeLeft": "Il te reste {p} dossiers personnalisés ce mois-ci",
   "acct.yourPass": "Ta formule",
   "upg.freePlan": "Offre gratuite",
