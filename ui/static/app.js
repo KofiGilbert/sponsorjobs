@@ -3046,7 +3046,13 @@
     if (r.note) showBoardNotice(r.note, false);
   }
 
+  // (2026-11-26) Each start of a resume chat (a job's Tailor, a pasted description) takes a number;
+  // an answer that comes back after a newer start began is dropped. Two starts close together (a
+  // job's Tailor and a pasted link, a second of each other) showed two openings in one chat, the
+  // first job's header over the second's, and the first's "build it for me" built the other.
+  let START_GEN = 0;
   async function tailorJob(sid) {
+    const gen = ++START_GEN;
     resetBuilder();
     showView("builder");
     $("#jdGate").hidden = true;
@@ -3054,6 +3060,7 @@
     try {
       const st = await api("/api/session/start_job", { source_id: sid });
       wk.remove();
+      if (gen !== START_GEN) return;          // a newer start took the builder: never two openings in one chat
       applyState(st);
       $("#composerInput").focus();
     } catch (e) {
@@ -4440,9 +4447,12 @@
   $("#jdStart").addEventListener("click", async () => {
     const jd = $("#jdInput").value.trim();
     if (!jd) { $("#jdInput").focus(); return; }
+    const gen = ++START_GEN;
     $("#jdGate").hidden = true;
     await withWorking(async () => {
-      applyState(await api("/api/session/start", { jd, template: SELECTED_TEMPLATE }));
+      const st = await api("/api/session/start", { jd, template: SELECTED_TEMPLATE });
+      if (gen !== START_GEN) return;          // a newer start took the builder
+      applyState(st);
       $("#composerInput").focus();
     }, "Reading the job description…");
   });

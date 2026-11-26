@@ -4663,6 +4663,10 @@ class WebIntake:
 
     @_one_voice
     def start(self):
+        # (2026-11-26) Once per session: a second start (a repeated request, a double click) never
+        # adds or narrates another opening; it answers with the chat as it stands.
+        if any(t.get("role") == "agent" for t in (self.history or [])):
+            return self._state()
         # Recall the most relevant prior statements for THIS job from the diary (keyword
         # overlap), on every entry point (New CV and Tailor-from-job both land here).
         self.recalled = self.palace.recall(f"{self.role} {self.company} {self.jd[:200]}")
