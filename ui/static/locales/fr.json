@@ -2187,5 +2187,15 @@
   "fill.needsMany": "{n} vous attendent. Maintenant : {q}",
   "fill.allDone": "Terminé. Appuyez sur Envoyer quand tout vous convient",
   "fill.submitted": "Envoyée. Marquée comme postulée",
-  "jd.readingLink": "Lecture de l'offre…"
+  "jd.readingLink": "Lecture de l'offre…",
+  "bb.cantRead": "Je n'ai pas pu lire cette offre. Collez sa description et j'adapterai un CV à partir de celle-ci.",
+  "bb.filling": "Enregistré. Je remplis la candidature ouverte dans l'onglet Navigateur avec ce CV.",
+  "bb.latestFail": "Impossible d'utiliser le dernier CV. Adaptez-en un.",
+  "bb.pasteJd": "Coller la description",
+  "bb.profileOnly": "Remplir sans CV",
+  "bb.reading": "Lecture de l'offre…",
+  "bb.tailorJob": "Adapter un CV pour cette offre (environ 1 min)",
+  "bb.tailoring": "J'adapte un CV pour cette offre. Le remplissage démarre ensuite",
+  "bb.useLatest": "Utiliser mon dernier CV",
+  "fill.noPage": "Rien n'est encore ouvert dans l'onglet Navigateur."
 }

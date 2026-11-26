@@ -2187,5 +2187,15 @@
   "fill.needsMany": "{n} need you. Now: {q}",
   "fill.allDone": "All done. Press Submit when you're happy",
   "fill.submitted": "Submitted. Marked as applied",
-  "jd.readingLink": "Reading the posting…"
+  "jd.readingLink": "Reading the posting…",
+  "bb.cantRead": "I could not read this job. Paste its description and I will tailor a resume from it.",
+  "bb.filling": "Saved. Filling the application open in the Browser tab with this resume.",
+  "bb.latestFail": "Could not use the latest resume. Try tailoring one.",
+  "bb.pasteJd": "Paste the description",
+  "bb.profileOnly": "Fill without a resume",
+  "bb.reading": "Reading the job…",
+  "bb.tailorJob": "Tailor a resume for this job (about 1 min)",
+  "bb.tailoring": "Tailoring a resume for this job. Autofill runs when it is ready",
+  "bb.useLatest": "Use my latest resume",
+  "fill.noPage": "Nothing is open in the Browser tab yet."
 }

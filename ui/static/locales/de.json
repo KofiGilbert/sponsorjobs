@@ -2187,5 +2187,15 @@
   "fill.needsMany": "{n} brauchen Sie. Jetzt: {q}",
   "fill.allDone": "Fertig. Drücken Sie Absenden, wenn alles passt",
   "fill.submitted": "Abgeschickt. Als beworben markiert",
-  "jd.readingLink": "Ich lese die Stellenanzeige…"
+  "jd.readingLink": "Ich lese die Stellenanzeige…",
+  "bb.cantRead": "Ich konnte diese Stelle nicht lesen. Füge die Beschreibung ein, dann passe ich einen Lebenslauf daran an.",
+  "bb.filling": "Gespeichert. Ich fülle die Bewerbung im Browser-Tab mit diesem Lebenslauf aus.",
+  "bb.latestFail": "Der letzte Lebenslauf ließ sich nicht verwenden. Passe einen neuen an.",
+  "bb.pasteJd": "Beschreibung einfügen",
+  "bb.profileOnly": "Ohne Lebenslauf ausfüllen",
+  "bb.reading": "Ich lese die Stelle…",
+  "bb.tailorJob": "Lebenslauf für diese Stelle anpassen (etwa 1 Min.)",
+  "bb.tailoring": "Ich passe einen Lebenslauf für diese Stelle an. Danach startet das Ausfüllen",
+  "bb.useLatest": "Meinen letzten Lebenslauf verwenden",
+  "fill.noPage": "Im Browser-Tab ist noch nichts geöffnet."
 }

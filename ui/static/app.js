@@ -1410,12 +1410,13 @@
     const b = $("#bbFillHere");
     if (b && !APPLY_AGENT && window.tailorShell && window.tailorShell.assistApply) b.hidden = false;
   }
-  async function bbFillHere() {
+  async function bbFillHere(o) {
     const b = $("#bbFillHere");
     if (!b || b.disabled) return;
     // (2026-11-26) No application behind this page (a job opened from the address bar or a link):
-    // read the job from the page first and offer a resume for it.
-    if (FILL_CTX.id == null && window.tailorShell.readPage) { await bbFillUnknown(b); return; }
+    // read the job from the page first and offer a resume for it. ``profileOnly``: the person
+    // chose to fill it from the saved profile without a resume.
+    if (FILL_CTX.id == null && !(o && o.profileOnly) && window.tailorShell.readPage) { await bbFillUnknown(b); return; }
     const label = b.textContent;
     b.disabled = true; b.textContent = T("aa.filling", "Filling\u2026");
     const r = await applyInPane({ url: "", recordId: FILL_CTX.id, resumePath: FILL_CTX.cv, submit: false, here: true, finish: true });
@@ -1500,10 +1501,7 @@
     bubble("agent", esc(T("bb.filling", "Saved. Filling the application open in the Browser tab with this resume.")));
     await bbFillHere();
   }
-  async function bbFillProfileOnly() {
-    const r = await applyInPane({ url: "", recordId: null, resumePath: "", submit: false, here: true, finish: true });
-    guideSay(r);
-  }
+  async function bbFillProfileOnly() { await bbFillHere({ profileOnly: true }); }
   async function bbUseLatest(sid) {
     let r = null;
     try { r = await api("/api/browser/job/latest", { source_id: sid }); } catch (e) { r = (e && e.data) || { error: e && e.message }; }

@@ -2187,5 +2187,15 @@
   "fill.needsMany": "{n} precisam de você. Agora: {q}",
   "fill.allDone": "Pronto. Toque em Enviar quando estiver tudo certo",
   "fill.submitted": "Enviada. Marcada como candidatada",
-  "jd.readingLink": "Lendo a vaga…"
+  "jd.readingLink": "Lendo a vaga…",
+  "bb.cantRead": "Não consegui ler esta vaga. Cole a descrição e eu adapto um currículo a ela.",
+  "bb.filling": "Salvo. Preenchendo a candidatura aberta na aba Navegador com este currículo.",
+  "bb.latestFail": "Não foi possível usar o último currículo. Tente adaptar um.",
+  "bb.pasteJd": "Colar a descrição",
+  "bb.profileOnly": "Preencher sem currículo",
+  "bb.reading": "Lendo a vaga…",
+  "bb.tailorJob": "Adaptar um currículo para esta vaga (cerca de 1 min)",
+  "bb.tailoring": "Adaptando um currículo para esta vaga. O preenchimento começa quando estiver pronto",
+  "bb.useLatest": "Usar meu último currículo",
+  "fill.noPage": "Ainda não há nada aberto na aba Navegador."
 }

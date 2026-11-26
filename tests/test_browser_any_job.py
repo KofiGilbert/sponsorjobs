@@ -199,8 +199,8 @@ def test_tailor_for_a_browser_job_starts_from_its_real_description(client):
 
 def test_the_button_reads_the_job_when_no_application_is_behind_the_page():
     src = APP_JS.read_text(encoding="utf-8")
-    fill = src.split("async function bbFillHere()", 1)[1].split("\n  }\n", 1)[0]
-    assert "FILL_CTX.id == null && window.tailorShell.readPage" in fill and "bbFillUnknown(b)" in fill
+    fill = src.split("async function bbFillHere(o)", 1)[1].split("\n  }\n", 1)[0]
+    assert "FILL_CTX.id == null && !(o && o.profileOnly) && window.tailorShell.readPage" in fill and "bbFillUnknown(b)" in fill
     unknown = src.split("async function bbFillUnknown(b)", 1)[1].split("\n  }\n", 1)[0]
     assert '"/api/browser/job"' in unknown
     assert '"Tailor a resume for this job (about 1 min)"' in unknown and '"Use my latest resume"' in unknown
