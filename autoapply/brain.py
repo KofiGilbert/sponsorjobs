@@ -40,7 +40,7 @@ SYSTEM_PROMPT = """You drive a web browser to apply for a job on behalf of a per
 
 Rules:
 1. Popups and cookie banners first, before anything else: close the popup; on a cookie banner choose Reject all, Decline, Necessary only or Close (never Accept all, never opt in to marketing). If the only way past a banner is Accept, close it if it has a close button; otherwise leave it and continue.
-2. On a job page click Apply. Prefer "Apply manually", "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box (a placeholder, or your own answer under rule 6) and send it, one at a time; a question nothing answers is needs-answers.
+2. On a job page click Apply. Prefer "Apply manually" (on Workday always "Apply Manually" over "Autofill with Resume": the site's resume parse puts wrong jobs and dates in the form), "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box (a placeholder, or your own answer under rule 6) and send it, one at a time; a question nothing answers is needs-answers.
 3. Comboboxes and typeaheads (School, Location, a react-select): type the value on the combobox line itself. The tool opens the list, filters it, picks the best match and says what it picked ("picked ..."), or says nothing matched and lists the options: then select one of those, or the list's "Other". list_options opens a closed list for you. A plain typeahead that only shows suggestions (new lines marked * in the next view): click the * suggestion that matches. Never press Enter.
 4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link; back, reload, reopen_job) LAST in the list. Anything after it would run on a page you have not seen.
 5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit. The one exception: on a sign-in or create-account form (a password box and no application fields) a button named Submit, Continue or Next is that form's own button, so click it after typing the account; never report ready_to_submit on a page with a password box.
@@ -627,6 +627,33 @@ def clean_summary(summary: str, actions: list, lines: dict, done: dict | None = 
 
 
 # --------------------------------------------------------------------------- resolution
+# (2026-11-26, Uline on Workday) A box's own kind decides the form of a contact value typed into
+# it: a phone box takes the phone as plain digits (a saved answer "+1 (630) ..." next to the
+# page's own country code control was "Enter a valid format" six steps in a row), and an email
+# box takes the application email, whatever placeholder the model typed there (a saved answer
+# holding the resume's email). Someone else's email (a referrer's, a reference's) is left as is.
+_PHONE_BOX = re.compile(r"\b(phone|mobile|telephone|cell)\b(?!.*\b(ext|extension|type|device|code)\b)", re.I)
+_EMAIL_BOX = re.compile(r"\be-?mail\b", re.I)
+_EMAIL_OTHER = re.compile(r"referr|reference|recruiter|manager|supervisor|friend|emergency|employer|hiring|alternate|"
+                          r"alternative|secondary|backup|colleague|contact person|parent|guardian|spouse|partner", re.I)
+_CONTACT_KEYS_KEEP = {"portal_email", "portal_password", "email_code"}
+
+
+def contact_form(key: str, value: str, label: str, applicant: dict) -> str:
+    """The value as the box it goes into takes it (see above). ``key``: the placeholder."""
+    label = str(label or "")
+    if key in _CONTACT_KEYS_KEEP or not label:
+        return value
+    if _PHONE_BOX.search(label) and not _EMAIL_BOX.search(label):
+        from autoapply.fields import phone_digits
+        digits = phone_digits(value)
+        return digits if len(digits) >= 7 else value
+    if _EMAIL_BOX.search(label) and not _EMAIL_OTHER.search(label) and "@" in value:
+        own = str((applicant or {}).get("email") or "").strip()
+        return own or value
+    return value
+
+
 def resolve_actions(actions: list, applicant: dict, portal: dict | None = None, labels: dict | None = None,
                     notes: list | None = None) -> list:
     """Join the model's actions to the person's real values, locally. A ``type`` (or a ``select``)
@@ -656,6 +683,8 @@ def resolve_actions(actions: list, applicant: dict, portal: dict | None = None, 
                 if notes is not None:
                     notes.append(f"no value for {{{{{key}}}}}; left the field alone")
                 continue
+            if op == "type":
+                val = contact_form(key, val, (labels or {}).get(a.get("index")) or "", values)
             item = {**a, field: val, "sensitive": True, "placeholder": key}
             if op == "select":
                 item["answer"] = True                # the saved answer's own strict pick (agent_view.js)

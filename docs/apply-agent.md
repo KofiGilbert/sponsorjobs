@@ -1951,3 +1951,35 @@ Auto. That would have misstated the person's legal status to an employer.
   stays: a best guess flagged "your work authorization is saved but this form words it differently".
 - The engine attaches the saved work authorization to the material (`Material.work_auth`).
 - Tests: tests/test_work_auth_never_guessed.py.
+
+## 34. What the site fills, checked against the profile (2026-11-26, Ashby, Workday, Lam)
+
+A site's own resume parse (Workday's "Autofill with Resume", Ashby's parse after the upload, Lam's
+portal) or a saved draft fills the form before or after the engine. On the real runs that put the
+email printed on the resume in place of the application email, the parse's job list (a project as
+a job, a wrong title and dates) and the street in County, and none of it was corrected.
+
+- **The contact boxes** (`enforceContact`, autofill_core.js): after every fill, every email box
+  holds the application email (`_application_email`: the alias with the agent on, else the
+  profile's own) and is read back; a referrer's, reference's or manager's email box is never
+  touched. A phone box holds the profile's digits, without the country code when the page has its
+  own Country Phone Code control. An address box holding another part of the address (County with
+  the street) gets its own part, or is emptied. After a resume upload `guardContact` keeps these
+  right in the page for 15 s, since the site's parse lands seconds later.
+- **The work history** (`checkHistory`): each "Work Experience N" whose company is none of the
+  profile's employers is removed with its own Delete; a profile job with the wrong title or From /
+  To month gets the profile's; an "Education N" school the profile does not have is removed. Never
+  with an empty profile.
+- **Workday's two ways in**: with "Apply Manually" next to "Autofill with Resume" the shell clicks
+  Apply Manually itself, once per run, with no model call (`manualOverParse`). The brain's rule 2
+  says the same.
+- **The phone loop**: a phone the brain types takes plain digits (`brain.contact_form`; a saved
+  answer "+1 (...)" was refused six steps in a row), an email box the application email. When the
+  page still names the phone in an error, the shell empties the box and types the digits with real
+  keys, once per page (`fixPhone`, `phoneRetype`), and tells the brain not to type it again.
+- **The final check** before Ready to send (`checkPrefill`, `prefillIssues`): puts right what it
+  can on the page; what is still wrong (in words, never a value: "Work Experience 2 is not a job in
+  your profile", "The page shows an email that is not your application email") goes back to the
+  brain once, then is named at Ready to send under "Check noted".
+- Tests: tests/test_autofill_site_fills.py (fixture tests/fixtures/forms/workday_prefilled.html),
+  tests/js/test_agent_site_fills.js.

@@ -7070,6 +7070,10 @@ def profile_autofill():
     from autoapply.history import form_history, form_languages, language_default
     hist = {"history": [], "education": [], "skills": []}
     langs, lang_default = [], None
+    # (2026-11-26) The person's OTHER addresses: the one printed on the resume and the profile's
+    # own when forms get another (the alias). The final check before Ready to send flags a page
+    # that shows one of them where the application email belongs; never filled anywhere.
+    others = {str(ident.get("email") or "").strip().lower()}
     try:
         prof = {}
         rid = request.args.get("record_id")
@@ -7078,6 +7082,7 @@ def profile_autofill():
             if rec:
                 d = _record_data(rec)
                 prof = d.get("render_profile") or d.get("profile") or {}
+                others.add(str(((prof.get("identity") or {}).get("email")) or "").strip().lower())
         full = _saved_full_profile() or {}
         if not prof.get("experience"):
             prof = dict(prof, experience=full.get("experience") or [])
@@ -7096,6 +7101,7 @@ def profile_autofill():
         "ok": True,
         "loaded": bool(name or fields["email"]),
         "fields": {k: v for k, v in fields.items() if v},
+        "other_emails": sorted(e for e in others if e and "@" in e and e != str(fields["email"] or "").lower()),
         "history": hist["history"],
         "education": hist["education"],
         "skills": hist["skills"],

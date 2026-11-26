@@ -2132,6 +2132,8 @@ function createAgent(deps) {
     const runUrls = new Set();           // every page this application has been on (back never leaves it)
     const stepSeen = new Map();          // page + actions -> times: the same step again is no progress
     let formReached = !!(S && S.formReached); // a page with fields of its own was seen: a closed-job check is moot
+    let manualTaken = false;             // Workday's Apply Manually was taken by the shell (once per run)
+    const phoneFixed = new Set();        // pages whose phone the shell retyped
     const ladderSay = (what, detail) => {
       feed.push("another", "Trying another way", what, { state: "retry", detail: detail || "" });
       progress(recordId, "running", lastMsg.get(fkey) || "Trying another way", { step: feed.step });
@@ -2732,6 +2734,26 @@ function createAgent(deps) {
           }
         }
 
+        // (2026-11-26) Workday offers "Autofill with Resume" next to "Apply Manually": the
+        // manual path, by the shell, no model call. The site's resume parse put a project in as a
+        // job, with a wrong title and dates, and the email printed on the resume (Uline).
+        if (!forced && !manualTaken) {
+          const m = manualOverParse(v.text);
+          if (m) { manualTaken = true; forced = { actions: [{ op: "click", index: m }], why: "Apply Manually, not the site's own resume parse" }; }
+        }
+        // (2026-11-26) The page still rejects the phone's format after the fill: the shell empties
+        // the box and types the digits with real keys, once per page (the six-step retype loop).
+        if (!forced && deps.fixPhone && phoneError(v.text) && !phoneFixed.has(page)) {
+          phoneFixed.add(page);
+          const r = await guard(deps.fixPhone(wc, recordId), 20000, "phone").catch((e) => { if (e && e.stopped) throw e; return null; });
+          dlog("step " + step + " phone retyped:", r);
+          if (r && r.typed) {
+            history.push({ step, evaluation: "", memory: "", actions: ["(shell) retyped the phone number as digits"], results: ["typed"] });
+            pendingNudges.push("The shell retyped the phone number as plain digits with real keys. Do not type the phone again; if the page still shows the error, read_errors, then carry on.");
+            v = await view(wc, fr);
+            curV = v;
+          }
+        }
         // 3. the brain
         const nudges = pendingNudges.splice(0);
         const last = hashes.slice(-LOOP_WINDOW);
@@ -2928,6 +2950,37 @@ function createAgent(deps) {
             dlog("review page differs", JSON.stringify({ why: why || "(the same answers: sending)", diff: opts.expectLines ? reviewDiff(opts.expectLines, reviewLines(v.text)) : "(no earlier lines kept)" }));
             if (why) return park("person", "The review page is not the same as when I filled it (" + why + "). Check it on the page, then press Continue.", { url });
           }
+          // (2026-11-26) The check against the person's profile: what the SITE filled (its resume
+          // parse, a saved draft) that is not theirs: an email that is not the application email,
+          // a job or school the profile does not have, a wrong title or dates, the street in
+          // County. Put right on this page where it can be; what is still wrong goes back to the
+          // brain once (it is on an earlier page), then is named at Ready to send.
+          if (deps.checkPrefill && !checkedPages.has("prefill|" + reviewSig(v.text))) {
+            checkedPages.add("prefill|" + reviewSig(v.text));
+            const pc = await guard(deps.checkPrefill(wc, recordId), 30000, "profile check").catch((e) => { if (e && e.stopped) throw e; return null; });
+            dlog("step " + step + " profile check:", pc && { fixed: pc.fixed, issues: (pc.issues || []).length });
+            const fixedN = pc && pc.ok ? (pc.fixed.contact || 0) + (pc.fixed.history || 0) : 0;
+            if (fixedN) {
+              feed.push("check", "Corrected", fixedN === 1 ? "1 box the site filled" : fixedN + " boxes the site filled",
+                        { state: "done", detail: "to match your profile" + ((pc.fixed.labels || []).length ? ": " + pc.fixed.labels.slice(0, 4).join(", ") : "") });
+              history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(profile check)"], results: [fixedN + " corrected to match the profile"] });
+              continue;
+            }
+            const pis = (pc && pc.ok ? pc.issues : []).map((x) => String(x).slice(0, 160)).filter(Boolean);
+            if (pis.length) {
+              terms.prefillIssues = pis;
+              if (!checkedPages.has("prefill-issues|" + recordId)) {
+                checkedPages.add("prefill-issues|" + recordId);
+                feed.push("check", "Checking", "what the site filled against your profile", { state: "retry", detail: pis[0] });
+                pendingNudges.push("Before I hand over, the check against the person's profile found: " + pis.join("; ")
+                  + ". The site's own resume parse or a saved draft put it there. Go back to the page that holds it (the site's own Back or its step list, never the browser's), and save it again so the engine puts it right; never Submit. Then report ready_to_submit again.");
+                history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(profile check)"], results: pis.slice(0, 3) });
+                continue;
+              }
+            } else terms.prefillIssues = [];
+          }
+          // what the check could not put right is named at Ready to send (once each)
+          for (const x of terms.prefillIssues || []) if (!(terms.criticIssues || []).includes(x)) terms.criticIssues = (terms.criticIssues || []).concat(x);
           // Then the critic (one cheap call): anything blank or suspicious gets the brain one
           // more round; after that the hand-over goes ahead and names what was noted.
           // One round only: after the critic's issues went back to the brain once, the hand-over
@@ -3770,6 +3823,21 @@ function createAgent(deps) {
   return { run, batch, send, sendAll, stop, guideNext, isReady, readyList, busy, pollParked, continueParked, startPolling, sentSeen, MAX_STEPS,
            quiet: () => !!(batchOn && batchOn.quiet),
            _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard, readyWatch: () => readyWatch, handleTerms } };
+}
+
+// ---- (2026-11-26) Workday's two ways in, and a phone the page will not take ------------------
+// The index of "Apply Manually" when the page also offers "Autofill with Resume" (0 otherwise).
+const MANUAL_RE = /^apply manually$/i;
+const PARSE_RE = /^autofill with (resume|cv)$|^use my last application$/i;
+function manualOverParse(viewText) {
+  const manual = buttonIndex(viewText, MANUAL_RE);
+  return manual && buttonIndex(viewText, PARSE_RE) ? manual : 0;
+}
+// The page's own error names the phone number ("Error-Phone Number", "Enter a valid format for
+// Phone Number", "Please enter a valid phone number").
+function phoneError(viewText) {
+  return String(viewText || "").split("\n").some((ln) => (/^Error: /.test(ln) || /<button>Error-/.test(ln) || /\b(valid|invalid)\b/i.test(ln))
+    && /\bphone\b/i.test(ln) && !/\b(type|device|extension)\b/i.test(ln));
 }
 
 // ---- the sign-in wall, read deterministically (section 13, the e2e of 2026-11-02) ---------
@@ -4681,4 +4749,4 @@ module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMess
                    closedJob, alreadyApplied, socialRefused, wroteLines,
                    createAnswers, addAnswer, addFile, fileRecord, brainAnswer, noteOrigins, noteRejected, rejectNudge, agentAnswers, engineAnswers, emptySelfId, criticInputs, readyAnswers, answersTelegram, readyNotice,
                    isSigninView, isCreateView, authForm, pageErrors, createFailure, resetAllowed, createBlockedReason, insideView,
-                   DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF };
+                   DEFER_LINE, isFiller, askItem, deferNudge, errorNames, optionalEmpty, pageValue, HL_ON, HL_OFF, manualOverParse, phoneError };
