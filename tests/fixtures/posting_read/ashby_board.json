@@ -1,0 +1,17 @@
+{
+ "apiVersion": "1",
+ "jobs": [
+  {
+   "id": "other-id",
+   "title": "Recruiter",
+   "descriptionPlain": "x"
+  },
+  {
+   "id": "5f6e7d8c-aaaa-bbbb-cccc-ddddeeeeffff",
+   "title": "Product Analyst",
+   "location": "New York, NY",
+   "jobUrl": "https://jobs.ashbyhq.com/examplelabs/5f6e7d8c-aaaa-bbbb-cccc-ddddeeeeffff",
+   "descriptionPlain": "About the role: you will own product analytics for our growth team. Requirements: SQL, experimentation, Amplitude or Mixpanel, and clear writing for stakeholders across the company. What you will do: build the metrics layer, design A/B tests with product managers, and present findings to leadership every month."
+  }
+ ]
+}

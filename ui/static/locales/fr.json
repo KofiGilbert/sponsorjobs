@@ -2186,5 +2186,6 @@
   "fill.needsOne": "1 vous attend : {q}",
   "fill.needsMany": "{n} vous attendent. Maintenant : {q}",
   "fill.allDone": "Terminé. Appuyez sur Envoyer quand tout vous convient",
-  "fill.submitted": "Envoyée. Marquée comme postulée"
+  "fill.submitted": "Envoyée. Marquée comme postulée",
+  "jd.readingLink": "Lecture de l'offre…"
 }

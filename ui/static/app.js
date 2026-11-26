@@ -652,12 +652,25 @@
     });
   }
 
+  // A job link, or a link with a short line around it ("tailor my resume for this: <link>"); a
+  // pasted posting that ends with its apply link is a posting. Mirrors sourcing/posting_read.link_in
+  // (the server decides; this only picks the path and the working label).
+  function jobLinkIn(t) {
+    const re = /\b(?:https?:\/\/|www\.)[^\s<>"')\]]+/gi;
+    const m = String(t || "").match(re);
+    if (!m) return "";
+    const rest = String(t).replace(re, " ").replace(/\s+/g, " ").trim();
+    if (rest.length > 300) return "";
+    if (/^(https?:\/\/)?([\w-]+\.)*(github\.com|gitlab\.com|bitbucket\.org|t\.me|telegram\.me|sponsorjobs\.ai|google\.com)\b/i.test(m[0])) return "";
+    return m[0];
+  }
+
   // The Home box: typing fades the page furniture; Enter (or the button) sends the text.
   // A pasted posting or a link starts a tailoring session, the exact JD-gate path New
   // Resume uses; anything else is a request for the assistant (agentAsk below), which
   // states a plan first. The server decides (agent/home.py); the client only guesses the
   // obvious cases so a posting never waits on a parse. Esc clears and brings the landing back.
-  const looksLikeJd = (t) => /^(https?:\/\/|www\.)\S+$/i.test(t) || t.length > 1500 ||
+  const looksLikeJd = (t) => /^(https?:\/\/|www\.)\S+$/i.test(t) || !!jobLinkIn(t) || t.length > 1500 ||
     (t.split("\n").filter(l => l.trim()).length >= 3 && /responsibilit|requirement|qualification/i.test(t));
   (function () {
     const box = $("#homePrompt");
@@ -3162,6 +3175,9 @@
       $("#composerInput").focus();
     } catch (e) {
       wk.remove();
+      // No description saved and none readable from its link: ask for the text (never tailor
+      // a role from its title alone).
+      if (gen === START_GEN && e.data && e.data.need_text) { askForJdText(e.message, e.data); return; }
       // A closed posting is never tailored: the engine checked it first (free, no AI).
       const msg = e.data && e.data.closed ? I18N.t("job.closedNothingSpent", "This job is closed. Nothing was spent.") : e.message;
       if (!e.reason || !OUTAGE[e.reason]) bubble("agent", `<span style="color:var(--flag)">${esc(msg)}</span>`);
@@ -4518,7 +4534,29 @@
     if (AGENT.on) setAgentMode(false);   // the builder's own header and composer are back
     resetBuilder();
     showView("builder");
+    JD_HELD = {};
+    jdNote("");
     $("#jdInput").value = "";
+    $("#jdGate").hidden = false;
+    $("#jdInput").focus();
+  }
+
+  // A link the server could not read (or a job with no description): the paste box comes back
+  // with the server's one line, empty and focused, and remembers the link (and the job) so the
+  // pasted text still belongs to that job.
+  let JD_HELD = {};
+  function jdNote(text) {
+    const el = $("#jdNote");
+    if (!el) return;
+    el.textContent = text || "";
+    el.hidden = !text;
+  }
+  function askForJdText(message, data) {
+    resetBuilder();
+    showView("builder");
+    JD_HELD = { url: (data && data.url) || "", source_id: (data && data.source_id) || "" };
+    $("#jdInput").value = "";
+    jdNote(message);
     $("#jdGate").hidden = false;
     $("#jdInput").focus();
   }
@@ -4541,17 +4579,34 @@
     loadDashboard(); showView("dashboard");
   });
 
+  // (2026-11-26) A pasted job LINK is read by the server first (sourcing/posting_read.py) and the
+  // resume is tailored to the posting's description; the chat's first line names the job it read.
+  // A link it cannot read (LinkedIn, a bot wall, a page that loads its text only in a browser)
+  // comes back here with one plain line, and the box waits for the description text; the link is
+  // kept, so the tracker job still carries it.
   $("#jdStart").addEventListener("click", async () => {
     const jd = $("#jdInput").value.trim();
     if (!jd) { $("#jdInput").focus(); return; }
     const gen = ++START_GEN;
+    const isLink = !!jobLinkIn(jd);
+    const held = JD_HELD;
+    jdNote("");
     $("#jdGate").hidden = true;
     await withWorking(async () => {
-      const st = await api("/api/session/start", { jd, template: SELECTED_TEMPLATE });
+      let st;
+      try {
+        st = await api("/api/session/start", { jd, template: SELECTED_TEMPLATE,
+                                               url: isLink ? undefined : held.url,
+                                               source_id: isLink ? undefined : held.source_id });
+      } catch (e) {
+        if (gen === START_GEN && e.data && e.data.need_text) { askForJdText(e.message, e.data); return; }
+        throw e;
+      }
       if (gen !== START_GEN) return;          // a newer start took the builder
+      JD_HELD = {};
       applyState(st);
       $("#composerInput").focus();
-    }, "Reading the job description…");
+    }, isLink ? sjT("jd.readingLink", "Reading the posting…") : "Reading the job description…");
   });
 
   /* ---------------------------------------------------------------- template picker */

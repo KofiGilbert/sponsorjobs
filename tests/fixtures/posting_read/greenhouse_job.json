@@ -1,0 +1,10 @@
+{
+ "id": 4012345,
+ "title": "Data Engineer",
+ "company_name": "Example Freight",
+ "location": {
+  "name": "Boston, MA"
+ },
+ "absolute_url": "https://job-boards.greenhouse.io/examplefreight/jobs/4012345",
+ "content": "&lt;h2&gt;About the role&lt;/h2&gt;&lt;p&gt;Example Freight is looking for a Data Engineer to design and run our batch and streaming pipelines.&lt;/p&gt;&lt;h3&gt;Requirements&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Python and SQL&lt;/li&gt;&lt;li&gt;Airflow and dbt&lt;/li&gt;&lt;li&gt;Experience with AWS data services&lt;/li&gt;&lt;/ul&gt;&lt;h3&gt;What you will do&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Own the ETL jobs that feed our pricing and routing models&lt;/li&gt;&lt;li&gt;Partner with analysts on data quality and documentation&lt;/li&gt;&lt;/ul&gt;"
+}

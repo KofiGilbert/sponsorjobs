@@ -4670,9 +4670,16 @@ class WebIntake:
         # Recall the most relevant prior statements for THIS job from the diary (keyword
         # overlap), on every entry point (New CV and Tailor-from-job both land here).
         self.recalled = self.palace.recall(f"{self.role} {self.company} {self.jd[:200]}")
+        # (2026-11-26) A pasted link was read first (sourcing/posting_read.py): one line says
+        # which job the resume is tailored to, before the opening.
+        said = []
+        note = str(getattr(self, "posting_note", "") or "").strip()
+        if note:
+            self._append("agent", note)
+            said.append(note)
         text = self.opening()
         self._append("agent", text)
-        return self._state([text])
+        return self._state(said + [text])
 
     # ------------------------------------------------------------------ conversation turn
     def submit(self, message: str):

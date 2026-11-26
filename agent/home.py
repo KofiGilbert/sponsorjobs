@@ -78,6 +78,9 @@ def route(text: str) -> str:
     """'url' or 'jd' keeps today's path (a tailoring session); 'request' goes to the agent."""
     if looks_like_url(text):
         return "url"
+    from sourcing.posting_read import link_in        # a job link with a short line around it
+    if link_in(text):
+        return "url"
     if looks_like_jd(text):
         return "jd"
     return "request"
