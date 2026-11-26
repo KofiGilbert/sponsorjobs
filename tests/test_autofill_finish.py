@@ -227,7 +227,7 @@ def test_the_fast_fill_fills_each_box_as_the_pointer_arrives_within_the_time_cap
     assert all(x["empty"] for x in paced), paced              # the pointer arrives, then the box fills
     assert r["ms"] < 6500, r["ms"]                            # the whole pointer time is capped
     # ONE colour token: the label's background is it
-    assert r["color"] == "#7C5CFF" and r["bg"] == "rgb(124, 92, 255)", r
+    assert r["color"] == "#7957FC" and r["bg"] == "rgb(121, 87, 252)", r
 
 
 # ------------------------------------------------------------------ the shell's rules (no Electron)

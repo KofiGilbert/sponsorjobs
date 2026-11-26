@@ -2027,7 +2027,7 @@ person's own click, attended, and it stops at Ready to send for the person's own
   pointer moves beside each field it fills or element it clicks, with a short label ("Filling:
   First name", "Clicking: Next", "Uploading resume"). A picture in its own shadow root,
   pointer-events none, placed right of the field (or under it) so it never covers it; glides
-  0.3 s, jumps under reduced motion; gone when the run ends or after 10 s idle.
+  0.2 s, jumps under reduced motion; gone when the run ends or after 10 s idle. One colour token, `--sj-pointer`, violet `#7957FC` (white label text 4.58:1).
 - Tests: tests/test_autofill_finish.py, tests/js/test_autofill_finish.js,
   worker/test/finishes.test.ts.
 ## 36. Self-identification on any wording; the AI reads the saved answers (2026-11-26, owner decision)

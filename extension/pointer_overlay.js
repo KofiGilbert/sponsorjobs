@@ -9,13 +9,13 @@
 // window.TailorPointer = { at(el, label, opts), point(rect, label, opts), hide(), state(), COLOR }
 //
 // (2026-11-26) One signature colour, ONE token (--sj-pointer): the arrow's fill and the label's
-// background. Violet until the owner picks (candidates: violet #7C5CFF, magenta #E0368C, fuchsia
-// #C026D3). Moves take MOVE_MS; a fill that paces itself to the pointer (the engine's fillAsync
+// background. The owner's pick (2026-11-26): violet, one shade deeper than #7C5CFF so the white label
+// text passes 4.5:1 (4.58:1; the arrow's edge 4.58:1 on white, 4.09:1 on a dark page). Moves take MOVE_MS; a fill that paces itself to the pointer (the engine's fillAsync
 // with the pointer on) passes { now: true } so each field is filled as the pointer arrives.
 (function () {
   "use strict";
   if (typeof window === "undefined" || window.TailorPointer) return;
-  const COLOR = "#7C5CFF";               // THE pointer token
+  const COLOR = "#7957FC";               // THE pointer token
   const MOVE_MS = 200;
   const IDLE_MS = 10000;
   const GAP = 10;                      // pointer tip to the field's edge
@@ -36,10 +36,10 @@
          transition: transform ${MOVE_MS}ms cubic-bezier(.2,.7,.2,1), opacity 160ms ease; }
     .p.on { opacity: 1; }
     .p.still { transition: opacity 120ms ease; }
-    svg { width: 18px; height: 22px; flex: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
-    .t { margin-top: 12px; max-width: 240px; padding: 3px 9px; border-radius: 999px;
+    svg { width: 34px; height: 42px; flex: none; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
+    .t { margin-top: 24px; max-width: 280px; padding: 4px 11px; border-radius: 999px;
          background: var(--sj-pointer); color: #ffffff; border: 1px solid rgba(255,255,255,.35);
-         font: 600 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         font: 600 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
          box-shadow: 0 2px 8px rgba(0,0,0,.25); }
   `;
@@ -69,8 +69,8 @@
   function spot(r) {
     const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
     const room = vw - r.right - GAP;
-    if (room >= 200) return { x: Math.round(r.right + GAP), y: Math.round(Math.max(4, Math.min(vh - 30, r.top + r.height / 2 - 6))), side: "right" };
-    return { x: Math.round(Math.max(4, Math.min(vw - 220, r.left))), y: Math.round(Math.min(vh - 30, r.bottom + GAP / 2)), side: "below" };
+    if (room >= 330) return { x: Math.round(r.right + GAP), y: Math.round(Math.max(4, Math.min(vh - 30, r.top + r.height / 2 - 6))), side: "right" };
+    return { x: Math.round(Math.max(4, Math.min(vw - 330, r.left))), y: Math.round(Math.min(vh - 60, r.bottom + GAP / 2)), side: "below" };
   }
   function visible(r) {
     const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
