@@ -1,0 +1,262 @@
+{
+"_about": "The application questions of one public Instacart job on Greenhouse (Account Manager, Canada - Remote (ON, AB, BC, or NS Only)), read 2026-11-26 from the public job board API (boards-api.greenhouse.io/v1/boards/instacart/jobs/8407307?questions=true). Labels, required flags, field types and option labels only.",
+"board": "instacart",
+"title": "Account Manager",
+"questions": [
+{
+"label": "First Name",
+"required": true,
+"fields": [
+{
+"name": "first_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Last Name",
+"required": true,
+"fields": [
+{
+"name": "last_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Email",
+"required": true,
+"fields": [
+{
+"name": "email",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Phone",
+"required": true,
+"fields": [
+{
+"name": "phone",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Resume/CV",
+"required": false,
+"fields": [
+{
+"name": "resume",
+"type": "input_file",
+"values": []
+},
+{
+"name": "resume_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Cover Letter",
+"required": false,
+"fields": [
+{
+"name": "cover_letter",
+"type": "input_file",
+"values": []
+},
+{
+"name": "cover_letter_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Are you currently, or have you previously, worked for Instacart?",
+"required": true,
+"fields": [
+{
+"name": "question_71011121",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "How did you hear about this job?",
+"required": true,
+"fields": [
+{
+"name": "question_71011122",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "LinkedIn Profile:",
+"required": true,
+"fields": [
+{
+"name": "question_71011123",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Are you legally entitled to work in Canada?",
+"required": true,
+"fields": [
+{
+"name": "question_71011124",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you authorized to work in the United States?",
+"required": true,
+"fields": [
+{
+"name": "question_71011125",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Which state or province do you currently live in?",
+"required": true,
+"fields": [
+{
+"name": "question_71011126",
+"type": "multi_value_single_select",
+"values": [
+"(US) Alabama",
+"(US) Alaska",
+"(US) Arizona",
+"(US) Arkansas",
+"(US) California",
+"(US) Colorado",
+"(US) Connecticut",
+"(US) Delaware",
+"(US) Florida",
+"(US) Georgia",
+"(US) Hawaii",
+"(US) Idaho",
+"(US) Illinois",
+"(US) Indiana",
+"(US) Iowa",
+"(US) Kansas",
+"(US) Kentucky",
+"(US) Louisiana",
+"(US) Maine",
+"(US) Maryland",
+"(US) Massachusetts",
+"(US) Michigan",
+"(US) Minnesota",
+"(US) Mississippi",
+"(US) Missouri",
+"(US) Montana",
+"(US) Nebraska",
+"(US) Nevada",
+"(US) New Hampshire",
+"(US) New Jersey",
+"(US) New Mexico",
+"(US) New York",
+"(US) North Carolina",
+"(US) North Dakota",
+"(US) Ohio",
+"(US) Oklahoma",
+"(US) Oregon",
+"(US) Pennsylvania",
+"(US) Rhode Island",
+"(US) South Carolina",
+"(US) South Dakota",
+"(US) Tennessee",
+"(US) Texas",
+"(US) Utah",
+"(US) Vermont",
+"(US) Virginia",
+"(US) Washington",
+"(US) Washington, D.C.",
+"(US) West Virginia",
+"(US) Wisconsin",
+"(US) Wyoming",
+"(CAN) Alberta",
+"(CAN) British Columbia",
+"(CAN) Manitoba",
+"(CAN) New Brunswick",
+"(CAN) Newfoundland and Labrador",
+"(CAN) Nova Scotia",
+"(CAN) Ontario",
+"(CAN) Prince Edward Island",
+"(CAN) Quebec",
+"(CAN) Saskatchewan"
+]
+}
+]
+},
+{
+"label": "Will you now or in the future require immigration sponsorship to work for Instacart?",
+"required": true,
+"fields": [
+{
+"name": "question_71011127",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you comfortable using data to tell a story in a client-facing role?",
+"required": true,
+"fields": [
+{
+"name": "question_71011562",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+}
+],
+"location": [
+{
+"label": "Location",
+"required": true,
+"fields": [
+{
+"name": "location",
+"type": "input_text",
+"values": []
+}
+]
+}
+],
+"compliance": []
+}

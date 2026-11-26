@@ -81,6 +81,26 @@ eq(last.how, "combined", "two kinds together");
 eq(last.evidence.map((e) => e.kind), ["network-ats", "form-reset"], "the evidence, strongest first");
 assert(last.confidence >= D.FIRE_AT, "over the bar");
 
+// the real order in the shell: the site's post answers in under a second, the page's click note
+// is read a few seconds later; the post still counts once the click turns out to have come first
+d = mk(); n = fired.length;
+d.arm({ recordId: 30, startUrl: INSTA, fillUrl: INSTA });
+const clickAt = clock;
+clock += 700;
+d.signal({ kind: "network", method: "POST", url: "https://boards.greenhouse.io/embed/job_app?for=instacart&token=7000007", status: 200 });
+eq(d.state().evidence.length, 0, "a post with no click known yet waits");
+clock += 2000;
+d.signal({ kind: "probe", frame: true, frameUrl: FRAME, url: FRAME, clickAt, filledAtClick: 14, filledNow: 0, fieldsNow: 20 });
+eq([fired.length, fired[fired.length - 1].evidence.map((e) => e.kind).join("+")], [n + 1, "network-ats+form-reset"],
+   "the waiting post counts once the click is read, with the reset it fires");
+// a post from BEFORE the click never counts
+d = mk(); n = fired.length;
+d.arm({ recordId: 31, startUrl: INSTA, fillUrl: INSTA });
+d.signal({ kind: "network", method: "POST", url: "https://boards.greenhouse.io/embed/job_app?for=instacart", status: 200 });
+clock += 500;
+d.signal({ kind: "probe", frame: true, frameUrl: FRAME, url: FRAME, clickAt: clock, filledAtClick: 14, filledNow: 14, fieldsNow: 20 });
+eq(d.state().evidence.length, 0, "a post that came before the person's click is not about it");
+
 // a reset alone never fires, and a generic post + reset does
 d = mk(); n = fired.length;
 d.arm({ recordId: 4, startUrl: "https://jobs.example.com/apply/1", fillUrl: "https://jobs.example.com/apply/1" });

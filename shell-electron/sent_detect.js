@@ -251,14 +251,36 @@ function createDetector(o) {
     for (const fam of CLICK_BOUND) st.evidence.delete(fam);
   }
 
+  // The page's click note is read every few seconds, but the site's post answers in under one: a
+  // post or a window seen before the click is known is kept, and counted once the click turns out
+  // to have come first (the replay suite caught the Instacart post being dropped this way).
   function onClick(st, at, filled, where) {
     if (!at || at <= st.clickAt) return;
     st.clickAt = at;
     st.clickFilled = Number(filled) || 0;
     st.clickWhere = where || "";
     clickBoundReset(st);
+    const early = st.early.filter((x) => x.at >= at && x.at - at <= CLICK_WINDOW_MS);
+    st.early = [];
+    for (const x of early) clickBound(st, x.s, x.at);
   }
   const afterClick = (st) => st.clickAt && now() - st.clickAt <= CLICK_WINDOW_MS;
+  function clickBound(st, s, at) {
+    if (!st.clickAt || at < st.clickAt || at - st.clickAt > CLICK_WINDOW_MS) return;
+    if (s.kind === "network") {
+      const r = classifyRequest(s, st.sites);
+      if (r) add(st, Object.assign({}, r, { kind: r.kind }));
+    } else if (s.kind === "popup") {
+      add(st, { kind: "popup", where: siteOf(s.url || "") });
+    }
+  }
+  function maybeLater(st, s) {
+    const at = now();
+    if (afterClick(st)) { clickBound(st, s, at); return; }
+    st.early.push({ s: { kind: s.kind, method: s.method, url: s.url, status: s.status, type: s.type }, at });
+    const cut = at - CLICK_WINDOW_MS;
+    st.early = st.early.filter((x) => x.at >= cut).slice(-50);
+  }
 
   function signal(s) {
     s = s || {};
@@ -292,14 +314,9 @@ function createDetector(o) {
         add(st, { kind: s.how === "model" ? "page-model" : "page-marker", frame: !!s.frame,
                   pageUrl: s.pageUrl || "", res: s.res || null });
         break;
-      case "network": {
-        if (!afterClick(st)) break;
-        const r = classifyRequest(s, st.sites);
-        if (r) add(st, Object.assign({}, r, { kind: r.kind }));
-        break;
-      }
+      case "network":
       case "popup":
-        if (afterClick(st)) add(st, { kind: "popup", where: site });
+        maybeLater(st, s);
         break;
       case "said-yes":
         add(st, { kind: "said-yes" });
@@ -324,7 +341,7 @@ function createDetector(o) {
       if (cur && !cur.fired) this.leave("switched");
       const st = { recordId, startUrl: a.startUrl || "", fillUrl: a.fillUrl || "", pageUrl: "",
                    sites: new Set([siteOf(a.startUrl), siteOf(a.fillUrl)].filter(Boolean)),
-                   clickAt: 0, clickFilled: 0, clickWhere: "", evidence: new Map(), fired: false, asked: false };
+                   clickAt: 0, clickFilled: 0, clickWhere: "", evidence: new Map(), early: [], fired: false, asked: false };
       if (a.again) fired.delete(keyOf(st));
       if (fired.has(keyOf(st))) st.fired = true;      // announced already this session: once per record
       cur = st;

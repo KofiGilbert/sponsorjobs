@@ -58,8 +58,11 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
    (Next / Continue / Save never do), so a page change is not mistaken for a send.
 6. **Login or account wall.** Covered: `pageBlocker() === "auth"` stops the fill, the bar says to
    sign in, and the page watch fills the next page after it. The app never signs in.
-7. **Email-step account creation (iCIMS: email first, then a code or a link).** Gap: assisted
-   apply stops at the wall and the person finishes it by hand; the inbox's verification reader
+7. **Email-step account creation (iCIMS: email first, then a code or a link).** Gap. The replay
+   shows the email-only first page is NOT seen as a wall (no password box): Autofill types the
+   person's email, outlines the privacy box, presses nothing, and says "1 needs you". That is
+   harmless (Next stays the person's), but the bar does not say it is a sign-in step. The
+   password page after it is a wall and stops. The inbox's verification reader
    (`inbox/detect.py kind_of`, `about_site`) exists for the agent but is not offered in assisted
    mode. Plan: when the wall is an email step, the bar offers "Check my inbox for the code" which
    reads only mail from that site (`about_site`) and shows the code for the person to type.
@@ -83,6 +86,33 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
 11. **Slow page, hydration, timeouts.** Covered: `waitPaneLoad`, the fill budget
     (`fill_budget.js`), `fillKeys.capped` timeouts; a fill that times out leaves the rest for
     the person on the bar.
+
+31. **A required box left empty while the bubble says "check and submit" (Instacart Canada,
+    2026-11-26).** The end of an Autofill rests on Submit only when the engine's needs list is
+    empty, and that list holds only the boxes the engine itself read as required. A required box it
+    reads as optional (its mark drawn in a way the engine does not know, or inside a frame the
+    top page's marking never reached) is left empty and unmentioned. Fixed as a guard: the replay
+    suite reads every question as a person sees it ("*", a required mark, required /
+    aria-required) and fails when the end says "check and submit" with a required question
+    empty; a planted copy of the bug proves the check catches it. On the Instacart Canada replay
+    (its real question set) the end now names the 3 empty questions. Gap: the frame case in the
+    live shell is the frame walk's (#364: marking needs inside frames); the replay checks the
+    engine inside the frame, not the shell's marking. Plan: once #364 lands, the replay drives
+    the shell's own end over frames too.
+32. **The country warning did not show (Instacart Canada).** The warning ("This job is in Canada;
+    your saved work authorization is for the US") reads the job's location from its record. A job
+    whose record has no location (opened from the Browser, a pasted link, some feeds) counts as the
+    US, so no warning. The location reader also misses provinces written short ("Vancouver, BC"
+    reads as the US) and "Remote - CA" is read as the US (it may be California). Gap. Plan: when
+    the record has no location, read it from the posting's own location line (the Browser job
+    reader already finds it) or the description's first lines; teach the reader the Canadian
+    province codes when a Canadian city or "Canada" is near; and the replay's Instacart Canada
+    form gains the check that the warning is said before the walk.
+33. **"N need you" counted checkboxes, not questions.** Stripe's "countries you anticipate
+    working in" (a checkbox per country) made the bar say "38 need you" for 9 questions; Lever's
+    Yes / No checkbox question counted twice; Workday's month and year boxes of one date counted
+    twice. Fixed in this change (the replay found it): the needs list counts a checkbox or radio
+    group, and the boxes of one question, once; a group with a box ticked counts as answered.
 
 ### After the Submit click
 
@@ -157,6 +187,25 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
 30. **LinkedIn or a board that bans bots.** Covered: never filled, never watched (CLAUDE.md
     section 7).
 
+## The replay suite (how form bugs are caught before the owner sees them)
+
+`tests/js/test_replay_forms.js` (CI job "replay", real headless Chromium, no network) runs the
+guided Autofill with a made-up test profile against offline copies of the day's forms:
+Greenhouse direct with each job's own question set (Stripe, Axon, Meriton, Vestmark: read from
+Greenhouse's public job board API, `tests/fixtures/forms/replay/gh_*.json`), the Instacart Canada
+form inside an iframe from another origin, Ashby, Lever, Lam's Phenom form with its privacy
+window, Uline's Workday experience page and iCIMS's email step. For each it checks that every
+required question is filled or outlined, nothing was filled out of sight, nothing was submitted,
+no list is left open, and the end ("check and submit" or "N need you") matches the page. For the
+Greenhouse confirmation and the Instacart frame reset, a real Submit click is followed by the
+sent detector firing exactly once. It already caught two bugs fixed here: the detector dropped
+a post that answered before the click note was read (the Instacart case), and the needs count
+above. The Greenhouse pages are rebuilt from each job's real questions in the board's markup
+(the live pages need their own scripts and hold the applicant's data); Ashby, Lever, Phenom,
+Workday and iCIMS are the sanitized fixtures already in `tests/fixtures/forms`, modelled on
+those sites. Adding a form: save its questions or markup (labels only, no values), add a line
+to `SCENARIOS`.
+
 ## The top gaps, in order
 
 1. Site popups replace a half-filled form (Dropbox / Drive / "Apply with" buttons): the person
@@ -166,7 +215,8 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
 3. Drag-and-drop-only upload zones.
 4. The bar saying "the site did not take it" and "this job closed" after Submit.
 5. Non-English confirmation emails and markers.
-6. The daily sweep reaches the person on the Tracker card and as one Orb nudge ("Did you send
+6. The country warning for a job with no saved location, and short province codes (31, 32).
+7. The daily sweep reaches the person on the Tracker card and as one Orb nudge ("Did you send
    your <company> application?", kind `sent`), inside the Orb's daily limits; no OS notification
    of its own.
 

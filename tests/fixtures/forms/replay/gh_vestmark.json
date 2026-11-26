@@ -1,0 +1,174 @@
+{
+"_about": "The application questions of one public Vestmark job on Greenhouse (Associate  Operations Analyst, Wakefield, MA (Hybrid)), read 2026-11-26 from the public job board API (boards-api.greenhouse.io/v1/boards/vestmark/jobs/8355621?questions=true). Labels, required flags, field types and option labels only.",
+"board": "vestmark",
+"title": "Associate  Operations Analyst",
+"questions": [
+{
+"label": "First Name",
+"required": true,
+"fields": [
+{
+"name": "first_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Last Name",
+"required": true,
+"fields": [
+{
+"name": "last_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Email",
+"required": true,
+"fields": [
+{
+"name": "email",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Phone",
+"required": true,
+"fields": [
+{
+"name": "phone",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Resume/CV",
+"required": true,
+"fields": [
+{
+"name": "resume",
+"type": "input_file",
+"values": []
+},
+{
+"name": "resume_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Cover Letter",
+"required": false,
+"fields": [
+{
+"name": "cover_letter",
+"type": "input_file",
+"values": []
+},
+{
+"name": "cover_letter_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Please provide the US state in which you currently reside:",
+"required": true,
+"fields": [
+{
+"name": "question_70480503",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Are you willing and able to work out in the Wakefield office at least 3 times per week?",
+"required": true,
+"fields": [
+{
+"name": "question_70480504",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you authorized to work in the U.S.?",
+"required": true,
+"fields": [
+{
+"name": "question_70480505",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Do you now, or will you in the future, need sponsorship to work for Vestmark?",
+"required": true,
+"fields": [
+{
+"name": "question_70480506",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "By applying to this job, I affirm that the information provided on this application and resume is true and complete to the best of my knowledge. I understand that the Company will request a waiver for a background check and verify information through the reference and background check process should I reach the final stages of the interview process.",
+"required": true,
+"fields": [
+{
+"name": "question_70480507",
+"type": "multi_value_single_select",
+"values": [
+"I agree"
+]
+}
+]
+},
+{
+"label": "California law requires that we provide you this notice about the collection and use of your personal information. Our Privacy Policy (https://www.vestmark.com/privacy-policy) describes the categories of personal information that Vestmark, Inc. (“Company”, “we”, “us” and “our”) collects about California residents who apply or are recruited for a job with us (“candidates”), the purposes for which we use that information, and how to exercise your rights with respect to that information. For purposes of this notice, “personal information” has the meaning given in the California Consumer Privacy Act of 2018 (the “CCPA”), as amended by the California Privacy Rights Act of 2020, but excludes information exempted from the CCPA’s scope. This notice does not create or form part of any contract for employment or otherwise. If you have questions about this notice, please contact the privacy team or Vestmark, Inc., 100 Quannpowitt Parkway, Suite 205, Wakefield, MA 01880 Attn: Data Protection Officer.",
+"required": true,
+"fields": [
+{
+"name": "question_70480508",
+"type": "input_text",
+"values": []
+}
+]
+}
+],
+"location": [
+{
+"label": "Location",
+"required": true,
+"fields": [
+{
+"name": "location",
+"type": "input_text",
+"values": []
+}
+]
+}
+],
+"compliance": []
+}

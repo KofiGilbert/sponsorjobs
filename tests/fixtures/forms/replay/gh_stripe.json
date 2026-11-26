@@ -1,0 +1,319 @@
+{
+"_about": "The application questions of one public Stripe job on Greenhouse (Account Executive, Product Sales (Data), US-SF-HQ, US-NYC, US-CHI, US-SEA), read 2026-11-26 from the public job board API (boards-api.greenhouse.io/v1/boards/stripe/jobs/8190059?questions=true). Labels, required flags, field types and option labels only.",
+"board": "stripe",
+"title": "Account Executive, Product Sales (Data)",
+"questions": [
+{
+"label": "First Name",
+"required": true,
+"fields": [
+{
+"name": "first_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Last Name",
+"required": true,
+"fields": [
+{
+"name": "last_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Email",
+"required": true,
+"fields": [
+{
+"name": "email",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Phone",
+"required": true,
+"fields": [
+{
+"name": "phone",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Resume/CV",
+"required": false,
+"fields": [
+{
+"name": "resume",
+"type": "input_file",
+"values": []
+},
+{
+"name": "resume_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Cover Letter",
+"required": false,
+"fields": [
+{
+"name": "cover_letter",
+"type": "input_file",
+"values": []
+},
+{
+"name": "cover_letter_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Please select the country where you currently reside.",
+"required": true,
+"fields": [
+{
+"name": "question_69074737",
+"type": "multi_value_single_select",
+"values": [
+"Australia",
+"Belgium",
+"Brazil",
+"Canada",
+"Egypt",
+"France",
+"Germany",
+"India",
+"Indonesia",
+"Ireland",
+"Israel",
+"Italy",
+"Japan",
+"Malaysia",
+"Mexico",
+"New Zealand",
+"Poland",
+"Portugal",
+"Romania",
+"Singapore",
+"South Korea",
+"Spain",
+"Sweden",
+"Switzerland",
+"Taiwan",
+"Thailand",
+"The Netherlands",
+"UAE",
+"UK",
+"US",
+"Other"
+]
+}
+]
+},
+{
+"label": "Please select the country or countries you anticipate working in for the role in which you are applying.",
+"required": true,
+"fields": [
+{
+"name": "question_69074738[]",
+"type": "multi_value_multi_select",
+"values": [
+"Australia",
+"Belgium",
+"Brazil",
+"Canada",
+"France",
+"Germany",
+"India",
+"Indonesia",
+"Ireland",
+"Israel",
+"Italy",
+"Japan",
+"Luxembourg",
+"Malaysia",
+"Mexico",
+"New Zealand",
+"Poland",
+"Portugal",
+"Romania",
+"Singapore",
+"South Korea",
+"Spain",
+"Sweden",
+"Switzerland",
+"Taiwan",
+"Thailand",
+"The Netherlands",
+"UAE",
+"UK",
+"US"
+]
+}
+]
+},
+{
+"label": "Are you authorized to work in the location(s) you selected in your previous response?",
+"required": true,
+"fields": [
+{
+"name": "question_69074739",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Will you require Stripe to sponsor you for a work permit now or in the future for the location(s) you selected in in your previous response?",
+"required": true,
+"fields": [
+{
+"name": "question_69074740",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "If this role offers the option to work from a remote location, do you plan to work remotely?",
+"required": true,
+"fields": [
+{
+"name": "question_69074741",
+"type": "multi_value_single_select",
+"values": [
+"Yes, I intend to work remotely.",
+"No, I intend to work from an office location."
+]
+}
+]
+},
+{
+"label": "Have you ever been employed by Stripe or a Stripe affiliate?",
+"required": true,
+"fields": [
+{
+"name": "question_69074742",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Who is your current or previous employer?",
+"required": true,
+"fields": [
+{
+"name": "question_69074743",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "What is your current or previous job title?",
+"required": true,
+"fields": [
+{
+"name": "question_69074744",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Do you opt-in to receive WhatsApp messages from Stripe Recruiting?",
+"required": true,
+"fields": [
+{
+"name": "question_69074745",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "If located in the US, in what city and state do you reside?",
+"required": true,
+"fields": [
+{
+"name": "question_69458537",
+"type": "input_text",
+"values": []
+}
+]
+}
+],
+"location": [
+{
+"label": "Location",
+"required": true,
+"fields": [
+{
+"name": "location",
+"type": "input_text",
+"values": []
+}
+]
+}
+],
+"compliance": [
+{
+"label": "VeteranStatus",
+"required": false,
+"fields": [
+{
+"name": "eeo_veteranstatus",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+},
+{
+"label": "Race",
+"required": false,
+"fields": [
+{
+"name": "eeo_race",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+},
+{
+"label": "Gender",
+"required": false,
+"fields": [
+{
+"name": "eeo_gender",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+}
+]
+}
