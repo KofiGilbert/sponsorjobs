@@ -4,7 +4,7 @@
 <style>.spin{width:40px}</style></head>
 <body>
 <!-- Modelled on a Workday application reached through "Autofill with Resume" and a saved draft
-     (2026-11-26): the site's own resume parse filled the email printed on the resume, a phone
+     (2026-11-26; the ids are Workday's own, address--postalCode and so on): the site's own resume parse filled the email printed on the resume, a phone
      with its country code next to the page's own Country Phone Code, the street in County, a
      project as a job (wrong title and dates), and the real job with the parse's title. Every
      name, address and date here is made up. -->
@@ -19,14 +19,14 @@
   <input type="text" id="phone" name="phoneNumber" aria-required="true" value="+1 (555) 010-2000"></div>
 <div data-automation-id="formField"><label for="ext">Phone Extension</label>
   <input type="text" id="ext" name="extension" value=""></div>
-<div data-automation-id="formField"><label for="line1">Address Line 1*</label>
-  <input type="text" id="line1" name="addressLine1" value="12 Sample Street"></div>
-<div data-automation-id="formField"><label for="city">City*</label>
-  <input type="text" id="city" name="city" value="Springfield"></div>
-<div data-automation-id="formField"><label for="county">County</label>
-  <input type="text" id="county" name="regionSubdivision1" value="12 Sample Street"></div>
-<div data-automation-id="formField"><label for="zip">Postal Code*</label>
-  <input type="text" id="zip" name="postalCode" value="60601"></div>
+<div data-automation-id="formField"><label for="address--addressLine1">Address Line 1*</label>
+  <input type="text" id="address--addressLine1" name="addressLine1" value="12 Sample Street"></div>
+<div data-automation-id="formField"><label for="address--city">City*</label>
+  <input type="text" id="address--city" name="city" value="Springfield"></div>
+<div data-automation-id="formField"><label for="address--regionSubdivision1">County</label>
+  <input type="text" id="address--regionSubdivision1" name="regionSubdivision1" value="12 Sample Street"></div>
+<div data-automation-id="formField"><label for="address--postalCode">Postal Code*</label>
+  <input type="text" id="address--postalCode" name="postalCode" value="60601"></div>
 
 <h3>My Experience</h3>
 <div id="workList"></div>
@@ -69,6 +69,7 @@
   workSection(1, "Analyst Intern", "Northwind Labs Inc.", ["1", "2025"], ["", ""]);
   workSection(2, "Capstone Project Lead", "Personal Projects", ["6", "2024"], ["12", "2024"]);
   workSection(3, "Business Analyst", "Contoso Bank", ["2", "2018"], ["9", "2024"]);
+  workSection(4, "", "", ["", ""], ["", ""]);              // an empty one left by an earlier fill
   eduSection(1, "Example State University");
   eduSection(2, "Online Data Course");
   window.fxValues = () => ({
@@ -76,10 +77,10 @@
     referrer: document.getElementById("ref").value,
     phone: document.getElementById("phone").value,
     ext: document.getElementById("ext").value,
-    line1: document.getElementById("line1").value,
-    city: document.getElementById("city").value,
-    county: document.getElementById("county").value,
-    zip: document.getElementById("zip").value,
+    line1: document.getElementById("address--addressLine1").value,
+    city: document.getElementById("address--city").value,
+    county: document.getElementById("address--regionSubdivision1").value,
+    zip: document.getElementById("address--postalCode").value,
     titles: [...document.querySelectorAll("[name=jobTitle]")].map((e) => e.value),
     companies: [...document.querySelectorAll("[name=companyName]")].map((e) => e.value),
     dates: [...document.querySelectorAll("input[role=spinbutton]")].map((e) => e.value),

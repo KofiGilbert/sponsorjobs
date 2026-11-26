@@ -98,6 +98,7 @@ def test_the_site_parse_is_put_right_against_the_profile(tmp_path):
     assert "not your application email" in joined, before
     assert "Work Experience 2 is not a job in your profile" in joined, before
     assert "Education 2 is a school that is not in your profile" in joined, before
+    assert "County holds another part of your address" in joined, before
     assert "resume.person@example.org" not in joined and "Sample Street" not in joined
     # contact: the application email (read back), the referrer's own, the phone as digits next to
     # the page's country code, the extension empty, the street out of County
@@ -110,6 +111,7 @@ def test_the_site_parse_is_put_right_against_the_profile(tmp_path):
     # history: the project removed, the real job's title and From month the profile's, the course removed
     assert v["companies"] == ["Northwind Labs Inc.", "Contoso Bank"], v["companies"]
     assert v["titles"] == ["Data Analyst", "Business Analyst"], v["titles"]
+    # (the empty fourth section, past the profile's two jobs, is removed too)
     assert v["dates"][:2] == ["3", "2026"] and v["dates"][4:] == ["2", "2018", "9", "2024"], v["dates"]
     assert v["schools"] == ["Example State University"], v["schools"]
     assert rep["history_fixed"] >= 3

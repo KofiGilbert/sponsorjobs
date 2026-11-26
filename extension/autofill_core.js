@@ -694,11 +694,14 @@ function qsaSafe(sel, root) {
   // A box someone else's email belongs in (a referrer, a reference, a manager) is never touched.
   const EMAIL_OTHER_RE = /referr|reference|recruiter|manager|supervisor|friend|emergency|employer|hiring|alternate|alternative|secondary|backup|colleague|contact person|parent|guardian|spouse|partner|invite|sponsor/;
   const PHONE_CODE_RE = /country\s*(phone|calling|dial(l)?ing)?\s*code|countryphonecode|phone\s*(country\s*)?code|phonecode|dial(l)?ing code|calling code/;
+  // Most specific first, read from the box's own label before its name and id: Workday's ids all
+  // start "address--" (address--postalCode, address--regionSubdivision1), so an id alone would
+  // call every one of them the street (measured at Uline, 2026-11-26).
   const ADDR_PARTS = [
-    { key: "street", re: /street|address.?line.?1|addressline1|\baddress\b/ },
-    { key: "city", re: /\bcity\b|\btown\b/ },
+    { key: "county", re: /\bcounty\b|regionsubdivision1/ },
     { key: "zip", re: /\bzip\b|postal|post.?code/ },
-    { key: "county", re: /\bcounty\b/ },
+    { key: "city", re: /\bcity\b|\btown\b/ },
+    { key: "street", re: /street|address.?line.?1|addressline1|\baddress\b/ },
   ];
   const STREETISH_RE = /^\s*\d+[a-z]?\s+\S+.*\S/i;
   function boxSig(el) {
@@ -763,7 +766,9 @@ function qsaSafe(sel, root) {
       if (!have) continue;
       const sig = boxSig(el);
       if (STREET_EXTRA_RE.test(sig) && !/address.?line.?1|addressline1/.test(sig)) continue;   // line 2 is theirs
-      const own = ADDR_PARTS.find((p) => p.re.test(sig) && !(p.key === "street" && /email|e-mail/.test(sig)));
+      const lab = norm(cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || ""));
+      const own = (lab && ADDR_PARTS.find((p) => p.re.test(lab))) || ADDR_PARTS.find((p) => p.re.test(sig));
+      if (own && own.key === "street" && /email|e-mail/.test(sig)) continue;
       if (!own) continue;
       const mine = nv(f[own.key]);
       if (mine && have === mine) continue;
@@ -863,7 +868,12 @@ function qsaSafe(sel, root) {
           const head = cleanText(sec.heading.textContent);
           if (kind === "edu") {
             const school = sectionValue(sec, HIST_LABELS.school).value;
-            if (!school || list.some((s) => sameOrg(s.school, school))) continue;
+            if (!school) {
+              const del = fix && secs.length > Math.min(list.length, 3) && sec === secs[secs.length - 1] ? deleteButton(sec) : null;
+              if (del) { press(del); out.fixed++; trace(null, "history-removed-empty-" + kind); await sleep(STEP_MS * 6); removed = true; break; }
+              continue;
+            }
+            if (list.some((s) => sameOrg(s.school, school))) continue;
             const del = fix ? deleteButton(sec) : null;
             if (del) { press(del); out.fixed++; trace(null, "history-removed-" + kind); await sleep(STEP_MS * 6); removed = true; break; }
             out.issues.push(head + " is a school that is not in your profile");
@@ -871,7 +881,13 @@ function qsaSafe(sel, root) {
           }
           const company = sectionValue(sec, HIST_LABELS.company);
           const title = sectionValue(sec, HIST_LABELS.title);
-          if (!company.value && !title.value) continue;                     // an empty section: fillHistory's
+          if (!company.value && !title.value) {
+            // an empty section past the profile's jobs (left by an earlier fill or a draft): its
+            // required boxes would hold Save and Continue, so it goes with its own Delete
+            const del = fix && secs.length > Math.min(list.length, 5) && sec === secs[secs.length - 1] ? deleteButton(sec) : null;
+            if (del) { press(del); out.fixed++; trace(null, "history-removed-empty-" + kind); await sleep(STEP_MS * 6); removed = true; break; }
+            continue;                                                     // an empty section: fillHistory's
+          }
           const item = list.find((j) => company.value && sameOrg(j.company, company.value))
             || (!company.value && list.find((j) => canon(j.title) === canon(title.value)));
           if (!item) {
@@ -923,6 +939,20 @@ function qsaSafe(sel, root) {
         if (others.some((x) => text.includes(x))) issues.push("The page shows an email that is not your application email");
       }
     }
+    try {
+      const nv = (v) => norm(String(v || "")).replace(/[^\p{L}\p{N} ]+/gu, "");
+      for (const el of textBoxes()) {
+        const have = nv(el.value);
+        if (!have) continue;
+        const lab = norm(cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || ""));
+        const own = (lab && ADDR_PARTS.find((p) => p.re.test(lab))) || null;
+        if (!own || (nv(f[own.key]) && have === nv(f[own.key]))) continue;
+        const other = ADDR_PARTS.find((p) => p.key !== own.key && nv(f[p.key]) && nv(f[p.key]) === have);
+        if (other || (own.key === "county" && STREETISH_RE.test(String(el.value || "")))) {
+          issues.push((cleanLabel(rawLabel(el) || "") || own.key) + " holds another part of your address");
+        }
+      }
+    } catch (e) { /* the rest stands */ }
     try { issues.push(...(await checkHistory(payload, false)).issues); } catch (e) { /* the rest stands */ }
     return issues.slice(0, 6);
   }
