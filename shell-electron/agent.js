@@ -1592,9 +1592,23 @@ function createAgent(deps) {
         if (!dlg) { dlog("terms", "the notice's button opened no dialog with one accept button"); continue; }
         target = dlg.index;
       }
+      // (2026-11-26, the owner) a site window is read first, where the person can see it: the
+      // pointer on its title, "Reading: <title>", its text scrolled for a few seconds; then the
+      // pointer on its button and the click; then the window is let close before anything else
+      const seen = !(batchOn && batchOn.quiet);
+      if (seen) {
+        try { await guard(wc.executeJavaScript("window.TailorAutofill.readModal && window.TailorAutofill.readModal(3500)", true), 9000, "read"); } catch (e) { if (e && e.stopped) throw e; }
+      }
       let res = await press(target);
       if (!(res && res.ok)) continue;                    // tried again on the next pass
       await settle(wc, before);
+      for (let k = 0; k < 16; k++) {                     // the window closing (up to about 4 s)
+        let up = null;
+        try { up = await wc.executeJavaScript("window.TailorAutofill.siteModal ? window.TailorAutofill.siteModal() : null", true); } catch (e) { up = null; }
+        if (!up) break;
+        await delay(250);
+      }
+      if (seen) { try { await wc.executeJavaScript("window.TailorPointer && window.TailorPointer.hide()", true); } catch (e) { /* gone */ } }
       try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
       if (it.kind === "opener") {
         // the form's own record of the acceptance (SuccessFactors' fbclc_dpcsId), when it has one
@@ -2598,6 +2612,23 @@ function createAgent(deps) {
               if (ph) e.message = "fill timed out while " + ph;
               throw e;
             });
+          // (2026-11-26, the owner) the site's window stopped the walk (Lam's notice comes up when
+          // the resume goes in): it is read and acknowledged in sight, then the walk carries on
+          // from where it stopped; nothing is filled under it
+          for (let k = 0; k < 3 && rep && rep.modal; k++) {
+            dlog("step " + step + " walk stopped at the window: " + rep.modal);
+            const tm = await handleTerms(wc, terms);
+            if (tm.stop) return stopped(tm.stop.reason, tm.stop.message, { url });
+            if (tm.park) return park("terms", tm.park.question, { url, ask: batch ? undefined : tm.park.ask });
+            let still = null;
+            try { still = await wc.executeJavaScript("window.TailorAutofill.siteModal ? window.TailorAutofill.siteModal() : null", true); } catch (e) { still = null; }
+            if (still) break;                              // not one it may accept: the brain or the person
+            const more = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true, pointer: !quiet, guided: !quiet }), FILL_MS, "fill")
+              .catch((e) => { if (e && e.stopped) throw e; return null; });
+            if (!more) break;
+            rep = Object.assign({}, more, { filled: ((rep.filled) || 0) + (more.filled || 0), uploaded: (rep.uploaded || 0) + (more.uploaded || 0),
+                                            answers: (rep.answers || []).concat(more.answers || []), files: (rep.files || []).concat(more.files || []) });
+          }
           dlog("step " + step + " fill:", rep);
           dlog("step " + step + " fill cost: " + fillLogLine(rep));
           // the Autofill plan's model call (none when the page did not change), in the run's cost

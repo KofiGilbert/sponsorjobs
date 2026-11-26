@@ -2141,12 +2141,23 @@ and a redesign:
 - **The end at submit**: when the person presses the site's Submit during the guided ask and the
   page turns into the confirmation, the ask closes, the record is Applied, the shared signal is
   told, and the bar says "Submitted. Marked as applied" for a few seconds, then clears.
-- **A site's window over the form** (Lam, the Data Privacy Agreement: "Filling: Disability" sat on
-  top of it): `pointer_overlay.js coverOf` finds an open modal dialog that does not hold the field
-  (or another fixed layer drawn over it). The pointer then goes to the window, "Reading: <its
-  title>", never to a field hidden under it; a resting pointer goes away when a window opens over
-  its field; no ring is drawn over a window. The walk fills what was decided quietly underneath,
-  and the agent's press on the window's own button shows "Clicking: I Acknowledge".
+- **Nothing filled out of sight; site windows first** (the owner, after Lam, 2026-11-26). The walk
+  fills every box itself, top to bottom; once it ran on a page, the engine's fast pass and the
+  second plan do not touch that page (frames, iCIMS, still use the engine's frame pass). A site
+  window (an open modal dialog, `pointer_overlay.js openModal`) open when the walk starts, or
+  opening during it (Lam's notice comes up when the resume goes in), stops the walk at once with
+  nothing filled under it (`modal: <title>`). The agent then reads the window in sight
+  (`readModal`: the pointer on its title, "Reading: <title>", its text scrolled for about 3.5 s),
+  moves the pointer to its button ("Clicking: I Acknowledge"), clicks, waits for the window to
+  close, and walks again from where it stopped (the boxes done on each page are kept, never filled
+  twice). A field under a window is never labelled (`coverOf`: the pointer goes to the window).
+- **Every box the same way** (the owner): "Filling: <field>", the box glowing while it is filled,
+  whether or not the site put something in it; a box holding words is cleared in sight first. The
+  resume goes into the form's plain Resume / CV field at its own place, never into a site
+  "Autofill from resume" box (`siteParseBox`, Ashby's), so the site never fills the form from its
+  parse; Workday takes "Apply Manually".
+- **The end on Submit**: the pointer's tip is ON the button (its left centre), the label just past
+  its right edge, or under it when there is no room; never over it.
 - **The bar says one short line** (`app.js aaBarShort`): the agent's Ready line is "Your turn:
   check and submit" (or "Ready to send. Check it, then press Send" where the app sends), and any
   longer run message is cut to its first sentence; the whole text is under "Details". A question

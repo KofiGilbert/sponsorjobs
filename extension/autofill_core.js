@@ -1282,8 +1282,23 @@ function qsaSafe(sel, root) {
     return own + " " + (f.name || "") + " " + (f.id || "") + " " + (f.getAttribute("aria-label") || "");
   }
   function isLetterBox(f) { return !!f && LETTER_BOX_RE.test(fileBoxWords(f)); }
+  // (2026-11-26, the owner) The site's own "Autofill from resume" box (Ashby's, at the top of its
+  // form): a file there makes the SITE fill the form out of sight from its parse. The resume goes
+  // into the form's plain Resume / CV field, at its own place in the walk, never into this box.
+  const PARSE_BOX_RE = /\bauto-?fill\b|\bauto-?populate|\bpre-?fill (?:the |your )?(?:form|application)|\bparse (?:your )?r[eé]sum/i;
+  function siteParseBox(f) {
+    try {
+      if (PARSE_BOX_RE.test(fileBoxWords(f))) return true;
+      let n = f.parentElement;
+      for (let i = 0; n && i < 6; i++, n = n.parentElement) {
+        if (qsaSafe("input, textarea, select", n).some((x) => x !== f && x.type !== "hidden")) return false;   // the form's own area
+        if (PARSE_BOX_RE.test(String(n.textContent || "").slice(0, 400))) return true;
+      }
+    } catch (e) { /* plain box */ }
+    return false;
+  }
   function resumeInput() {
-    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled && !(f.files && f.files.length));
+    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled && !(f.files && f.files.length) && !siteParseBox(f));
     const named = boxes.find((f) => !isLetterBox(f) && RESUME_BOX_RE.test(fileBoxWords(f)));
     if (named) return named;
     const rest = boxes.filter((f) => !isLetterBox(f));
@@ -1441,7 +1456,7 @@ function qsaSafe(sel, root) {
   }
   // The resume's box even when it already holds a file (for the listing checks above).
   function resumeInputAny() {
-    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled);
+    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled && !siteParseBox(f));
     return boxes.find((f) => !isLetterBox(f) && RESUME_BOX_RE.test(fileBoxWords(f)))
       || (boxes.filter((f) => !isLetterBox(f)).length === 1 ? boxes.find((f) => !isLetterBox(f)) : null);
   }
@@ -1739,6 +1754,7 @@ function qsaSafe(sel, root) {
       if (["radio", "hidden", "submit", "button", "reset", "password", "image"].includes(raw)) return;
       if (isWidgetInput(el)) return;                                         // listed below as a widget
       if (siteSearch(el)) return;                                            // the site's job search
+      if (raw === "file" && siteParseBox(el)) return;                        // the site's own "Autofill from resume"
       if (onlyEmpty && raw !== "file" && raw !== "checkbox" && String(el.value || "").trim()
           && !/^(select|choose|--|please)/i.test(String(el.value))) return;
       const rect = el.getBoundingClientRect();
@@ -4626,6 +4642,13 @@ function qsaSafe(sel, root) {
     const per = Math.max(10, Math.min(120, Number(o && o.perChar) || 45));
     const burst = Math.max(0, Math.min(t.length, Number(o && o.burst) || 14));
     try { if (el.focus) el.focus(); } catch (e) { /* fine */ }
+    // (2026-11-26, the owner) a box that already holds words (the site's parse, a saved draft) is
+    // cleared where the person can see it, then typed like an empty one
+    const had = String(el.value || "");
+    if (had) {
+      const steps = Math.min(8, had.length);
+      for (let i = steps - 1; i >= 0; i--) { setNativeValue(el, had.slice(0, Math.floor(had.length * i / steps))); await plainSleep(per); }
+    }
     for (let i = 1; i <= burst; i++) { setNativeValue(el, t.slice(0, i)); await plainSleep(per); }
     setNativeValue(el, t);
     return String(el.value || "") === t;
@@ -4720,7 +4743,7 @@ function qsaSafe(sel, root) {
   }
   // a field that now holds an answer loses its ring (and leaves the list)
   function dropAnswered() {
-    for (const el of [..._glowEls.keys()]) if (!el.isConnected || filledNow(el)) unglow(el);
+    for (const el of [..._glowEls.keys()]) if (!el.isConnected || (filledNow(el) && !el.__sjFlash)) unglow(el);
   }
   function currentGlow(ref) {
     for (const r of _needs) { const el = elByRef(r); if (el && _glowEls.has(el)) _glowEls.get(el).classList.toggle("cur", r === ref); }
@@ -4756,6 +4779,46 @@ function qsaSafe(sel, root) {
     if (P && el) P.at(visibleBox(el), "Needs you" + (w.label ? ": " + w.label : ""), { now: true, stay: true });
     return { n: list.length, i: _needsAt, label: w.label || "" };
   }
+  // (2026-11-26) The site's own window over the page (a privacy notice), as {title}, or null.
+  function siteModal() {
+    const P = window.TailorPointer;
+    const m = P && P.openModal ? P.openModal() : null;
+    return m ? { title: (P.titleOf && P.titleOf(m)) || "the window on the page" } : null;
+  }
+  /** Read the site's window like a person: the pointer on its title ("Reading: <title>"), its text
+   * scrolled through at a readable pace for about ``ms`` (a few seconds, not all of it). */
+  async function readModal(ms) {
+    const P = window.TailorPointer;
+    const m = P && P.openModal ? P.openModal() : null;
+    if (!m) return null;
+    const title = (P.titleOf && P.titleOf(m)) || "";
+    const head = (P.headOf && P.headOf(m)) || m;
+    P.at(head, title ? "Reading: " + title : "Reading the window on the page", { now: true, stay: true });
+    // the part of the window that scrolls (its body), else the window itself
+    let box = null;
+    for (const n of [m, ...qsaSafe("*", m)]) {
+      if (n.scrollHeight > n.clientHeight + 40) { const g = getComputedStyle(n); if (/(auto|scroll)/.test(g.overflowY)) { box = n; break; } }
+    }
+    const total = Math.max(1500, Math.min(6000, Number(ms) || 3500));
+    const t0 = Date.now();
+    if (box) {
+      const span = Math.min(box.scrollHeight - box.clientHeight, box.clientHeight * 2);
+      while (Date.now() - t0 < total) {
+        const f = Math.min(1, (Date.now() - t0) / total);
+        box.scrollTop = Math.round(span * f);
+        await plainSleep(80);
+      }
+    } else await plainSleep(total);
+    return { title };
+  }
+  // The field being filled glows for the moment it is filled (the needs-you ring's look, brighter).
+  function flash(ref, on) {
+    const el = elByRef(ref);
+    if (!el) return false;
+    if (on) { if (!_glowEls.has(el)) { glow(el, true); el.__sjFlash = true; } }
+    else if (el.__sjFlash) { el.__sjFlash = false; unglow(el); }
+    return true;
+  }
   function clearNeeds() {
     stopGlows();
     _needs = []; _needsAt = -1;
@@ -4780,7 +4843,7 @@ function qsaSafe(sel, root) {
     if (sub) {
       try { sub.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { sub.scrollIntoView(); }
       await settled(sub);
-      try { window.TailorPointer && window.TailorPointer.at(sub, "Your turn: check and submit", { now: true, stay: true }); } catch (e) { /* fine */ }
+      try { window.TailorPointer && window.TailorPointer.at(sub, "Your turn: check and submit", { now: true, stay: true, on: true }); } catch (e) { /* fine */ }
       return { where: "submit", n: 0 };
     }
     return { where: "none", n: 0 };
@@ -4876,5 +4939,6 @@ function qsaSafe(sel, root) {
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
     orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
+    siteModal, readModal, flash, siteParseBox,
   };
 })();

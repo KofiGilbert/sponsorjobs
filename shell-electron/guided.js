@@ -25,27 +25,28 @@ const TIMING = {
 const q = (v) => JSON.stringify(v);
 
 // deps: { js(expr, ms), plan(fields) -> {ok, ops, left, cost}, upload(refs, pathOf) -> {n, seen},
-//         say?(info), alive?(), seenBefore?(fields), notePlanned?(fields), wait?(ms), timing? }
+//         say?(info), alive?(), done?(Set of refs walked on this page), notePlanned?(fields),
+//         wait?(ms), timing? }
+//
+// (2026-11-26, the owner, after Lam) Nothing is ever filled out of sight:
+//   * a site window (a privacy notice) open over the page stops the walk before anything is
+//     touched (out.modal = its title); the caller reads it and acknowledges it visibly, then walks
+//     again, carrying on where it stopped (``done``);
+//   * every box is filled the same way, top to bottom, whether or not the site already put
+//     something in it (its parse, a saved draft): the pointer goes there, the box glows, it is
+//     cleared where the person can see it and our value typed or picked ("Filling: <field>");
+//   * a window that opens while walking (Lam's notice comes up when the resume goes in) stops the
+//     walk at once, the same way.
 async function walk(deps) {
   const t = Object.assign({}, TIMING, deps.timing || {});
   const wait = deps.wait || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const js = deps.js;
-  const out = { filled: 0, uploaded: 0, needs: [], cost: 0, files: [], walked: 0, order: [] };
-  const fields = await js(`window.TailorAutofill.extractFormAsync(${q({ onlyEmpty: true, budgetMs: 15000 })})`, 20000);
-  if (!Array.isArray(fields) || !fields.length) return out;
-  // a page walked before (the agent's next step on it): what is left is the person's
-  if (deps.seenBefore && deps.seenBefore(fields)) return out;
-  const plan = await deps.plan(fields);
-  if (deps.notePlanned) deps.notePlanned(fields);
-  out.cost = (plan && Number(plan.cost)) || 0;
-  const ops = plan && plan.ok ? (plan.ops || []) : [];
-  const left = ((plan && plan.left) || []).map((l) => l.ref).filter(Boolean);
-  const uploadPath = new Map(ops.filter((o) => o.op === "upload" && o.path).map((o) => [o.ref, o.path]));
-  const byRef = new Map();
-  for (const o of ops) if (!byRef.has(o.ref)) byRef.set(o.ref, o);
-  const order = await js(`window.TailorAutofill.orderRefs(${q([...byRef.keys(), ...left.filter((r) => !byRef.has(r))])})`);
-  const refs = Array.isArray(order) ? order : [];
-  const upload = async (op) => {
+  const done = deps.done || new Set();
+  const out = { filled: 0, uploaded: 0, needs: [], cost: 0, files: [], walked: 0, order: [], modal: "" };
+  const modalNow = async () => { const m = await js("window.TailorAutofill.siteModal()", 3000); return (m && m.title) || ""; };
+  const stopFor = async (title) => { out.modal = title; return out; };
+  { const m = await modalNow(); if (m) return stopFor(m); }
+  const upload = async (op, uploadPath) => {
     const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
     if (rep && (rep.uploads || []).length && deps.upload) {
       const u = await deps.upload(rep.uploads, (r) => uploadPath.get(r) || "");
@@ -53,64 +54,78 @@ async function walk(deps) {
       for (const x of (u && u.seen) || []) out.files.push({ kind: op.from === "letter" ? "cover_letter" : "resume", path: x.path, how: x.how, earlier: !!x.earlier });
     }
   };
-  let i = 0, cover = "";
-  for (const ref of refs) {
+  let i = 0;
+  // Round 1: every box on the page; then only boxes that came up empty since (a question that
+  // opens on an answer), at most twice more.
+  for (let round = 0; round < 3; round++) {
     if (deps.alive && !deps.alive()) break;
-    const t0 = Date.now();
-    const w = await js(`window.TailorAutofill.walkTo(${q(ref)})`, 3000);
-    if (!w || !w.ok) continue;
-    const name = w.label || "this field";
-    const pt = (label) => js(`window.TailorAutofill.pointAt(${q(ref)}, ${q(label)})`, 3000);
-    const op = byRef.get(ref);
-    out.order.push(ref);
-    if (w.covered) {
-      // (Lam, 2026-11-26) the site opened a window over the form: the pointer reads the window
-      // (pointer_overlay.js points there, "Reading: <its title>"), never labels a field hidden
-      // under it; what was decided goes in quietly, and a field left for the person is kept for
-      // the end (its ring is drawn once the window is gone)
-      if (cover !== w.covered) { cover = w.covered; await pt("Reading"); await wait(t.needs); }
-      if (!op) { await js(`window.TailorAutofill.markNeeds(${q(ref)})`, 3000); out.needs.push(name); continue; }
-      if (op.op === "upload") await upload(op);
-      else {
-        const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
-        out.filled += (rep && rep.filled) || 0;
+    const got = await js(`window.TailorAutofill.extractFormAsync(${q({ onlyEmpty: round > 0, budgetMs: 15000 })})`, 20000);
+    const fields = (Array.isArray(got) ? got : []).filter((f) => f && f.ref && !done.has(f.ref));
+    if (!fields.length) break;
+    const plan = await deps.plan(fields);
+    if (deps.notePlanned) deps.notePlanned(fields);
+    out.cost += (plan && Number(plan.cost)) || 0;
+    const ops = plan && plan.ok ? (plan.ops || []) : [];
+    const left = ((plan && plan.left) || []).map((l) => l.ref).filter(Boolean);
+    const uploadPath = new Map(ops.filter((o) => o.op === "upload" && o.path).map((o) => [o.ref, o.path]));
+    const byRef = new Map();
+    for (const o of ops) if (!byRef.has(o.ref) && !done.has(o.ref)) byRef.set(o.ref, o);
+    const order = await js(`window.TailorAutofill.orderRefs(${q([...byRef.keys(), ...left.filter((r) => !byRef.has(r) && !done.has(r))])})`);
+    const refs = Array.isArray(order) ? order : [];
+    if (!refs.length) break;
+    for (const ref of refs) {
+      if (deps.alive && !deps.alive()) break;
+      { const m = await modalNow(); if (m) return stopFor(m); }
+      const t0 = Date.now();
+      const w = await js(`window.TailorAutofill.walkTo(${q(ref)})`, 3000);
+      if (!w || !w.ok) { done.add(ref); continue; }
+      if (w.covered) return stopFor(w.covered);
+      const name = w.label || "this field";
+      const pt = (label) => js(`window.TailorAutofill.pointAt(${q(ref)}, ${q(label)})`, 3000);
+      const op = byRef.get(ref);
+      if (!op) {
+        // the person's: only when it is still empty (a box the site filled is left as it is)
+        done.add(ref);
+        if (!(await js(`window.TailorAutofill.markNeeds(${q(ref)})`, 3000))) continue;
+        if (w.scrolled) { await pt("Scrolling"); await wait(t.scroll); }
+        await pt("Needs you: " + name);
+        out.needs.push(name);
+        out.order.push(ref);
+        await wait(t.needs);
+        continue;
       }
-      out.covered = (out.covered || 0) + 1;
-      continue;
-    }
-    cover = "";
-    if (w.scrolled) { await pt("Scrolling"); await wait(t.scroll); }
-    if (!op) {                                               // the person's: a pause and an outline
-      await pt("Needs you: " + name);
-      await js(`window.TailorAutofill.markNeeds(${q(ref)})`, 3000);
-      out.needs.push(name);
-      await wait(t.needs);
-      continue;
-    }
-    i++;
-    if (deps.say) deps.say({ guide: { i, n: byRef.size }, message: "Filling " + i + " of " + byRef.size });
-    if (op.op === "upload") {
-      await pt(op.from === "letter" ? "Uploading cover letter" : "Uploading resume");
-      await upload(op);
-    } else {
-      await pt("Clicking: " + name);
-      await wait(t.move);
-      await pt("Filling: " + name);
-      let typed = false;
-      if (op.op === "fill" && op.text) {
-        typed = (await js(`window.TailorAutofill.typeVisibly(${q(ref)}, ${q(String(op.text))}, ${q({ perChar: t.perChar, burst: t.burst })})`, 8000)) === true;
+      if (w.scrolled) { await pt("Scrolling"); await wait(t.scroll); }
+      out.order.push(ref);
+      i++;
+      if (deps.say) deps.say({ guide: { i, n: i + Math.max(0, refs.length - refs.indexOf(ref) - 1) }, message: "Filling " + i });
+      await js(`window.TailorAutofill.flash(${q(ref)}, true)`, 2000);
+      if (op.op === "upload") {
+        await pt(op.from === "letter" ? "Uploading cover letter" : "Uploading resume");
+        await upload(op, uploadPath);
+      } else {
+        await pt("Clicking: " + name);
+        await wait(t.move);
+        await pt("Filling: " + name);
+        let typed = false;
+        if (op.op === "fill" && op.text) {
+          typed = (await js(`window.TailorAutofill.typeVisibly(${q(ref)}, ${q(String(op.text))}, ${q({ perChar: t.perChar, burst: t.burst })})`, 8000)) === true;
+        }
+        if (typed) out.filled++;
+        else {
+          const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
+          out.filled += (rep && rep.filled) || 0;
+        }
+        await js("window.TailorAutofill.tidyMenus()", 4000);    // its list closed before the next field
       }
-      if (typed) out.filled++;
-      else {
-        const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
-        out.filled += (rep && rep.filled) || 0;
-      }
-      await js("window.TailorAutofill.tidyMenus()", 4000);    // its list closed before the next field
+      await js(`window.TailorAutofill.flash(${q(ref)}, false)`, 2000);
+      done.add(ref);
+      out.walked++;
+      const spent = Date.now() - t0;
+      if (spent < t.min) await wait(t.min - spent);
     }
-    out.walked++;
-    const spent = Date.now() - t0;
-    if (spent < t.min) await wait(t.min - spent);
   }
+  // a window the last field opened (the resume going in): the caller deals with it
+  { const m = await modalNow(); if (m) return stopFor(m); }
   // the walk is over: the pointer goes (a pointer left behind sits over the wrong field once the
   // page moves); the run's end puts it where the person acts (guideEnd)
   await js("window.TailorPointer && window.TailorPointer.hide()", 2000);

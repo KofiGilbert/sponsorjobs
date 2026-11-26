@@ -66,8 +66,16 @@
   }
   // Where the tip goes for a field's box: right of it, centred on its height; under its left end
   // when the label would not fit on the right. Never inside the box.
-  function spot(r) {
+  function spot(r, on) {
     const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+    if (on) {
+      // (2026-11-26, the owner) the tip ON the button (its left centre); the label just past the
+      // button's right edge when it fits, else under the button: never over it
+      const x = Math.round(Math.max(4, r.left + Math.min(18, r.width / 4)));
+      const y = Math.round(Math.max(4, Math.min(vh - 30, r.top + r.height / 2 - 4)));
+      const right = vw - r.right - 12 >= 260;
+      return { x, y, side: "on", shift: right ? Math.round(r.right - x + 12 - 40) : 0, drop: right ? 0 : Math.round(r.bottom - y + 6 - 24) };
+    }
     const room = vw - r.right - GAP;
     if (room >= 330) return { x: Math.round(r.right + GAP), y: Math.round(Math.max(4, Math.min(vh - 30, r.top + r.height / 2 - 6))), side: "right" };
     // no room on the right (a narrow pane): the tip on the field's lower edge, near its left end, so
@@ -124,6 +132,22 @@
     } catch (e) { /* never in the page's way */ }
     return null;
   }
+  // The site's own modal window open now (a privacy notice over the form), or null: an open dialog
+  // that is modal (aria-modal, a modal <dialog>) or takes a large part of the view.
+  function openModal() {
+    try {
+      const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+      for (const d of document.querySelectorAll(MODAL_SEL)) {
+        if (ours(d)) continue;
+        const r = openRect(d);
+        if (!r) continue;
+        let modal = d.getAttribute("aria-modal") === "true";
+        try { modal = modal || (d.tagName === "DIALOG" && d.matches(":modal")); } catch (e) { /* old engine */ }
+        if (modal || r.width * r.height >= 0.2 * vw * vh) return d;
+      }
+    } catch (e) { /* never in the page's way */ }
+    return null;
+  }
   function headOf(m) {
     try {
       const id = m.getAttribute("aria-labelledby");
@@ -146,7 +170,7 @@
     if (!cur.el || !cur.el.isConnected) { hide(); return; }
     const r = cur.el.getBoundingClientRect();
     if (!visible(r) || (!cur.modal && coverOf(cur.el))) { wrap.classList.remove("on"); return; }
-    const m = spot(r);
+    const m = spot(r, cur.on);
     wrap.classList.add("still");                       // follow at once, no glide behind the page
     wrap.style.transform = "translate(" + m.x + "px, " + m.y + "px)";
     wrap.classList.add("on");
@@ -160,6 +184,9 @@
     if (!ensure()) return;
     wrap.classList.toggle("still", reduced());
     tag.textContent = String(m.label || "").slice(0, 60);
+    // beside the button it points into (see spot), else the usual place
+    tag.style.marginLeft = m.shift ? Math.max(0, m.shift) + "px" : "";
+    tag.style.marginTop = m.side === "on" ? (m.shift ? "-6px" : Math.max(24, 24 + (m.drop || 0)) + "px") : "";
     wrap.style.transform = "translate(" + m.x + "px, " + m.y + "px)";
     wrap.classList.add("on");
     shown = { x: m.x, y: m.y, label: tag.textContent, side: m.side };
@@ -176,7 +203,7 @@
   }
   function point(rect, label, opts) {
     if (!visible(rect)) return false;
-    const m = Object.assign(spot(rect), { label });
+    const m = Object.assign(spot(rect, !!(opts && opts.on)), { label });
     stay = !!(opts && opts.stay);
     if (opts && opts.now) { queue.length = 0; clearTimeout(timer); timer = null; show(m); return true; }
     queue.push(m);
@@ -208,7 +235,7 @@
       }
       if (dx || dy) r = { left: r.left + dx, right: r.right + dx, top: r.top + dy, bottom: r.bottom + dy, width: r.width, height: r.height };
       const ok = point(r, label, opts);
-      if (ok) cur = dx || dy ? null : { el, label };      // a frame's element: placed once, not followed
+      if (ok) cur = dx || dy ? null : { el, label, on: !!(opts && opts.on) };      // a frame's element: placed once, not followed
       return ok;
     } catch (e) { return false; }
   }
@@ -223,5 +250,5 @@
     return true;
   }
   const state = () => (shown ? Object.assign({ queued: queue.length, reduced: reduced() }, shown) : null);
-  window.TailorPointer = { at, point, hide, state, coverOf, titleOf, COLOR, MOVE_MS };
+  window.TailorPointer = { at, point, hide, state, coverOf, titleOf, openModal, headOf, COLOR, MOVE_MS };
 })();

@@ -115,56 +115,105 @@ async function run(o) {
     const end = await js("window.TailorAutofill.guideEnd()");
     await page.waitForTimeout(700);
     const st = await page.evaluate("window.TailorPointer.state()");
+    const tip = await page.evaluate(() => { const r = document.getElementById("submit").getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
     const outlined = await page.evaluate("!!document.querySelector('#submit.tailor-submit-hint')");
     const clicked = await page.evaluate("document.getElementById('submit').dataset.clicked || ''");
     await b.close();
     assert(end.where === "submit" && st && st.label === "Your turn: check and submit", "rests on Submit " + JSON.stringify([end, st]));
+    assert(st.side === "on" && st.x >= tip.left && st.x <= tip.right && st.y >= tip.top && st.y <= tip.bottom, "the tip ON the button " + JSON.stringify([st, tip]));
     assert(outlined && !clicked, "Submit outlined, never pressed");
   }
 
-  // ---- (Lam, 2026-11-26) a site window over the form: the pointer reads the window, never labels
-  // a field hidden under it; no ring is drawn over the window; once it closes, fields are labelled
+  // ---- (Lam, 2026-11-26, the owner) a site window over the form: NOTHING is filled under it. The
+  // walk stops before touching the page and says so; the window is read in sight ("Reading:
+  // <title>", its text scrolled) and acknowledged; then the walk starts from the top. A window that
+  // opens in the middle stops the walk at once, and the next walk carries on where it stopped.
+  {
+    const b = await chromium.launch();
+    const page = await b.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.goto(FIX);
+    await page.evaluate(CORE); await page.evaluate(POINTER);
+    const openDpa = () => page.evaluate(() => {
+      const back = document.createElement("div");
+      back.id = "dpa";
+      back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center";
+      back.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="dpaH" style="background:#fff;width:520px;padding:20px">'
+        + '<h2 id="dpaH">Data Privacy Agreement</h2><div id="dpaBody" style="height:120px;overflow-y:auto"><p style="height:900px">Made-up notice text.</p></div>'
+        + '<button id="ack" type="button">I Acknowledge</button></div>';
+      document.body.appendChild(back);
+      document.getElementById("ack").addEventListener("click", () => back.remove());
+    });
+    await openDpa();
+    await page.evaluate(() => { window.__labels = []; const show = window.TailorPointer.at;
+      window.TailorPointer.at = (el, label, opt) => { const ok = show(el, label, opt); const st = window.TailorPointer.state(); window.__labels.push(st ? st.label : ""); return ok; }; });
+    const js = (e) => page.evaluate(`(async () => (${e}))()`);
+    const done = new Set();
+    const walkIt = () => guided.walk({ js, done, plan: async (f) => planFor(f, {}), upload: async () => ({ n: 0, seen: [] }), wait: () => new Promise((res) => setTimeout(res, 10)) });
+    const first = await walkIt();
+    const v1 = await page.evaluate("window.fxValues()");
+    assert(first.modal === "Data Privacy Agreement" && first.walked === 0 && first.filled === 0, "stopped before touching the page " + JSON.stringify(first));
+    assert(!v1.first && !v1.email && !v1.adult, "nothing filled under the window " + JSON.stringify(v1));
+    // the window read in sight: the pointer on its title, the text scrolled
+    const read = await js("window.TailorAutofill.readModal(1500)");
+    const scrolled = await page.evaluate("document.getElementById('dpaBody').scrollTop");
+    const label = await page.evaluate("window.TailorPointer.state() && window.TailorPointer.state().label");
+    assert(read && read.title === "Data Privacy Agreement" && label === "Reading: Data Privacy Agreement" && scrolled > 50, "read: " + JSON.stringify([read, label, scrolled]));
+    const ackFree = await page.evaluate(() => !window.TailorPointer.coverOf(document.getElementById("ack")));
+    assert(ackFree, "the window's own button is not covered: the click lands there");
+    await page.click("#ack");
+    // a window that opens after the second field: the walk stops there
+    await page.evaluate(() => { const em = document.getElementById("email"); em.addEventListener("focus", () => window.__openAgain && window.__openAgain(), { once: true }); });
+    await page.exposeFunction("__openAgainHost", () => true);
+    await page.evaluate(() => { window.__openAgain = () => { const back = document.createElement("div"); back.id = "dpa2";
+      back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000";
+      back.innerHTML = '<div role="dialog" aria-modal="true" style="background:#fff;width:400px;margin:100px auto;padding:20px"><h2>Before you go on</h2><button id="ok2">OK</button></div>';
+      document.body.appendChild(back); document.getElementById("ok2").addEventListener("click", () => back.remove()); }; });
+    const second = await walkIt();
+    const v2 = await page.evaluate("window.fxValues()");
+    assert(second.modal === "Before you go on", "a window opening mid-walk stops it " + JSON.stringify(second));
+    assert(v2.first === "Avery" && !v2.adult, "the fields above were filled, nothing after " + JSON.stringify(v2));
+    await page.click("#ok2");
+    const third = await walkIt();
+    const v3 = await page.evaluate("window.fxValues()");
+    const labels = await page.evaluate("window.__labels");
+    await b.close();
+    assert(!third.modal && v3.adult === "Yes" && v3.veteran === "I am not a protected veteran", "carried on to the end " + JSON.stringify([third, v3]));
+    assert(third.order[0] !== second.order[0], "never the same box twice");
+    const fillLabels = labels.filter((l) => /^(Filling|Clicking)/.test(l));
+    assert(fillLabels.length >= 4 && !labels.some((l) => /^Checking/.test(l)), "every box filled in sight " + JSON.stringify(labels));
+  }
+
+  // ---- (2026-11-26, the owner) a box the site already filled is filled the same way: the pointer
+  // goes there, it is cleared in sight and our value typed; the site's "Autofill from resume" box
+  // is never offered for the resume
   {
     const b = await chromium.launch();
     const page = await b.newPage({ viewport: { width: 1000, height: 700 } });
     await page.goto(FIX);
     await page.evaluate(CORE); await page.evaluate(POINTER);
     await page.evaluate(() => {
-      const back = document.createElement("div");
-      back.id = "dpa";
-      back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center";
-      back.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="dpaH" style="background:#fff;width:520px;padding:20px">'
-        + '<h2 id="dpaH">Data Privacy Agreement</h2><p>Made-up notice text.</p><button id="ack" type="button">I Acknowledge</button></div>';
-      document.body.appendChild(back);
-      document.getElementById("ack").addEventListener("click", () => back.remove());
-      window.__labels = [];
-      const show = window.TailorPointer.at;
-      window.TailorPointer.at = (el, label, opt) => { const ok = show(el, label, opt); const st = window.TailorPointer.state(); window.__labels.push(st ? st.label : ""); return ok; };
+      document.getElementById("first_name").value = "Wrongname";
+      const pane = document.createElement("div");
+      pane.innerHTML = '<div class="autofill-pane"><p>Autofill from resume</p><p>Upload your resume here to autofill key application fields.</p><input type="file" id="parse"></div>';
+      document.body.prepend(pane);
+      const f = document.createElement("div"); f.className = "field";
+      f.innerHTML = '<label for="resume">Resume *</label><input type="file" id="resume" name="resume">';
+      document.getElementById("application-form").appendChild(f);
+      window.__seen = [];
+      const el = document.getElementById("first_name");
+      el.addEventListener("input", () => window.__seen.push(el.value));
     });
     const js = (e) => page.evaluate(`(async () => (${e}))()`);
-    const out = await guided.walk({ js, plan: async (f) => planFor(f, {}), upload: async () => ({ n: 0, seen: [] }), wait: () => new Promise((res) => setTimeout(res, 10)) });
-    const labels = await page.evaluate("window.__labels");
+    await guided.walk({ js, plan: async (f) => planFor(f, {}), upload: async () => ({ n: 0, seen: [] }), wait: () => new Promise((res) => setTimeout(res, 10)) });
+    const seen = await page.evaluate("window.__seen");
     const v = await page.evaluate("window.fxValues()");
-    await js("window.TailorAutofill.guideEnd()");          // the run's end, the window still open
-    const st = await page.evaluate("window.TailorPointer.state()");
-    // the field under the window: covered, its ring never drawn over the window
-    const cov = await page.evaluate(() => !!window.TailorPointer.coverOf(document.getElementById("first_name")));
-    const ring = await js("(() => { const T = window.TailorAutofill; T.markNeeds(T.needsList()[0] || ''); const h = document.querySelector('[data-sj-glow]'); return h ? [...h.shadowRoot.querySelectorAll('.r')].filter((r) => !r.classList.contains('off')).length : 0; })()");
-    // the window's own button is not covered: the agent's "Clicking: I Acknowledge" lands on it
-    const ackFree = await page.evaluate(() => !window.TailorPointer.coverOf(document.getElementById("ack")));
-    await page.click("#ack");
-    await page.waitForTimeout(700);
-    const covAfter = await page.evaluate(() => !!window.TailorPointer.coverOf(document.getElementById("first_name")));
-    const after = await page.evaluate(() => { window.scrollTo(0, 0); window.TailorPointer.at(document.getElementById("last_name"), "Filling: Last Name", { now: true }); return window.TailorPointer.state(); });
+    const boxes = await page.evaluate(() => ({ parse: window.TailorAutofill.siteParseBox(document.getElementById("parse")),
+      plain: window.TailorAutofill.siteParseBox(document.getElementById("resume")),
+      listed: window.TailorAutofill.extractForm({}).filter((f) => f.type === "file").map((f) => f.label) }));
     await b.close();
-    assert(labels.length && labels.every((l) => l === "Reading: Data Privacy Agreement"), "only the window is labelled while it is open " + JSON.stringify(labels));
-    assert(!labels.some((l) => /^(Filling|Clicking|Scrolling|Needs you)/.test(l)), "never a field hidden under it");
-    assert(v.first === "Avery" && v.veteran === "I am not a protected veteran", "what was decided still goes in, quietly " + JSON.stringify(v));
-    assert(out.covered >= 4 && out.needs.length === 1, "walked under the window " + JSON.stringify(out));
-    assert(st && /^Reading: Data Privacy Agreement/.test(st.label), "the end rests on the window, not on the field under it " + JSON.stringify(st));
-    assert(cov && ackFree && !covAfter, "covered while open, the window's button free, uncovered after " + JSON.stringify([cov, ackFree, covAfter]));
-    assert(ring === 0, "no ring drawn over the window: " + ring);
-    assert(after && after.label === "Filling: Last Name", "fields labelled again once it is gone " + JSON.stringify(after));
+    assert(v.first === "Avery", "our value in the end " + JSON.stringify(v));
+    assert(seen.some((x) => x && "Wrongname".startsWith(x) && x.length < 9) && seen.includes(""), "cleared in sight first " + JSON.stringify(seen.slice(0, 12)));
+    assert(boxes.parse === true && boxes.plain === false && boxes.listed.length === 1 && /Resume/.test(boxes.listed[0]), "the parse box is never used " + JSON.stringify(boxes));
   }
 
   // ---- (Lam, 2026-11-26) the site's confirmation in a window over its profile page counts as
