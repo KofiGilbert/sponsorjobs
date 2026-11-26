@@ -21375,6 +21375,19 @@ def _orb_candidates(now) -> list[dict]:
     finally:
         recs.close()
     ready = [r for r in rows if is_waiting_to_submit(_record_data(r))]
+    # (2026-11-26) The daily sweep: an Autofill over a day old with nothing showing it was sent
+    # (no thank-you page, form post, confirmation email or yes) is asked about ONCE more.
+    from submit.stages import app_stage
+    for r in rows:
+        d = _record_data(r)
+        age = _filled_age(d)
+        if age is None or age < ASK_AGAIN_AFTER_S or not _ask_submitted(d, app_stage(d)["stage"]):
+            continue
+        role, company = _record_label(r, d)
+        out.append({"type": "sent", "key": f"sent:{r['id']}:{d.get('filled_at')}",
+                    "text": f"Did you send your {company or role or 'job'} application?",
+                    "action": {"nav": "tracker", "label": "Open Tracker"}})
+        break
     # The Tracker's own board: the follow-ups due today and the jobs at Interviewing.
     w = _watchlist()
     try:

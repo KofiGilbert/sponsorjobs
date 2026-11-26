@@ -295,3 +295,19 @@ def test_an_inbox_move_records_the_confirmation_email(A):
     assert r.status_code == 200, r.get_json()
     assert _card(c, snap["source_id"])["stage"] == "applied"
     assert _data(A, rid)["sent_evidence"]["label"] == "confirmation email"
+
+
+def test_the_orb_carries_the_daily_sweep(A):
+    from datetime import datetime, timedelta, timezone
+    two_days = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    rid = _add(A, "Data Analyst", "gh:lark10", url="https://boards.greenhouse.io/lark/jobs/10", filled_at=two_days)
+    got = [c for c in A._orb_candidates(datetime.now()) if c["type"] == "sent"]
+    assert [c["text"] for c in got] == ["Did you send your Larkspur Labs application?"]
+    assert got[0]["key"].startswith(f"sent:{rid}:")
+    # evidence it was sent: no nudge
+    recs = CVRecords(A.DB_PATH)
+    try:
+        recs.merge_data(rid, {"sent_evidence": A._sent_evidence([{"kind": "email"}])})
+    finally:
+        recs.close()
+    assert not [c for c in A._orb_candidates(datetime.now()) if c["type"] == "sent"]

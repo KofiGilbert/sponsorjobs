@@ -116,7 +116,8 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
     last-resort ask). A fill that times out quietly is left to the Tracker's ask.
 18. **Closes the app mid-fill or before the confirmation loads.** Covered by the Tracker's ask
     (the fill report stamps `filled_at`) and fixed by the daily sweep: a card filled over a day
-    ago with no evidence is asked once more (`test_sent_detection.py`). The confirmation email
+    ago with no evidence is asked once more, on the card and as one Orb nudge
+    (`test_sent_detection.py`). The confirmation email
     also lands later.
 19. **Applies outside the app (their own Chrome, the phone).** Fixed as far as the inbox reaches:
     a confirmation email moves the card when it surely names that application; the new ATS
@@ -165,8 +166,9 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
 3. Drag-and-drop-only upload zones.
 4. The bar saying "the site did not take it" and "this job closed" after Submit.
 5. Non-English confirmation emails and markers.
-6. The daily sweep reaches the person only on the Tracker (and the Orb once it can nudge from
-   `ask_submitted`); no notification yet.
+6. The daily sweep reaches the person on the Tracker card and as one Orb nudge ("Did you send
+   your <company> application?", kind `sent`), inside the Orb's daily limits; no OS notification
+   of its own.
 
 ## What is not verified on a real site
 
