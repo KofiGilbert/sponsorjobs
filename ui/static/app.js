@@ -1395,6 +1395,7 @@
           : "The site confirmed your application. No saved package matched this page, so mark it applied yourself if you built one.";
       }
       if (info && info.matched && $("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
+      if (info && info.matched && $("#view-tracker")?.classList.contains("is-active")) loadTracker();
     });
   }
 
@@ -6385,6 +6386,10 @@
   const trkStageName = (s) => trkT("tracker.stage." + s, TRK_STAGE_EN[s] || s);
   const TRK_VIEW_KEY = "tailor-tracker-view";
   let TRK_CARDS = [], TRK_METRICS = null, TRK_VIEW = "board", TRK_OPEN = null, TRK_CLOSED = null, TRK_PANEL_SEQ = 0;
+  // The Closed column shows the cards closed in the last 14 days; "Show older (N)" reveals the
+  // rest until the page is left. Search and the Table view always show everything.
+  const TRK_CLOSED_RECENT_DAYS = 14;
+  let TRK_SHOW_OLDER = false, TRK_RECHECK_TRIES = 0, TRK_RECHECK_TIMER = null;
   // The toolbar's filters (Jira's search box and quick filters): words matched against the company
   // and the job title, "Follow-ups due", and "Resume ready" (the jobs that can be applied to right
   // now). Client side, on the cards already loaded.
@@ -6401,6 +6406,7 @@
   }
 
   async function loadTracker() {
+    TRK_SHOW_OLDER = false;          // each visit starts on the last 14 days of Closed
     const [board, metrics] = await Promise.all([
       api("/api/tracker/board").catch(() => null),
       api("/api/tracker/metrics").catch(() => null),
@@ -6424,6 +6430,18 @@
   function trkTakeBoard(board) {
     TRK_CARDS = TRK_STAGES.flatMap(s => board.columns[s] || []);
     trkRenderClosed(board.closed_notice);
+    trkWatchRecheck(board);
+  }
+  // The engine checks the To apply postings in the background (a closed one moves to Closed with
+  // "Job closed"). While it runs, the board looks again a few times, then stops.
+  function trkWatchRecheck(board) {
+    clearTimeout(TRK_RECHECK_TIMER);
+    if (!board || !board.rechecking) { TRK_RECHECK_TRIES = 0; return; }
+    if (TRK_RECHECK_TRIES >= 6) return;
+    TRK_RECHECK_TRIES++;
+    TRK_RECHECK_TIMER = setTimeout(() => {
+      if ($("#view-tracker")?.classList.contains("is-active")) trkReloadCards();
+    }, 8000);
   }
   // "3 jobs closed before you applied. Removed from your list." The same quiet line, and the same
   // once-per-batch rule, as the Applications page (aaRenderClosed): the engine is told it was
@@ -6437,8 +6455,8 @@
     }
     const k = TRK_CLOSED;
     if (!k || k.hidden) { el.hidden = true; return; }
-    el.innerHTML = `<span class="fn-text">${esc(k.n === 1 ? trkT("aa.closedOne", "1 job closed before you applied. Removed from your list.")
-        : trkT("aa.closedN", "{n} jobs closed before you applied. Removed from your list.").replace("{n}", k.n))}</span>`
+    el.innerHTML = `<span class="fn-text">${esc(k.n === 1 ? trkT("tracker.closedOne", "1 job closed before you applied. Moved to Closed.")
+        : trkT("tracker.closedN", "{n} jobs closed before you applied. Moved to Closed.").replace("{n}", k.n))}</span>`
       + `<button class="fn-x" type="button" aria-label="${esc(trkT("job.dismiss", "Dismiss"))}" title="${esc(trkT("job.dismiss", "Dismiss"))}">&times;</button>`;
     el.querySelector(".fn-x").addEventListener("click", () => { k.hidden = true; el.hidden = true; });
     el.hidden = false;
@@ -6568,18 +6586,32 @@
     const loz = (key, tone, k, f) => ({ key, tone, text: trkT(k, f) });
     const col = trkColOf(c.stage);
     if (col === "closed") {
-      if (c.closed_at) return loz("job_closed", "neutral", "tracker.loz.jobClosed", "Job closed");
-      return c.stage === "rejected" ? loz("not_selected", "neutral", "tracker.notSelected", "Not selected")
-        : loz("archived", "neutral", "tracker.stage.archived", "Archived");
+      // Every Closed card says why (2026-11-26).
+      const why = trkCloseReason(c);
+      return loz(why, "neutral", TRK_REASON[why][0], TRK_REASON[why][1]);
     }
     if (col === "todo") {
       if (c.ask_submitted && c.apply_id) return loz("ask", "warn", "tracker.loz.ask", "Did you submit?");
+      if (c.still_interested) return loz("still", "warn", "tracker.loz.still", "Still interested?");
       if (c.apply_id || (c.stage === "approved" && c.record)) return loz("ready", "success", "tracker.loz.ready", "Resume ready");
       if (c.stage === "in_progress") return loz("tailoring", "info", "tracker.loz.tailoring", "Tailoring");
       return loz("none", "neutral", "tracker.loz.none", "No resume yet");
     }
+    if (col === "offer" && c.accepted) return loz("accepted", "success", "tracker.loz.accepted", "Accepted");
+    if (col === "applied" && c.no_response) return loz("no_response_q", "warn", "tracker.loz.noResponseQ", "No response?");
     if (c.follow_up_due) return loz("due", "warn", "tracker.loz.due", "Follow up due");
     return null;
+  }
+  // Why a Closed card is closed, with the right word when an older card carries no reason yet.
+  const TRK_REASON = {
+    job_closed: ["tracker.loz.jobClosed", "Job closed"], not_selected: ["tracker.notSelected", "Not selected"],
+    no_response: ["tracker.reason.noResponse", "No response"], passed: ["tracker.reason.passed", "Passed"],
+  };
+  const TRK_REASONS = ["job_closed", "not_selected", "no_response", "passed"];
+  function trkCloseReason(c) {
+    if (TRK_REASON[c.close_reason]) return c.close_reason;
+    if (c.stage === "rejected") return "not_selected";
+    return c.closed_at ? "job_closed" : "passed";
   }
   function trkLozHtml(st) {
     return st ? `<span class="trk-loz trk-loz-${st.tone}" data-loz="${st.key}">${esc(st.text)}</span>` : "";
@@ -6597,13 +6629,14 @@
   // due replaces it (a flag, in amber). The words are on hover; the card shows icon and date.
   function trkCardDate(c) {
     const on = (k, f, iso, more) => (iso ? { icon: "calendar", day: trkDay(iso), title: trkT(k, f).replace("{d}", trkDay(iso)), ...more } : null);
-    if (c.closed_at) return on("tracker.jobClosedOn", "Job closed {d}", c.closed_at);
+    if (c.closed_at && (trkColOf(c.stage) !== "closed" || trkCloseReason(c) === "job_closed")) return on("tracker.jobClosedOn", "Job closed {d}", c.closed_at);
     if (c.follow_up_due && c.follow_up_at) return on("tracker.followUpOn", "Follow up {d}", c.follow_up_at, { icon: "flag", due: true });
     switch (c.stage) {
       case "saved": return on("tracker.savedOn", "Saved {d}", c.stage_at);
       case "approved": return on("tracker.tailoredOn", "Tailored {d}", c.tailored_at || c.stage_at);
       case "applied": return on("tracker.appliedOnDay", "Applied {d}", c.applied_at || c.stage_at);
-      case "archived": return on("tracker.archivedOn", "Archived {d}", c.stage_at);
+      case "rejected":
+      case "archived": return on("tracker.closedOn", "Closed {d}", c.closed_on || c.stage_at);
       default: return on("tracker.sinceOn", "Since {d}", c.stage_at);
     }
   }
@@ -6640,17 +6673,31 @@
     const shown = trkVisible();
     const filtering = !!(TRK_FILTER.q || TRK_FILTER.due || TRK_FILTER.ready);
     host.innerHTML = TRK_COLS.map(col => {
-      const cards = shown.filter(c => col.stages.includes(c.stage));
+      let cards = shown.filter(c => col.stages.includes(c.stage));
       // To apply reads top down by what can be done next: resumes that are ready, then the ones
       // being tailored, then jobs only saved.
       if (col.key === "todo") cards.sort((x, y) => col.stages.indexOf(y.stage) - col.stages.indexOf(x.stage));
+      const total = cards.length;
+      let older = 0;
+      if (col.key === "closed") {
+        // Newest closing first; only the last 14 days unless the person asks for older ones (a
+        // search always shows them all).
+        cards.sort((x, y) => String(y.closed_on || y.stage_at || "").localeCompare(String(x.closed_on || x.stage_at || "")));
+        if (!filtering && !TRK_SHOW_OLDER) {
+          const recent = cards.filter(trkClosedRecently);
+          older = cards.length - recent.length;
+          cards = recent;
+        }
+      }
       const name = trkT(col.name[0], col.name[1]);
       const hint = filtering ? trkT("tracker.noMatch", "No matches") : trkT(col.hint[0], col.hint[1]);
-      return `<section class="trk-col${cards.length ? "" : " is-empty"}" data-col="${col.key}" aria-label="${esc(name)}">
-        <h2 class="trk-col-h"><span class="trk-col-name">${esc(name)}</span>${col.check ? `<span class="trk-col-ok">${trkIcon("check")}</span>` : ""}<span class="trk-col-n">${cards.length}</span></h2>
-        <div class="trk-col-cards">${cards.length ? cards.map(trkCardHtml).join("") : `<div class="trk-col-hint">${esc(hint)}</div>`}</div>
+      const more = older ? `<button class="link-btn trk-col-more" type="button" data-trk-older>${esc(trkT("tracker.showOlder", "Show older ({n})").replace("{n}", older))}</button>` : "";
+      return `<section class="trk-col${total ? "" : " is-empty"}" data-col="${col.key}" aria-label="${esc(name)}">
+        <h2 class="trk-col-h"><span class="trk-col-name">${esc(name)}</span>${col.check ? `<span class="trk-col-ok">${trkIcon("check")}</span>` : ""}<span class="trk-col-n">${total}</span></h2>
+        <div class="trk-col-cards">${cards.length ? cards.map(trkCardHtml).join("") : (older ? "" : `<div class="trk-col-hint">${esc(hint)}</div>`)}${more}</div>
       </section>`;
     }).join("");
+    host.querySelector("[data-trk-older]")?.addEventListener("click", () => { TRK_SHOW_OLDER = true; renderTrackerBoard(); });
     host.querySelectorAll(".trk-card").forEach(card => {
       const sid = card.dataset.sid;
       // The whole card opens the side panel (Jira's issue view). It has no buttons of its own.
@@ -6675,6 +6722,14 @@
         trkDropOn(e.dataTransfer.getData("text/plain"), col.dataset.col);
       });
     });
+  }
+  // Closed in the last 14 days (the day it entered Closed, on this computer's calendar).
+  function trkClosedRecently(c) {
+    const iso = String(c.closed_on || c.stage_at || "").slice(0, 10);
+    const [y, m, d] = iso.split("-").map(Number);
+    if (!y || !m || !d) return true;
+    const days = (Date.now() - new Date(y, m - 1, d).getTime()) / 86400000;
+    return days < TRK_CLOSED_RECENT_DAYS;
   }
   // A card dropped on (or sent to) a column: nothing when it is already there.
   function trkDropOn(sid, col) {
@@ -6701,8 +6756,8 @@
     await aaFill(id, { item, btn: btn && document.contains(btn) ? btn : null });
     trkReloadCards();
   }
-  // "Did you submit it?" Yes: marked applied (it moves to Applied). Not yet: asked again after the
-  // next Autofill. The same two calls as the Applications row.
+  // "Did you submit?" Yes: marked applied (it moves to Applied). No: it stays in To apply and is
+  // not asked again. The same two calls as the Applications row.
   async function trkSubmittedYes(sid, btn) {
     const c = TRK_CARDS.find(x => x.source_id === sid);
     if (!c || !c.apply_id) return;
@@ -6725,13 +6780,13 @@
     try { await api("/api/autoapply/not-yet", { record_id: c.apply_id }); } catch { /* it asks again next visit */ }
   }
 
-  // The panel's Status picker: the five columns, with Closed split into its two outcomes.
+  // The panel's Status picker: the four open columns, then Closed with its four reasons.
   function trkStatusSelect(c) {
-    const cur = trkColOf(c.stage) === "closed" ? c.stage : trkColOf(c.stage);
-    const opts = [["todo", trkColName("todo")], ["applied", trkColName("applied")], ["interviewing", trkColName("interviewing")],
-      ["offer", trkColName("offer")], ["rejected", trkT("tracker.notSelected", "Not selected")], ["archived", trkStageName("archived")]];
-    return `<select class="fld trk-stage-sel" id="trkPanelStage">${opts.map(([v, n]) =>
-      `<option value="${v}"${v === cur ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>`;
+    const cur = trkColOf(c.stage) === "closed" ? "closed:" + trkCloseReason(c) : trkColOf(c.stage);
+    const opt = (v, n) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(n)}</option>`;
+    const open = ["todo", "applied", "interviewing", "offer"].map(k => opt(k, trkColName(k))).join("");
+    const closed = TRK_REASONS.map(r => opt("closed:" + r, trkT(TRK_REASON[r][0], TRK_REASON[r][1]))).join("");
+    return `<select class="fld trk-stage-sel" id="trkPanelStage">${open}<optgroup label="${esc(trkColName("closed"))}">${closed}</optgroup></select>`;
   }
 
   // The table: the same cards (and the same filters), one compact row each, with the same
@@ -6787,14 +6842,15 @@
     });
   }
 
-  async function trkMove(sid, stage, note) {
+  async function trkMove(sid, stage, note, reason) {
     const card = TRK_CARDS.find(c => c.source_id === sid);
-    if (!card || card.stage === stage) return;
-    const prev = card.stage;
+    if (!card || (card.stage === stage && (!reason || trkCloseReason(card) === reason))) return;
+    const prev = card.stage, prevReason = card.close_reason;
     card.stage = stage;             // optimistic: the card lands where it was dropped
+    if (reason) { card.close_reason = reason; card.closed_on = new Date().toISOString().slice(0, 10); }
     renderTracker();
     try {
-      const out = await api("/api/tracker/move", { source_id: sid, stage, note: note || "" });
+      const out = await api("/api/tracker/move", reason ? { source_id: sid, stage, reason, note: note || "" } : { source_id: sid, stage, note: note || "" });
       Object.assign(card, out.job);
       trkSetDot(out.due_count);
       TRK_METRICS = await api("/api/tracker/metrics").catch(() => TRK_METRICS);
@@ -6804,10 +6860,15 @@
       toast(trkT("tracker.movedTo", "Moved {company} to {stage}").replace("{company}", coName(card)).replace("{stage}", trkColName(trkColOf(stage))),
         { label: trkT("tracker.undo", "Undo"), run: () => trkUndo(sid) });
     } catch {
-      card.stage = prev;
+      card.stage = prev; card.close_reason = prevReason;
       renderTracker();
       toast(trkT("tracker.moveFail", "Couldn't move that job, try again."));
     }
+  }
+  // Close a card with a reason (the panel's picker, "Close" on Still interested?, "Close as No
+  // response"). Not selected is the Rejected stage, the other reasons Archived.
+  function trkCloseWith(sid, reason) {
+    trkMove(sid, reason === "not_selected" ? "rejected" : "archived", "", reason);
   }
 
   // Walk back the newest stage change on one job (tracker_activity keeps the dates it rewrote).
@@ -6845,7 +6906,13 @@
     const rec = j.record || null, sess = j.has_session ? j.session : null;
     const pdf = (rec && rec.pdf) || (sess && sess.pdf);
     const act = trkAction(j);
-    const primary = act === "apply" ? `<button class="btn btn-primary btn-sm trk-p-main" type="button" data-trk-act="apply" title="${esc(trkApplyTip())}">${esc(trkT("tracker.apply", "Apply"))}</button>`
+    // Never a button that cannot work: Apply only with a link to open; without one, "Add job
+    // link" (an inline field), after which the button is Apply. A posting that closed offers
+    // Remove instead (trkPanelAsk), never Apply.
+    const noLink = act === "apply" && !j.has_link;
+    const primary = trkIsExpired(j) ? ""
+      : noLink ? `<button class="btn btn-primary btn-sm trk-p-main" type="button" data-trk-act="link">${esc(trkT("tracker.addLink", "Add job link"))}</button>`
+      : act === "apply" ? `<button class="btn btn-primary btn-sm trk-p-main" type="button" data-trk-act="apply" title="${esc(trkApplyTip())}">${esc(trkT("tracker.apply", "Apply"))}</button>`
       : act === "continue" ? `<button class="btn btn-primary btn-sm trk-p-main" type="button" data-trk-act="continue">${esc(trkT("tracker.continueTailoring", "Continue tailoring"))}</button>`
       : act === "tailor" ? `<button class="btn btn-primary btn-sm trk-p-main" type="button" data-trk-act="tailor">${esc(trkT("tracker.tailorResume", "Tailor resume"))}</button>` : "";
     const link = (href, icon, k, f) => `<a class="btn btn-ghost btn-sm trk-p-link" href="${href}" target="_blank" rel="noopener">${trkIcon(icon)}<span>${esc(trkT(k, f))}</span></a>`;
@@ -6854,17 +6921,124 @@
       pdf ? link(esc(pdf), "file", "tracker.resume", "Resume") : "",
       rec && rec.cover_letter ? link(esc(rec.cover_letter), "file", "tracker.coverLetter", "Cover letter") : "",
       sess && act !== "continue" ? `<button class="btn btn-ghost btn-sm trk-p-link" type="button" data-trk-act="continue">${trkIcon("chat")}<span>${esc(trkT("tracker.chat", "Chat"))}</span></button>` : "",
-      j.url ? link(safeHref(j.url), "external", "tracker.posting", "Job posting") : "",
+      j.url && /^https?:\/\//i.test(j.url) ? link(safeHref(j.url), "external", "tracker.posting", "Job posting") : "",
     ].filter(Boolean);
-    return parts.length ? `<div class="trk-p-acts">${parts.join("")}</div>` : "";
+    return parts.length ? `<div class="trk-p-acts">${parts.join("")}</div>${noLink ? trkLinkForm() : ""}` : "";
+  }
+  // "Add job link": a field under the buttons, hidden until asked for.
+  function trkLinkForm() {
+    return `<form class="trk-link-form" id="trkLinkForm" hidden novalidate>
+        <input class="fld" id="trkLinkIn" type="url" inputmode="url" autocomplete="off" placeholder="https://" aria-label="${esc(trkT("tracker.linkLabel", "The job's link"))}">
+        <button class="btn btn-ghost btn-sm" type="submit">${esc(trkT("tracker.linkSave", "Save"))}</button>
+        <span class="trk-link-err" id="trkLinkErr" role="alert" hidden></span>
+      </form>`;
+  }
+  // A To apply job whose posting closed: it sits in Closed with "Job closed".
+  function trkIsExpired(j) {
+    return trkColOf(j.stage) === "closed" && trkCloseReason(j) === "job_closed";
   }
   // "Did you submit it?" Yes / Not yet: asked in the panel after an Autofill (the engine's own
   // ask_submitted, the same question the Applications list asks). The card only shows a lozenge.
+  // The panel's one question, when the job has one (2026-11-26), in the order that matters:
+  //   * a closed posting: "This job is no longer open." with Remove;
+  //   * "Did you submit?" Yes / No, asked once after an Autofill the page watch could not read;
+  //   * "Still interested?" Keep / Close (and "Add job link" when there is no link to check);
+  //   * "No response?" Close as No response / Keep;
+  //   * an offer: "Mark as accepted" (or "Accepted" with Undo).
   function trkPanelAsk(j) {
-    if (!j.ask_submitted || !j.apply_id) return "";
-    return `<div class="trk-ask" role="group" aria-label="${esc(trkT("aa.askSubmitted", "Did you submit it?"))}"><span class="trk-ask-q">${esc(trkT("aa.askSubmitted", "Did you submit it?"))}</span>
-        <button class="btn btn-ghost btn-sm" type="button" data-trk-yes>${esc(trkT("ans.yes", "Yes"))}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-trk-notyet>${esc(trkT("aa.notYet", "Not yet"))}</button></div>`;
+    const box = (q, btns, tone) => `<div class="trk-ask${tone ? " trk-ask-" + tone : ""}" role="group" aria-label="${esc(q)}"><span class="trk-ask-q">${esc(q)}</span>${btns}</div>`;
+    const b = (attr, k, f) => `<button class="btn btn-ghost btn-sm" type="button" ${attr}>${esc(trkT(k, f))}</button>`;
+    if (trkIsExpired(j)) {
+      return box(trkT("tracker.noLongerOpen", "This job is no longer open."), b("data-trk-remove", "tracker.remove", "Remove"), "quiet");
+    }
+    if (j.ask_submitted && j.apply_id) {
+      return box(trkT("tracker.loz.ask", "Did you submit?"), b("data-trk-yes", "ans.yes", "Yes") + b("data-trk-notyet", "tracker.askNo", "No"));
+    }
+    if (j.still_interested && trkColOf(j.stage) === "todo") {
+      return box(trkT("tracker.loz.still", "Still interested?"),
+        // "Add job link" sits here unless the action row already offers it (one button per thing).
+        (j.needs_link && trkAction(j) !== "apply" ? b("data-trk-addlink", "tracker.addLink", "Add job link") : "")
+        + b("data-trk-keep", "tracker.keep", "Keep") + b("data-trk-pass", "tracker.closePassed", "Close"))
+        + (j.needs_link && trkAction(j) !== "apply" ? trkLinkForm() : "");
+    }
+    if (j.no_response && j.stage === "applied") {
+      return box(trkT("tracker.loz.noResponseQ", "No response?"),
+        b("data-trk-noresp", "tracker.closeNoResponse", "Close as No response") + b("data-trk-keep", "tracker.keep", "Keep"));
+    }
+    if (j.stage === "offer") {
+      return j.accepted
+        ? box(trkT("tracker.offerAccepted", "You accepted this offer."), b("data-trk-accept=\"0\"", "tracker.undo", "Undo"), "good")
+        : box(trkT("tracker.offerQ", "Did you accept it?"), b("data-trk-accept=\"1\"", "tracker.markAccepted", "Mark as accepted"), "quiet");
+    }
+    return "";
+  }
+  // The lifecycle buttons in the panel: Remove (with Undo), Keep, Close, accepted, and the
+  // "Add job link" field.
+  function trkBindLifecycle(sid, j, panel) {
+    panel.querySelectorAll("[data-trk-remove]").forEach(b => b.addEventListener("click", () => trkRemove(sid)));
+    panel.querySelector("[data-trk-keep]")?.addEventListener("click", (e) => trkKeep(sid, e.currentTarget));
+    panel.querySelector("[data-trk-pass]")?.addEventListener("click", () => trkCloseWith(sid, "passed"));
+    panel.querySelector("[data-trk-noresp]")?.addEventListener("click", () => trkCloseWith(sid, "no_response"));
+    panel.querySelector("[data-trk-accept]")?.addEventListener("click", (e) => trkAccept(sid, e.currentTarget.dataset.trkAccept === "1", e.currentTarget));
+    const form = panel.querySelector("#trkLinkForm");
+    const openForm = () => { if (!form) return; form.hidden = false; panel.querySelector("#trkLinkIn")?.focus(); };
+    panel.querySelectorAll("[data-trk-act=link], [data-trk-addlink]").forEach(b => b.addEventListener("click", openForm));
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = $("#trkLinkIn"), err = $("#trkLinkErr"), url = input.value.trim();
+      const bad = (msg) => { err.textContent = msg; err.hidden = false; input.focus(); };
+      if (!/^https?:\/\/[^\s/]+\.[^\s]+$/i.test(url)) { bad(trkT("tracker.linkBad", "Paste the job's link, starting with https://")); return; }
+      err.hidden = true;
+      const btn = form.querySelector("button"); btn.disabled = true;
+      try {
+        const out = await api("/api/tracker/link", { source_id: sid, url });
+        const card = TRK_CARDS.find(c => c.source_id === sid);
+        if (card && out.job) Object.assign(card, out.job);
+        renderTracker();
+        toast(trkT("tracker.linkSaved", "Link saved."));
+        if (TRK_OPEN === sid) openTrackerPanel(sid);
+      } catch (ex) { btn.disabled = false; bad(ex.message || trkT("tracker.saveFail", "Couldn't save that, try again.")); }
+    });
+  }
+  // "Remove from tracker": no confirm, an Undo in the toast for 6 seconds instead.
+  async function trkRemove(sid) {
+    const card = TRK_CARDS.find(c => c.source_id === sid);
+    closeTrackerPanel();
+    TRK_CARDS = TRK_CARDS.filter(c => c.source_id !== sid);
+    renderTracker();
+    try {
+      const out = await api("/api/tracker/remove", { source_id: sid });
+      trkSetDot(out.due_count);
+      TRK_METRICS = await api("/api/tracker/metrics").catch(() => TRK_METRICS);
+      renderTrackerMetrics();
+      toast(trkT("tracker.removed.toast", "Removed {company} from the tracker").replace("{company}", card ? coName(card) : ""),
+        { label: trkT("tracker.undo", "Undo"), run: () => trkUndo(sid) }, 6000);
+    } catch {
+      if (card) TRK_CARDS.push(card);
+      renderTracker();
+      toast(trkT("tracker.saveFail", "Couldn't save that, try again."));
+    }
+  }
+  async function trkKeep(sid, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const out = await api("/api/tracker/keep", { source_id: sid });
+      const card = TRK_CARDS.find(c => c.source_id === sid);
+      if (card && out.job) Object.assign(card, out.job);
+      renderTracker();
+      toast(trkT("tracker.kept", "Kept. We'll ask again in 30 days."));
+      if (TRK_OPEN === sid) openTrackerPanel(sid);
+    } catch { if (btn) btn.disabled = false; toast(trkT("tracker.saveFail", "Couldn't save that, try again.")); }
+  }
+  async function trkAccept(sid, accepted, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const out = await api("/api/tracker/accept", { source_id: sid, accepted });
+      const card = TRK_CARDS.find(c => c.source_id === sid);
+      if (card && out.job) Object.assign(card, out.job);
+      renderTracker();
+      if (TRK_OPEN === sid) openTrackerPanel(sid);
+    } catch { if (btn) btn.disabled = false; toast(trkT("tracker.saveFail", "Couldn't save that, try again.")); }
   }
   // Tailor resume: the Jobs page's own tailoring flow for this job. Continue tailoring: its chat.
   async function trkTailor(sid) {
@@ -6944,7 +7118,8 @@
       ${sec("tracker.timeline", "Timeline", `${j.furthest_stage && j.furthest_stage !== j.stage && TRK_STAGES.indexOf(j.furthest_stage) >= 0
           ? `<div class="trk-furthest">${esc(trkT("tracker.furthest", "Got as far as {stage}").replace("{stage}", trkStageName(j.furthest_stage)))}</div>` : ""}
         <div class="trk-tl">${timeline}</div>`,
-        (j.history || []).length ? `<button class="link-btn trk-p-undo" id="trkPanelUndo" type="button">${esc(trkT("tracker.undoLast", "Undo last change"))}</button>` : "")}`;
+        (j.history || []).length ? `<button class="link-btn trk-p-undo" id="trkPanelUndo" type="button">${esc(trkT("tracker.undoLast", "Undo last change"))}</button>` : "")}
+      ${trkIsExpired(j) ? "" : `<div class="trk-p-foot"><button class="link-btn trk-p-remove" type="button" data-trk-remove>${esc(trkT("tracker.removeFromTracker", "Remove from tracker"))}</button></div>`}`;
     panel.hidden = false;
     panel.scrollTop = 0;
     if (scrim) scrim.hidden = false;
@@ -6957,13 +7132,14 @@
     }));
     panel.querySelector("[data-trk-yes]")?.addEventListener("click", (e) => trkSubmittedYes(sid, e.currentTarget));
     panel.querySelector("[data-trk-notyet]")?.addEventListener("click", () => trkSubmittedNotYet(sid));
+    trkBindLifecycle(sid, j, panel);
     (panel.querySelector(".trk-p-main") || $("#trkPanelClose")).focus();
     $("#trkPanelUndo")?.addEventListener("click", () => trkUndo(sid));
     trkBindMail(sid, j);
     trkPanelMessages(sid, j);
     $("#trkPanelStage").addEventListener("change", (e) => {
       const v = e.target.value;
-      if (v === "rejected" || v === "archived") trkMove(sid, v); else trkDropOn(sid, v);
+      if (v.startsWith("closed:")) trkCloseWith(sid, v.slice(7)); else trkDropOn(sid, v);
     });
     $("#trkPanelFu").addEventListener("change", async (e) => {
       try {
@@ -13548,7 +13724,7 @@
     const it = (opts && opts.item) || ((AA.item && AA.item.id === id) ? AA.item : aaFind(id));
     if (!it) return null;
     const here = !!(opts && opts.here);
-    if (!here && !/^https?:\/\//i.test(it.apply_url || "")) { aaNote(id, T("aa.noLink", "This application has no link. Open the package to add one.")); return null; }
+    if (!here && !/^https?:\/\//i.test(it.apply_url || "")) { aaNote(id, T("aa.noLink", "This application has no link. Open it in the Tracker and add the job link.")); return null; }
     if (!window.tailorShell) { window.open(it.apply_url, "_blank", "noopener"); return null; }
     // The drawer is a modal, and the in-app browser hides under any modal: filling from the
     // drawer loaded and filled the site out of sight, so it looked like nothing happened

@@ -48,6 +48,20 @@ PASTED_SOURCE = "pasted"
 # Why a job left the running: a posting found closed or gone from its feed. Not a stage (the person
 # was not rejected); the card keeps its stage and says the posting closed.
 CLOSED_POSTING = "posting closed"
+# Why a card sits in Closed (2026-11-26, the owner's lifecycle). Every Closed card carries one:
+# the posting expired before an application (job_closed), the employer said no (not_selected),
+# nothing came back (no_response), or the person chose not to go on (passed). Not selected is the
+# Rejected stage; the other three are Archived, so the funnel's rejection count stays honest.
+CLOSE_REASONS = ("job_closed", "not_selected", "no_response", "passed")
+CLOSED_STAGES = ("rejected", "archived")
+REASON_STAGE = {"job_closed": "archived", "not_selected": "rejected",
+                "no_response": "archived", "passed": "archived"}
+TODO_STAGES = ("saved", "in_progress", "approved")
+# A To apply card untouched this long asks "Still interested?" (once its posting is known to be
+# open); an Applied card with no movement this long asks "No response?".
+STALE_DAYS = 30
+# The Closed column shows the cards closed this recently; "Show older" reveals the rest.
+CLOSED_RECENT_DAYS = 14
 
 
 def now_iso() -> str:
@@ -73,7 +87,12 @@ def migrate_board(c: sqlite3.Connection) -> None:
     cols = {r[1] for r in c.execute("PRAGMA table_info(sourced_job)")}
     for name, ddl in (("stage", "TEXT"), ("stage_at", "TEXT"), ("applied_at", "TEXT"),
                       ("follow_up_at", "TEXT"), ("notes", "TEXT DEFAULT ''"),
-                      ("furthest_stage", "TEXT"), ("closed_at", "TEXT"), ("closed_reason", "TEXT")):
+                      ("furthest_stage", "TEXT"), ("closed_at", "TEXT"), ("closed_reason", "TEXT"),
+                      # the lifecycle (2026-11-26): why a card is Closed, an accepted offer, the
+                      # last "Keep", a card taken off the tracker for good, and the To apply
+                      # posting check (open / closed / unknown, and when)
+                      ("close_reason", "TEXT"), ("accepted_at", "TEXT"), ("kept_at", "TEXT"),
+                      ("untracked_at", "TEXT"), ("live_status", "TEXT"), ("live_at", "TEXT")):
         if name not in cols:
             c.execute(f"ALTER TABLE sourced_job ADD COLUMN {name} {ddl}")
     c.execute("""CREATE TABLE IF NOT EXISTS tracker_activity (
@@ -86,7 +105,10 @@ def migrate_board(c: sqlite3.Connection) -> None:
     acols = {r[1] for r in c.execute("PRAGMA table_info(tracker_activity)")}
     for name, ddl in (("prev_stage_at", "TEXT"), ("prev_applied_at", "TEXT"),
                       ("prev_follow_up_at", "TEXT"), ("undone", "INTEGER DEFAULT 0"),
-                      ("undone_at", "TEXT"), ("ref", "TEXT DEFAULT ''")):
+                      ("undone_at", "TEXT"), ("ref", "TEXT DEFAULT ''"),
+                      ("prev_close_reason", "TEXT"), ("prev_accepted_at", "TEXT"),
+                      ("prev_saved", "INTEGER"), ("prev_closed_at", "TEXT"),
+                      ("prev_closed_reason", "TEXT")):
         if name not in acols:
             c.execute(f"ALTER TABLE tracker_activity ADD COLUMN {name} {ddl}")
     # Mail the app has tied to an application: the thread lane of inbox matching reads it, and
@@ -103,6 +125,20 @@ def migrate_board(c: sqlite3.Connection) -> None:
     c.execute("CREATE INDEX IF NOT EXISTS tracker_contact_job ON tracker_contact(source_id)")
     if "furthest_stage" not in cols:
         _backfill_furthest(c)
+    _backfill_close_reasons(c)
+
+
+def _backfill_close_reasons(c: sqlite3.Connection) -> None:
+    """Every Closed card gets its reason, once (only rows that have none yet): a posting found
+    closed keeps "Job closed", a rejection reads "Not selected", and a job the person archived
+    reads "Passed". Nothing else on the row changes."""
+    c.execute("UPDATE sourced_job SET close_reason='job_closed' WHERE stage IN ('rejected','archived') "
+              "AND (close_reason IS NULL OR close_reason='') AND stage='archived' "
+              "AND closed_at IS NOT NULL AND closed_at<>''")
+    c.execute("UPDATE sourced_job SET close_reason='not_selected' WHERE stage='rejected' "
+              "AND (close_reason IS NULL OR close_reason='')")
+    c.execute("UPDATE sourced_job SET close_reason='passed' WHERE stage='archived' "
+              "AND (close_reason IS NULL OR close_reason='')")
 
 
 def _furthest(stages) -> str | None:
@@ -126,7 +162,23 @@ def _backfill_furthest(c: sqlite3.Connection) -> None:
 
 _BOARD_COLS = ("source_id, source, company, title, location, remote, url, posted_at, salary, "
                "saved, sponsorship_stated, stage, stage_at, applied_at, follow_up_at, notes, "
-               "furthest_stage, closed_at, closed_reason")
+               "furthest_stage, closed_at, closed_reason, close_reason, accepted_at, kept_at, "
+               "live_status, live_at")
+
+
+def default_close_reason(stage: str, closed_at=None, prev: str | None = None) -> str | None:
+    """The reason a card takes when it enters Closed without one being named: Not selected for
+    the Rejected stage; for Archived, Job closed when its posting was found closed, else Passed.
+    None outside Closed."""
+    if stage == "rejected":
+        return "not_selected"
+    if stage == "archived":
+        return "job_closed" if closed_at else "passed"
+    return None
+
+
+# The timeline row "Remove from tracker" writes (its ``ref``), so Undo knows to lift the removal.
+REMOVED_REF = "removed"
 
 
 class BoardMixin:
@@ -138,10 +190,15 @@ class BoardMixin:
     # -- stage ----------------------------------------------------------- #
     def track_job(self, source_id: str, stage: str = "saved", note: str = "",
                   now: str | None = None, job: dict | None = None,
-                  applied_at: str | None = None) -> dict | None:
+                  applied_at: str | None = None, reason: str | None = None,
+                  auto: bool = False) -> dict | None:
         """Put a job on the board at ``stage`` if it is not on it yet. ``job`` is a snapshot to
         insert first when the row is not local (a kitchen role, or a resume tailored from a pasted
-        JD). A job already on the board is left where it is. Returns the board row (or None)."""
+        JD). A job already on the board is left where it is. Returns the board row (or None).
+
+        A job the person removed from the tracker stays off it: ``auto`` (the board catching up
+        on its own, _board_reconcile) never brings it back. Only the person's own action (saving
+        it again, starting a resume for it, a move) puts it back, and that clears the removal."""
         if stage not in STAGES:
             raise ValueError(f"unknown stage {stage!r}")
         if job and job.get("source_id"):
@@ -153,34 +210,63 @@ class BoardMixin:
                 "posted_at": job.get("posted_at", ""), "salary": job.get("salary", ""),
             }])
         row = self._conn.execute(
-            "SELECT stage FROM sourced_job WHERE source_id=?", (source_id,)).fetchone()
+            "SELECT stage, untracked_at FROM sourced_job WHERE source_id=?", (source_id,)).fetchone()
         if row is None:
             return None
         if row["stage"] in STAGES:
             return self.board_job(source_id)
-        return self.move_stage(source_id, stage, note=note, now=now, applied_at=applied_at)
+        if row["untracked_at"]:
+            if auto:
+                return None
+            self._conn.execute("UPDATE sourced_job SET untracked_at=NULL WHERE source_id=?", (source_id,))
+        return self.move_stage(source_id, stage, note=note, now=now, applied_at=applied_at, reason=reason)
+
+    def is_untracked(self, source_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT untracked_at FROM sourced_job WHERE source_id=?", (source_id,)).fetchone()
+        return bool(row and row["untracked_at"])
 
     def move_stage(self, source_id: str, stage: str, note: str = "", now: str | None = None,
-                   applied_at: str | None = None, ref: str = "") -> dict:
+                   applied_at: str | None = None, ref: str = "", reason: str | None = None) -> dict:
         """Move one job to ``stage`` and log it. Entering Applied stamps applied_at (kept on a
         later re-entry) and arms a default follow-up; a closed stage (rejected / archived) clears
-        the follow-up because a nudge no longer helps. Moving to the stage it is already in is a
-        no-op (no activity row)."""
+        the follow-up because a nudge no longer helps, and carries a reason (``reason``, else
+        default_close_reason). Moving to the stage it is already in is a no-op (no activity row),
+        unless it is Closed and ``reason`` names a different one: then only the reason changes,
+        logged so Undo can put it back. Leaving Closed drops the reason (and a "Job closed"
+        stamp: the person says it is open); leaving Offer drops "Accepted"."""
         if stage not in STAGES:
             raise ValueError(f"unknown stage {stage!r}")
+        if reason is not None and reason not in CLOSE_REASONS:
+            raise ValueError(f"unknown close reason {reason!r}")
         now = now or now_iso()
         cur = self._conn.execute(
-            "SELECT stage, stage_at, applied_at, follow_up_at, furthest_stage FROM sourced_job "
+            "SELECT stage, stage_at, applied_at, follow_up_at, furthest_stage, close_reason, "
+            "accepted_at, saved, closed_at, closed_reason FROM sourced_job "
             "WHERE source_id=?", (source_id,)).fetchone()
         if cur is None:
             raise KeyError(f"no job {source_id}")
         prev = cur["stage"] if cur["stage"] in STAGES else None
         if prev == stage:
+            if stage in CLOSED_STAGES and reason and reason != cur["close_reason"]:
+                self._conn.execute("UPDATE sourced_job SET close_reason=? WHERE source_id=?",
+                                   (reason, source_id))
+                self._log_change(source_id, prev, stage, now, note, cur, ref)
+                self._conn.commit()
             return self.board_job(source_id)
         sets, params = ["stage=?", "stage_at=?"], [stage, now]
         best = _furthest([cur["furthest_stage"], stage])
         if best and best != cur["furthest_stage"]:
             sets.append("furthest_stage=?"); params.append(best)
+        if stage in CLOSED_STAGES:
+            why = reason or default_close_reason(stage, cur["closed_at"], prev)
+            sets.append("close_reason=?"); params.append(why)
+        else:
+            sets.append("close_reason=NULL")
+            if prev in CLOSED_STAGES and cur["close_reason"] == "job_closed":
+                sets.append("closed_at=NULL"); sets.append("closed_reason=NULL")
+        if stage != "offer":
+            sets.append("accepted_at=NULL")
         if stage == "applied":
             applied = cur["applied_at"] or applied_at or now
             sets.append("applied_at=?"); params.append(applied)
@@ -188,9 +274,9 @@ class BoardMixin:
                 d = date_of(applied) or date_of(now)
                 sets.append("follow_up_at=?")
                 params.append((d + timedelta(days=FOLLOW_UP_DAYS)).isoformat() if d else None)
-        elif stage in ("rejected", "archived"):
+        elif stage in CLOSED_STAGES:
             sets.append("follow_up_at=NULL")
-        elif stage in ("saved", "in_progress", "approved"):
+        elif stage in TODO_STAGES:
             # Back to Saved (or Approved) means "not applied after all" (the review queue's stage_patch does
             # the same for a record), so the funnel stops counting it and the nudge is dropped.
             sets.append("applied_at=NULL"); sets.append("follow_up_at=NULL")
@@ -204,12 +290,35 @@ class BoardMixin:
         return self.board_job(source_id)
 
     def _log_change(self, source_id, prev, stage, now, note, cur, ref="") -> None:
-        """One timeline row, carrying the dates as they were so Undo can put them back."""
+        """One timeline row, carrying the row as it was (dates, reason, accepted, bookmark, a
+        "Job closed" stamp) so Undo can put it back."""
+        keys = cur.keys() if hasattr(cur, "keys") else []
+        get = lambda k: cur[k] if k in keys else None  # noqa: E731
         self._conn.execute(
             "INSERT INTO tracker_activity(source_id, from_stage, to_stage, at, note, prev_stage_at, "
-            "prev_applied_at, prev_follow_up_at, ref) VALUES(?,?,?,?,?,?,?,?,?)",
+            "prev_applied_at, prev_follow_up_at, ref, prev_close_reason, prev_accepted_at, prev_saved, "
+            "prev_closed_at, prev_closed_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (source_id, prev, stage, now, (note or "")[:300], cur["stage_at"], cur["applied_at"],
-             cur["follow_up_at"], (ref or "")[:160]))
+             cur["follow_up_at"], (ref or "")[:160], get("close_reason"), get("accepted_at"),
+             get("saved"), get("closed_at"), get("closed_reason")))
+
+    def remove_from_tracker(self, source_id: str, now: str | None = None) -> bool:
+        """"Remove from tracker": the card leaves the board for good (``untracked_at``), and its
+        bookmark goes with it, so neither the board catching up nor the Saved list brings it back
+        on its own. Its resumes, chats and records are kept. Undo (undo_last) puts it back as it
+        was, bookmark included. Returns False when it was not on the board."""
+        now = now or now_iso()
+        cur = self._conn.execute(
+            "SELECT stage, stage_at, applied_at, follow_up_at, close_reason, accepted_at, saved, "
+            "closed_at, closed_reason FROM sourced_job WHERE source_id=?", (source_id,)).fetchone()
+        if cur is None or cur["stage"] not in STAGES:
+            return False
+        self._conn.execute(
+            "UPDATE sourced_job SET stage=NULL, stage_at=?, follow_up_at=NULL, saved=0, "
+            "untracked_at=? WHERE source_id=?", (now, now, source_id))
+        self._log_change(source_id, cur["stage"], "", now, "Removed from tracker", cur, REMOVED_REF)
+        self._conn.commit()
+        return True
 
     def untrack(self, source_id: str, note: str = "", now: str | None = None) -> None:
         """Take a job off the board (stage NULL), logging the exit so the timeline is honest."""
@@ -239,9 +348,20 @@ class BoardMixin:
             return None
         back = row["from_stage"] if row["from_stage"] in STAGES else None
         self._conn.execute(
-            "UPDATE sourced_job SET stage=?, stage_at=?, applied_at=?, follow_up_at=? WHERE source_id=?",
-            (back, row["prev_stage_at"], row["prev_applied_at"], row["prev_follow_up_at"], source_id))
-        if back is None:
+            "UPDATE sourced_job SET stage=?, stage_at=?, applied_at=?, follow_up_at=?, close_reason=?, "
+            "accepted_at=? WHERE source_id=?",
+            (back, row["prev_stage_at"], row["prev_applied_at"], row["prev_follow_up_at"],
+             row["prev_close_reason"] if back in CLOSED_STAGES else None,
+             row["prev_accepted_at"] if back == "offer" else None, source_id))
+        if row["prev_closed_at"] and row["to_stage"] not in CLOSED_STAGES:
+            # The move had lifted a "Job closed" stamp (dragged out of Closed): it comes back.
+            self._conn.execute("UPDATE sourced_job SET closed_at=?, closed_reason=? WHERE source_id=?",
+                               (row["prev_closed_at"], row["prev_closed_reason"], source_id))
+        if row["ref"] == REMOVED_REF:
+            # Undo "Remove from tracker": back on the board as it was, bookmark included.
+            self._conn.execute("UPDATE sourced_job SET untracked_at=NULL, saved=? WHERE source_id=?",
+                               (1 if row["prev_saved"] else 0, source_id))
+        elif back is None:
             # Off the board again: a bookmark that only put it there goes too (set_saved keeps
             # the two in step the same way).
             self._conn.execute("UPDATE sourced_job SET saved=0 WHERE source_id=?", (source_id,))
@@ -370,6 +490,42 @@ class BoardMixin:
             "AND (closed_at IS NULL OR closed_at='')", (now or now_iso(), reason, source_id))
         self._conn.commit()
         return cur.rowcount > 0
+
+    # -- the lifecycle (2026-11-26) ---------------------------------------- #
+    def set_accepted(self, source_id: str, accepted: bool, now: str | None = None) -> dict | None:
+        """An offer the person accepted: it stays in Offer with "Accepted" (the finish line).
+        Only an Offer card can be accepted."""
+        if self.stage_of(source_id) != "offer":
+            raise ValueError("only an offer can be accepted")
+        self._conn.execute("UPDATE sourced_job SET accepted_at=? WHERE source_id=?",
+                           ((now or now_iso()) if accepted else None, source_id))
+        self._conn.commit()
+        return self.board_job(source_id)
+
+    def keep(self, source_id: str, now: str | None = None) -> dict | None:
+        """"Keep" on "Still interested?" or "No response?": the 30 days start again."""
+        self._conn.execute("UPDATE sourced_job SET kept_at=? WHERE source_id=?",
+                           (now or now_iso(), source_id))
+        self._conn.commit()
+        return self.board_job(source_id)
+
+    def set_job_url(self, source_id: str, url: str) -> None:
+        """"Add job link": the posting's link, for a job that had none (a pasted description).
+        The posting check looks at it afresh."""
+        self._conn.execute("UPDATE sourced_job SET url=?, live_status=NULL, live_at=NULL WHERE source_id=?",
+                           (str(url or "")[:1000], source_id))
+        self._conn.commit()
+
+    def set_live(self, source_id: str, status: str, now: str | None = None) -> None:
+        """What the posting check found for a To apply card (open / closed / unknown), and when."""
+        self._conn.execute("UPDATE sourced_job SET live_status=?, live_at=? WHERE source_id=?",
+                           (str(status or "")[:20], now or now_iso(), source_id))
+        self._conn.commit()
+
+    def last_mail_at(self) -> dict[str, str]:
+        """{source_id: when the newest mail tied to it arrived}, for "No response?"."""
+        return {r[0]: r[1] for r in self._conn.execute(
+            "SELECT source_id, MAX(at) FROM tracker_mail GROUP BY source_id")}
 
     def clear_posting_closed(self, source_id: str) -> None:
         """The person put a closed job back in the running (dragged it out of Closed): drop the

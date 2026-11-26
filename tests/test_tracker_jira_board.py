@@ -226,7 +226,7 @@ def test_the_new_column_name_is_used_where_the_old_one_was():
 
 def test_every_new_string_has_every_locale():
     keys = ("tracker.searchPh", "tracker.dueChip", "tracker.apply", "tracker.applyTip", "tracker.tailoredOn",
-            "tracker.appliedOnDay", "tracker.followUpOn", "tracker.savedOn", "tracker.sinceOn", "tracker.archivedOn",
+            "tracker.appliedOnDay", "tracker.followUpOn", "tracker.savedOn", "tracker.sinceOn", "tracker.closedOn",
             "tracker.noMatch", "tracker.markedApplied", "tracker.dateCol", "tracker.close",
             "tracker.col.todo", "tracker.hintTodo", "tracker.loz.ready", "tracker.loz.tailoring", "tracker.loz.none",
             "tracker.loz.due", "tracker.loz.ask", "tracker.loz.jobClosed", "tracker.tailorResume",
