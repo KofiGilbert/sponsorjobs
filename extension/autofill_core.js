@@ -3066,7 +3066,7 @@ function qsaSafe(sel, root) {
 
   // extractForm, plus the option lists of custom dropdowns, which only exist in the page while
   // the menu is open: open each (at most 15), read up to 40 options, close it again.
-  const EXTRACT_BUDGET_MS = 8000;
+  const EXTRACT_BUDGET_MS = 15000;
   async function extractFormAsync(opts) {
     let n = 0;
     // ``budgetMs`` (the shell's): what is left of the form read across the page and its frames.
@@ -3076,7 +3076,9 @@ function qsaSafe(sel, root) {
     passStart();
     for (const el of comboboxes()) {
       // a real cap: a dropdown is only opened while there is time to read and close it
-      if (n >= 15 || Date.now() + 250 > budget) { if (n < 15) _timedOut = true; break; }
+      // (2026-11-26) up to 40: Axon's Greenhouse form has 23, and the 15 before left its Gender,
+      // Hispanic and Veteran Status lists without choices, so the saved answers could not be matched
+      if (n >= 40 || Date.now() + 250 > budget) { if (n < 40) _timedOut = true; break; }
       if (_comboOptions.has(el) || comboValue(el) || popupStuckFor(el) || stuckShowing()) continue;
       n++;
       tick();
@@ -4529,6 +4531,169 @@ function qsaSafe(sel, root) {
   // Only a REQUIRED question is ever "left for you": an optional box the person's material does
   // not answer (Workday's Field of Study, Skills, a second address line) stays empty silently, and
   // never stops a run or shows on the bar (2026-11-16: "3 left for you" on Uline, all optional).
+  // ---- (2026-11-26) Guided fill: the shell walks the form top to bottom with the drawn pointer,
+  // one field after another (shell-electron/main.js guidedWalk). The decisions are made first (the
+  // plan); these only place, type and tidy, so a person watching can follow it with their eyes.
+  function docOrder(a, b) {
+    if (a === b) return 0;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const ya = ra.top + (window.scrollY || 0), yb = rb.top + (window.scrollY || 0);
+    if (Math.abs(ya - yb) > 4) return ya - yb;                    // top to bottom
+    const pos = a.compareDocumentPosition(b);
+    return pos & 4 ? -1 : pos & 2 ? 1 : ra.left - rb.left;         // then in the page's own order
+  }
+  /** The refs in page order, top to bottom; refs no longer on the page are left out. */
+  function orderRefs(refs) {
+    const els = (refs || []).map((r) => [r, elByRef(r)]).filter(([, el]) => el && el.isConnected);
+    els.sort((x, y) => docOrder(visibleBox(x[1]), visibleBox(y[1])));
+    return els.map(([r]) => r);
+  }
+  // A hidden file input or a react-select's zero-width box: the visible box a person sees for it.
+  function visibleBox(el) {
+    let b = el;
+    for (let i = 0; b && i < 5; i++) {
+      const r = b.getBoundingClientRect();
+      if (r.width > 8 && r.height > 8) return b;
+      b = b.parentElement;
+    }
+    return el;
+  }
+  function inView(el) {
+    const r = el.getBoundingClientRect(), vh = window.innerHeight || 800;
+    return r.top >= 60 && r.bottom <= vh - 60;
+  }
+  /** Bring the field into view (smoothly unless reduced motion) and wait until the page stops
+   * moving, so the pointer lands where the field IS; {scrolled, label}. */
+  async function walkTo(ref) {
+    const r = walkStart(ref);
+    if (!r.ok || !r.scrolled) return r;
+    const el = visibleBox(elByRef(ref));
+    let last = null;
+    for (let i = 0; i < 30; i++) {                               // 1.5 s at most
+      await plainSleep(50);
+      const t = Math.round(el.getBoundingClientRect().top);
+      if (last !== null && t === last) break;
+      last = t;
+    }
+    return r;
+  }
+  function walkStart(ref) {
+    const el = elByRef(ref);
+    if (!el) return { ok: false };
+    const box = visibleBox(el);
+    let scrolled = false;
+    if (!inView(box)) {
+      let reduce = false;
+      try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { reduce = false; }
+      try { box.scrollIntoView({ block: "center", behavior: reduce ? "instant" : "smooth" }); } catch (e) { box.scrollIntoView(); }
+      scrolled = true;
+    }
+    return { ok: true, scrolled, label: cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40) };
+  }
+  /** The drawn pointer on a field (its visible box), with ``label``; stays until moved. */
+  function pointAt(ref, label) {
+    const el = elByRef(ref);
+    const P = window.TailorPointer;
+    if (!el || !P) return false;
+    return !!P.at(visibleBox(el), label, { now: true, stay: true });
+  }
+  /** Type ``text`` into a text box a few characters at a time, the way a person types: about
+   * ``perChar`` ms a character for the first ``burst`` characters, then the rest at once. */
+  async function typeVisibly(ref, text, o) {
+    const el = elByRef(ref);
+    const t = String(text == null ? "" : text);
+    if (!el || !("value" in el) || /^(SELECT)$/.test(tagOf(el))) return false;
+    if (isWidgetInput(el) || el.getAttribute("role") === "combobox" || /^(checkbox|radio|file|hidden)$/i.test(el.type || "")) return false;
+    const per = Math.max(10, Math.min(120, Number(o && o.perChar) || 45));
+    const burst = Math.max(0, Math.min(t.length, Number(o && o.burst) || 14));
+    try { if (el.focus) el.focus(); } catch (e) { /* fine */ }
+    for (let i = 1; i <= burst; i++) { setNativeValue(el, t.slice(0, i)); await plainSleep(per); }
+    setNativeValue(el, t);
+    return String(el.value || "") === t;
+  }
+  /** Close every dropdown left open on the page (a react-select menu, a listbox), whoever opened
+   * it, and let go of the keyboard: the page is left tidy. Returns how many were open. */
+  async function tidyMenus() {
+    let n = 0;
+    for (const el of comboboxes()) {
+      if (!el.isConnected) continue;
+      // only a list a person can SEE (a phone widget's hidden country search says expanded forever)
+      if ((el.getAttribute("aria-expanded") === "true" && boxShown(el)) || optionsFor(el).length > 0) {
+        n++;
+        try { await closeCombo(el); } catch (e) { /* the next one */ }
+      }
+    }
+    try { await closeOpened(); } catch (e) { /* fine */ }
+    try { const a = document.activeElement; if (a && a !== document.body && a.blur && /^(INPUT|SELECT|TEXTAREA)$/.test(tagOf(a))) a.blur(); } catch (e) { /* fine */ }
+    return n;
+  }
+  // The fields that need the person, in page order: outlined until Done, and the pointer can step
+  // through them (Next / Previous on the status line).
+  let _needs = [], _needsAt = -1;
+  const NEEDS_STYLE = "tailor-needs";
+  function markNeeds(ref) {
+    const el = elByRef(ref);
+    if (!el) return false;
+    const box = visibleBox(el);
+    try {
+      if (!document.getElementById("tailor-needs-style")) {
+        const st = document.createElement("style"); st.id = "tailor-needs-style";
+        st.textContent = "." + NEEDS_STYLE + "{outline:3px solid #7957FC !important;outline-offset:3px !important;border-radius:6px}";
+        (document.head || document.documentElement).appendChild(st);
+      }
+      box.classList.add(NEEDS_STYLE);
+    } catch (e) { return false; }
+    if (!_needs.includes(ref)) _needs.push(ref);
+    return true;
+  }
+  function needsList() {
+    _needs = orderRefs(_needs.filter((r) => { const el = elByRef(r); return el && !filledNow(el); }));
+    return _needs.slice();
+  }
+  function filledNow(el) {
+    if (tagOf(el) === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "")) return false;
+    if (isWidgetInput(el) || el.getAttribute("role") === "combobox") return !!(comboValue(el) || chosenPills(el).length);
+    return !!String(el.value || "").trim();
+  }
+  /** Move to the next (dir 1) or previous (-1) field that needs the person: scroll, pointer, label. */
+  function needsStep(dir) {
+    const list = needsList();
+    if (!list.length) return { n: 0, i: -1 };
+    _needsAt = dir === 0 ? 0 : (_needsAt + (dir < 0 ? -1 : 1) + list.length) % list.length;
+    const ref = list[_needsAt];
+    const w = walkStart(ref);
+    setTimeout(() => pointAt(ref, "Needs you" + (w.label ? ": " + w.label : "")), w.scrolled ? 450 : 0);
+    return { n: list.length, i: _needsAt, label: w.label || "" };
+  }
+  function clearNeeds() {
+    for (const el of qsaDeep("." + NEEDS_STYLE)) el.classList.remove(NEEDS_STYLE);
+    _needs = []; _needsAt = -1;
+    try { if (window.TailorPointer) window.TailorPointer.hide(); } catch (e) { /* fine */ }
+    return true;
+  }
+  /** The end of a run: the pointer rests on the first field that needs the person, else on the
+   * site's Submit (outlined, never pressed) with "Your turn: check and submit". */
+  function guideEnd() {
+    const list = needsList();
+    if (list.length) { _needsAt = -1; const r = needsStep(1); return { where: "needs", n: list.length, label: r.label }; }
+    const recipe = recipeFor();
+    try { highlightSubmit(recipe); } catch (e) { /* fine */ }
+    let sub = qsaDeep(".tailor-submit-hint")[0];
+    if (!sub) {                       // no recipe for this site: the page's own Submit by its words
+      const SUBMIT_WORDS = /^(submit( (my )?application)?|send( (my )?application)?|review and submit|complete application|apply( now)?)$/i;
+      const cands = qsaDeep("button, input[type='submit'], [role='button'], a").filter((b) => shown(b)
+        && SUBMIT_WORDS.test(String(b.innerText || b.value || b.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
+      sub = cands[cands.length - 1] || null;
+      if (sub) { injectStyle(); try { sub.classList.add("tailor-submit-hint"); } catch (e) { /* fine */ } }
+    }
+    if (sub) {
+      try { sub.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { sub.scrollIntoView(); }
+      setTimeout(() => { try { window.TailorPointer && window.TailorPointer.at(sub, "Your turn: check and submit", { now: true, stay: true }); } catch (e) { /* fine */ } }, 450);
+      return { where: "submit", n: 0 };
+    }
+    return { where: "none", n: 0 };
+  }
+
   function leftover() {
     const out = [];
     for (const f of extractForm({ onlyEmpty: true })) {
@@ -4586,5 +4751,7 @@ function qsaSafe(sel, root) {
     honeypot, parkedOffCanvas,
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
+    // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
+    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd,
   };
 })();

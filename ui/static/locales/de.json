@@ -2166,5 +2166,13 @@
   "tracker.markAccepted": "Als angenommen markieren",
   "tracker.removeFromTracker": "Aus dem Tracker entfernen",
   "tracker.removed.toast": "{company} aus dem Tracker entfernt",
-  "tracker.kept": "Behalten. Wir fragen in 30 Tagen wieder."
+  "tracker.kept": "Behalten. Wir fragen in 30 Tagen wieder.",
+  "fill.details": "Details",
+  "fill.doneAll": "{f} ausgefüllt. Prüfe es und sende es auf der Website ab",
+  "fill.doneNone": "Hier gibt es nichts Neues auszufüllen",
+  "fill.doneSome": "{f} von {t} ausgefüllt. {n} brauchen dich",
+  "fill.needsAt": "Braucht dich: {q} ({i} von {n})",
+  "fill.prev": "Zurück",
+  "fill.next": "Weiter",
+  "fill.done": "Fertig"
 }

@@ -2166,5 +2166,13 @@
   "tracker.markAccepted": "Marquer comme acceptée",
   "tracker.removeFromTracker": "Retirer du suivi",
   "tracker.removed.toast": "{company} retiré du suivi",
-  "tracker.kept": "Gardé. Nous redemanderons dans 30 jours."
+  "tracker.kept": "Gardé. Nous redemanderons dans 30 jours.",
+  "fill.details": "Détails",
+  "fill.doneAll": "{f} remplis. Vérifie, puis envoie sur le site",
+  "fill.doneNone": "Rien de nouveau à remplir ici",
+  "fill.doneSome": "{f} sur {t} remplis. {n} ont besoin de toi",
+  "fill.needsAt": "A besoin de toi : {q} ({i} sur {n})",
+  "fill.prev": "Précédent",
+  "fill.next": "Suivant",
+  "fill.done": "Terminé"
 }

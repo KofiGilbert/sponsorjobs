@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld("tailorShell", {
   autoApplyRun: (url, recordId) => ipcRenderer.invoke("autoapply:run", url, recordId),
   // The apply agent (docs/apply-agent.md): run one application, press Send, stop.
   agentRun: (opts) => ipcRenderer.invoke("agent:run", opts || {}),
+  // (2026-11-26) Guided fill: Next (1) / Previous (-1) to each field that needs the person, "done".
+  guideStep: (dir) => ipcRenderer.invoke("assist:guide-step", dir),
   agentSend: (recordId, opts) => ipcRenderer.invoke("agent:send", recordId, opts || null),
   agentPoll: () => ipcRenderer.invoke("agent:poll"),
   agentStop: () => ipcRenderer.invoke("agent:stop"),

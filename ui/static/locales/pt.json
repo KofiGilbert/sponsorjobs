@@ -2166,5 +2166,13 @@
   "tracker.markAccepted": "Marcar como aceita",
   "tracker.removeFromTracker": "Remover do acompanhamento",
   "tracker.removed.toast": "{company} removida do acompanhamento",
-  "tracker.kept": "Mantida. Perguntaremos de novo em 30 dias."
+  "tracker.kept": "Mantida. Perguntaremos de novo em 30 dias.",
+  "fill.details": "Detalhes",
+  "fill.doneAll": "{f} preenchidos. Confira e envie no site",
+  "fill.doneNone": "Nada de novo para preencher aqui",
+  "fill.doneSome": "{f} de {t} preenchidos. {n} precisam de você",
+  "fill.needsAt": "Precisa de você: {q} ({i} de {n})",
+  "fill.prev": "Anterior",
+  "fill.next": "Próximo",
+  "fill.done": "Concluído"
 }

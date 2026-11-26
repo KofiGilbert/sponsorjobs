@@ -76,6 +76,7 @@
     const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
     return r && (r.width > 0 || r.height > 0) && r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
   }
+  let stay = false;                    // a resting pointer (the end of a guided run) is never idled away
   function show(m) {
     if (!ensure()) return;
     wrap.classList.toggle("still", reduced());
@@ -85,7 +86,7 @@
     shown = { x: m.x, y: m.y, label: tag.textContent, side: m.side };
     lastAt = Date.now();
     clearTimeout(idle);
-    idle = setTimeout(hide, IDLE_MS);
+    if (!stay) idle = setTimeout(hide, IDLE_MS);
   }
   function drain() {
     timer = null;
@@ -97,6 +98,7 @@
   function point(rect, label, opts) {
     if (!visible(rect)) return false;
     const m = Object.assign(spot(rect), { label });
+    stay = !!(opts && opts.stay);
     if (opts && opts.now) { queue.length = 0; clearTimeout(timer); timer = null; show(m); return true; }
     queue.push(m);
     while (queue.length > MAX_QUEUE) queue.shift();
@@ -123,6 +125,7 @@
     } catch (e) { return false; }
   }
   function hide() {
+    stay = false;
     clearTimeout(idle); clearTimeout(timer); timer = null;
     queue.length = 0;
     shown = null;

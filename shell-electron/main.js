@@ -1070,6 +1070,34 @@ const FILL_CAPS = fillBudget.caps(process.env);
 const PLAN_MS = FILL_CAPS.plan;
 let _fillPhase = "";
 function fillPhase() { return _fillPhase; }
+// ---- (2026-11-26) Guided fill: top to bottom, visible, ends where the person acts --------------
+// The form's empty fields are read with their choices and the plan decides every one of them (the
+// same engine route as the fill's own plan). Then the walk: in page order, the page scrolls to
+// each field ("Scrolling"), the pointer moves to it ("Clicking: <field>"), text is typed a few
+// characters at a time, a choice is picked and its list closed ("Filling: <field>"), a file goes
+// in ("Uploading resume"); a field the person must answer gets a short pause and an outline
+// ("Needs you"). About 0.6 to 1.2 s a field. Nothing is ever submitted here.
+async function guidedWalk(wc, recordId, url, page, say) {
+  const pkey = finishRules.planKey(recordId, url);
+  return guided.walk({
+    js: (e, ms) => fillKeys.capped(wc.executeJavaScript(e, true), ms || 15000),
+    alive: () => !wc.isDestroyed(),
+    seenBefore: (fields) => !finishRules.unplannedFields(_planned.get(pkey), fields).length,
+    notePlanned: (fields) => { _planned.set(pkey, finishRules.notePlanned(_planned.get(pkey), fields)); },
+    plan: async (fields) => {
+      try {
+        const resp = await net.fetch(SERVER + "/api/autoapply/plan", {
+          method: "POST", headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1", ...SESSION_HEADER },
+          body: JSON.stringify({ url, record_id: recordId, fields }), signal: AbortSignal.timeout(30000) });
+        return resp.ok ? await resp.json() : null;
+      } catch (e) { return null; }
+    },
+    upload: async (refs, pathOf) => { const seen = []; const n = await cdpUploadFiles(wc, refs, pathOf, seen); return { n, seen }; },
+    say,
+  });
+}
+const guided = require("./guided");
+
 async function runAutoApplyOnPane(recordId, opts) {
   opts = opts || {};
   if (!pane) return { ok: false, reason: "no-page" };
@@ -1149,8 +1177,17 @@ async function runAutoApplyOnPane(recordId, opts) {
     const payload = await fetchAutofillPayload(recordId);
     lap("payload", "filling the page");
     const havePayload = !!(payload && payload.loaded !== false);
+    // (2026-11-26) Guided fill: the decisions first (the plan), then the walk, top to bottom, field
+    // after field, with the drawn pointer; the engine's own pass below fills what is still empty,
+    // quietly (its pointer off, so the pointer never jumps back up the page).
+    let walked = null;
+    if (opts.guided && pointer && havePayload) {
+      _fillPhase = "walking the form";
+      walked = await guidedWalk(wc, recordId, url, page, (t) => sendProgress(Object.assign({ record_id: recordId || null, page }, t)));
+      lap("walk", "filling the page");
+    }
     const fillExpr = (budgetMs) => (havePayload
-      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.setPointer(${pointer}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
+      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.setPointer(${pointer && !walked}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
     const pres = [];
     let searchTrouble = [];                              // labels of lists whose search did not finish
     if (havePayload) {
@@ -1242,7 +1279,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     // on a page that did not change asks the model nothing (6 to 17 plan calls an application).
     const pkey = finishRules.planKey(recordId, url);
     const unplanned = finishRules.unplannedFields(_planned.get(pkey), fields);
-    const skipPlan = !!opts.samePlanSkip && fields.length > 0 && unplanned.length === 0;
+    const skipPlan = !!(opts.samePlanSkip || walked) && fields.length > 0 && unplanned.length === 0;
     if (skipPlan) { counts.plan_skipped = 1; planReason = "already-planned"; }
     if (fields.length && !skipPlan && !(cut && cut.stalled) && fillBudget.room(C, "plan", Date.now() - t0)) {
       let plan = null;
@@ -1324,6 +1361,14 @@ async function runAutoApplyOnPane(recordId, opts) {
     let left = (await wc.executeJavaScript("window.TailorAutofill.leftover()", true)) || [];
     for (const ctx of liveFrames) left = left.concat((await fr.eval(ctx, "window.TailorAutofill.leftover()")) || []);
     left = [...new Set(left.concat(searchTrouble))].slice(0, 60);
+    if (walked) {
+      // the required boxes still empty are outlined, in page order, for Next / Previous and the end
+      await wc.executeJavaScript(`(() => { const T = window.TailorAutofill; let n = 0;
+        for (const f of T.extractForm({ onlyEmpty: true })) if (f.required && T.markNeeds(f.ref)) n++; T.tidyMenus(); return n; })()`, true).catch(() => 0);
+      applied.filled += walked.filled; applied.uploaded += walked.uploaded;
+      for (const f of walked.files) files.push(f);
+      planCost += walked.cost;
+    }
     // (the agent only) What this fill set and where each value came from, for the Review answers
     // list at Ready to send. Kept in the shell: never in the fill report, a log or a model call.
     let answers = [];
@@ -1507,8 +1552,34 @@ async function applyDecision(url, pageUrl) {
 // plain fill, the drawn pointer goes. The site's Submit is never pressed on this path.
 ipcMain.handle("assist:finish", async (_e, opts, report) => {
   const o = opts || {};
-  if (!o.finish) { if (pane) pointerOff(pane.webContents); return report; }
-  return finishAfterAutofill(o, report);
+  const r = o.finish ? await finishAfterAutofill(o, report) : report;
+  return guideEnd(r);
+});
+
+// (2026-11-26) The end of every Autofill: the pointer rests on the first field that needs the
+// person (outlined, with Next / Previous on the status line), else on the site's Submit, outlined,
+// with "Your turn: check and submit". Never pressed.
+async function guideEnd(r) {
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  if (!wc) return r;
+  let g = null;
+  try {
+    g = await fillKeys.capped(wc.executeJavaScript(`(async () => { const T = window.TailorAutofill; if (!T || !T.guideEnd) return null;
+      await T.tidyMenus(); return T.guideEnd(); })()`, true), 8000);
+  } catch (e) { g = null; }
+  if (!g || g === fillKeys.TIMED_OUT) return r;
+  return Object.assign({}, r || {}, { guide: { where: g.where, needs: g.n || 0, label: g.label || "" } });
+}
+// Next / Previous / Done on the status line: the pointer and the page go to each field that needs
+// the person, in page order; Done takes the outlines and the pointer away.
+ipcMain.handle("assist:guide-step", async (_e, dir) => {
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  if (!wc) return { n: 0 };
+  const d = dir === "done" ? "done" : Number(dir) || 0;
+  try {
+    return await wc.executeJavaScript(d === "done" ? "(window.TailorAutofill && window.TailorAutofill.clearNeeds(), { n: 0, done: true })"
+      : `window.TailorAutofill ? window.TailorAutofill.needsStep(${d}) : { n: 0 }`, true);
+  } catch (e) { return { n: 0 }; }
 });
 
 // After the fast Autofill: hand the page to the agent when it left required fields, more pages or
@@ -1518,7 +1589,7 @@ ipcMain.handle("assist:finish", async (_e, opts, report) => {
 // auto-submit, whatever is saved.
 async function finishAfterAutofill(o, r) {
   const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
-  const done = (x) => { if (wc) pointerOff(wc); return x; };
+  const done = (x) => x;                       // the pointer rests at the end (guideEnd)
   if (!wc || o.recordId === undefined || o.recordId === null || o.recordId === "" || agent.busy()) return done(r);
   let invalid = 0;
   try {
@@ -1598,7 +1669,7 @@ ipcMain.handle("assist:apply", async (_e, opts) => {
   if (!pane) return { ok: false, reason: "no-page" };
   const wc = pane.webContents;
 
-  const report = await runAutoApplyOnPane(recordId, { pointer: true });
+  const report = await runAutoApplyOnPane(recordId, { pointer: true, guided: true });
   const filledOk = !!(report && report.ok !== false);
   if (report && report.reason === "blocked") return report;   // never fight an auth wall
   let attached = !!(report && report.uploaded);

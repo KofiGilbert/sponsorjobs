@@ -2081,3 +2081,35 @@ empty, a site error, a closed posting, other. The person's own Stop makes none.
   every stop grouped by its question (else its host), seen most first, with the newest example and
   the agent's reason.
 - Tests: tests/test_stoplog.py, tests/js/test_stoplog_events.js, worker/test/stoplog.test.ts.
+
+## 38. Guided fill: top to bottom, visible, ends where the person acts (2026-11-26)
+
+The owner watched a live Autofill on a Greenhouse form (Axon) and could not follow it. Three bugs
+and a redesign:
+
+- **The pointer was not seen**: the fast fill's pointer only showed on boxes already in view, and
+  most were below the fold. Now the page scrolls to each field first.
+- **Lists left open**: Yes / No react-select menus hung open after the run. `tidyMenus` closes every
+  list a person can see after each field and at the end, whoever opened it, and lets go of the
+  keyboard.
+- **Veteran Status stayed "Select..."**: the form read stopped reading choices after 15 lists, and
+  that form has 23, so Gender, Hispanic and Veteran Status reached the plan without choices and the
+  saved answers could not be matched. It now reads up to 40 lists in 15 s.
+- **The walk** (`shell-electron/guided.js`): the decisions first (the form's empty fields read with
+  their choices, then the plan), then strictly in page order, one field after another: the page
+  scrolls to it ("Scrolling", waiting until it stops moving), the pointer moves to it ("Clicking:
+  <field>"), text is typed a few characters at a time, a choice is picked and its list closed
+  ("Filling: <field>"), a file goes in ("Uploading resume"); a field the person must answer gets a
+  short pause and an outline ("Needs you: <field>"). At least 0.65 s a field (about 30 to 45 s for
+  a 30-field form). Reduced motion: no glide, still in order. The engine's own pass then fills what
+  is still empty, quietly (pointer off, so it never jumps back up). The agent's pages are walked the
+  same way; a page already walked is not walked again.
+- **The end**: every Autofill (`assist:finish`, `guideEnd`) rests the pointer on the first field
+  that needs the person, outlined, else on the site's Submit, outlined, "Your turn: check and
+  submit". Never pressed.
+- **The status line** (`app.js say`): one short line ("Filled 27 of 30. 3 need you"), Previous /
+  Next to step the pointer and the page through those fields (`assist:guide-step`), Done, and the
+  long text only under "Details". Every message goes through `say({ line, actions, details })`, so
+  an assistant's speech bubble can replace the bar later.
+- Tests: tests/test_guided_fill.py, tests/js/test_guided_walk.js (fixture
+  tests/fixtures/forms/guided_form.html).

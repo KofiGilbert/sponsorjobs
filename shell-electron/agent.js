@@ -2560,7 +2560,7 @@ function createAgent(deps) {
           toolFill = false;                                   // the brain fills this page itself
           left = [];
         } else {
-          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true, pointer: !quiet }), FILL_MS, "fill")
+          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true, pointer: !quiet, guided: !quiet }), FILL_MS, "fill")
             .catch((e) => {
               // say where the fill stood when it ran out of time (section 13)
               const ph = e && e.hang && typeof deps.fillPhase === "function" ? deps.fillPhase() : "";

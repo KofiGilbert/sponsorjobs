@@ -1280,6 +1280,70 @@
     return msg;
   }
 
+  // ---- (2026-11-26) The status line: ONE place every Autofill message goes through, a short line
+  // plus optional actions and details shown only on demand. The assistant the owner is considering
+  // (a small character with a speech bubble) can replace this one function later.
+  //   say({ line, actions: [{ label, fn, primary }], details, tone: "wall" })
+  function say(msg) {
+    const bar = $("#bbFill");
+    if (!bar) return;
+    const m = msg || {};
+    aaFeedHide();
+    bar.innerHTML = "";
+    bar.classList.remove("is-wall", "is-live", "is-ready", "bb-stack");
+    if (!m.line) { bar.hidden = true; return; }
+    const text = document.createElement("span");
+    text.className = "bb-fill-text"; text.textContent = m.line;
+    bar.appendChild(text);
+    for (const a of m.actions || []) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn btn-sm " + (a.primary ? "btn-primary" : "btn-ghost");
+      b.textContent = a.label; b.addEventListener("click", a.fn); bar.appendChild(b);
+    }
+    if (m.details) {
+      const d = document.createElement("button");
+      d.type = "button"; d.className = "bb-details"; d.textContent = T("fill.details", "Details");
+      const box = document.createElement("div");
+      box.className = "bb-details-box"; box.textContent = m.details; box.hidden = true;
+      d.addEventListener("click", () => { box.hidden = !box.hidden; bar.classList.toggle("bb-stack", !box.hidden); });
+      bar.append(d, box);
+    }
+    bar.classList.toggle("is-wall", m.tone === "wall");
+    bar.hidden = false;
+  }
+  // After an Autofill: "Filled 27 of 30. 3 need you", Previous / Next to each of those fields (the
+  // pointer and the page go there), Done; the long text only under Details.
+  function guideLine(r) {
+    const g = (r && r.guide) || null;
+    const filled = Number((r && r.filled) || 0) + (r && r.resume_attached ? 1 : 0);
+    const needs = g ? Number(g.needs || 0) : ((r && r.left) || []).length;
+    if (!needs) return filled ? T("fill.doneAll", "Filled {f}. Check it, then submit on the site").replace("{f}", filled)
+                              : T("fill.doneNone", "Nothing new to fill here");
+    return T("fill.doneSome", "Filled {f} of {t}. {n} need you").replace("{f}", filled).replace("{t}", filled + needs).replace("{n}", needs);
+  }
+  function guideSay(r) {
+    if (!r) return;
+    if (r.ok === false && !r.guide) { say({ line: applyMessage(r), tone: "wall" }); return; }
+    const needs = r.guide ? Number(r.guide.needs || 0) : 0;
+    const head = r.agent && r.agent.message && !r.agent.ready ? r.agent.message : guideLine(r);
+    const step = async (dir) => {
+      let s2 = null;
+      try { s2 = await window.tailorShell.guideStep(dir); } catch { s2 = null; }
+      if (s2 && s2.n) say(Object.assign(msg(), { line: T("fill.needsAt", "Needs you: {q} ({i} of {n})")
+        .replace("{q}", s2.label || "").replace("{i}", s2.i + 1).replace("{n}", s2.n) }));
+    };
+    const msg = () => ({
+      line: head,
+      actions: (needs && window.tailorShell && window.tailorShell.guideStep ? [
+        { label: T("fill.prev", "Previous"), fn: () => step(-1) },
+        { label: T("fill.next", "Next"), fn: () => step(1), primary: true },
+      ] : []).concat(window.tailorShell && window.tailorShell.guideStep ? [{ label: T("fill.done", "Done"), fn: () => {
+        try { window.tailorShell.guideStep("done"); } catch { /* fine */ } say(null); } }] : []),
+      details: applyMessage(r),
+    });
+    say(msg());
+  }
+
   async function pkgFill(here) {
     if (!window.tailorShell || !PKG_ID) return;
     const note = $("#pkgAssistNote");
@@ -1296,7 +1360,8 @@
     const r = await applyInPane({ url, recordId: PKG_ID, resumePath: PKG_CV_PATH, submit: false, here, finish: true,
                                   company: PKG_COMPANY || "" });
     btn.disabled = false;
-    note.textContent = applyMessage(r);
+    note.textContent = r && r.ok !== false ? guideLine(r) : applyMessage(r);
+    guideSay(r);
     if (r && r.ok !== false) { $("#pkgFillHereBtn").hidden = false; offerLearn(note); }
   }
   // (2026-11-24) Assisted apply: the application being filled (its record and resume), so Fill
@@ -1316,10 +1381,9 @@
     const r = await applyInPane({ url: "", recordId: FILL_CTX.id, resumePath: FILL_CTX.cv, submit: false, here: true, finish: true });
     b.disabled = false; b.textContent = label;
     const bar = $("#bbFill");
-    // an agent finish leaves its own last line (and its Steps) on the bar
-    if (bar && !(r && r.agent)) { aaFeedHide(); bar.textContent = applyMessage(r); bar.classList.remove("is-wall", "is-live"); bar.hidden = false; }
+    if (bar) guideSay(r);
     const note = $("#pkgAssistNote");
-    if (note && PKG_ID && String(FILL_CTX.id) === String(PKG_ID)) note.textContent = applyMessage(r);
+    if (note && PKG_ID && String(FILL_CTX.id) === String(PKG_ID)) note.textContent = r && r.ok !== false ? guideLine(r) : applyMessage(r);
   }
   $("#bbFillHere")?.addEventListener("click", () => bbFillHere());
   // Always on the bar in assisted apply: a page the person opened themselves fills from the
@@ -1366,6 +1430,7 @@
         }
         return;
       }
+      if (info.guide) { say({ line: info.message }); return; }       // the walk: "Filling 5 of 27"
       const bar = $("#bbFill");
       if (bar) {
         aaFeedHide();
@@ -13768,7 +13833,8 @@
     const r = await applyInPane({ url: it.apply_url, recordId: id, resumePath: it.cv_path || "", submit: auto, here, finish: !auto,
                                   company: it.company || "" });
     if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; }
-    aaNote(id, applyMessage(r), r && r.ok !== false && !r.submitted);
+    aaNote(id, r && r.ok !== false ? guideLine(r) : applyMessage(r), r && r.ok !== false && !r.submitted);
+    guideSay(r);
     if (r && r.submitted) {
       await api(`/api/record/${id}/status`, { status: "applied" }).catch(() => {});   // off the to-do
       loadAutoApply();

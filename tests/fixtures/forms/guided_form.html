@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (guided fill fixture)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script>
+<style>.gap{height:520px}</style></head>
+<body>
+<!-- A Greenhouse-like form taller than the window (made-up job, no person's values): text boxes at
+     the top, react-select Yes/No and EEO lists far below, a question only the person can answer,
+     and the Submit button at the bottom. The guided fill walks it top to bottom. -->
+<h1>Analyst</h1>
+<form id="application-form" onsubmit="return false">
+  <div class="field"><label for="first_name">First Name *</label><input type="text" id="first_name" name="first_name" aria-required="true"></div>
+  <div class="field"><label for="last_name">Last Name *</label><input type="text" id="last_name" name="last_name" aria-required="true"></div>
+  <div class="field"><label for="email">Email *</label><input type="email" id="email" name="email" aria-required="true"></div>
+  <div class="gap"></div>
+  <div id="w1"></div>
+  <div class="gap"></div>
+  <div id="w2"></div>
+  <div class="gap"></div>
+  <div id="w3"></div>
+  <button type="submit" id="submit">Submit application</button>
+</form>
+<script>
+  const W = window.FixtureWidgets;
+  window.fx = {
+    adult: W.ReactSelect(document.getElementById("w1"), { id: "question_1", label: "Are you at least 18 years of age? *", required: true, options: ["Yes", "No"] }),
+    fugitive: W.ReactSelect(document.getElementById("w2"), { id: "question_2", label: "Are you a fugitive from justice? *", required: true, options: ["Yes", "No"] }),
+    veteran: W.ReactSelect(document.getElementById("w3"), { id: "veteran_status", label: "Veteran Status *", required: true,
+      options: ["I am not a protected veteran", "I identify as one or more of the classifications of protected veteran", "I don't wish to answer"] }),
+  };
+  window.fxValues = () => ({ first: document.getElementById("first_name").value, last: document.getElementById("last_name").value,
+    email: document.getElementById("email").value, adult: window.fx.adult.value, fugitive: window.fx.fugitive.value, veteran: window.fx.veteran.value,
+    open: [...document.querySelectorAll("[aria-expanded='true']")].length + document.querySelectorAll(".select__menu").length });
+</script>
+</body></html>
