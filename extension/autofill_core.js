@@ -4868,6 +4868,51 @@ function qsaSafe(sel, root) {
     return { where: "none", n: 0 };
   }
 
+  // (2026-11-26, Meriton) The app never submits, and no key ends up submitting for it. On a page
+  // the app filled: Enter in a one-line box of a form that has a Submit button does NOT send the
+  // form (the browser's "implicit submission"; the owner typed an answer the app asked for in the
+  // site's own box and the application went); the site's own Enter handlers still run (a list's
+  // search), only the form's default sending is stopped, and the pointer shows where the
+  // person's Submit is. A Submit control is never clicked by a script (an untrusted click is
+  // stopped before the site sees it). The person's own click on Submit is untouched.
+  const SUBMIT_TEXT_RE = /^(submit( (my |your |the )?application)?|send( (my |your )?application)?|apply( now)?|complete( (my )?application)?|finish( (my )?application)?|submit and finish)$/i;
+  function submitLike(node) {
+    const b = node && node.closest ? node.closest("button, input[type='submit'], input[type='button'], [role='button'], a") : null;
+    if (!b) return null;
+    const t = String(b.innerText || b.value || b.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+    return SUBMIT_TEXT_RE.test(t) ? b : null;
+  }
+  const ONE_LINE_RE = /^(text|email|tel|url|number|search|password|date|month|week|time|datetime-local)$/i;
+  function enterWouldSubmit(t) {
+    if (!t || tagOf(t) !== "INPUT" || !ONE_LINE_RE.test(t.type || "text")) return false;
+    if (t.getAttribute("role") === "combobox" || t.getAttribute("aria-autocomplete") || t.getAttribute("aria-expanded") === "true") return false;
+    const f = t.form || (t.closest && t.closest("form"));
+    if (!f) return false;
+    return qsaSafe("button, input[type='submit']", f).some((b) => b.type === "submit" || submitLike(b));
+  }
+  function armSubmitGuard() {
+    if (window.__sjSubmitGuard) return false;
+    window.__sjSubmitGuard = true;
+    document.addEventListener("keydown", (e) => {
+      try {
+        if (e.key !== "Enter" || e.isComposing || e.shiftKey || !enterWouldSubmit(e.target)) return;
+        e.preventDefault();                                 // the box keeps its words; the form is not sent
+        window.__sjEnterStopped = (window.__sjEnterStopped || 0) + 1;
+        const f = e.target.form || e.target.closest("form");
+        const sub = qsaSafe("button, input[type='submit']", f).find((b) => submitLike(b)) || null;
+        const P = window.TailorPointer;
+        if (P && sub) P.at(sub, "Press Submit yourself when you are ready", { now: true, stay: true, on: true });
+      } catch (err) { /* never in the page's way */ }
+    }, true);
+    document.addEventListener("click", (e) => {
+      try {
+        if (e.isTrusted) return;                            // the person's own click (or a real one)
+        if (submitLike(e.target)) { e.preventDefault(); e.stopImmediatePropagation(); window.__sjClickStopped = (window.__sjClickStopped || 0) + 1; }
+      } catch (err) { /* fine */ }
+    }, true);
+    return true;
+  }
+
   // (2026-11-26) What the form's choice questions hold the moment the person presses the site's
   // Submit: the shell keeps it (a console line it alone reads) and, once the site confirms the
   // application (applied_watch.js onSubmitted), saves the background answers among them through
@@ -4958,6 +5003,6 @@ function qsaSafe(sel, root) {
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
     orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
-    siteModal, readModal, flash, siteParseBox, resetBoxes,
+    siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike,
   };
 })();

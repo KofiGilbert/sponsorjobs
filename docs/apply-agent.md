@@ -2159,6 +2159,15 @@ and a redesign:
   resume goes into the form's plain Resume / CV field at its own place, never into a site
   "Autofill from resume" box (`siteParseBox`, Ashby's), so the site never fills the form from its
   parse; Workday takes "Apply Manually".
+- **No key or script ever sends the form** (Meriton, 2026-11-26: the run asked for an optional
+  "Preferred First Name" with the caret in the site's own box; an Enter there sent the form, the
+  browser's implicit submission). On every page the app filled (`armSubmitGuard`): Enter in a
+  one-line box of a form that has a Submit button does not send it (the site's own Enter handlers
+  still run; only the browser's sending is stopped) and the pointer shows the person's Submit; an
+  untrusted (script) click on a Submit control is stopped. The person's own click is untouched.
+- **Optional fields never trigger an ask**: the walk flags only required fields the plan could not
+  answer. A preferred first name or nickname: optional, left empty; required, the profile's first
+  name (asked only when the profile has none).
 - **The end on Submit**: the pointer's tip is ON the button (its left centre), the label just past
   its right edge, or under it when there is no room; never over it.
 - **The bar says one short line** (`app.js aaBarShort`): the agent's Ready line is "Your turn:

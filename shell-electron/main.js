@@ -1421,6 +1421,8 @@ async function runAutoApplyOnPane(recordId, opts) {
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
     watchSnapshots(wc);
     wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitSnapshot && window.TailorAutofill.armSubmitSnapshot()", true).catch(() => null);
+    // Enter in a filled form never sends it; a script never clicks its Submit (Meriton, 2026-11-26)
+    wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitGuard && window.TailorAutofill.armSubmitGuard()", true).catch(() => null);
     if (fr) { fr.close(); fr = null; }
     const sig = await mainSignature(wc);
     if (!opts.fromWatch) armPageWatch(wc, recordId, page, sig);

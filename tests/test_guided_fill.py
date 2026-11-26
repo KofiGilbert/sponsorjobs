@@ -90,3 +90,23 @@ def test_the_bar_clears_after_the_site_confirms_the_application():
     block = app[i:i + 900]
     assert 'T("fill.submitted"' in block and "say(null)" in block and "5000" in block
     assert "const short = aaBarShort(info);" in app
+
+
+def test_a_preferred_name_box_is_never_asked():
+    """(Meriton, 2026-11-26) The run stopped on an optional "Preferred First Name" and asked the
+    owner. An optional preferred / nick name is left empty and never asked; a required one is the
+    profile's first name (made-up values)."""
+    from autoapply.fields import FormField
+    from autoapply.planner import KnownContext, plan_known
+    ctx = KnownContext(applicant={"first_name": "Avery", "last_name": "Example"})
+    opt = FormField("p", "Preferred First Name", "text")
+    req = FormField("q", "Preferred first name *", "text", required=True)
+    nick = FormField("n", "Nickname", "text")
+    res = plan_known([opt, req, nick], ctx)
+    left = {f.ref for f in res.left}
+    acts = {a.ref: a for a in res.actions}
+    assert "p" not in left and "n" not in left and "p" not in acts and "n" not in acts
+    assert acts["q"].source == "first_name"
+    # no first name on file: the required one is the person's, the optional one still is not
+    res2 = plan_known([opt, req], KnownContext(applicant={}))
+    assert {f.ref for f in res2.left} == {"q"}

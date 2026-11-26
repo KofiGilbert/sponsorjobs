@@ -86,6 +86,11 @@ _NAME_PART = re.compile(r"middle|preferred|nick ?name|maiden|former|previous|pri
 _STREET_EXTRA = re.compile(r"line.?[2-9]\b|address.?[2-9]\b|\bapt\b|apartment|\bsuite\b", re.I)
 
 
+_PREFERRED_NAME = re.compile(r"^\W*(preferred|chosen)\s+(first\s+|given\s+)?name\b|^\W*nick ?name\b|what (name )?should we call you"
+                             r"|^\W*name you (go|prefer to go) by", re.I)
+_NOT_PREFERRED = re.compile(r"last|family|sur ?name|pronoun|pronunciation|phonetic", re.I)
+
+
 def contact_key(label: str) -> str:
     """The placeholder key a contact field asks for ("" when it is not one)."""
     lbl = str(label or "")
@@ -1216,6 +1221,15 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
 
         # 5. profile fields (placeholder keys, resolved locally)
         ck = contact_key(label)
+        # (2026-11-26, the owner) "Preferred first name", "Nickname": a required one is the first
+        # name on the profile; an optional one is left empty and never asked
+        if not ck and _PREFERRED_NAME.search(label) and not _NOT_PREFERRED.search(label):
+            if f.required:
+                if str(ctx.applicant.get("first_name") or "").strip():
+                    out.actions.append(FillAction(f.ref, _op_for(f), source="first_name", origin="profile"))
+                else:
+                    out.left.append(f)
+            continue
         if ck:
             if str(ctx.applicant.get(ck) or "").strip():
                 out.actions.append(FillAction(f.ref, _op_for(f), source=ck, origin="profile"))

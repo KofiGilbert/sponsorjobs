@@ -27,7 +27,7 @@ function planFor(fields, o) {
     const lab = String(f.label || "").replace(/\s*\*\s*$/, "");
     const v = want[lab];
     if (v) ops.push({ ref: f.ref, op: f.type === "text" || f.type === "email" ? "fill" : "select", text: v });
-    else if (f.required) left.push({ ref: f.ref, label: f.label });
+    else left.push({ ref: f.ref, label: f.label });              // the walk flags only the required ones
   }
   return { ok: true, ops, left, cost: 0.001 };
 }
@@ -78,6 +78,7 @@ async function run(o) {
   const r = await run({});
   assert(r.v.first === "Avery" && r.v.last === "Example" && r.v.email === "apply.person@example.com", "text filled " + JSON.stringify(r.v));
   assert(r.v.adult === "Yes" && r.v.veteran === "I am not a protected veteran", "choices picked " + JSON.stringify(r.v));
+  assert(!r.out.needs.some((n) => /Preferred/.test(n)), "an optional box the plan left is never flagged " + JSON.stringify(r.out.needs));
   assert(r.v.fugitive == null, "the person's question is never filled");
   assert(r.v.open === 0, "no list left open: " + r.v.open);
   // top to bottom: the fields' page positions only ever grow
@@ -238,6 +239,38 @@ async function run(o) {
     await b.close();
     assert(before === false && formWords === false && interest === false, "not before the submit " + JSON.stringify([before, formWords, interest]));
     assert(thanks === true, "the confirmation window counts as submitted");
+  }
+
+  // ---- (Meriton, 2026-11-26) Enter in the site's own box never sends the form; a script never
+  // clicks Submit; the person's own click on Submit still sends it
+  {
+    const b = await chromium.launch();
+    const page = await b.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.goto(FIX);
+    await page.evaluate(CORE); await page.evaluate(POINTER);
+    await page.evaluate(() => { window.__sent = 0; window.__siteEnter = 0;
+      document.getElementById("application-form").addEventListener("submit", () => { window.__sent++; });
+      document.getElementById("first_name").addEventListener("keydown", (e) => { if (e.key === "Enter") window.__siteEnter++; }); });
+    // without the guard: a real Enter in a one-line box sends the form (the browser's own rule)
+    await page.click("#first_name"); await page.keyboard.type("Kofi"); await page.keyboard.press("Enter");
+    const before = await page.evaluate("window.__sent");
+    await page.evaluate("window.TailorAutofill.armSubmitGuard()");
+    await page.click("#last_name"); await page.keyboard.type("Example"); await page.keyboard.press("Enter");
+    await page.click("#first_name"); await page.keyboard.press("Enter");
+    const guarded = await page.evaluate("[window.__sent, window.__siteEnter, window.__sjEnterStopped, document.getElementById('last_name').value]");
+    const hint = await page.evaluate("window.TailorPointer.state() && window.TailorPointer.state().label");
+    // a script's click on Submit: stopped; the person's own click: goes
+    await page.evaluate(() => document.getElementById("submit").click());
+    const scripted = await page.evaluate("window.__sent");
+    await page.click("#submit");
+    const person = await page.evaluate("window.__sent");
+    await b.close();
+    assert(before === 1, "the browser sends a form on Enter in a one-line box (the Meriton case): " + before);
+    assert(guarded[0] === 1 && guarded[2] === 2 && guarded[3] === "Example", "Enter never sends it once guarded " + JSON.stringify(guarded));
+    assert(guarded[1] === 2, "the site's own Enter handler still runs " + JSON.stringify(guarded));
+    assert(hint === null || hint === "Press Submit yourself when you are ready", "the pointer, when Submit is in view: " + hint);
+    assert(scripted === 1, "a script's click on Submit is stopped");
+    assert(person === 2, "the person's own click on Submit sends it");
   }
 
   // ---- reduced motion: no glide, still in order ---------------------------------------------

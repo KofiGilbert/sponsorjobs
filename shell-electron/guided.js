@@ -47,6 +47,7 @@ async function walk(deps) {
   const modalNow = async () => { const m = await js("window.TailorAutofill.siteModal()", 3000); return (m && m.title) || ""; };
   const stopFor = async (title) => { out.modal = title; return out; };
   { const m = await modalNow(); if (m) return stopFor(m); }
+  await js("window.TailorAutofill.armSubmitGuard()", 2000);      // no key or script ever sends the form
   const upload = async (op, uploadPath) => {
     const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
     if (rep && (rep.uploads || []).length && deps.upload) {
@@ -67,7 +68,10 @@ async function walk(deps) {
     if (deps.notePlanned) deps.notePlanned(fields);
     out.cost += (plan && Number(plan.cost)) || 0;
     const ops = plan && plan.ok ? (plan.ops || []) : [];
-    const left = ((plan && plan.left) || []).map((l) => l.ref).filter(Boolean);
+    // only a REQUIRED box the plan could not answer is the person's (Meriton, 2026-11-26: an
+    // optional "Preferred First Name" was flagged "Needs you"); an optional one is left empty
+    const required = new Set(fields.filter((f) => f.required).map((f) => f.ref));
+    const left = ((plan && plan.left) || []).map((l) => l.ref).filter((r) => r && required.has(r));
     const uploadPath = new Map(ops.filter((o) => o.op === "upload" && o.path).map((o) => [o.ref, o.path]));
     const byRef = new Map();
     for (const o of ops) if (!byRef.has(o.ref) && !done.has(o.ref)) byRef.set(o.ref, o);
