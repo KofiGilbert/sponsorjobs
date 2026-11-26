@@ -1897,6 +1897,27 @@ ipcMain.on("notify:show", (_e, msg) => {
   } catch (e) { /* a notification is best-effort; the badge in the app still shows the count */ }
 });
 ipcMain.handle("pane:get-state", () => paneState());
+// (2026-11-26) "Autofill this page" on a job the app does not know: the page's own words, read
+// once from the page already open (its HTML, visible text and canonical link), so the engine can
+// tell which job it is without fetching it again. A LinkedIn page is never read: only its address.
+const READ_JOB_JS = `(() => {
+  const q = (s) => document.querySelector(s);
+  const canon = (q('link[rel="canonical"]') || {}).href || (q('meta[property="og:url"]') || {}).content || "";
+  return { url: location.href, title: String(document.title || "").slice(0, 300),
+           html: String(document.documentElement ? document.documentElement.outerHTML : "").slice(0, 2000000),
+           text: String((document.body && document.body.innerText) || "").slice(0, 200000),
+           canonical: String(canon || "") };
+})()`;
+ipcMain.handle("pane:read-job", async () => {
+  if (!pane || pane.webContents.isDestroyed()) return null;
+  const wc = pane.webContents;
+  const url = wc.getURL() || "";
+  if (!/^https?:/i.test(url)) return null;
+  try {
+    if (/(^|\.)linkedin\.com$/i.test(new URL(url).hostname)) return { url, linkedin: true };
+  } catch (e) { return null; }
+  try { return await wc.executeJavaScript(READ_JOB_JS, true); } catch (e) { return { url }; }
+});
 
 // Dev only: start the managed-AI broker (avatar + bundled LLM) so the live interview works on
 // launch with no manual setup, and put the dev user on a plan with minutes. In production the

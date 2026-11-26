@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld("tailorShell", {
   appVersion: () => ipcRenderer.invoke("app:version"),
   setBounds: (rect) => ipcRenderer.send("pane:set-bounds", rect),
   getState: () => ipcRenderer.invoke("pane:get-state"),
+  // The page open in the Browser tab, read once ({url, title, html, text, canonical}); a LinkedIn
+  // page answers only {url, linkedin: true} (2026-11-26, Autofill on a job the app does not know).
+  readPage: () => ipcRenderer.invoke("pane:read-job"),
   onState: (cb) => ipcRenderer.on("pane:state", (_e, state) => cb(state)),
   // Stripe checkout finished in the pane and returned to our app; the shell closed the pane and
   // hands us the result ('success'|'cancel') so the main window can confirm cleanly.

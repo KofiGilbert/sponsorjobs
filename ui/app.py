@@ -4491,7 +4491,8 @@ def session_apply():
         _board_forward(rec, "approved")
     item = _aa_row(rec, data, _aa_job_index([rec]))
     return jsonify({"ok": True, "record_id": rid, "pdf": r.get("pdf"), "item": item,
-                    "submitted": stage == "submitted", "autonomous": _autonomous_on()})
+                    "submitted": stage == "submitted", "autonomous": _autonomous_on(),
+                    "cv_path": _resume_upload_path(rec)})
 
 
 def _board_forward(rec: dict, stage: str) -> None:
@@ -15831,6 +15832,155 @@ def start_from_job():
     _attach_session_job(session, job={**job, "source_id": sid})
     _SESSION["s"] = session
     return jsonify(session.start())
+
+
+# ---- Autofill any job opened in the Browser (2026-11-26) -----------------------------------
+# A job link the person got elsewhere and opened in the Browser tab has no application behind it
+# (no record, no resume), so "Autofill this page" had nothing to fill with. Now the click reads the
+# job from the page already open (its own HTML first, then the posting link the compliant way,
+# sourcing/posting_read.read_open_page), puts it on the Tracker (To apply, the same card when the job
+# is already there) and offers one choice: tailor a resume for it, or use the latest resume. Either
+# way the guided Autofill then runs with a real resume and record, so the site's confirmation moves
+# the card to Applied (application:submitted). LinkedIn is never read or filled.
+
+def _record_for_page(keys: set) -> dict | None:
+    """The newest tailored application whose job link is this page, with its resume on disk."""
+    recs = _records()
+    try:
+        for r in recs.list(limit=300):
+            d = _record_data(r)
+            cand = {_url_key((d.get("source_job") or {}).get("url")), _url_key(d.get("apply_url"))} - {""}
+            if cand & keys and (WORKDIR / f"cv-{r['id']}.pdf").exists():
+                return r
+    finally:
+        recs.close()
+    return None
+
+
+def _page_keys(*urls) -> set:
+    from sourcing.posting_read import _FORM_TAIL
+    out = set()
+    for u in urls:
+        k = _url_key(u)
+        if k:
+            out.add(k)
+            out.add(_FORM_TAIL.sub("", k))
+    return out
+
+
+def _browser_job_card(res: dict, keys: set) -> tuple[str, bool]:
+    """(source_id, created) of the Tracker card for a job read from the Browser. The same card
+    when the job is already on the board (by the feed's id, else by its link); else a new To
+    apply card with the posting's title, company, link and description."""
+    from sourcing.board import PASTED_SOURCE, now_iso
+    import hashlib
+    w = _watchlist()
+    try:
+        sid = str(res.get("source_id") or "")
+        if sid and w.stage_of(sid):
+            return sid, False
+        if not sid:
+            for j in w.board_jobs(None):
+                if _page_keys(j.get("url")) & keys:
+                    return j["source_id"], False
+            sid = f"{PASTED_SOURCE}:web-" + hashlib.sha1(sorted(keys)[0].encode()).hexdigest()[:12]
+            if w.stage_of(sid):
+                return sid, False
+        from sourcing.posting_read import as_jd
+        snap = {"source_id": sid, "source": res.get("source") if res.get("source_id") else PASTED_SOURCE,
+                "company": res.get("company") or "", "title": res.get("title") or "",
+                "location": res.get("location") or "", "remote": "", "url": res.get("url") or "",
+                "jd_text": as_jd(res), "posted_at": now_iso()[:10], "salary": ""}
+        w.track_job(sid, "saved", note="Opened in the Browser", job=None if w.get_job(sid) else snap)
+        return sid, True
+    finally:
+        w.close()
+
+
+def _latest_resume() -> dict | None:
+    """The newest tailored resume on disk (not a test or a scratch variant): {record_id, label}."""
+    recs = _records()
+    try:
+        for r in recs.list(limit=200):
+            if (WORKDIR / f"cv-{r['id']}.pdf").exists():
+                role, company = r.get("role") or "", r.get("company") or ""
+                return {"record_id": r["id"], "label": f"{role} at {company}" if role and company else (role or company or "Resume")}
+    finally:
+        recs.close()
+    return None
+
+
+@app.post("/api/browser/job")
+@_guard
+def browser_job():
+    """Body {url, html?, text?, canonical?}: the page open in the Browser tab. Answers
+    {known: true, record_id, cv_path} when an application already belongs to this page; else
+    {ok: true, source_id, created, title, company, line, latest} with the job on the Tracker;
+    else {ok: false, need_text: true, error} (LinkedIn, or a page whose job cannot be read)."""
+    from sourcing import posting_read
+    b = request.json or {}
+    url = posting_read.clean_url(str(b.get("url") or ""))
+    if not url:
+        return jsonify({"ok": False, "error": "Open the job's page first."}), 400
+    site = posting_read.ask_to_paste_site(url)
+    if site:
+        return jsonify({"ok": False, "need_text": True, "url": url, "why": "paste_site", "site": site,
+                        "error": (f"I never automate {site}. Copy the job description from this page "
+                                  f"and paste it, and I will tailor a resume from it.")})
+    keys = _page_keys(url, b.get("canonical"))
+    rec = _record_for_page(keys)
+    if rec is not None:
+        return jsonify({"ok": True, "known": True, "record_id": rec["id"], "cv_path": _resume_upload_path(rec)})
+    res = posting_read.read_open_page(url, html=str(b.get("html") or "")[:2_000_000],
+                                      text=str(b.get("text") or "")[:200_000],
+                                      canonical=str(b.get("canonical") or ""))
+    if not res.get("ok"):
+        return jsonify({"ok": False, "need_text": True, "url": url, "why": res.get("reason") or "",
+                        "error": posting_read.failure_message(res)})
+    keys |= _page_keys(res.get("url"))
+    sid, created = _browser_job_card(res, keys)
+    line = posting_read.confirmation(res) + (" Added to To apply." if created else " It is on your Tracker.")
+    return jsonify({"ok": True, "source_id": sid, "created": created, "title": res.get("title") or "",
+                    "company": res.get("company") or "", "line": line, "latest": _latest_resume()})
+
+
+@app.post("/api/browser/job/latest")
+@_guard
+def browser_job_latest():
+    """Body {source_id}: "Use my latest resume" for a job read from the Browser. A new application
+    record for THIS job, carrying a copy of the latest tailored resume (its page and profile), so
+    the Autofill attaches it and the site's confirmation marks this job applied. {record_id,
+    cv_path}."""
+    sid = str((request.json or {}).get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        job = w.get_job(sid) if sid else None
+    finally:
+        w.close()
+    if not job:
+        return jsonify({"error": "That job is not on your Tracker."}), 404
+    latest = _latest_resume()
+    if not latest:
+        return jsonify({"error": "There is no saved resume yet. Tailor one for this job."}), 404
+    recs = _records()
+    try:
+        old = recs.get(int(latest["record_id"]))
+        od = _record_data(old)
+        data = {k: od.get(k) for k in ("render_profile", "page_profile", "base_profile", "template",
+                                         "sections", "headings") if od.get(k) is not None}
+        data.update({"jd_text": job.get("jd_text") or "", "status": "ready", "reused_from": old["id"],
+                     "source_job": {"url": job.get("url") or "", "source": job.get("source") or "",
+                                    "source_id": sid},
+                     "job_id": sid})
+        rid = recs.add(role=job.get("title") or old.get("role") or "Resume",
+                       company=job.get("company") or "", coverage=0, pdf_path="",
+                       jd_label=job.get("title") or "", data=data)
+        rec = recs.get(rid)
+    finally:
+        recs.close()
+    import shutil
+    shutil.copyfile(WORKDIR / f"cv-{old['id']}.pdf", WORKDIR / f"cv-{rid}.pdf")
+    return jsonify({"ok": True, "record_id": rid, "cv_path": _resume_upload_path(rec)})
 
 
 @app.post("/api/autoapply/plan")
