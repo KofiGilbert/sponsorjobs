@@ -59,6 +59,8 @@ def test_a_walked_page_fills_nothing_in_its_frames_out_of_sight():
     assert 'for (const ctx of liveFrames) await fr.eval(ctx, "window.TailorAutofill.armSubmitGuard()");' in run
     # the person's turn keeps the frames (Enter flow, pointer on Submit), let go on Done
     assert "holdGuideFrames(wc, fr, held, { url, recordId })" in run
+    # a fill that does not walk (the agent's plain retry) keeps the person's frame fields reachable
+    assert "releaseGuideFrames()" not in run
     step = _between(main, 'ipcMain.handle("assist:guide-step"', "\n});")
     assert "c.js(`window.TailorAutofill.needsStep(${d})`" in step
     assert "guided.bringIntoSight(top, c, r.ref)" in step      # Next / Previous scroll the top page too

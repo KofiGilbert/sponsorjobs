@@ -1143,8 +1143,8 @@ async function prepareWalkFrames(fr) {
 // After a walk that went into frames, the frames stay reachable while the person works through
 // what needs them (the Enter flow, Next / Previous, the pointer on Submit): their CDP session is
 // held, and twice a second the pointer moves a frame kept are drawn on the top page and its needs
-// line goes to the bar. Let go on Done, a new fill, the site's confirmation, the pane closing, the
-// frames going away, or after 30 minutes.
+// line goes to the bar. Let go when a new fill walks frames, on the site's confirmation, the pane
+// closing, the frames going away, or after 30 minutes (Done only takes the outlines away).
 let _guideFrames = null;
 const frameSignals = require("./frame_signals");
 function holdGuideFrames(wc, fr, ctxs, info) {
@@ -1266,7 +1266,8 @@ async function runAutoApplyOnPane(recordId, opts) {
   } catch (e) { return { ok: false, reason: "no-page" }; }
 
   let fr = null;
-  releaseGuideFrames();                                    // a new fill: the last walk's frames go
+  // (the last walk's frames are let go only when this fill walks frames again, holdGuideFrames: a
+  // fill that does not walk, the agent's plain retry, must not drop the person's needs-you fields)
   try {
     // never fill a page with no size (a parked pane measured 0 x 0, and sites drew their
     // small-screen forms): size it first; if it still has none, say so instead of filling
