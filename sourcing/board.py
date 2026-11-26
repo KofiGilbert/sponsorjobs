@@ -131,14 +131,17 @@ def migrate_board(c: sqlite3.Connection) -> None:
 def _backfill_close_reasons(c: sqlite3.Connection) -> None:
     """Every Closed card gets its reason, once (only rows that have none yet): a posting found
     closed keeps "Job closed", a rejection reads "Not selected", and a job the person archived
-    reads "Passed". Nothing else on the row changes."""
-    c.execute("UPDATE sourced_job SET close_reason='job_closed' WHERE stage IN ('rejected','archived') "
-              "AND (close_reason IS NULL OR close_reason='') AND stage='archived' "
-              "AND closed_at IS NOT NULL AND closed_at<>''")
-    c.execute("UPDATE sourced_job SET close_reason='not_selected' WHERE stage='rejected' "
-              "AND (close_reason IS NULL OR close_reason='')")
-    c.execute("UPDATE sourced_job SET close_reason='passed' WHERE stage='archived' "
-              "AND (close_reason IS NULL OR close_reason='')")
+    reads "Passed". Nothing else on the row changes. A read first: with nothing to fill (every
+    open after the first) no write is started, so opening the database never takes its write
+    lock (a reader must not wait on this, nor block a writer)."""
+    todo = c.execute("SELECT 1 FROM sourced_job WHERE stage IN ('rejected','archived') "
+                     "AND (close_reason IS NULL OR close_reason='') LIMIT 1").fetchone()
+    if todo is None:
+        return
+    c.execute("UPDATE sourced_job SET close_reason=CASE "
+              "WHEN stage='rejected' THEN 'not_selected' "
+              "WHEN closed_at IS NOT NULL AND closed_at<>'' THEN 'job_closed' ELSE 'passed' END "
+              "WHERE stage IN ('rejected','archived') AND (close_reason IS NULL OR close_reason='')")
 
 
 def _furthest(stages) -> str | None:
