@@ -209,6 +209,27 @@ def test_the_engine_names_each_field_it_fills_beside_the_pointer(tmp_path):
     assert r["off"] == []                                              # only when the shell asks
 
 
+@browser
+def test_the_fast_fill_fills_each_box_as_the_pointer_arrives_within_the_time_cap(tmp_path):
+    import json as _json
+    payload = {"fields": {"email": "apply.person@example.com", "city": "Springfield", "zip": "60601",
+                          "street": "12 Sample Street"}, "screening": {}, "eeo": {}}
+    # empty the site's own values first, then fill with the pointer on
+    js = (f"(async () => {{ for (const i of document.querySelectorAll('input')) i.value = '';"
+          f" const seen = []; const at = window.TailorPointer.at;"
+          f" window.TailorPointer.at = (el, l, o) => {{ seen.push({{ l, empty: !String(el.value || '').trim(), now: !!(o && o.now) }}); return at(el, l, o); }};"
+          f" const t0 = Date.now(); await window.TailorAutofill.fillAsync({_json.dumps(payload)}, {{ pointer: true }});"
+          f" const s = getComputedStyle(document.querySelector('[data-sj-pointer]').shadowRoot.querySelector('.t'));"
+          f" return {{ seen, ms: Date.now() - t0, bg: s.backgroundColor, color: window.TailorPointer.COLOR }}; }})()")
+    r = run(tmp_path, "workday_prefilled.html", [{"do": "inject"}, {"do": "script", "file": POINTER}, {"do": "eval", "as": "r", "js": js}])["r"]
+    paced = [x for x in r["seen"] if x["now"]]
+    assert len(paced) >= 3, r["seen"]
+    assert all(x["empty"] for x in paced), paced              # the pointer arrives, then the box fills
+    assert r["ms"] < 6500, r["ms"]                            # the whole pointer time is capped
+    # ONE colour token: the label's background is it
+    assert r["color"] == "#7C5CFF" and r["bg"] == "rgb(124, 92, 255)", r
+
+
 # ------------------------------------------------------------------ the shell's rules (no Electron)
 def test_autofill_finish_js():
     if not shutil.which("node"):

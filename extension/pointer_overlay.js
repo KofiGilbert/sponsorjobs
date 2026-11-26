@@ -6,10 +6,17 @@
 // itself stays in view. Moves glide (about 0.3 s) unless the person asked for reduced motion,
 // then they jump. Gone with hide(), and by itself after 10 s with nothing new.
 //
-// window.TailorPointer = { at(el, label), point(rect, label), hide(), state() }
+// window.TailorPointer = { at(el, label, opts), point(rect, label, opts), hide(), state(), COLOR }
+//
+// (2026-11-26) One signature colour, ONE token (--sj-pointer): the arrow's fill and the label's
+// background. Violet until the owner picks (candidates: violet #7C5CFF, magenta #E0368C, fuchsia
+// #C026D3). Moves take MOVE_MS; a fill that paces itself to the pointer (the engine's fillAsync
+// with the pointer on) passes { now: true } so each field is filled as the pointer arrives.
 (function () {
   "use strict";
   if (typeof window === "undefined" || window.TailorPointer) return;
+  const COLOR = "#7C5CFF";               // THE pointer token
+  const MOVE_MS = 200;
   const IDLE_MS = 10000;
   const GAP = 10;                      // pointer tip to the field's edge
   const MIN_STEP_MS = 140;             // a burst of fills is shown one by one, this far apart
@@ -23,16 +30,16 @@
     try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (e) { return false; }
   };
   const CSS = `
-    :host { all: initial; }
+    :host { all: initial; --sj-pointer: ${COLOR}; }
     .p { position: fixed; left: 0; top: 0; display: flex; align-items: flex-start; gap: 6px;
          transform: translate(-200px, -200px); opacity: 0; will-change: transform;
-         transition: transform 300ms cubic-bezier(.2,.7,.2,1), opacity 160ms ease; }
+         transition: transform ${MOVE_MS}ms cubic-bezier(.2,.7,.2,1), opacity 160ms ease; }
     .p.on { opacity: 1; }
     .p.still { transition: opacity 120ms ease; }
     svg { width: 18px; height: 22px; flex: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
     .t { margin-top: 12px; max-width: 240px; padding: 3px 9px; border-radius: 999px;
-         background: #16171a; color: #f4f4f5; border: 1px solid rgba(255,255,255,.14);
-         font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--sj-pointer); color: #ffffff; border: 1px solid rgba(255,255,255,.35);
+         font: 600 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
          box-shadow: 0 2px 8px rgba(0,0,0,.25); }
   `;
@@ -49,7 +56,7 @@
     st.textContent = CSS;
     wrap = document.createElement("div");
     wrap.className = "p" + (reduced() ? " still" : "");
-    wrap.innerHTML = '<svg viewBox="0 0 18 22" aria-hidden="true"><path d="M1.5 1.5 L1.5 17.5 L5.6 13.6 L8.6 20.2 L11.4 19 L8.5 12.5 L14.2 12.5 Z" fill="#16171a" stroke="#ffffff" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+    wrap.innerHTML = '<svg viewBox="0 0 18 22" aria-hidden="true"><path d="M1.5 1.5 L1.5 17.5 L5.6 13.6 L8.6 20.2 L11.4 19 L8.5 12.5 L14.2 12.5 Z" fill="var(--sj-pointer)" stroke="#ffffff" stroke-width="1.4" stroke-linejoin="round"/></svg>';
     tag = document.createElement("span");
     tag.className = "t";
     wrap.appendChild(tag);
@@ -87,9 +94,10 @@
     show(m);
     if (queue.length) timer = setTimeout(drain, MIN_STEP_MS);
   }
-  function point(rect, label) {
+  function point(rect, label, opts) {
     if (!visible(rect)) return false;
     const m = Object.assign(spot(rect), { label });
+    if (opts && opts.now) { queue.length = 0; clearTimeout(timer); timer = null; show(m); return true; }
     queue.push(m);
     while (queue.length > MAX_QUEUE) queue.shift();
     if (!timer) {
@@ -98,7 +106,7 @@
     }
     return true;
   }
-  function at(el, label) {
+  function at(el, label, opts) {
     try {
       if (!el || !el.getBoundingClientRect) return false;
       let r = el.getBoundingClientRect();
@@ -111,7 +119,7 @@
         w = f.ownerDocument && f.ownerDocument.defaultView;
       }
       if (dx || dy) r = { left: r.left + dx, right: r.right + dx, top: r.top + dy, bottom: r.bottom + dy, width: r.width, height: r.height };
-      return point(r, label);
+      return point(r, label, opts);
     } catch (e) { return false; }
   }
   function hide() {
@@ -123,5 +131,5 @@
     return true;
   }
   const state = () => (shown ? Object.assign({ queued: queue.length, reduced: reduced() }, shown) : null);
-  window.TailorPointer = { at, point, hide, state };
+  window.TailorPointer = { at, point, hide, state, COLOR, MOVE_MS };
 })();

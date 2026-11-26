@@ -1425,7 +1425,7 @@ function armPageWatch(wc, recordId, page, sig) {
       }
       if (!framed && !s.empty) { st.labels = new Set(s.labels); return; }   // nothing to fill
       const next = st.page + 1;
-      const res = await runAutoApplyOnPane(recordId, { page: next, fromWatch: true });
+      const res = await runAutoApplyOnPane(recordId, { page: next, fromWatch: true, pointer: true });
       const after = await mainSignature(wc);
       if (framed && !(res && res.ok)) return;            // an ad or widget frame reloading
       st.page = next;
