@@ -18,8 +18,8 @@ tailored silently:
                     honest User-Agent: the schema.org JobPosting block the page embeds for search
                     engines, else the page's visible words when they read like a posting.
   * LinkedIn        never fetched (no automation of LinkedIn, CLAUDE.md §7): the person is asked to
-                    paste the description. Indeed and Glassdoor (their terms forbid automated
-                    access) are asked the same way.
+                    paste the description. Every other board whose terms ban automation
+                    (submit.allowlist.PROHIBITED_HOSTS) is asked the same way.
 
 Plain HTTP, no AI, no login, no cookies; a bot wall or a captcha page is a failure, never a retry
 with another identity. ``fetch(url, accept, follow) -> Resp`` is liveness.http_get, swapped for
@@ -43,11 +43,12 @@ MAX_WORDS_AROUND = 300
 # The least a description must hold to be worth tailoring from.
 MIN_DESCRIPTION = 200
 
-# Sites whose own terms forbid automated reading: never fetched, the person pastes the text.
-_ASK_TO_PASTE = {
-    "linkedin.com": "LinkedIn", "lnkd.in": "LinkedIn",
-    "indeed.com": "Indeed", "glassdoor.com": "Glassdoor",
-}
+# Sites whose own terms forbid automation: never fetched, the person pastes the text. The one
+# list is the submission policy's (submit/allowlist.py), plus LinkedIn's short links.
+from submit.allowlist import PROHIBITED_HOSTS  # noqa: E402
+
+_ASK_TO_PASTE = tuple(PROHIBITED_HOSTS) + ("lnkd.in",)
+_SITE_NAMES = {"linkedin": "LinkedIn", "lnkd": "LinkedIn", "ziprecruiter": "ZipRecruiter"}
 # Links that are never a job posting (a request may carry one).
 _NOT_JOB_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "t.me", "telegram.me",
                   "sponsorjobs.ai", "google.com", "docs.google.com", "drive.google.com")
@@ -99,11 +100,13 @@ def _host(p) -> str:
 
 
 def ask_to_paste_site(url: str) -> str:
-    """"LinkedIn" (or Indeed, Glassdoor) when the link is on a site the app never reads."""
+    """"LinkedIn" (or another board whose terms ban automation) when the link is on a site the
+    app never reads, else ""."""
     host = _host(urllib.parse.urlsplit(url))
-    for dom, name in _ASK_TO_PASTE.items():
+    for dom in _ASK_TO_PASTE:
         if host == dom or host.endswith("." + dom):
-            return name
+            label = dom.split(".")[0]
+            return _SITE_NAMES.get(label, label.title())
     return ""
 
 
