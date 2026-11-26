@@ -557,6 +557,12 @@ function armSuccessWatch(wc, startUrl, recordId) {
   disarmSuccessWatch();
   const started = Date.now();
   let done = false;
+  // When the markers say nothing, the model reads the changed page (applied_watch.js).
+  const model = appliedWatch.createModelWatch({
+    startUrl, fillUrl: wc.getURL() || "", recordId: recordId || null,
+    read: () => wc.executeJavaScript(appliedWatch.PAGE_PROBE_JS, true),
+    ask: (body) => postApp("/api/autofill/confirm-check", body),
+  });
   const check = async () => {
     if (done || !pane || pane.webContents !== wc || wc.isDestroyed()) return;
     if (Date.now() - started > 30 * 60 * 1000) { disarmSuccessWatch(); return; }
@@ -567,22 +573,34 @@ function armSuccessWatch(wc, startUrl, recordId) {
       hit = await wc.executeJavaScript("window.TailorAutofill.detectSuccess()", true);
       if (!hit) hit = await frameSuccess(wc);              // iCIMS confirms inside its iframe
     } catch (e) { hit = false; }
-    if (!hit) return;
+    let res = null, how = "marker";
+    if (!hit) {
+      const v = await model.tick();
+      if (done) return;
+      if (v && v.stop) { disarmSuccessWatch(); return; }
+      if (!v || !v.applied) return;
+      res = v.applied;                                     // the engine marked it applied already
+      how = "model";
+    }
     done = true;
     disarmSuccessWatch();
     const pageUrl = wc.getURL() || "";
-    const res = await postApp("/api/autofill/applied",
-                              { url: startUrl, page_url: pageUrl, record_id: recordId || null });
+    if (!res) {
+      res = await postApp("/api/autofill/applied",
+                          { url: startUrl, page_url: pageUrl, record_id: recordId || null });
+    }
     if (win && !win.isDestroyed()) {
       win.webContents.send("assist:applied", Object.assign({ url: startUrl, page_url: pageUrl }, res || { ok: false }));
     }
     // A job the agent left ready or paused on this page: it leaves that state and the bar says
     // Sent (Home Depot, 2026-11-19: the bar kept "Paused, not sent" over Workday's confirmation).
     const rid = (res && res.matched && res.record_id != null) ? res.record_id : recordId;
+    // The one shared "the site took it" event (applied_watch.js onSubmitted).
+    appliedWatch.announceSubmitted({ recordId: rid == null ? null : rid, url: startUrl, pageUrl, how, matched: !!(res && res.matched) });
     if (rid != null) agent.sentSeen(rid, { url: startUrl, pageUrl }).catch(() => {});
   };
   const timer = setInterval(check, 2500);
-  const onNav = () => setTimeout(check, 1500);
+  const onNav = () => { model.navigated(); setTimeout(check, 1500); };
   for (const ev of ["did-navigate", "did-navigate-in-page", "did-finish-load"]) wc.on(ev, onNav);
   _successWatch = { wc, timer, onNav };
 }
@@ -598,6 +616,7 @@ function armSuccessWatch(wc, startUrl, recordId) {
 // debugger is attached, so a quiet run holds it for its whole length (holdQuietDebugger) and it
 // is not detached under it. SJ_AGENT_DEBUG=1 says once what the page reports afterwards.
 const focusEmulation = require("./focus_emulation");
+const appliedWatch = require("./applied_watch");
 const emulationLog = process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null;
 const isQuietPane = (wc) => !!(paneQuiet && pane && pane.webContents === wc);
 let _quietHold = null;                // {wc, release}: the quiet run's own hold on the debugger

@@ -5586,6 +5586,24 @@ body.panel-open .trk-panel { right: calc(var(--panel-w) + 42px); }
   color: var(--trk-loz-warn-ink); background: var(--trk-loz-warn-bg); }
 .trk-ask-q { flex: 1 1 auto; font-weight: 600; }
 .trk-ask .btn { background: var(--surface); color: var(--ink); border-color: transparent; }
+/* the lifecycle questions (2026-11-26): a neutral one (an offer, a closed posting) and a good one */
+.trk-ask-quiet { color: var(--ink-2); background: var(--trk-loz-neutral-bg); }
+.trk-ask-good { color: var(--trk-loz-success-ink); background: var(--trk-loz-success-bg); }
+.trk-ask { flex-wrap: wrap; }
+.trk-ask-q { min-width: 0; }
+.trk-link-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.trk-link-form[hidden] { display: none; }
+.trk-link-form .fld { flex: 1 1 220px; min-width: 0; height: 32px; box-sizing: border-box; font-size: 13px; }
+.trk-link-form .btn { height: 32px; padding: 0 12px; }
+.trk-link-err { flex-basis: 100%; font-size: 12.5px; line-height: 18px; color: var(--trk-warn); }
+.trk-link-err[hidden] { display: none; }
+.trk-p-foot { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border); }
+.trk-p-remove { padding: 0; font-size: 13px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px;
+  text-decoration-color: var(--border-strong); }
+.trk-p-remove:hover { color: var(--ink); }
+.trk-col-more { flex: none; align-self: flex-start; margin: 2px 8px 0; padding: 0; font-size: 12px; line-height: 16px; color: var(--muted);
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+.trk-col-more:hover { color: var(--ink); }
 .trk-p-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .trk-p-acts .btn { height: 32px; padding: 0 12px; font-size: 13px; gap: 6px; }
 .trk-p-acts .trk-p-main { padding: 0 16px; font-weight: 600; }

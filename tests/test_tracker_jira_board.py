@@ -147,7 +147,8 @@ def test_apply_runs_the_applications_autofill_from_the_panel():
     assert "const it = item || aaFind(id);" in _fn("aaSilentApprove")
     panel = _fn("openTrackerPanel")
     assert 'if (act === "apply") trkApply(sid, e.currentTarget);' in panel
-    assert 'else if (act === "continue") trkContinue(sid);' in panel and "else trkTailor(sid);" in panel
+    assert 'else if (act === "continue") trkContinue(sid);' in panel and 'else if (act === "tailor") trkTailor(sid);' in panel
+    assert "else trkTailor(sid);" not in panel        # "Add job link" never starts a new resume
     assert "await tailorJob(sid);" in _fn("trkTailor")          # the Jobs page's own tailoring flow
     assert "openJobWorkspace(sid)" in _fn("trkContinue")        # the job's resume chat
 
@@ -226,7 +227,7 @@ def test_the_new_column_name_is_used_where_the_old_one_was():
 
 def test_every_new_string_has_every_locale():
     keys = ("tracker.searchPh", "tracker.dueChip", "tracker.apply", "tracker.applyTip", "tracker.tailoredOn",
-            "tracker.appliedOnDay", "tracker.followUpOn", "tracker.savedOn", "tracker.sinceOn", "tracker.archivedOn",
+            "tracker.appliedOnDay", "tracker.followUpOn", "tracker.savedOn", "tracker.sinceOn", "tracker.closedOn",
             "tracker.noMatch", "tracker.markedApplied", "tracker.dateCol", "tracker.close",
             "tracker.col.todo", "tracker.hintTodo", "tracker.loz.ready", "tracker.loz.tailoring", "tracker.loz.none",
             "tracker.loz.due", "tracker.loz.ask", "tracker.loz.jobClosed", "tracker.tailorResume",

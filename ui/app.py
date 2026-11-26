@@ -3965,7 +3965,7 @@ def _close_posting_on_board(w, sid: str) -> None:
     from sourcing.board import CLOSED_POSTING
     w.mark_posting_closed(sid, CLOSED_POSTING)
     if w.stage_of(sid) in ("saved", "in_progress", "approved"):
-        w.move_stage(sid, "archived", note="Posting closed")
+        w.move_stage(sid, "archived", note="Posting closed", reason="job_closed")
 
 
 def _session_job_id(s) -> str:
@@ -7038,6 +7038,84 @@ def autofill_applied():
     """The engine detected the application-received page: mark that job applied.
     Body {url, page_url?, record_id?, title?, system?}."""
     return _nostore(jsonify(_mark_applied_from_page(request.json or {})))
+
+
+# ---- did the site take the application? The model reads the page (2026-11-26) ---------------
+# After an Autofill the shell watches the Browser pane (shell-electron/applied_watch.js). When the
+# page changes after a navigation or a form submit and the recipe's own markers say nothing, it
+# sends the page's visible text here once; the model decides from what the page MEANS whether it
+# confirms the application was sent (the owner's rule: the brain decides, not a word list). A yes
+# marks it applied, exactly like a marker hit (_mark_applied_from_page). One short call on the
+# cheaper model, each page answered once (cached by its address and text).
+_CONFIRM_CACHE: dict[str, str] = {}
+_CONFIRM_SYSTEM = (
+    "You read the visible text of ONE web page that a job applicant reached after filling in an "
+    "online job application. Decide whether THIS page confirms that the application was "
+    "submitted: the site says it was sent, received, completed, or thanks the person for "
+    "applying. Answer \"no\" for the application form itself, a review or next step of the form, "
+    "an error or a required field message, a sign-in or account page, or a job listing. Answer "
+    "\"unsure\" when the page does not make it clear. Reply with JSON only: "
+    "{\"submitted\": \"yes\" | \"no\" | \"unsure\"}.")
+
+
+def _confirm_model(system: str, user: str) -> str:
+    """One short classification on the cheaper model when the app runs on the person's own
+    Anthropic key, else the app's model (the same rule as _selfid_model)."""
+    llm = _make_llm()
+    try:
+        from llm.anthropic_client import AnthropicLLM
+        if isinstance(llm, AnthropicLLM):
+            llm = AnthropicLLM(model=os.environ.get("RESUME_AGENT_CONFIRM_MODEL") or "claude-haiku-4-5",
+                               api_key=getattr(llm, "api_key", None) or _cred("ANTHROPIC_API_KEY"))
+    except Exception:                                    # noqa: BLE001 - the app's model then
+        pass
+    return llm._complete(system, user, max_tokens=40, effort="none")
+
+
+def _confirm_verdict(page_url: str, title: str, text: str, fields: int) -> str:
+    """"yes" / "no" / "unsure" for one page, from the model; cached per page. A model that
+    cannot be reached is "unsure" (the one-time "Did you submit?" ask then covers it)."""
+    import hashlib
+    key = hashlib.sha1(f"{_url_key(page_url)}\n{text}".encode("utf-8", "ignore")).hexdigest()
+    if key in _CONFIRM_CACHE:
+        return _CONFIRM_CACHE[key]
+    user = (f"Page address: {_url_key(page_url)}\nPage title: {title}\n"
+            f"Visible form fields on the page: {fields}\n\nVisible text:\n{text}")
+    try:
+        raw = _confirm_model(_CONFIRM_SYSTEM, user) or ""
+    except Exception:          # noqa: BLE001 - no AI right now: unsure, never a guess
+        return "unsure"
+    m = re.search(r'"submitted"\s*:\s*"(yes|no|unsure)"', raw, re.I) or re.search(r"\b(yes|no|unsure)\b", raw, re.I)
+    verdict = m.group(1).lower() if m else "unsure"
+    if len(_CONFIRM_CACHE) > 300:
+        _CONFIRM_CACHE.clear()
+    _CONFIRM_CACHE[key] = verdict
+    return verdict
+
+
+@app.post("/api/autofill/confirm-check")
+@_guard
+@_extension_only
+def autofill_confirm_check():
+    """The Browser pane's page after an Autofill: does it confirm the application was sent?
+    Body {url (the application's start page), page_url, record_id?, title?, text, fields?}.
+    {verdict} and, on "yes", the same reply as /api/autofill/applied (the record is marked
+    applied and its Tracker card moves to Applied with today's date)."""
+    b = request.json or {}
+    text = " ".join(str(b.get("text") or "").split())[:4000]
+    if len(text) < 20:
+        return _nostore(jsonify({"ok": True, "verdict": "unsure"}))
+    try:
+        fields = max(0, min(500, int(b.get("fields") or 0)))
+    except (TypeError, ValueError):
+        fields = 0
+    verdict = _confirm_verdict(str(b.get("page_url") or ""), str(b.get("title") or "")[:200], text, fields)
+    out = {"ok": True, "verdict": verdict}
+    if verdict == "yes":
+        out.update(_mark_applied_from_page({"url": b.get("url"), "page_url": b.get("page_url"),
+                                            "record_id": b.get("record_id")}))
+        out["verdict"] = "yes"
+    return _nostore(jsonify(out))
 
 
 @app.post("/api/autoapply/fill-report")
@@ -18965,7 +19043,152 @@ def _liveness_tick() -> bool:
         rows = recs.list(limit=10000)
     finally:
         recs.close()
-    return _liveness_kick(rows) if rows else False
+    try:
+        # the To apply cards' own check: a thread only when some card is due
+        w = _watchlist()
+        try:
+            jobs = w.board_jobs(None)
+        finally:
+            w.close()
+        todo = _todo_liveness_kick(jobs)
+    except Exception:   # noqa: BLE001 - the records' check still runs
+        todo = False
+    return (_liveness_kick(rows) if rows else False) or todo
+
+
+# The To apply cards' own posting check (2026-11-26): every job waiting to be applied to, tailored
+# or not, is looked at again after LIVENESS_RECHECK_S, so an expired posting moves to Closed with
+# "Job closed" by itself, and "Still interested?" is only asked about a job known to be open.
+_TODO_LIVE_RUN = {"running": False, "checked": 0, "closed": 0, "gen": 0}
+
+
+def _todo_liveness_due(j: dict, now: float) -> bool:
+    from datetime import datetime
+
+    from sourcing.board import TODO_STAGES
+    if j.get("stage") not in TODO_STAGES or j.get("closed_at") or not _usable_link(j.get("url")):
+        return False
+    at = str(j.get("live_at") or "")
+    if not at:
+        return True
+    try:
+        return now - datetime.fromisoformat(at).timestamp() >= LIVENESS_RECHECK_S
+    except ValueError:
+        return True
+
+
+def _todo_liveness_recheck(now: float | None = None) -> dict:
+    """Check the To apply postings that are due; a closed one leaves the Jobs list and its card
+    moves to Closed with "Job closed" (_mark_job_closed). Returns {checked, closed}."""
+    from sourcing import liveness
+    now = time.time() if now is None else now
+    w = _watchlist()
+    try:
+        todo = {j["source_id"]: j for j in w.board_jobs(None) if _todo_liveness_due(j, now)}
+    finally:
+        w.close()
+    if not todo:
+        return {"checked": 0, "closed": 0}
+    res = liveness.check_many([(sid, str(j.get("url")), sid) for sid, j in todo.items()])
+    closed = 0
+    for sid, out in res.items():
+        status = out.get("status") or "unknown"
+        w = _watchlist()
+        try:
+            w.set_live(sid, status)
+        finally:
+            w.close()
+        if status == "closed":
+            _mark_job_closed(sid, str(todo[sid].get("url") or ""), out.get("why") or "")
+            closed += 1
+    return {"checked": len(res), "closed": closed}
+
+
+def _todo_liveness_kick(jobs: list[dict] | None = None) -> bool:
+    """Start the To apply posting check in the background when a card is due; True while it runs."""
+    now = time.time()
+    with _LIVENESS_LOCK:
+        if _TODO_LIVE_RUN["running"]:
+            return True
+        if jobs is not None and not any(_todo_liveness_due(j, now) for j in jobs):
+            return False
+        _TODO_LIVE_RUN.update(running=True, checked=0, closed=0)
+
+    def work():
+        out = {"checked": 0, "closed": 0}
+        try:
+            out = _todo_liveness_recheck()
+        except Exception:   # noqa: BLE001 - a failed sweep changes nothing
+            traceback.print_exc()
+        finally:
+            with _LIVENESS_LOCK:
+                _TODO_LIVE_RUN.update(running=False, **out)
+                if out["closed"]:
+                    _TODO_LIVE_RUN["gen"] = int(_TODO_LIVE_RUN.get("gen") or 0) + 1
+
+    threading.Thread(target=work, name="todo-liveness", daemon=True).start()
+    return True
+
+
+# A board row with no job title (a resume chat started from a pasted link, before its role was
+# known) gets the posting's own title, read once from the posting (sourcing.liveness.posting_title:
+# Lever's or Greenhouse's public JSON, else the page's title). Never the person's own headline.
+_TITLE_TRIED: set = set()
+
+
+def _fill_job_titles(jobs: list[dict]) -> int:
+    from sourcing.liveness import posting_title
+    n = 0
+    for j in jobs:
+        sid, url = j["source_id"], str(j.get("url") or "")
+        if not _usable_link(url):
+            recs = _records()
+            try:
+                for r in recs.list(limit=10000):
+                    if _board_key(r)[0] == sid:
+                        u = ((_record_data(r).get("source_job") or {}).get("url") or "")
+                        if _usable_link(u):
+                            url = u
+                            break
+            finally:
+                recs.close()
+        title = posting_title(url) if _usable_link(url) else ""
+        if not title:
+            continue
+        w = _watchlist()
+        try:
+            w._conn.execute("UPDATE sourced_job SET title=? WHERE source_id=? AND (title IS NULL OR title='')",
+                            (title, sid))
+            w._conn.commit()
+        finally:
+            w.close()
+        n += 1
+    return n
+
+
+def _fill_job_titles_kick(jobs: list[dict]) -> bool:
+    """Start the title fill in the background for board rows that have none; True when started."""
+    todo = [j for j in jobs if not str(j.get("title") or "").strip() and j["source_id"] not in _TITLE_TRIED]
+    if not todo:
+        return False
+    _TITLE_TRIED.update(j["source_id"] for j in todo)
+
+    def work():
+        try:
+            _fill_job_titles(todo)
+        except Exception:   # noqa: BLE001 - the card keeps showing the company
+            traceback.print_exc()
+
+    threading.Thread(target=work, name="job-titles", daemon=True).start()
+    return True
+
+
+@app.get("/api/tracker/liveness")
+@_guard
+def tracker_liveness():
+    """Whether the To apply posting check is still running, and how many it closed."""
+    with _LIVENESS_LOCK:
+        return jsonify({"ok": True, **_TODO_LIVE_RUN})
 
 
 @app.get("/api/autoapply/liveness")
@@ -20702,10 +20925,12 @@ ASK_SUBMITTED_AFTER_S = 30 * 60
 
 def _ask_submitted(data: dict, stage: str, now: float | None = None) -> bool:
     """True when a fill ran for this record more than ASK_SUBMITTED_AFTER_S ago, it is still not
-    sent or skipped, and the person has not answered Not yet for that fill."""
+    sent or skipped, and the page watch could not tell whether it was sent. Asked ONCE per
+    application (2026-11-26): after a No it is not asked again, even after another Autofill (the
+    page watch still marks it applied when the site confirms; the person can drag the card)."""
     from datetime import datetime
     at = str(data.get("filled_at") or "")
-    if not at or stage in ("submitted", "skipped") or data.get("submit_q_hidden") == at:
+    if not at or stage in ("submitted", "skipped") or data.get("submit_q_hidden"):
         return False
     try:
         t = datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
@@ -21384,7 +21609,8 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
         for r in group:
             data = _record_data(r)
             st = _record_board_stage(data)
-            stages.append((st if st in STAGES else "saved", data.get("applied_at") or None, r))
+            # the record's UTC send time on the person's own calendar ("Applied" today, not tomorrow)
+            stages.append((st if st in STAGES else "saved", _local_stamp(data.get("applied_at")) or None, r))
         live = [x for x in stages if x[0] != "archived"]
         if live:
             rstage, applied_at, rr = max(live, key=lambda x: RANK[x[0]])
@@ -21394,9 +21620,10 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
         if rstage == "archived":
             # Every unsent package of this job is closed: Closed with "Job closed", never Rejected.
             if cur is None:
-                w.track_job(sid, "archived", note="Posting closed", job=None if w.get_job(sid) else snap)
+                w.track_job(sid, "archived", note="Posting closed", job=None if w.get_job(sid) else snap,
+                            reason="job_closed", auto=True)
             elif cur in ("saved", "in_progress", "approved"):
-                w.move_stage(sid, "archived", note="Posting closed")
+                w.move_stage(sid, "archived", note="Posting closed", reason="job_closed")
             if w.stage_of(sid) == "archived":
                 w.mark_posting_closed(sid, CLOSED_POSTING)
             continue
@@ -21405,7 +21632,7 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
             existing = w.get_job(sid)
             w.track_job(sid, rstage, note=note,
                         now=(_local_stamp(rr.get("created_at")) or None) if rstage == "saved" else None,
-                        job=None if existing else snap, applied_at=applied_at)
+                        job=None if existing else snap, applied_at=applied_at, auto=True)
         elif cur not in ("rejected", "archived") and RANK[rstage] > RANK[cur]:
             w.move_stage(sid, rstage, note=note, applied_at=applied_at)
     return by_job
@@ -21501,7 +21728,8 @@ def _job_session_view(row: dict | None) -> dict | None:
             "pdf": row.get("pdf")}
 
 
-def _board_card(j: dict, records: list[dict], today, sessions: dict | None = None) -> dict:
+def _board_card(j: dict, records: list[dict], today, sessions: dict | None = None,
+                mail_at: dict | None = None) -> dict:
     """One card: the job, its sponsorship badges, the latest tailored resume, its current resume
     chat (``session``, with ``has_session``), whether its posting closed, and the dates.
     ``sessions`` is {job id: current session row} read once for a whole board."""
@@ -21548,6 +21776,11 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
         r2, c2 = _record_label(latest, _record_data(latest))
         if c2 and title.strip().lower() == c2.lower():
             company, title = c2, r2
+    # The employer as the posting names it: a blank one from the job board's link
+    # (jobs.lever.co/<employer>/...), an all lowercase one ("applied compute") from the link when
+    # it names the same employer properly, else title-cased. The title is always the JOB's (the
+    # row's, filled from the posting by _fill_job_titles), never the person's own headline.
+    company = _display_company(company, _card_link(j, records))
     return {
         "source_id": j["source_id"], "company": company, "title": title,
         "display_name": j.get("display_name") or "",
@@ -21561,6 +21794,7 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
         "record": rec,
         "has_session": sess is not None, "session": sess,
         "closed_at": j.get("closed_at") or None, "closed_reason": j.get("closed_reason") or "",
+        **_card_lifecycle(j, records, sess, today, mail_at),
         # Ready to apply: the record "Apply" fills, when it was tailored, whether it was never
         # opened ("New"), and whether to ask "Did you submit it?" after an Autofill
         "apply_id": ready["id"] if ready else None,
@@ -21568,6 +21802,131 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
         "new": ready_stage == "queued",
         "ask_submitted": _ask_submitted(ready_data, ready_stage) if ready else False,
     }
+
+
+_HTTP_LINK = re.compile(r"^https?://[^\s/]+\.[^\s]+$", re.I)
+
+
+_BOARD_SLUG_HOSTS = ("jobs.lever.co", "boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.ashbyhq.com",
+                     "apply.workable.com")
+
+
+def _display_company(company: str, link: str) -> str:
+    """A company name fit to show: the link's when there is none, the link's properly written
+    name when the stored one is all lowercase and the same words, else title-cased."""
+    company = " ".join(str(company or "").split())
+    named = _company_from_link(link)
+    if not company:
+        return named
+    if company == company.lower() and any(ch.isalpha() for ch in company):
+        if named and named.lower().replace("-", " ") == company.lower():
+            return named
+        return " ".join(w[:1].upper() + w[1:] for w in company.split(" "))
+    return company
+
+
+def _company_from_link(url: str) -> str:
+    """The employer a job board's own link names: jobs.lever.co/acme-consulting/... -> "Acme
+    Consulting". "" for any other link (a company's own site says nothing reliable here)."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(str(url or ""))
+    except ValueError:
+        return ""
+    if (u.hostname or "").lower() not in _BOARD_SLUG_HOSTS:
+        return ""
+    from urllib.parse import unquote
+    slug = unquote(next((p for p in u.path.split("/") if p), "")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 &._-]{1,60}", slug) or slug.lower() in ("embed", "v1", "jobs"):
+        return ""
+    if " " in slug and slug != slug.lower():
+        return slug                                  # Ashby writes the name itself: "Applied Compute"
+    return " ".join(w[:1].upper() + w[1:] for w in re.split(r"[-_ ]+", slug) if w)
+
+
+def _usable_link(url) -> bool:
+    """A link the in-app browser can open for this job: http(s), with a real host."""
+    return bool(_HTTP_LINK.match(str(url or "").strip()))
+
+
+def _card_link(j: dict, records: list[dict]) -> str:
+    """The job's application link: the posting's own, else one a tailored record carries."""
+    if _usable_link(j.get("url")):
+        return str(j["url"]).strip()
+    for r in sorted(records, key=lambda r: -r["id"]):
+        u = ((_record_data(r).get("source_job") or {}).get("url") or "")
+        if _usable_link(u):
+            return str(u).strip()
+    return ""
+
+
+def _day_of(value):
+    """A board date, a record's UTC CURRENT_TIMESTAMP, or a session's epoch -> a local date."""
+    from datetime import date, datetime
+
+    from sourcing.board import date_of
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value)).date()
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, date):
+        return value
+    text = str(value)
+    if " " in text and "T" not in text:          # sqlite CURRENT_TIMESTAMP, stored in UTC
+        return date_of(_local_stamp(text))
+    return date_of(text)
+
+
+def _card_lifecycle(j: dict, records: list[dict], sess: dict | None, today, mail_at: dict | None) -> dict:
+    """The lifecycle facts one card carries (2026-11-26):
+
+    * ``close_reason``: why a Closed card is closed (job_closed / not_selected / no_response /
+      passed); ``closed_on`` the day it entered Closed (the Closed column shows the last 14 days);
+    * ``accepted``: an offer the person accepted (it stays in Offer);
+    * ``has_link``: the job has a usable application link (else the panel offers "Add job link");
+    * ``still_interested``: a To apply card untouched for 30 days whose posting was checked AFTER
+      it went quiet and is not known closed, or that has no link to check (``needs_link``);
+    * ``no_response``: an Applied card with no movement (stage, Keep, mail) for 30 days."""
+    from datetime import timedelta
+
+    from sourcing.board import CLOSED_STAGES, STALE_DAYS, TODO_STAGES, default_close_reason
+    stage = j.get("stage") or ""
+    out = {"close_reason": "", "closed_on": None, "accepted": False, "has_link": False,
+           "still_interested": False, "needs_link": False, "no_response": False,
+           "live_status": j.get("live_status") or ""}
+    link = _card_link(j, records)
+    out["has_link"] = bool(link)
+    if stage in CLOSED_STAGES:
+        out["close_reason"] = j.get("close_reason") or default_close_reason(stage, j.get("closed_at")) or ""
+        out["closed_on"] = (j.get("stage_at") or "")[:10] or None
+        return out
+    if stage == "offer":
+        out["accepted"] = bool(j.get("accepted_at"))
+        return out
+    stale = timedelta(days=STALE_DAYS)
+    if stage in TODO_STAGES:
+        touches = [_day_of(j.get("stage_at")), _day_of(j.get("kept_at")),
+                   _day_of((sess or {}).get("updated_at"))]
+        touches += [_day_of(r.get("created_at")) for r in records]
+        last = max([d for d in touches if d], default=None)
+        if last and today - last >= stale and not j.get("closed_at"):
+            if not link:
+                out["still_interested"] = out["needs_link"] = True
+            else:
+                checked = _day_of(j.get("live_at"))
+                # FIRST the posting is checked; a closed one moves to Closed instead of asking.
+                if checked and checked >= last + stale and (j.get("live_status") or "") != "closed":
+                    out["still_interested"] = True
+        return out
+    if stage == "applied":
+        moves = [_day_of(j.get("stage_at")), _day_of(j.get("applied_at")), _day_of(j.get("kept_at")),
+                 _day_of((mail_at or {}).get(j["source_id"]))]
+        last = max([d for d in moves if d], default=None)
+        out["no_response"] = bool(last and today - last >= stale)
+    return out
 
 
 def _board_goal() -> int:
@@ -21591,6 +21950,7 @@ def tracker_board():
         by_job = _board_reconcile(w)
         jobs = _sponsors().tag_jobs(w.board_jobs(only or None))
         due = len(w.due_followups(today))
+        mail_at = w.last_mail_at()
     finally:
         w.close()
     columns = {s: [] for s in ([only] if only else STAGES)}
@@ -21599,26 +21959,39 @@ def tracker_board():
     except Exception:      # noqa: BLE001
         sessions = {}
     for j in jobs:
-        columns[j["stage"]].append(_board_card(j, by_job.get(j["source_id"], []), today, sessions))
+        columns[j["stage"]].append(_board_card(j, by_job.get(j["source_id"], []), today, sessions, mail_at))
     closed = _closed_notice(_record_data(r) for group in by_job.values() for r in group)
+    # Is each To apply posting still open? A free check in the background (no AI, no login);
+    # a closed one moves to Closed with "Job closed". ``rechecking`` lets the page look again.
+    rechecking = _todo_liveness_kick(jobs)
+    rechecking = _fill_job_titles_kick(jobs) or rechecking
+    with _LIVENESS_LOCK:
+        live_gen = int(_TODO_LIVE_RUN.get("gen") or 0)
     return _nostore(jsonify({"stages": list(STAGES), "columns": columns, "due_count": due,
                              "goal": _board_goal(), "total": len(jobs),
-                             # "N jobs closed before you applied. Removed from your list."
-                             "closed_notice": closed}))
+                             # "N jobs closed before you applied. Moved to Closed."
+                             "closed_notice": closed, "rechecking": rechecking, "live_gen": live_gen}))
 
 
 @app.post("/api/tracker/move")
 @_guard
 def tracker_move():
     """Move one job to a stage (a drag on the board, or the stage picker). Body: {source_id,
-    stage, note?, job?}. ``job`` is a snapshot so a role straight from the feed can be put on
-    the board even before it is in the local DB (same contract as /api/jobs/save)."""
+    stage, note?, job?, reason?}. ``job`` is a snapshot so a role straight from the feed can be
+    put on the board even before it is in the local DB (same contract as /api/jobs/save).
+    ``reason`` (job_closed / not_selected / no_response / passed) closes it with that reason: the
+    stage then follows the reason (Not selected is Rejected, the rest Archived)."""
     from datetime import date
 
-    from sourcing.board import STAGES
+    from sourcing.board import CLOSE_REASONS, REASON_STAGE, STAGES
     body = request.json or {}
     sid = str(body.get("source_id") or "").strip()
     stage = str(body.get("stage") or "").strip()
+    reason = str(body.get("reason") or "").strip() or None
+    if reason is not None:
+        if reason not in CLOSE_REASONS:
+            return jsonify({"error": f"reason must be one of {', '.join(CLOSE_REASONS)}"}), 400
+        stage = REASON_STAGE[reason]
     if not sid:
         return jsonify({"error": "missing source_id"}), 400
     if stage not in STAGES:
@@ -21630,8 +22003,10 @@ def tracker_move():
             snap = body.get("job") if isinstance(body.get("job"), dict) else None
             if not snap or snap.get("source_id") != sid:
                 return jsonify({"error": "That job is not in your local list; send its snapshot."}), 404
-            w.track_job(sid, stage, note=str(body.get("note") or ""), job=snap)
-        row = w.move_stage(sid, stage, note=str(body.get("note") or ""))
+            w.track_job(sid, stage, note=str(body.get("note") or ""), job=snap, reason=reason)
+        elif w.stage_of(sid) is None and w.is_untracked(sid):
+            w.track_job(sid, stage, note=str(body.get("note") or ""), reason=reason)
+        row = w.move_stage(sid, stage, note=str(body.get("note") or ""), reason=reason)
         _board_patch_records(by_job.get(sid, []), stage)
         job = _sponsors().tag_jobs([row])[0]
         due = len(w.due_followups(date.today()))
@@ -21702,6 +22077,7 @@ def tracker_job():
         activity = w.activity(sid)
         history = w.history(sid)
         mail = w.mail_for(sid)
+        mail_at = w.last_mail_at()
     finally:
         w.close()
     recs = []
@@ -21712,7 +22088,7 @@ def tracker_job():
                      "pdf": f"/api/cv.pdf?job={jobname}" if (WORKDIR / f"{jobname}.pdf").exists() else None,
                      "cover_letter": (f"/api/record/{r['id']}/cover_letter.pdf"
                                       if (data.get("cover_letter") or "").strip() else None)})
-    card = _board_card(job, by_job.get(sid, []), date.today())
+    card = _board_card(job, by_job.get(sid, []), date.today(), mail_at=mail_at)
     # Every resume chat for this job, newest first; the newest is the current one.
     live = _SESSION.get("s")
     if live is not None and _session_job_id(live) == sid:
@@ -21724,6 +22100,100 @@ def tracker_job():
                              "activity": activity, "history": history, "mail": mail,
                              "furthest_stage": job.get("furthest_stage") or "",
                              "records": recs, "salary": job.get("salary") or ""}))
+
+
+def _tracker_card_reply(w, sid: str, by_job: dict) -> dict:
+    """{ok, job (the card, or null when it left the board), due_count} after a lifecycle change."""
+    from datetime import date
+    row = w.board_job(sid)
+    card = None
+    if row is not None and row.get("stage"):
+        card = _board_card(_sponsors().tag_jobs([row])[0], by_job.get(sid, []), date.today(),
+                           mail_at=w.last_mail_at())
+    return {"ok": True, "job": card, "due_count": len(w.due_followups(date.today()))}
+
+
+@app.post("/api/tracker/remove")
+@_guard
+def tracker_remove():
+    """"Remove from tracker": the card leaves the board for good and does not come back on its
+    own; its resumes, chats and records are kept. Undo is /api/tracker/undo. Body {source_id}."""
+    sid = str((request.json or {}).get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        if not w.remove_from_tracker(sid):
+            return jsonify({"error": "That job is not on your board."}), 404
+        return jsonify(_tracker_card_reply(w, sid, by_job))
+    finally:
+        w.close()
+
+
+@app.post("/api/tracker/keep")
+@_guard
+def tracker_keep():
+    """"Keep" on "Still interested?" or "No response?": the 30 days start again. Body {source_id}."""
+    sid = str((request.json or {}).get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        if not w.stage_of(sid):
+            return jsonify({"error": "That job is not on your board."}), 404
+        w.keep(sid)
+        return jsonify(_tracker_card_reply(w, sid, by_job))
+    finally:
+        w.close()
+
+
+@app.post("/api/tracker/accept")
+@_guard
+def tracker_accept():
+    """An offer the person accepted (or not after all): it stays in Offer with "Accepted".
+    Body {source_id, accepted}."""
+    b = request.json or {}
+    sid = str(b.get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        try:
+            w.set_accepted(sid, bool(b.get("accepted", True)))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_tracker_card_reply(w, sid, by_job))
+    finally:
+        w.close()
+
+
+@app.post("/api/tracker/link")
+@_guard
+def tracker_link():
+    """"Add job link": the application link for a job that has none (a pasted description).
+    Body {source_id, url}; the url must be http(s). Saved on the job and on its tailored records
+    that have no link, so Apply opens it; the posting check then looks at it."""
+    b = request.json or {}
+    sid = str(b.get("source_id") or "").strip()
+    url = str(b.get("url") or "").strip()
+    if not _usable_link(url):
+        return jsonify({"error": "Paste the job's link, starting with https://"}), 400
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        if not w.stage_of(sid):
+            return jsonify({"error": "That job is not on your board."}), 404
+        w.set_job_url(sid, url)
+        recs = _records()
+        try:
+            for r in by_job.get(sid, []):
+                sj = _record_data(r).get("source_job")
+                sj = sj if isinstance(sj, dict) else {}
+                if not _usable_link(sj.get("url")):
+                    recs.merge_data(r["id"], {"source_job": {**sj, "url": url}})
+        finally:
+            recs.close()
+        by_job = _board_reconcile(w)
+        return jsonify(_tracker_card_reply(w, sid, by_job))
+    finally:
+        w.close()
 
 
 @app.post("/api/tracker/note")

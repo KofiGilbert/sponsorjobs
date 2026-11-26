@@ -781,3 +781,28 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   a red end button that asks first, a thin outline on the speaker (Zoom's green active-speaker
   cue). The intro's button says "Get started", not "Join interview": joining happens on the device
   check, and two "Join interview" buttons in a row would each claim to join.
+- 2026-11-26 (Tracker lifecycle, approved by the owner; extends the 2026-11-25 board): the five
+  columns stay. **To apply** fills itself (saved or tailored). **Applied** fills itself: after an
+  Autofill the Browser pane is watched for ~30 minutes (or until it leaves the site: one page
+  elsewhere is still read, the second ends it), and when the page changes after a navigation or a
+  form submit, the model reads its visible text once (`shell-electron/applied_watch.js`,
+  `/api/autofill/confirm-check`, cached per page, at most 12 reads a fill) and a confirmed page
+  moves the card with today's date. The brain decides from meaning, never a word list. When it
+  cannot tell, the card asks "Did you submit?" Yes / No ONCE per application (No keeps it in To
+  apply). Interviewing and Offer are the person's drags. **Closed always says why**, one neutral
+  lozenge: "Job closed" (the posting expired before an application; automatic, the free posting
+  check runs over every To apply job), "Not selected" (a drag from Applied on, or the inbox),
+  "No response", "Passed" (a drag from To apply, or Close). The panel's Status picker is the four
+  open columns then a "Closed" group of the four reasons. An accepted offer stays in Offer with a
+  green "Accepted" (the finish line); the panel asks "Did you accept it?" / "Mark as accepted".
+  Thirty quiet days ask, as an amber lozenge and a panel question: "Still interested?" (To apply,
+  only once the posting was checked open; Keep / Close, plus "Add job link" when there is no link
+  to check) and "No response?" (Applied; Close as No response / Keep). A closed posting's panel
+  says "This job is no longer open." with Remove, never Apply. Apply shows only with a usable
+  link; otherwise the primary is "Add job link" (an inline https field), never a button that
+  cannot work. Every other panel ends with a quiet "Remove from tracker": no confirm, an Undo
+  toast for 6 seconds, and the card never comes back on its own (the person saving, tailoring or
+  dragging it again does). The Closed column shows the last 14 days, newest first, with a quiet
+  "Show older (N)" link under its cards; the header counts them all; a search and the Table view
+  show everything. Old cards were given reasons once: archived = Passed, a closed posting = Job
+  closed, rejected = Not selected.

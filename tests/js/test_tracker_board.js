@@ -7,7 +7,11 @@
 // * the side panel's primary action is named for the state (Apply / Continue tailoring / Tailor
 //   resume) and it, not the card, asks "Did you submit it?";
 // * a drop on a column maps to the right underlying stage;
-// * the search box and the two quick filters; the inbox strip is hidden when it has nothing.
+// * the search box and the two quick filters; the inbox strip is hidden when it has nothing;
+// * the lifecycle (2026-11-26): every Closed card says why (Job closed, Not selected, No response,
+//   Passed), the Closed column shows the last 14 days with "Show older (N)", "Still interested?",
+//   "No response?" and "Accepted" lozenges and their panel questions, Apply only with a link
+//   (else "Add job link"), and a closed posting's panel offers Remove, never Apply.
 // tests/test_tracker_jira_board.py runs it. Made-up companies only.
 "use strict";
 const path = require("path");
@@ -41,6 +45,9 @@ const prelude = `
   const visaBadges = (j) => (j.visa || []).map((v) => '<span class="vbadge">' + v.code + '</span>').join("");
   const safeHref = (u) => u;
   const trkApplyTip = () => "Opens the application and fills it from your profile. You check it and submit.";
+  const TRK_REASONS = ["job_closed", "not_selected", "no_response", "passed"];
+  const TRK_CLOSED_RECENT_DAYS = 14;
+  let TRK_SHOW_OLDER = false;
   let TRK_CARDS = [];
   const TRK_FILTER = { q: "", due: false, ready: false };
   let INBOX_SUGG = [], INBOX_CONNECTED = false, INBOX_OPEN = false;
@@ -49,17 +56,21 @@ const prelude = `
   const $ = (sel) => HOSTS[sel] || null;
   const HOSTS = {};
 `;
-const body = [konst("TRK_IC", "}"), konst("TRK_COLS", "]")].concat(["trkIcon", "trkColOf", "trkColName", "trkDropStage", "trkDropOn", "trkState",
-  "trkLozHtml", "trkAction", "trkDay", "trkVisible", "trkChip", "trkCardDate", "trkDateHtml", "trkCardHtml", "trkAvatar", "trkPanelActions",
-  "trkPanelAsk", "trkStatusSelect", "renderTrackerBoard", "renderTrackerTable"].map(fn)).join("\n");
+const body = [konst("TRK_IC", "}"), konst("TRK_COLS", "]"), konst("TRK_REASON", "}")].concat(["trkIcon", "trkColOf", "trkColName", "trkDropStage", "trkDropOn", "trkState",
+  "trkCloseReason", "trkLozHtml", "trkAction", "trkDay", "trkVisible", "trkChip", "trkCardDate", "trkDateHtml", "trkCardHtml", "trkAvatar", "trkPanelActions",
+  "trkLinkForm", "trkIsExpired", "trkPanelAsk", "trkStatusSelect", "trkClosedRecently", "renderTrackerBoard", "renderTrackerTable"].map(fn)).join("\n");
 const api = new Function(`${prelude}\n${body}\n
   return { TRK_COLS, trkColOf, trkDropStage, trkDropOn, trkState, trkAction, trkVisible, trkCardDate, trkCardHtml, trkPanelActions, trkPanelAsk,
-    trkStatusSelect, renderTrackerBoard, renderTrackerTable, MOVES, HOSTS, setCards: (c) => { TRK_CARDS = c; }, TRK_FILTER };`)();
+    trkStatusSelect, renderTrackerBoard, renderTrackerTable, MOVES, HOSTS, setCards: (c) => { TRK_CARDS = c; }, TRK_FILTER,
+    showOlder: (v) => { TRK_SHOW_OLDER = v; } };`)();
+// A day this many days back, as the engine sends it (local calendar).
+const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 const saved = { source_id: "gh:0", company: "Fennel Robotics", title: "Process Engineer", stage: "saved", stage_at: "2026-11-18" };
 const tailoring = { source_id: "gh:9", company: "Harlow Press", title: "Data Analyst, Subscriptions", stage: "in_progress", stage_at: "2026-11-19",
   has_session: true, session: { updated_at: 1 } };
-const ready = { source_id: "gh:1", company: "Brightwater Freight", title: "Data Analyst", stage: "approved", apply_id: 7,
+const ready = { source_id: "gh:1", company: "Brightwater Freight", title: "Data Analyst", stage: "approved", apply_id: 7, has_link: true,
   tailored_at: "2026-11-20", new: true, ask_submitted: false, record: { id: 7 }, visa: [{ code: "H1B" }, { code: "E3" }] };
 const asked = { ...ready, source_id: "gh:8", new: false, ask_submitted: true };
 const applied = { source_id: "gh:2", company: "Larkspur Labs", title: "Platform Engineer", stage: "applied",
@@ -68,9 +79,10 @@ const applied = { source_id: "gh:2", company: "Larkspur Labs", title: "Platform 
 const dueCard = { ...applied, source_id: "gh:3", company: "Harlow Press", title: "Editor", follow_up_due: true };
 const interviewing = { source_id: "gh:6", company: "Meridian Works", title: "Data Scientist", stage: "interviewing", stage_at: "2026-11-10" };
 const offer = { source_id: "gh:7", company: "Vantor Group", title: "Analyst", stage: "offer", stage_at: "2026-11-12" };
-const closed = { source_id: "gh:4", company: "Pinecrest Studio", title: "Designer", stage: "archived", closed_at: "2026-11-24" };
-const passed = { source_id: "gh:10", company: "Sable Systems", title: "QA Engineer", stage: "archived", stage_at: "2026-11-21" };
-const rejected = { source_id: "gh:5", company: "Quillon Ltd", title: "Writer", stage: "rejected", stage_at: "2026-11-22" };
+const closed = { source_id: "gh:4", company: "Pinecrest Studio", title: "Designer", stage: "archived", closed_at: daysAgo(2), stage_at: daysAgo(2),
+  close_reason: "job_closed", closed_on: daysAgo(2) };
+const passed = { source_id: "gh:10", company: "Sable Systems", title: "QA Engineer", stage: "archived", stage_at: daysAgo(5) };
+const rejected = { source_id: "gh:5", company: "Quillon Ltd", title: "Writer", stage: "rejected", stage_at: daysAgo(4) };
 const ALL = [saved, tailoring, ready, asked, applied, dueCard, interviewing, offer, closed, passed, rejected];
 
 // ---- five columns, and which stages each one groups
@@ -94,7 +106,12 @@ eq(loz(interviewing), null, "interviewing: no lozenge");
 eq(loz(offer), null, "offer: no lozenge");
 eq(loz(rejected), ["Not selected", "neutral"], "rejected: Not selected");
 eq(loz(closed), ["Job closed", "neutral"], "a closed posting: Job closed");
-eq(loz(passed), ["Archived", "neutral"], "archived by hand");
+eq(loz(passed), ["Passed", "neutral"], "archived by hand, with no reason stored yet: Passed");
+eq(loz({ ...rejected, close_reason: "no_response" }), ["No response", "neutral"], "closed as No response");
+eq(loz({ ...passed, close_reason: "passed" }), ["Passed", "neutral"], "closed as Passed");
+eq(loz({ ...saved, still_interested: true }), ["Still interested?", "warn"], "a quiet To apply card asks Still interested?");
+eq(loz({ ...applied, no_response: true }), ["No response?", "warn"], "a quiet Applied card asks No response?");
+eq(loz({ ...offer, accepted: true }), ["Accepted", "success"], "an accepted offer stays in Offer, Accepted");
 eq(loz({ ...saved, stage: "approved" }), ["No resume yet", "neutral"], "moved by hand with no resume: still No resume yet");
 
 // ---- the card face: information only
@@ -130,13 +147,29 @@ const main = (c) => (api.trkPanelActions(c).match(/trk-p-main" type="button" dat
 eq(main(saved), ["tailor", "Tailor resume"], "saved: Tailor resume");
 eq(main(tailoring), ["continue", "Continue tailoring"], "in progress: Continue tailoring");
 eq(main(ready), ["apply", "Apply"], "resume ready: Apply");
+eq(main({ ...ready, has_link: false }), ["link", "Add job link"], "no link: Add job link, never an Apply that cannot work");
+assert(/id="trkLinkForm" hidden/.test(api.trkPanelActions({ ...ready, has_link: false })) && !/trkLinkForm/.test(api.trkPanelActions(ready)),
+  "the link field waits under the button, only when there is no link");
+eq(main(closed), [], "a closed posting offers no Apply or Tailor");
+const exp = api.trkPanelAsk(closed);
+assert(/This job is no longer open\./.test(exp) && /data-trk-remove/.test(exp) && !/Apply/.test(exp), "a closed posting: no longer open, Remove");
+eq(api.trkPanelAsk(passed), "", "a job the person passed on asks nothing");
+const still = api.trkPanelAsk({ ...saved, still_interested: true });
+assert(/Still interested\?/.test(still) && /data-trk-keep/.test(still) && /data-trk-pass/.test(still) && !/data-trk-addlink/.test(still), "Still interested? Keep / Close");
+const stillNoLink = api.trkPanelAsk({ ...saved, still_interested: true, needs_link: true });
+assert(/data-trk-addlink/.test(stillNoLink) && /id="trkLinkForm"/.test(stillNoLink), "no link to check: Add job link next to it");
+const stillReady = { ...ready, still_interested: true, needs_link: true, has_link: false };
+assert(!/data-trk-addlink/.test(api.trkPanelAsk(stillReady)) && /data-trk-act="link"/.test(api.trkPanelActions(stillReady)), "one Add job link, never two");
+const nr = api.trkPanelAsk({ ...applied, no_response: true });
+assert(/No response\?/.test(nr) && /data-trk-noresp/.test(nr) && /data-trk-keep/.test(nr), "No response? Close as No response / Keep");
+assert(/data-trk-accept="1"/.test(api.trkPanelAsk(offer)) && /data-trk-accept="0"/.test(api.trkPanelAsk({ ...offer, accepted: true })), "an offer: Mark as accepted, and Undo");
 eq(main(applied), [], "no primary action once applied");
 for (const c of [saved, tailoring, ready, applied]) eq((api.trkPanelActions(c).match(/btn-primary/g) || []).length <= 1, true, "one primary at most");
 const acts = api.trkPanelActions(applied);
 assert(/Resume/.test(acts) && /Cover letter/.test(acts) && /Chat/.test(acts) && /Job posting/.test(acts), "the quiet links live in the panel");
 assert(/You check it and submit\./.test(api.trkPanelActions(ready)), "Apply says what it does");
-assert(/Did you submit it\?/.test(api.trkPanelAsk(asked)) && /data-trk-yes/.test(api.trkPanelAsk(asked)) && /data-trk-notyet/.test(api.trkPanelAsk(asked)),
-  "the panel asks Did you submit it? Yes / Not yet");
+assert(/Did you submit\?/.test(api.trkPanelAsk(asked)) && /data-trk-yes/.test(api.trkPanelAsk(asked)) && /data-trk-notyet[^>]*>No</.test(api.trkPanelAsk(asked)),
+  "the panel asks Did you submit? Yes / No, in the card's own words");
 eq(api.trkPanelAsk(ready), "", "no question before an Autofill");
 
 // ---- drop mapping
@@ -155,12 +188,30 @@ api.trkDropOn("gh:1", "applied"); api.trkDropOn("gh:0", "todo"); api.trkDropOn("
 eq(api.MOVES, [["gh:1", "applied"]], "only a real move reaches the engine");
 
 // ---- the board: five columns always, counts, To apply ordered by what can be done next
-const host = { innerHTML: "", querySelectorAll: () => [] };
+const host = { innerHTML: "", querySelectorAll: () => [], querySelector: () => null };
 api.HOSTS["#trkBoard"] = host;
 api.renderTrackerBoard();
 eq((host.innerHTML.match(/<section class="trk-col/g) || []).length, 5, "five columns");
 eq((host.innerHTML.match(/data-col="(\w+)"/g) || []), ['data-col="todo"', 'data-col="applied"', 'data-col="interviewing"', 'data-col="offer"', 'data-col="closed"'], "in order");
 eq((host.innerHTML.match(/class="trk-col-n">(\d+)</g) || []).map((x) => Number(x.match(/\d+/)[0])), [4, 2, 1, 1, 3], "each header counts its cards");
+assert(!/data-trk-older/.test(host.innerHTML), "every closed card is recent: no Show older");
+const closedCol = (h) => h.split('data-col="closed"')[1];
+assert(closedCol(host.innerHTML).indexOf("Pinecrest") < closedCol(host.innerHTML).indexOf("Quillon"), "Closed: newest closing first");
+const old1 = { ...passed, source_id: "gh:11", title: "Old One", stage_at: daysAgo(20) }, old2 = { ...rejected, source_id: "gh:12", title: "Old Two", stage_at: daysAgo(40) };
+api.setCards(ALL.concat([old1, old2]));
+api.renderTrackerBoard();
+assert(/data-trk-older>Show older \(2\)</.test(closedCol(host.innerHTML)) && !/Old One|Old Two/.test(host.innerHTML), "older than 14 days: behind Show older (2)");
+assert(/class="trk-col-n">5</.test(closedCol(host.innerHTML)), "the header still counts them all");
+api.TRK_FILTER.q = "old";
+api.renderTrackerBoard();
+assert(/Old One/.test(host.innerHTML) && /Old Two/.test(host.innerHTML) && !/data-trk-older/.test(host.innerHTML), "a search shows them all");
+api.TRK_FILTER.q = "";
+api.showOlder(true);
+api.renderTrackerBoard();
+assert(/Old Two/.test(host.innerHTML) && !/data-trk-older/.test(host.innerHTML), "Show older reveals them");
+api.showOlder(false);
+api.setCards(ALL);
+api.renderTrackerBoard();
 const todo = host.innerHTML.split('data-col="applied"')[0];
 assert(todo.indexOf("Resume ready") < todo.indexOf("Tailoring") && todo.indexOf("Tailoring") < todo.indexOf("No resume yet"), "ready first, then tailoring, then saved");
 assert(/trk-col-ok/.test(host.innerHTML.split('data-col="offer"')[1].split("</h2>")[0]), "Offer carries a quiet check");
@@ -178,8 +229,10 @@ const tbody = thost.innerHTML.split("<tbody>")[1];
 assert(!/<button|<select|<a\b|<input/.test(tbody), "no buttons or pickers in table rows");
 assert(/data-loz="ready"/.test(tbody) && /data-loz="due"/.test(tbody) && /trk-td-go/.test(tbody), "the same lozenges and a quiet chevron");
 const sel = api.trkStatusSelect(rejected);
-eq((sel.match(/<option/g) || []).length, 6, "the panel's status picker: five columns, Closed as its two outcomes");
-assert(/value="rejected" selected/.test(sel) && /value="todo" selected/.test(api.trkStatusSelect(saved)), "it shows where the job is");
+eq((sel.match(/<option/g) || []).length, 8, "the panel's status picker: four open columns, then Closed with its four reasons");
+assert(/<optgroup label="Closed">/.test(sel), "the reasons sit under Closed");
+assert(/value="closed:not_selected" selected/.test(sel) && /value="todo" selected/.test(api.trkStatusSelect(saved)), "it shows where the job is");
+assert(/value="closed:job_closed" selected/.test(api.trkStatusSelect(closed)), "and why it is closed");
 
 // ---- the search box and the quick filters
 eq(api.trkVisible().length, ALL.length, "no filter: every card");
