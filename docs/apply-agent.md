@@ -2152,7 +2152,10 @@ and a redesign:
   close, and walks again from where it stopped (the boxes done on each page are kept, never filled
   twice). A field under a window is never labelled (`coverOf`: the pointer goes to the window).
 - **Every box the same way** (the owner): "Filling: <field>", the box glowing while it is filled,
-  whether or not the site put something in it; a box holding words is cleared in sight first. The
+  whether or not the site put something in it; what the site put in the boxes the walk will fill
+  is emptied in one quick reset before the first field (`resetBoxes`: text boxes, text areas, plain
+  lists; never a file, a tick box or a custom list), so each box is filled once, with no visible
+  delete then type. The
   resume goes into the form's plain Resume / CV field at its own place, never into a site
   "Autofill from resume" box (`siteParseBox`, Ashby's), so the site never fills the form from its
   parse; Workday takes "Apply Manually".

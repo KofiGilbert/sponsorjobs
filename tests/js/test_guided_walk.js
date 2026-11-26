@@ -184,7 +184,7 @@ async function run(o) {
   }
 
   // ---- (2026-11-26, the owner) a box the site already filled is filled the same way: the pointer
-  // goes there, it is cleared in sight and our value typed; the site's "Autofill from resume" box
+  // goes there and our value is typed, after one quick reset of what the site put in; the site's "Autofill from resume" box
   // is never offered for the resume
   {
     const b = await chromium.launch();
@@ -212,7 +212,8 @@ async function run(o) {
       listed: window.TailorAutofill.extractForm({}).filter((f) => f.type === "file").map((f) => f.label) }));
     await b.close();
     assert(v.first === "Avery", "our value in the end " + JSON.stringify(v));
-    assert(seen.some((x) => x && "Wrongname".startsWith(x) && x.length < 9) && seen.includes(""), "cleared in sight first " + JSON.stringify(seen.slice(0, 12)));
+    // one quick reset before the walk, then typed once: never a visible delete, letter by letter
+    assert(seen[0] === "" && !seen.some((x) => x && "Wrongname".startsWith(x)) && seen.slice(1).every((x) => "Avery".startsWith(x)), "reset once, then typed " + JSON.stringify(seen.slice(0, 12)));
     assert(boxes.parse === true && boxes.plain === false && boxes.listed.length === 1 && /Resume/.test(boxes.listed[0]), "the parse box is never used " + JSON.stringify(boxes));
   }
 

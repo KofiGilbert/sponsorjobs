@@ -33,8 +33,9 @@ const q = (v) => JSON.stringify(v);
 //     touched (out.modal = its title); the caller reads it and acknowledges it visibly, then walks
 //     again, carrying on where it stopped (``done``);
 //   * every box is filled the same way, top to bottom, whether or not the site already put
-//     something in it (its parse, a saved draft): the pointer goes there, the box glows, it is
-//     cleared where the person can see it and our value typed or picked ("Filling: <field>");
+//     something in it (its parse, a saved draft): those boxes are emptied first in one quick
+//     reset, then the pointer goes to each, the box glows, our value is typed or picked
+//     ("Filling: <field>"), once;
 //   * a window that opens while walking (Lam's notice comes up when the resume goes in) stops the
 //     walk at once, the same way.
 async function walk(deps) {
@@ -73,6 +74,9 @@ async function walk(deps) {
     const order = await js(`window.TailorAutofill.orderRefs(${q([...byRef.keys(), ...left.filter((r) => !byRef.has(r) && !done.has(r))])})`);
     const refs = Array.isArray(order) ? order : [];
     if (!refs.length) break;
+    // what the site already put in the boxes we fill goes in one quick reset: the form looks empty,
+    // then each box is filled once, in order (never a visible delete then type)
+    if (round === 0) await js(`window.TailorAutofill.resetBoxes(${q([...byRef.keys()].filter((r) => byRef.get(r).op !== "upload"))})`, 4000);
     for (const ref of refs) {
       if (deps.alive && !deps.alive()) break;
       { const m = await modalNow(); if (m) return stopFor(m); }

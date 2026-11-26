@@ -4642,13 +4642,7 @@ function qsaSafe(sel, root) {
     const per = Math.max(10, Math.min(120, Number(o && o.perChar) || 45));
     const burst = Math.max(0, Math.min(t.length, Number(o && o.burst) || 14));
     try { if (el.focus) el.focus(); } catch (e) { /* fine */ }
-    // (2026-11-26, the owner) a box that already holds words (the site's parse, a saved draft) is
-    // cleared where the person can see it, then typed like an empty one
-    const had = String(el.value || "");
-    if (had) {
-      const steps = Math.min(8, had.length);
-      for (let i = steps - 1; i >= 0; i--) { setNativeValue(el, had.slice(0, Math.floor(had.length * i / steps))); await plainSleep(per); }
-    }
+
     for (let i = 1; i <= burst; i++) { setNativeValue(el, t.slice(0, i)); await plainSleep(per); }
     setNativeValue(el, t);
     return String(el.value || "") === t;
@@ -4811,6 +4805,31 @@ function qsaSafe(sel, root) {
     } else await plainSleep(total);
     return { title };
   }
+  /** (2026-11-26, the owner) Before the walk: the boxes it will fill that the site already filled
+   * (its resume parse, a saved draft) are emptied in one quick reset, so the form looks empty and
+   * the walk fills each box once, top to bottom. Text boxes, text areas and plain lists with an
+   * empty first choice only; a file, a tick box, a radio or a custom list is left as it is (the
+   * walk picks our choice in it). Returns how many were emptied. */
+  function resetBoxes(refs) {
+    let n = 0;
+    for (const ref of refs || []) {
+      const el = elByRef(ref);
+      if (!el || el.disabled || el.readOnly) continue;
+      try {
+        if (tagOf(el) === "SELECT") {
+          const first = el.options[0];
+          if (el.selectedIndex > 0 && first && (!first.value || /^(select|choose|--|please)/i.test(first.text || ""))) {
+            el.selectedIndex = 0; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); n++;
+          }
+          continue;
+        }
+        if (isWidgetInput(el) || el.getAttribute("role") === "combobox") continue;
+        if (tagOf(el) === "INPUT" && /^(file|checkbox|radio|hidden|submit|button)$/i.test(el.type || "")) continue;
+        if ("value" in el && String(el.value || "")) { setNativeValue(el, ""); n++; }
+      } catch (e) { /* left as it is */ }
+    }
+    return n;
+  }
   // The field being filled glows for the moment it is filled (the needs-you ring's look, brighter).
   function flash(ref, on) {
     const el = elByRef(ref);
@@ -4939,6 +4958,6 @@ function qsaSafe(sel, root) {
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
     orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
-    siteModal, readModal, flash, siteParseBox,
+    siteModal, readModal, flash, siteParseBox, resetBoxes,
   };
 })();
