@@ -357,21 +357,73 @@ def page(p, fetch):
         return gone
     if r.status != 200:
         return _no_answer(r, "the page")
-    body = r.body or ""
+    return from_html(r.url or url, r.body or "") or _fail(
+        "no_text", "the page does not show the job's description to apps "
+                   "(it may load it only in a browser)")
+
+
+def from_html(url: str, body: str, text: str = "") -> dict | None:
+    """The posting a page's own HTML carries, read with no request: its schema.org JobPosting
+    block, else its visible words when they read like a posting (``text``: the words a browser
+    shows, when the caller has them). A closed page answers closed; anything else None."""
+    body = body or ""
     posting = extract_jobposting(body)
     if posting and posting.get("title"):
-        company, where, text = _posting_text(posting)
-        return _ok("page", "", "", r.url or url, posting.get("title"), company, where, text)
-    words = page_text(body)
+        company, where, desc = _posting_text(posting)
+        return _ok("page", "", "", url, posting.get("title"), company, where, desc)
+    words = (text or "").strip() or page_text(body)
     if closed_phrase(words):
         return _fail("closed", "the page says this posting is closed")
     m = _OG_TITLE.search(body) or _TITLE_TAG.search(body)
     head = " ".join(_html.unescape(m.group(1)).split()) if m else ""
     if len(words) >= MIN_DESCRIPTION * 3 and len(_JD_WORDS.findall(words)) >= 2 and head:
         title, company = _split_title(head)
-        return _ok("page", "", "", r.url or url, title, company, "", words)
-    return _fail("no_text", "the page does not show the job's description to apps "
-                            "(it may load it only in a browser)")
+        return _ok("page", "", "", url, title, company, "", words)
+    return None
+
+
+_ATS_HOST = re.compile(r"(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|recruitee\.com|"
+                       r"myworkdayjobs\.com)$", re.I)
+_FORM_TAIL = re.compile(r"/(apply|application|applications|apply-now|applynow)/?$", re.I)
+
+
+def read_open_page(url: str, html: str = "", text: str = "", canonical: str = "", *, fetch=None) -> dict:
+    """The job behind a page the person has open in the app's Browser (2026-11-26): the page's
+    own HTML first (no request), then the posting its link names, read the compliant way
+    (read_posting), then the posting page an application form sits under (".../apply") or the
+    page's canonical link. LinkedIn and the other paste-only sites are never read."""
+    url = clean_url(url)
+    if not url:
+        return _fail("unknown_link", "no page is open")
+    site = ask_to_paste_site(url)
+    if site:
+        out = _fail("paste_site", f"the app does not read {site} pages", url)
+        out["site"] = site
+        return out
+    p = urllib.parse.urlsplit(url)
+    tried, first = set(), None
+    if _ATS_HOST.search(_host(p)):
+        # an ATS's public JSON first: the feed's own id comes with it (a job on the board is that job)
+        first = read_posting(url, fetch=fetch)
+        if first.get("ok"):
+            return first
+        tried.add(url)
+    own = from_html(url, html, text) if (html or text) else None
+    if own and own.get("ok") and len(own.get("description") or "") >= MIN_DESCRIPTION:
+        return own
+    posting_page = urllib.parse.urlunsplit(p._replace(path=_FORM_TAIL.sub("", p.path) or "/", query="")) \
+        if _FORM_TAIL.search(p.path or "") else ""
+    last = own if own and not own.get("ok") else first
+    for cand in (url, posting_page, clean_url(canonical)):
+        if not cand or cand in tried:
+            continue
+        tried.add(cand)
+        res = read_posting(cand, fetch=fetch)
+        if res.get("ok"):
+            return res
+        if not (last and last.get("reason") == "closed"):
+            last = res
+    return last or _fail("no_text", "the page does not show the job's description")
 
 
 # --------------------------------------------------------------------------- the read

@@ -1410,9 +1410,13 @@
     const b = $("#bbFillHere");
     if (b && !APPLY_AGENT && window.tailorShell && window.tailorShell.assistApply) b.hidden = false;
   }
-  async function bbFillHere() {
+  async function bbFillHere(o) {
     const b = $("#bbFillHere");
     if (!b || b.disabled) return;
+    // (2026-11-26) No application behind this page (a job opened from the address bar or a link):
+    // read the job from the page first and offer a resume for it. ``profileOnly``: the person
+    // chose to fill it from the saved profile without a resume.
+    if (FILL_CTX.id == null && !(o && o.profileOnly) && window.tailorShell.readPage) { await bbFillUnknown(b); return; }
     const label = b.textContent;
     b.disabled = true; b.textContent = T("aa.filling", "Filling\u2026");
     const r = await applyInPane({ url: "", recordId: FILL_CTX.id, resumePath: FILL_CTX.cv, submit: false, here: true, finish: true });
@@ -1423,6 +1427,90 @@
     if (note && PKG_ID && String(FILL_CTX.id) === String(PKG_ID)) note.textContent = r && r.ok !== false ? guideLine(r) : applyMessage(r);
   }
   $("#bbFillHere")?.addEventListener("click", () => bbFillHere());
+
+  /* ---- Autofill any job opened in the Browser (2026-11-26) -----------------------------------
+     A job the app does not know (opened from the address bar, or a link from elsewhere): the click
+     reads the job from the page already open (/api/browser/job), puts it on the Tracker (To apply,
+     the same card when it is there already), and offers ONE choice on the bar: tailor a resume for
+     it (the default; the normal resume chat with the real description, built from the saved
+     profile, then the guided Autofill on this page with that resume) or use the latest resume.
+     Either way the fill runs with a real record, so the site's confirmation marks the card Applied.
+     The choice is also published as data (window.__sjBrowserChoice and the "sj:browser-choice"
+     event) so the Orb can speak it in its own bubble. LinkedIn is never read or filled. */
+  let BROWSER_JOB = null;          // {source_id, built} while the resume for a Browser job is built
+  function sayChoice(c) {
+    const choice = { line: c.line, tone: c.tone || "",
+                     options: (c.options || []).map(o => ({ id: o.id, label: o.label, primary: !!o.primary })),
+                     choose: (id) => { const o = (c.options || []).find(x => x.id === id); if (o) o.fn(); } };
+    window.__sjBrowserChoice = choice;
+    try { document.dispatchEvent(new CustomEvent("sj:browser-choice", { detail: choice })); } catch { /* old engines */ }
+    say({ line: c.line, tone: c.tone, actions: (c.options || []).map(o => ({ label: o.label, primary: !!o.primary, fn: () => { window.__sjBrowserChoice = null; o.fn(); } })) });
+  }
+  async function bbFillUnknown(b) {
+    const label = b.textContent;
+    b.disabled = true; b.textContent = T("bb.reading", "Reading the job\u2026");
+    let page = null, r = null;
+    try { page = await window.tailorShell.readPage(); } catch { page = null; }
+    if (page && page.url) {
+      try { r = await api("/api/browser/job", page.linkedin ? { url: page.url } : page); }
+      catch (e) { r = (e && e.data) || { ok: false, error: e && e.message }; }
+    }
+    b.disabled = false; b.textContent = label;
+    if (!page || !page.url) { say({ line: T("fill.noPage", "Nothing is open in the Browser tab yet."), tone: "wall" }); return; }
+    if (r && r.known) { fillCtx(r.record_id, r.cv_path || ""); await bbFillHere(); return; }
+    if (!r || r.ok === false) {
+      const why = (r && r.error) || T("bb.cantRead", "I could not read this job. Paste its description and I will tailor a resume from it.");
+      const opts = [{ id: "paste", label: T("bb.pasteJd", "Paste the description"), primary: true,
+                      fn: () => askForJdText(why, { url: (r && r.url) || page.url }) }];
+      // Any other page with a form still fills from the saved profile, as before (never LinkedIn).
+      if (!page.linkedin) opts.push({ id: "profile", label: T("bb.profileOnly", "Fill without a resume"), fn: () => bbFillProfileOnly() });
+      sayChoice({ line: why, tone: "wall", options: opts });
+      return;
+    }
+    const options = [{ id: "tailor", primary: true, label: T("bb.tailorJob", "Tailor a resume for this job (about 1 min)"),
+                       fn: () => bbTailorThenFill(r.source_id) }];
+    if (r.latest) options.push({ id: "latest", label: T("bb.useLatest", "Use my latest resume"), fn: () => bbUseLatest(r.source_id) });
+    sayChoice({ line: r.line, options });
+  }
+  async function bbTailorThenFill(sid) {
+    BROWSER_JOB = { source_id: sid, built: false, filling: false };
+    say({ line: T("bb.tailoring", "Tailoring a resume for this job. Autofill runs when it is ready") });
+    await tailorJob(sid);
+  }
+  // The resume chat's state for a Browser job: a returning person's resume builds by itself from
+  // the saved profile; once it is built, it is saved as this job's application and the page open
+  // in the Browser is filled with it (the person still checks the form and presses Submit).
+  async function browserJobState(st) {
+    const bj = BROWSER_JOB;
+    if (!bj || !st) return;
+    if (!bj.built && st.can_autobuild) {
+      bj.built = true;
+      document.getElementById("autobuildAction")?.remove();
+      sendTurn("just build it from my saved profile", "\u26a1 Build it from my saved profile");
+      return;
+    }
+    const ready = (st.phase === "review" || (st.phase === "done" && !!st.pdf)) && st.one_page !== false && !st.blocked_finalize;
+    if (!ready || bj.filling) return;
+    bj.filling = true;
+    let r = null;
+    try { r = await api("/api/session/apply", {}); } catch (e) { r = (e && e.data) || null; }
+    if (!r || r.ok === false || !r.record_id) { bj.filling = false; return; }   // the builder's own Apply still works
+    BROWSER_JOB = null;
+    fillCtx(r.record_id, r.cv_path || "");
+    if (window.Panel && Panel.open) { try { Panel.open("browser"); } catch { /* the bar still says it */ } }
+    bubble("agent", esc(T("bb.filling", "Saved. Filling the application open in the Browser tab with this resume.")));
+    await bbFillHere();
+  }
+  async function bbFillProfileOnly() { await bbFillHere({ profileOnly: true }); }
+  async function bbUseLatest(sid) {
+    let r = null;
+    try { r = await api("/api/browser/job/latest", { source_id: sid }); } catch (e) { r = (e && e.data) || { error: e && e.message }; }
+    if (!r || !r.record_id) { say({ line: (r && r.error) || T("bb.latestFail", "Could not use the latest resume. Try tailoring one."), tone: "wall" }); return; }
+    fillCtx(r.record_id, r.cv_path || "");
+    await bbFillHere();
+  }
+  // A new address typed in the Browser bar is a new job: the application being filled is let go.
+  document.addEventListener("sj:pane-typed", () => { FILL_CTX.id = null; FILL_CTX.cv = ""; BROWSER_JOB = null; });
   // Always on the bar in assisted apply: a page the person opened themselves fills from the
   // saved profile (no application picked yet).
   if (!APPLY_AGENT && window.tailorShell && window.tailorShell.assistApply && $("#bbFillHere")) $("#bbFillHere").hidden = false;
@@ -4099,6 +4187,7 @@
     if (st.question) bubble("agent", chatText(st.question));
     if (st.can_autobuild) renderAutobuild();
     else document.getElementById("autobuildAction")?.remove();
+    if (BROWSER_JOB) browserJobState(st);
     if (Array.isArray(st.required_open) && st.required_open.length) renderDeclineRequired(st.required_open);
     else document.getElementById("declineRequiredAction")?.remove();
     if (st.role) $("#builderRole").textContent = st.role + (st.company ? " · " + st.company : "");
@@ -16810,6 +16899,7 @@
       let u = urlBox.value.trim();
       if (!u) return;
       if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+      document.dispatchEvent(new CustomEvent("sj:pane-typed", { detail: { url: u } }));
       shell.navigate(u);
       open("browser");
     });

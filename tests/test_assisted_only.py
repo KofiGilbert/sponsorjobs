@@ -248,7 +248,7 @@ def test_every_agent_control_is_hidden_and_fill_this_page_is_on_the_bar():
                    'data-i18n="aa.how1" data-agent-only', 'data-i18n="signin.terms2" data-agent-only'):
         assert marker in INDEX, marker
     assert 'id="bbFillHere"' in INDEX and 'data-i18n="bb.fillHere"' in INDEX
-    m = re.search(r"async function bbFillHere\(\) \{.*?\n  \}", APP_JS, re.S)
+    m = re.search(r"async function bbFillHere\(o?\) \{.*?\n  \}", APP_JS, re.S)
     assert m and 'submit: false, here: true' in m.group(0)
 
 

@@ -2187,5 +2187,15 @@
   "fill.needsMany": "{n} te necesitan. Ahora: {q}",
   "fill.allDone": "Listo. Pulsa Enviar cuando estés conforme",
   "fill.submitted": "Enviada. Marcada como aplicada",
-  "jd.readingLink": "Leyendo la oferta…"
+  "jd.readingLink": "Leyendo la oferta…",
+  "bb.cantRead": "No pude leer esta oferta. Pega su descripción y adaptaré un currículum a ella.",
+  "bb.filling": "Guardado. Relleno la solicitud abierta en la pestaña Navegador con este currículum.",
+  "bb.latestFail": "No se pudo usar el último currículum. Prueba a adaptar uno.",
+  "bb.pasteJd": "Pegar la descripción",
+  "bb.profileOnly": "Rellenar sin currículum",
+  "bb.reading": "Leyendo la oferta…",
+  "bb.tailorJob": "Adaptar un currículum para esta oferta (aprox. 1 min)",
+  "bb.tailoring": "Adaptando un currículum para esta oferta. El relleno empieza cuando esté listo",
+  "bb.useLatest": "Usar mi último currículum",
+  "fill.noPage": "Todavía no hay nada abierto en la pestaña Navegador."
 }
