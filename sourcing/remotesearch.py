@@ -12,9 +12,12 @@ What leaves the machine is ONLY the query, the facets, a cursor and, for the Aut
 the job titles the person typed (their saved search or today's focus). Every request is built by
 `build_query` from an allowlist of keys (SEARCH_KEYS / CANDIDATE_KEYS) and goes out through one
 method (`_get`), which tests/test_remote_search.py guards. Never sent: the resume or profile, words
-taken from them, saved or dismissed IDs, company lists, match scores. The one header is an
-anonymous random install token (generated once, kept in the data dir, never tied to the account
-and never the broker's bearer token), which the server only rate-limits on.
+taken from them, saved or dismissed IDs, company lists, match scores. The one header is the
+install's broker account token (`Authorization: Bearer`, 2026-11-25): search is locked to
+SponsorJobs installs (worker/src/installauth.ts), and the server uses the account only as a
+rate-limit key, never storing it next to a query. A 401 asks `on_unauthorized` (ui/app.py
+`_recover_from_401`) to replace a token the broker no longer knows and retries once; a 401 that
+stays, or no token at all, is handled like being offline: the board serves the slice with its note.
 
 Engine side: an in-memory LRU of the last ~50 responses (Back and facet toggles cost nothing);
 a short back-off after a failure, so an offline app pays one timeout, not one per request; and
@@ -26,7 +29,6 @@ device's own layers (personal ranking, dismissed) to each server page, follows n
 from __future__ import annotations
 
 import json
-import secrets
 import threading
 import time
 import urllib.error
@@ -52,8 +54,6 @@ BUSY_FOR = 600              # after a 503 (no index yet, or the day's free allow
 CACHE_SIZE = 50             # responses kept in memory
 PAGE_CALLS = 3              # server calls to fill one short board page
 MAX_WALK = 40               # pages walked forward to reach a deep page (1,000 results / 30 = 34)
-TOKEN_FILE = "search_install_token"
-TOKEN_HEADER = "X-Install-Token"
 _UA = "resume-agent/1.0 (search client)"
 
 
@@ -66,9 +66,14 @@ class StaleCursor(RuntimeError):
 
 
 def _http_get(url: str, headers: dict, timeout: float) -> tuple[int, bytes]:
-    """(status, body); an HTTP error status is returned, not raised."""
+    """(status, body); an HTTP error status is returned, not raised. The account token is added
+    unredirected, so a redirect could never carry it to another host."""
+    rest = {k: v for k, v in headers.items() if k.lower() != "authorization"}
     req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept": "application/json",
-                                               **headers})
+                                               **rest})
+    for k, v in headers.items():
+        if k.lower() == "authorization":
+            req.add_unredirected_header("Authorization", v)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return int(getattr(resp, "status", 200) or 200), resp.read()
@@ -151,7 +156,8 @@ class RemoteSearch:
     are injectable so tests run against a fake server, offline."""
 
     def __init__(self, base_url: str, data_dir, fetch=None, clock=time.time,
-                 timeout: float = TIMEOUT, cache_size: int = CACHE_SIZE, down_for: float = DOWN_FOR):
+                 timeout: float = TIMEOUT, cache_size: int = CACHE_SIZE, down_for: float = DOWN_FOR,
+                 token=None, on_unauthorized=None):
         self.base_url = (base_url or "").rstrip("/")
         self.data_dir = Path(data_dir)
         self._fetch = fetch or _http_get
@@ -162,32 +168,26 @@ class RemoteSearch:
         self._lru: OrderedDict = OrderedDict()
         self._starts: dict[str, dict[int, tuple]] = {}   # query -> {page: (cursor, skip) or None}
         self._down_until = 0.0
-        self._token: str | None = None
+        # `token() -> str | None`: the broker account token (ui/app.py _account_token, which
+        # registers on first need). `on_unauthorized() -> bool`: replace a rejected token.
+        self._token = token
+        self._on_unauthorized = on_unauthorized
         self._inflight: set[str] = set()          # page-1 prefetches running now
         self._lock = threading.RLock()
 
-    # -- the install token ---------------------------------------------------------------- #
+    # -- the account token ----------------------------------------------------------------- #
 
-    def token(self) -> str:
-        """The anonymous install token: 32 random hex characters, made once and kept in the data
-        dir. Not the account, not the broker's bearer token: the server only rate-limits on it."""
-        with self._lock:
-            if self._token:
-                return self._token
-            path = self.data_dir / TOKEN_FILE
-            try:
-                tok = path.read_text(encoding="utf-8").strip()
-            except OSError:
-                tok = ""
-            if not (len(tok) == 32 and all(c in "0123456789abcdef" for c in tok)):
-                tok = secrets.token_hex(16)
-                try:
-                    self.data_dir.mkdir(parents=True, exist_ok=True)
-                    path.write_text(tok + "\n", encoding="utf-8")
-                except OSError:
-                    pass                            # unsaved: still anonymous, just per process
-            self._token = tok
-            return tok
+    def _auth(self) -> dict | None:
+        """The bearer header, or None when no token can be had right now (offline, the network's
+        sign-up limit): the board then serves the slice, exactly as when search is down. No
+        `token` callable (a search address on another host, tests): no header at all."""
+        if self._token is None:
+            return {}
+        try:
+            tok = self._token()
+        except Exception:                           # noqa: BLE001 - no token = no search for now
+            tok = None
+        return {"Authorization": f"Bearer {tok}"} if tok else None
 
     # -- requests ---------------------------------------------------------------------------- #
 
@@ -211,11 +211,22 @@ class RemoteSearch:
                 return hit
             if self.down():
                 raise SearchUnavailable("the search server was unreachable a moment ago")
+        auth = self._auth()
+        if auth is None:
+            self._failed(BUSY_FOR)                  # registering again is not worth a wait per page
+            raise SearchUnavailable("search needs a SponsorJobs account and none is set up yet")
         try:
-            status, body = self._fetch(url, {TOKEN_HEADER: self.token()}, self._timeout)
+            status, body = self._fetch(url, auth, self._timeout)
+            if status == 401 and self._on_unauthorized is not None and self._on_unauthorized():
+                auth = self._auth()                 # a fresh account: one retry
+                if auth is not None:
+                    status, body = self._fetch(url, auth, self._timeout)
         except Exception as exc:                    # noqa: BLE001 - offline, DNS, timeout...
             self._failed()
             raise SearchUnavailable(f"{type(exc).__name__}: {exc}"[:200]) from exc
+        if status == 401:                           # the account was refused: like being offline
+            self._failed(BUSY_FOR)
+            raise SearchUnavailable("search refused this install's account (401)")
         if status == 409:
             with self._lock:                        # the index moved on: every cursor is stale
                 self._lru.clear()

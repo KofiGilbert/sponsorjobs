@@ -4,7 +4,7 @@ JOBS_SEARCH=server switch in /api/jobs and the Auto-apply picker. Offline: a fak
 (a `fetch` function) and a real local HTTP origin for the feed (tests/test_feed_parts.Origin).
 
 The PRIVACY GUARD at the end inspects every request the client sends: only allowlisted keys, only
-the install token header, and nothing taken from the profile, saved or dismissed jobs."""
+the account token header, and nothing taken from the profile, saved or dismissed jobs."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from sourcing.feedclient import StaticFeed
 from sourcing.feedfile import (MANIFEST_FILE, SLICE_PREFIX, SLICE_REMOVED_PREFIX, load_stable_state,
                                save_stable_state, slice_rows, write_feed)
 from sourcing.filters import apply_facets
-from sourcing.remotesearch import (CANDIDATE_KEYS, SEARCH_KEYS, TOKEN_HEADER, RemoteSearch,
+from sourcing.remotesearch import (CANDIDATE_KEYS, SEARCH_KEYS, RemoteSearch,
                                    SearchUnavailable, build_query, count_label)
 from test_feed_parts import Origin
 
@@ -203,17 +203,62 @@ def test_responses_are_kept_in_a_small_lru(tmp_path):
     assert rs.cached({"q": "engineer"}) is not None and rs.cached({"q": "nope"}) is None
 
 
-def test_the_install_token_is_random_kept_and_the_only_header(tmp_path):
+def test_the_account_token_is_the_only_header(tmp_path):
+    """Search is locked to SponsorJobs installs (worker/src/installauth.ts): the broker account
+    token rides as a bearer header, and nothing else does."""
     srv = FakeServer(ALL)
-    rs = RemoteSearch("https://api.test", tmp_path, fetch=srv)
+    rs = RemoteSearch("https://api.test", tmp_path, fetch=srv, token=lambda: "acct-token")
     rs.search({})
-    tok = srv.calls[0][1][TOKEN_HEADER]
-    assert len(tok) == 32 and set(srv.calls[0][1]) == {TOKEN_HEADER}
-    rs2 = RemoteSearch("https://api.test", tmp_path, fetch=srv)
-    rs2.search({"q": "x"})
-    assert srv.calls[1][1][TOKEN_HEADER] == tok                       # kept across restarts
-    other = RemoteSearch("https://api.test", tmp_path / "other", fetch=srv).token()
-    assert other != tok
+    assert srv.calls[0][1] == {"Authorization": "Bearer acct-token"}
+    assert not any(p.name.startswith("search_install") for p in tmp_path.iterdir())   # no install token file
+
+
+class _Refusing(FakeServer):
+    """401 unless the bearer token is in `good`."""
+
+    def __init__(self, rows, good):
+        super().__init__(rows)
+        self.good = good
+
+    def __call__(self, url, headers, timeout):
+        if headers.get("Authorization", "")[7:] not in self.good:
+            self.calls.append((url, dict(headers)))
+            return 401, b'{"reason":"no_account"}'
+        return super().__call__(url, headers, timeout)
+
+
+def test_a_401_replaces_the_token_once_and_retries(tmp_path):
+    tok = {"v": "stale"}
+
+    def repair():
+        tok["v"] = "fresh"
+        return True
+    srv = _Refusing(ALL, {"fresh"})
+    rs = RemoteSearch("https://api.test", tmp_path, fetch=srv, token=lambda: tok["v"], on_unauthorized=repair)
+    assert rs.search({"q": "engineer"})["jobs"]
+    assert [h["Authorization"] for _, h in srv.calls] == ["Bearer stale", "Bearer fresh"]
+
+
+def test_a_401_that_stays_is_handled_like_offline(tmp_path):
+    t = [1000.0]
+    repaired = []
+    srv = _Refusing(ALL, set())
+    rs = RemoteSearch("https://api.test", tmp_path, fetch=srv, token=lambda: "revoked", clock=lambda: t[0],
+                      on_unauthorized=lambda: repaired.append(1) or False)
+    with pytest.raises(SearchUnavailable):
+        rs.search({"q": "engineer"})
+    assert repaired == [1] and rs.down()                   # the board serves the slice with its note
+    with pytest.raises(SearchUnavailable):
+        rs.search({"q": "nurse"})
+    assert len(srv.calls) == 1                             # no request while down
+
+
+def test_no_token_to_be_had_sends_nothing(tmp_path):
+    srv = FakeServer(ALL)
+    rs = RemoteSearch("https://api.test", tmp_path, fetch=srv, token=lambda: None)
+    with pytest.raises(SearchUnavailable):
+        rs.search({})
+    assert srv.calls == [] and rs.down()
 
 
 def test_board_pages_follow_cursors_and_refill_short_pages(tmp_path):
@@ -318,7 +363,7 @@ def app(tmp_path, monkeypatch, site):
             sf = StaticFeed(site.url, A._DATA / "feed_cache", retry_pause=0)
             A._STATIC_FEEDS[(site.url, str(A._DATA))] = sf
         sf.refresh(force=True)
-        rs = RemoteSearch("https://api.test", A._DATA, fetch=srv)
+        rs = RemoteSearch("https://api.test", A._DATA, fetch=srv, token=lambda: "acct-token")
         A._REMOTE_SEARCH[("https://api.test", str(A._DATA))] = rs
         return sf, rs
     A.test_install, A.test_server = install, srv
@@ -455,7 +500,7 @@ SECRET_WORDS = ("Zorblax", "Kubernetes", "Quillfeather", "acme:7")
 
 def test_privacy_guard_nothing_personal_leaves_the_machine(app, monkeypatch):
     """Every request the client sent during searches, deep pages and an Auto-apply run carries
-    only allowlisted keys and the install token, and none of the profile's words, saved IDs or
+    only allowlisted keys and the account token, and none of the profile's words, saved IDs or
     dismissed IDs."""
     sf, rs = app.test_install(True)
     profile = {"name": "Zorblax Quillfeather", "skills": ["Kubernetes", "Zorblax"],
@@ -476,6 +521,6 @@ def test_privacy_guard_nothing_personal_leaves_the_machine(app, monkeypatch):
         keys = [k for k, _ in parse_qsl(parts.query)]
         allowed = CANDIDATE_KEYS if parts.path.endswith("/candidates") else SEARCH_KEYS
         assert set(keys) <= allowed, url
-        assert set(headers) == {TOKEN_HEADER}, headers
+        assert headers == {"Authorization": "Bearer acct-token"}, headers
         for word in SECRET_WORDS + ("greenhouse:acme:70",):
             assert word.lower() not in url.lower(), (word, url)

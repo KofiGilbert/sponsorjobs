@@ -15,6 +15,108 @@ custom domain `feed.sponsorjobs.ai` serves them through Cloudflare's CDN. An R2 
 serves **every key in the bucket**, not just `feed/`, so nothing private may be stored in that
 bucket: the crawl state has its own private bucket (see "The crawl state" below).
 
+**Since 2026-11-25 the app reads the job files only through the broker's locked route**
+(`https://api.sponsorjobs.ai/v1/feed/...`, next section), not through `feed.sponsorjobs.ai`. The
+custom domain is still where the browser extension and the website read the sponsor index and the
+manifest, so it stays connected; the go-live step below blocks the job files on it.
+
+## The locked route (2026-11-25)
+
+Goal: only SponsorJobs installs can read the job list, so a copycat app cannot read our crawl or
+spend our free Cloudflare allowance. Every install already holds a broker account token (the app
+registers an anonymous account on first need, `ui/app.py _account_token`, free or paid alike).
+
+- **Worker** (`worker/src/feed.ts`): `GET /v1/feed/<file>` on the broker. No token, a made-up,
+  revoked or expired token, or a suspended account: `401 {"error", "reason": "no_account"}`. A
+  valid token: the file is streamed straight from the `sponsorjobs-feed` bucket through the
+  `FEED_BUCKET` R2 binding (`wrangler.jsonc`), with the headers the uploader stored
+  (`Content-Type`, `Content-Encoding: gzip` passed through untouched, so the app's sha256 checks
+  see the stored bytes), `ETag`, and `304` on a matching `If-None-Match`. `public` in the stored
+  `Cache-Control` becomes `private`. The Worker never reads or buffers the body, so a file costs
+  one Worker request and almost no CPU. Only the files the app reads are served:
+  `manifest.json`, `jobs.json.gz`, `parts/*.json.gz`, `jd/*.json.gz` (never the upload history,
+  the sponsor index or anything else in the bucket). Without the binding: `503 feed_not_configured`.
+- **Who is checked** (`worker/src/installauth.ts`, shared with search): a valid token's account is
+  remembered in the Worker's memory for a minute, so a burst of files costs one account lookup.
+  A token revoked in that minute keeps reading for at most a minute more.
+- **Abuse limits** (Workers rate-limit bindings, live in `wrangler.jsonc`): 600 requests a minute
+  per network, checked BEFORE the token is looked up (made-up tokens cannot hammer the account
+  database), then 120 files a minute per account. A first download is ~20 files, two at a time.
+  Tokens and paths are never logged. Registration itself stays limited per network
+  (`REGISTER_PER_IP_PER_DAY`, 50).
+- **App** (`sourcing/feedclient.py`, `ui/app.py`, `shell-electron/main.js`): `JOBS_FEED_URL` is
+  `<TAILOR_BROKER_URL>/v1/feed` (the installed app and the default dev run, both on
+  `https://api.sponsorjobs.ai`). `ui/app.py _broker_auth_for` gives the feed reader the account
+  token only when the feed is on the broker's own origin, so the token never goes to another host,
+  and urllib sends it unredirected (never on a redirect). A 401 runs `_recover_from_401` (replace
+  a token the broker no longer knows, register a fresh account) and retries once. No token to be
+  had (offline, the network's sign-up limit) or a 401 that stays is a failed download like any
+  other: the cache keeps serving, the back-off applies, and with nothing cached for 30 minutes the
+  polite first-open crawl runs. ETag, gzip, parts, resume and sha256 checks are unchanged. A dev run
+  on the local dev broker (`TAILOR_LIVE_BROKER=0`) and the Community edition get no feed and use
+  the local crawl.
+- **What stays the same**: the feed workflow and `scripts/upload_feed.py` (same bucket, same keys,
+  same headers), the browser extension and the website (they read `sponsors/` and
+  `manifest.json` on `feed.sponsorjobs.ai`), the admin dashboard (reads `manifest.json` there), and
+  the workflow's shrink guard (reads `manifest.json` there, with the saved state as its fallback).
+
+**What it does not stop**: anyone can register an account exactly as the app does
+(`POST /account/register`). The lock makes every reader an account we can see, rate-limit and
+suspend, and caps new accounts per network a day; it does not make the list secret. The postings
+are public anyway; what it protects is our crawl and our allowance from a copycat app quietly
+using them.
+
+### Worker requests per install (Cloudflare free plan: 100,000 a day for the whole account)
+
+One request per file. For one install with the app open:
+
+| what | all day | ~8 hours |
+|---|---|---|
+| manifest check (hourly) | 24 | 8 |
+| changed list parts (8 rebuilds a day, ~2 files each, measured 2026-10-23) | ~16 to 24 | ~6 |
+| description shards (one per role opened, per shard, cached a day) | ~10 to 30 | ~10 |
+| **total** | **~50 to 80** | **~25** |
+
+A first install adds ~20 once (the whole list in ~1 MB parts; ~5 with server search's slice), and
+a flaky link adds a retry per dropped part. So the feed alone fits roughly **1,500 to 4,000 daily
+active installs** in the free plan's 100,000, which is shared with every other broker route (AI,
+sign-in, billing) and with server search when it is on (its own budget is 60,000 a day). Before
+this the feed cost no Worker requests at all (the CDN served it). Past that, Workers Paid is $5 a
+month with 10 million requests included, then $0.30 a million. R2 counts one read (Class B) per
+file served; the free 10 million a month (~330,000 a day) is above the Worker limit, so it is not
+the first limit hit.
+
+### Go-live (the owner, right after the deploy)
+
+There are no users yet, so there is no phased rollout: the locked route is the only way the app
+reads the job list.
+
+1. Deploy the Worker (`cd worker && npx wrangler deploy`). The `FEED_BUCKET` binding and the two
+   feed rate limits are in `wrangler.jsonc`; binding an existing bucket creates nothing and needs
+   no secret. Check: `curl -s -o /dev/null -w "%{http_code}\n" https://api.sponsorjobs.ai/v1/feed/manifest.json`
+   prints `401`, and with a token (`-H "Authorization: Bearer <token>"`, e.g. the dev app's
+   `TAILOR_ACCOUNT_TOKEN`) prints `200`.
+2. **Turn off public access to the job files** on `feed.sponsorjobs.ai`. Do NOT remove the custom
+   domain: the browser extension (`extension/background.js`), the website (`site/script.js`), the
+   admin dashboard and the workflow's shrink guard read `sponsors/*` and `manifest.json` there.
+   Instead block everything else with one WAF rule (free plan: 5 custom rules):
+   Cloudflare dashboard -> the `sponsorjobs.ai` zone -> **Security** -> **WAF** -> **Custom rules**
+   -> **Create rule**. Name `feed: job files only through the app`. **Edit expression** and paste:
+
+   ```
+   (http.host eq "feed.sponsorjobs.ai" and not (http.request.uri.path eq "/feed/manifest.json" or starts_with(http.request.uri.path, "/feed/sponsors/")))
+   ```
+
+   Action **Block**. **Deploy**. Check: `curl -sI https://feed.sponsorjobs.ai/feed/jobs.json.gz`
+   and `.../feed/parts/<any part name from the manifest>` answer `403`;
+   `.../feed/manifest.json` and `.../feed/sponsors/manifest.json` still answer `200`.
+   (The manifest stays public: it names the parts and the counts, not the jobs.)
+3. Only if the sponsor index, the website and the dashboard ever move off this domain can the
+   domain go entirely: `npx wrangler r2 bucket domain remove sponsorjobs-feed --domain feed.sponsorjobs.ai`
+   (or R2 -> `sponsorjobs-feed` -> Settings -> Custom Domains -> `feed.sponsorjobs.ai` -> Remove).
+   Today that would break the extension's badges, the website's job count and live lookup, and
+   the dashboard's feed card. The bucket's `r2.dev` URL is already off.
+
 **GitHub Pages** (2026-10-06 to 2026-10-10, while Cloudflare would not activate R2 on the account)
 is still wired as the fallback host: unset `FEED_HOST` (or set it to anything but `r2`) and the
 workflow publishes the same files as a Pages site instead. GitHub's terms say Pages is not free
@@ -140,8 +242,11 @@ GitHub Action (every 3h, .github/workflows/feed.yml)
   scripts/upload_feed.py  put_object to R2 (S3 API) with Content-Type / Content-Encoding / Cache-Control;
                           list parts before the list (skipping parts the bucket already has),
                           manifest last, then deletes parts none of the last 3 manifests name
-R2 bucket, custom domain  https://<domain>/feed/jobs.json.gz, /feed/jd/{xx}.json.gz, /feed/manifest.json
-Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/main.js sets it)
+R2 bucket sponsorjobs-feed  feed/jobs.json.gz, feed/jd/{xx}.json.gz, feed/parts/*, feed/manifest.json
+Broker Worker             GET /v1/feed/<file>: account token checked, file streamed from the
+                          bucket binding (worker/src/feed.ts, "The locked route" above)
+Desktop app               JOBS_FEED_URL=<broker>/v1/feed  (shell-electron/main.js sets it),
+                          sends its broker account token
   sourcing/feedclient.py  download jobs.json.gz hourly (ETag), cache under data/feed_cache/,
                           filter + paginate locally with sourcing/filters.py (ui/app.py /api/jobs),
                           fetch one JD shard when a role is opened (cached a day)
@@ -176,7 +281,8 @@ back-off as below) and `sourcing/remotesearch.py` asks `/v1/jobs/search` and `/v
 (on `JOBS_SEARCH_URL`, else `TAILOR_BROKER_URL`) for keyword searches, deeper pages and the
 Auto-apply pool. Everything below describes the default, switch-off behaviour.
 
-- `JOBS_FEED_URL` is the **base URL** of the feed (e.g. `https://tailor.example/feed`).
+- `JOBS_FEED_URL` is the **base URL** of the feed: `https://api.sponsorjobs.ai/v1/feed` (the
+  locked route, which needs the account token), or any open host for a local copy.
 - `jobs.json.gz` is downloaded into `<data dir>/feed_cache/` **at most once an hour**, at a
   per-install random minute (drawn once, persisted in `feed_state.json`) so a fleet of installs
   spreads its downloads across the hour. The request carries `If-None-Match`; an unchanged file costs
@@ -298,8 +404,9 @@ the crawl-state save carries it. Apps read the index only with `JOBS_SEARCH=serv
 - **Cloudflare R2 free tier**: 10 GB storage, 1M Class A (writes) and 10M Class B (reads) operations
   a month, **zero egress fees**. One crawl every 3 hours uploads ~257 objects = ~62k writes/month.
   Reads: each install makes at most 24 conditional list requests a day plus one shard per role opened;
-  10,000 daily users is roughly 7-8M Class B operations a month, still inside the free tier. Serving
-  through a Cloudflare custom domain puts the CDN cache in front, which cuts R2 reads further.
+  10,000 daily users is roughly 7-8M Class B operations a month, still inside the free tier. Since
+  the locked route (2026-11-25) every file the app reads is one R2 read through the Worker binding
+  (no CDN cache in front) and one Worker request; see "Worker requests per install" above.
 - **GitHub Actions**: ~8 runs a day. Public repos get unlimited minutes; a private repo's 2,000
   free minutes/month covers runs of up to ~8 minutes each. Since 2026-10-30 the workflow downloads
   **nothing** from the Actions cache (see "The crawl state"): the account's cache egress limit is

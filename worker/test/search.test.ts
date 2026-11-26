@@ -4,7 +4,8 @@
 // search-parity.test.ts.
 import { beforeEach, describe, expect, it } from "vitest";
 import { decodeCursor, encodeCursor, forgetIndexVersion, ftsAll } from "../src/search";
-import { call, env, freshIp } from "./helpers";
+import { forgetAccounts } from "../src/installauth";
+import { call, env, freshIp, newAccount } from "./helpers";
 
 const N = 1200;   // more than the depth limit
 const db = env.SEARCH_DB!;
@@ -39,9 +40,15 @@ async function setMeta(m: Record<string, string>) {
 }
 const setVersion = (v: string) => setMeta({ index_version: v });
 
-// A fresh network per call, so the per-IP limiter never couples tests; no token unless asked.
+// A fresh network and a fresh account per call, so neither limiter couples tests. The account is
+// the dev header (DEV_HEADER_AUTH=1, no database row); "token checks" below uses real tokens.
+let userSeq = 0;
 const get = (path: string, headers: Record<string, string> = {}, extra: Record<string, any> = {}) =>
-  call(path, { headers: { "CF-Connecting-IP": freshIp(), ...headers }, env: extra });
+  call(path, { headers: { "CF-Connecting-IP": freshIp(), "X-Tailor-User": `acct_s${++userSeq}`, ...headers },
+               env: { DEV_HEADER_AUTH: "1", ...extra } });
+// A real bearer token, the dev header off (production).
+const getAs = (token: string, path: string, headers: Record<string, string> = {}) =>
+  call(path, { token, headers: { "CF-Connecting-IP": freshIp(), ...headers }, env: { DEV_HEADER_AUTH: "0" } });
 
 async function walk(path: string, max = 80) {
   const seen: string[] = [];
@@ -244,28 +251,79 @@ describe("the daily budget (free plan)", () => {
   });
 });
 
+describe("token checks (SponsorJobs installs only)", () => {
+  it("401 no_account without a token, with a made-up one, a revoked one or a suspended account", async () => {
+    for (const path of ["/v1/jobs/search?limit=1", "/v1/jobs/candidates?limit=1"]) {
+      const none = await call(path, { headers: { "CF-Connecting-IP": freshIp() }, env: { DEV_HEADER_AUTH: "0" } });
+      expect(none.status).toBe(401);
+      expect(none.data.reason).toBe("no_account");
+      expect((await getAs("not-a-real-token-" + crypto.randomUUID(), path)).status).toBe(401);
+    }
+    const revoked = await newAccount();
+    await call("/account/revoke", { method: "POST", token: revoked.token });
+    expect((await getAs(revoked.token, "/v1/jobs/search?limit=1")).data.reason).toBe("no_account");
+    const suspended = await newAccount();
+    await env.DB.prepare("UPDATE accounts SET suspended_at = 1 WHERE account_id = ?").bind(suspended.id).run();
+    expect((await getAs(suspended.token, "/v1/jobs/search?limit=1")).status).toBe(401);
+  });
+
+  it("the X-Tailor-User header is no account in production", async () => {
+    const r = await call("/v1/jobs/search?limit=1",
+                         { headers: { "CF-Connecting-IP": freshIp(), "X-Tailor-User": "acct_x" }, env: { DEV_HEADER_AUTH: "0" } });
+    expect(r.status).toBe(401);
+  });
+
+  it("a valid token searches; the answer is private to the app, and the edge cache serves every account", async () => {
+    const a = await newAccount(), b = await newAccount();
+    const ra = await getAs(a.token, "/v1/jobs/search?limit=3&q=nurse");
+    expect(ra.status).toBe(200);
+    expect(ra.data.jobs).toHaveLength(3);
+    const rb = await getAs(b.token, "/v1/jobs/search?limit=3&q=nurse");
+    expect(rb.data).toEqual(ra.data);
+    const raw = await (await import("../src/index")).default.fetch(
+      new Request("https://broker.test/v1/jobs/search?limit=3&q=nurse",
+                  { headers: { Authorization: `Bearer ${a.token}`, "CF-Connecting-IP": freshIp() } }),
+      { ...env, DEV_HEADER_AUTH: "0" } as any);
+    expect(raw.headers.get("cache-control")).toMatch(/^private/);
+  });
+
+  it("checks the token before anything else: no index, a bad cursor or a 503 are not shown to strangers", async () => {
+    const r = await call("/v1/jobs/search?cursor=nonsense",
+                         { headers: { "CF-Connecting-IP": freshIp() }, env: { DEV_HEADER_AUTH: "0", SEARCH_DB: undefined } });
+    expect(r.status).toBe(401);
+  });
+
+  it("a revoked token stops within the account cache's minute", async () => {
+    const a = await newAccount();
+    expect((await getAs(a.token, "/v1/jobs/search?limit=1")).status).toBe(200);
+    await call("/account/revoke", { method: "POST", token: a.token });
+    forgetAccounts();                                // as when the cached minute has passed
+    expect((await getAs(a.token, "/v1/jobs/search?limit=1")).status).toBe(401);
+  });
+});
+
 describe("rate limits", () => {
-  it("60 a minute per install token", async () => {
-    const token = "install-" + crypto.randomUUID();
+  it("60 a minute per account, keyed on the account, not the token", async () => {
+    const a = await newAccount();
     let last = 0;
-    for (let i = 0; i < 61; i++) last = (await get("/v1/jobs/search?limit=1", { "X-Install-Token": token })).status;
+    for (let i = 0; i < 61; i++) last = (await getAs(a.token, "/v1/jobs/search?limit=1")).status;
     expect(last).toBe(429);
-    expect((await get("/v1/jobs/search?limit=1", { "X-Install-Token": "install-" + crypto.randomUUID() })).status).toBe(200);
+    // A second token for the SAME account shares its limit; another account does not.
+    const { issueToken } = await import("../src/accounts");
+    expect((await getAs(await issueToken(env.DB, a.id), "/v1/jobs/search?limit=1")).status).toBe(429);
+    expect((await getAs((await newAccount()).token, "/v1/jobs/search?limit=1")).status).toBe(200);
   });
 
-  it("reads the client's X-Install-Token header (sourcing/remotesearch.py), not another name", async () => {
-    const token = crypto.randomUUID().replace(/-/g, "");      // 32 hex, as secrets.token_hex(16)
-    for (let i = 0; i < 60; i++) await get("/v1/jobs/search?limit=1", { "X-Install-Token": token });
-    expect((await get("/v1/jobs/search?limit=1", { "X-Install-Token": token })).status).toBe(429);
-    expect((await get("/v1/jobs/search?limit=1", { "X-Install": token })).status).toBe(200);
-  });
-
-  it("300 a minute per network", async () => {
+  it("300 a minute per network, counted before the token is looked up", async () => {
     const ip = freshIp();
     let last = 0;
     for (let i = 0; i < 301; i++) {
-      last = (await call("/v1/jobs/search?limit=1", { headers: { "CF-Connecting-IP": ip } })).status;
+      last = (await call("/v1/jobs/search?limit=1",
+                         { headers: { "CF-Connecting-IP": ip, "X-Tailor-User": `acct_n${i}` },
+                           env: { DEV_HEADER_AUTH: "1" } })).status;
     }
     expect(last).toBe(429);
+    // Over the network's limit, even a request with no token is turned away without a lookup.
+    expect((await call("/v1/jobs/search?limit=1", { headers: { "CF-Connecting-IP": ip } })).status).toBe(429);
   });
 });
