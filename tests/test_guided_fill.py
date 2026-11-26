@@ -138,3 +138,17 @@ def test_other_please_specify_gets_its_box_filled(tmp_path):
         assert acts2.get("h2") == "Online Job Board" and "s2" not in acts2, acts2
     finally:
         lib.close()
+
+
+def test_the_status_line_stays_one_short_line_when_the_agent_stops():
+    """(Vestmark, 2026-11-26) The agent stopped on a consent box and its whole message ("This site
+    needs you to accept its terms to apply, and I could not find where. Have a look at the page.")
+    filled the bar over two lines. The bar keeps the counts; the agent's words go under Details,
+    and any line over 80 characters keeps its first sentence."""
+    app = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    g = app[app.index("  function guideSay(r) {"):]
+    g = g[:g.index("\n  }\n")]
+    assert "const head = guideLine(r);" in g and "said" in g
+    s = app[app.index("  function say(msg) {"):]
+    s = s[:s.index("\n  }\n")]
+    assert "line.length > 80" in s and '"bb-fill-text is-one"' in s

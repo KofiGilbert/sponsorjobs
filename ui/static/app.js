@@ -1292,8 +1292,15 @@
     bar.innerHTML = "";
     bar.classList.remove("is-wall", "is-live", "is-ready", "bb-stack");
     if (!m.line) { bar.hidden = true; return; }
+    // (2026-11-26, the owner) one short line: a longer one keeps its first sentence, the whole
+    // of it goes under Details
+    let line = String(m.line);
+    if (line.length > 80) {
+      const cut = /^(.{8,}?[.!?])\s+\S/.exec(line);
+      if (cut && cut[1].length <= 90) { m.details = [line, m.details].filter(Boolean).join("\n"); line = cut[1]; }
+    }
     const text = document.createElement("span");
-    text.className = "bb-fill-text"; text.textContent = m.line;
+    text.className = "bb-fill-text is-one"; text.textContent = line;
     bar.appendChild(text);
     for (const a of m.actions || []) {
       const b = document.createElement("button");
@@ -1325,7 +1332,9 @@
     if (!r) return;
     if (r.ok === false && !r.guide) { say({ line: applyMessage(r), tone: "wall" }); return; }
     const needs = r.guide ? Number(r.guide.needs || 0) : 0;
-    const head = r.agent && r.agent.message && !r.agent.ready ? r.agent.message : guideLine(r);
+    // one short line (the counts); what the agent said when it stopped is under Details
+    const head = guideLine(r);
+    const said = r.agent && r.agent.message && !r.agent.ready ? r.agent.message : "";
     const step = async (dir) => {
       let s2 = null;
       try { s2 = await window.tailorShell.guideStep(dir); } catch { s2 = null; }
@@ -1339,7 +1348,7 @@
         { label: T("fill.next", "Next"), fn: () => step(1), primary: true },
       ] : []).concat(window.tailorShell && window.tailorShell.guideStep ? [{ label: T("fill.done", "Done"), fn: () => {
         try { window.tailorShell.guideStep("done"); } catch { /* fine */ } say(null); } }] : []),
-      details: applyMessage(r),
+      details: [said, applyMessage(r)].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join("\n"),
     });
     say(msg());
   }
