@@ -23,7 +23,9 @@ function needsFinish(report, extra) {
   const r = report || {};
   const x = extra || {};
   if (!report) return { go: false, why: "" };
-  if (r.reason === "not-a-form") return { go: true, why: "job-page" };
+  // the job or overview page, or a page whose form has not shown yet (Ashby's overview, a
+  // single-page app still loading): the agent opens the form
+  if (r.reason === "not-a-form" || r.reason === "no-fields") return { go: true, why: "job-page" };
   if (HAND_BACK.has(r.reason) || r.blocker === "captcha" || r.captcha || r.wall) return { go: false, why: "" };
   if (r.submitted) return { go: false, why: "" };
   const left = (r.left || []).filter((l) => String(typeof l === "string" ? l : (l && l.label) || "").trim());

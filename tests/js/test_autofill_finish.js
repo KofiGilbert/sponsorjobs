@@ -90,6 +90,7 @@ const FINISH = { url: URL1, company: "Acme", lane: "assisted", autonomous: true,
   assert(go({ ok: true, left: [] }, { invalid: 1 }).why === "invalid", "the page marks a field invalid");
   assert(go({ ok: true, left: [], next_page: true }).why === "pages", "the form goes on");
   assert(go({ ok: false, reason: "not-a-form", apply: "Apply" }).why === "job-page", "the job page, not the form");
+  assert(go({ ok: false, reason: "no-fields", page: 1 }).why === "job-page", "an overview page with no form yet");
   for (const reason of ["blocked", "linkedin", "fill-by-hand", "bad-url", "no-page", "stalled"]) {
     assert(go({ ok: false, reason, left: ["x"] }).go === false, "never handed over: " + reason);
   }
