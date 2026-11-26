@@ -190,11 +190,12 @@
   ball.addEventListener("contextmenu", (e) => { e.preventDefault(); menu.hidden ? openMenu() : closeMenu(); });
 
   function openMenu() {
+    bubble.hidden = true;                      // one thing at a time: the menu, then the bubble again
     menu.hidden = false;
     report();
     $("#orbMute").focus();
   }
-  function closeMenu() { if (!menu.hidden) { menu.hidden = true; report(); } }
+  function closeMenu() { if (!menu.hidden) { menu.hidden = true; bubble.hidden = !treeKey; report(); } }
   menu.addEventListener("keydown", (e) => {
     const items = [...menu.querySelectorAll(".orb-mi")];
     const i = items.indexOf(document.activeElement);
