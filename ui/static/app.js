@@ -1345,7 +1345,29 @@
   }
   function needsLine(n, label) {
     return T(n === 1 ? "fill.needsOne" : "fill.needsMany", n === 1 ? "1 needs you: {q}" : "{n} need you. Now: {q}")
-      .replace("{n}", n).replace("{q}", label);
+      .replace("{n}", n).replace("{q}", askShort(label) || label);
+  }
+  // (2026-11-26, the owner) A question in plain words for the status line: the common ones by
+  // meaning ("If this role offers the option to work from a remote location, do you plan to work
+  // remotely?" is "remote or office?"), anything else its own words cut at a word.
+  const ASK_SHORT = [
+    [/sponsor/i, "aa.ask.sponsor", "visa sponsorship?"],
+    [/\b(remote(ly)?|hybrid|on.?site|in.?office|work from home)\b/i, "aa.ask.remote", "remote or office?"],
+    [/authori[sz]ed to work|(legally|eligible) (eligible |able )?to work|right to work/i, "aa.ask.auth", "allowed to work here?"],
+    [/relocat/i, "aa.ask.relocate", "willing to relocate?"],
+    [/salary|compensation|pay (range|expectation)/i, "aa.ask.salary", "expected salary?"],
+    [/start date|when can you (start|begin)|notice period/i, "aa.ask.start", "start date?"],
+    [/how did you (hear|find|learn)/i, "aa.ask.heard", "how you found the job?"],
+    [/(employed by|worked (for|at)|previously (worked|employed))/i, "aa.ask.worked", "worked here before?"],
+    [/whats.?app|text messages|\bsms\b/i, "aa.ask.messages", "messages from the recruiter?"],
+  ];
+  function askShort(q) {
+    const raw = String(q || "").replace(/\s*\*\s*$/, "").replace(/\s+/g, " ").trim();
+    if (!raw) return "";
+    for (const [rx, k, f] of ASK_SHORT) if (rx.test(raw)) return T(k, f);
+    if (raw.length <= 48) return raw;
+    const cut = raw.slice(0, 48);
+    return cut.slice(0, Math.max(24, cut.lastIndexOf(" "))) + "...";
   }
   let GUIDE_MSG = null;                  // the bar's last guided message (its buttons), for needs updates
   // The page moved to another item that needs the person (Enter, a choice, the chip): the bar says it.
@@ -14728,14 +14750,22 @@
       // (2026-11-17) The guided ask: ONE slim line. The field itself is outlined on the page and
       // the person answers there, with the site's own control; no question list, no answer box.
       const g = info.guide;
-      text.textContent = (g.n === 1 ? T("aa.guide.one", "1 field needs you.") : T("aa.guide.many", "{n} fields need you.").replace("{n}", g.n))
-        + " " + T("aa.guide.of", "{i} of {n}").replace("{i}", g.i).replace("{n}", g.n);
-      text.title = String(g.question || "");
-      btn(T("aa.guide.next", "Next"), "btn-primary bb-send", (e) => {
-        e.target.disabled = true;
-        try { window.tailorShell.agentGuideNext(); } catch { /* the field stays outlined */ }
-      });
-      btn(T("aa.agent.skipJob", "Skip this job"), "btn-ghost bb-skip", () => { try { window.tailorShell.agentStop(); } catch {} });
+      // (2026-11-26, the owner) the line names the item in plain words, the way the guided
+      // Autofill's does ("1 needs you: remote or office?"); the page's own question is the tooltip
+      if (g.done) {
+        text.textContent = info.message || T("fill.allDone", "All done. Press Submit when you're happy");
+      } else {
+        const what = askShort(g.question);
+        text.textContent = what ? needsLine(g.n - g.i + 1, what)
+          : (g.n === 1 ? T("aa.guide.one", "1 field needs you.") : T("aa.guide.many", "{n} fields need you.").replace("{n}", g.n))
+            + " " + T("aa.guide.of", "{i} of {n}").replace("{i}", g.i).replace("{n}", g.n);
+        text.title = String(g.question || "");
+        btn(T("aa.guide.next", "Next"), "btn-primary bb-send", (e) => {
+          e.target.disabled = true;
+          try { window.tailorShell.agentGuideNext(); } catch { /* the field stays outlined */ }
+        });
+        btn(T("aa.agent.skipJob", "Skip this job"), "btn-ghost bb-skip", () => { try { window.tailorShell.agentStop(); } catch {} });
+      }
     } else if ((info.state === "ask" || info.state === "parked") && info.ask) {
       // The agent needs answers. One question shows the page's choices as buttons plus a box.
       // Several show ONE AT A TIME ("Question 2 of 4", the question on its own line, its
@@ -16767,8 +16797,14 @@
     if (!ORB.on) { if (ORB.lastKey !== "off") { ORB.lastKey = "off"; ORB_SHELL.orbSet({ visible: false }); } return; }
     const overlay = [...document.querySelectorAll(ORB_OVERLAYS)].some((x) => x.getClientRects().length > 0);
     const visible = !overlay && !orbCameraOn() && document.visibilityState !== "hidden";
-    // the anchor: the Browser pane while it shows, else the window
+    // the anchor: the Browser pane while it shows, else the work column (never over the side
+    // panel's own buttons or the right rail)
     let anchor = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }, kind = "window";
+    const main = document.querySelector("main.main");
+    if (main) {
+      const r = main.getBoundingClientRect();
+      if (r.width > 200 && r.height > 200) anchor = { x: r.x, y: r.y, width: r.width, height: r.height };
+    }
     const slot = $("#browserSlot");
     if (window.Panel && window.Panel.isOpen("browser") && slot) {
       const r = slot.getBoundingClientRect();
@@ -16980,10 +17016,12 @@
     }
   }
   function orbSuggestLater() { setTimeout(orbSuggest, 0); }
-  function orbOpenChat() {
-    if (!(AGENT.on && $("#view-builder").classList.contains("is-active"))) openAgent();
-    else composerInput.focus();
+  async function orbOpenChat() {
+    // already open: the chat is where it was, nothing said twice
+    if (AGENT.on && $("#view-builder").classList.contains("is-active")) { composerInput.focus(); return; }
+    openAgent();
     orbApi("/api/orb/event", { kind: "chat_opened" }).catch(() => {});
+    await Promise.race([orbPoll(true), new Promise((res) => setTimeout(res, 1500))]);   // what waits, fresh
     const w = (ORB.waiting || []).filter(Boolean);
     if (ORB.nudge) w.unshift(ORB.nudge);
     const seen = new Set();
@@ -16993,10 +17031,12 @@
       bubble("agent", esc(list.length === 1 ? OT("orb.oneWaits", "One thing waits on you:") : OT("orb.fewWait", "Here is what waits on you:"))
         + "<br>" + list.map((n) => "&bull; " + esc(n.text)).join("<br>"));
       const wrap = el("div", "agent-acts");
+      const labels = new Set();
       list.forEach((n) => {
-        if (!n.action || !n.action.label) return;
-        const b = el("button", "btn btn-sm btn-ghost");
-        b.type = "button"; b.textContent = n.action.label + ": " + n.text;
+        if (!n.action || !n.action.label || labels.has(n.action.label)) return;   // one button per place
+        labels.add(n.action.label);
+        const b = el("button", "btn btn-sm " + (labels.size === 1 ? "btn-primary" : "btn-ghost"));
+        b.type = "button"; b.textContent = n.action.label;
         b.addEventListener("click", () => { wrap.remove(); orbNudgeAct(n); });
         wrap.appendChild(b);
       });
@@ -17055,7 +17095,7 @@
     orbSendBoot();
   }
   // The first message creates the Orb's view (it loads, then says ready and the Orb turns on).
-  function orbSendBoot() { ORB_SHELL.orbSet({ visible: true, anchor: null, kind: "window", state: "idle", labels: orbLabels(),
+  function orbSendBoot() { ORB_SHELL.orbSet({ boot: true, visible: true, anchor: null, kind: "window", state: "idle", labels: orbLabels(),
                                               theme: document.documentElement.getAttribute("data-theme") || "dark" }); }
   if (ORB_SHELL && OrbCore) {
     // Everything that can move the ball or change its bubble asks for one repaint.

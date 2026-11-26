@@ -2224,5 +2224,14 @@
   "orb.soundDesc": "Um toque suave quando algo precisa de você.",
   "orb.todayFail": "Não consegui ler seu acompanhamento agora. Tente de novo em um momento.",
   "orb.why": "Preenchi cada campo com seu perfil salvo e seu currículo para esta vaga. Onde eu não tinha certeza, deixei para você e o ponteiro mostra. Nada é enviado até você clicar em Enviar no site.",
-  "orb.how": "Sou seu assistente de busca de emprego. Leio apenas o que está no SponsorJobs neste computador: seus currículos, seu acompanhamento e seu perfil. Quando você clica em Preencher, preencho o formulário com seu perfil e aponto o que não tenho certeza. Nunca clico em Enviar, nunca resolvo captcha e nunca preencho um campo que você não possa ver. Eu sugiro, você decide. Aviso no máximo 3 vezes por dia e só sobre coisas reais: um follow-up pendente, um currículo pronto, uma entrevista chegando. Clique com o botão direito em mim para silenciar meus sons ou me desativar, ou mude isso em Configurações."
+  "orb.how": "Sou seu assistente de busca de emprego. Leio apenas o que está no SponsorJobs neste computador: seus currículos, seu acompanhamento e seu perfil. Quando você clica em Preencher, preencho o formulário com seu perfil e aponto o que não tenho certeza. Nunca clico em Enviar, nunca resolvo captcha e nunca preencho um campo que você não possa ver. Eu sugiro, você decide. Aviso no máximo 3 vezes por dia e só sobre coisas reais: um follow-up pendente, um currículo pronto, uma entrevista chegando. Clique com o botão direito em mim para silenciar meus sons ou me desativar, ou mude isso em Configurações.",
+  "aa.ask.sponsor": "patrocínio de visto?",
+  "aa.ask.remote": "remoto ou escritório?",
+  "aa.ask.auth": "autorizado a trabalhar aqui?",
+  "aa.ask.relocate": "disposto a se mudar?",
+  "aa.ask.salary": "salário esperado?",
+  "aa.ask.start": "data de início?",
+  "aa.ask.heard": "como encontrou a vaga?",
+  "aa.ask.worked": "já trabalhou aqui?",
+  "aa.ask.messages": "mensagens do recrutador?"
 }

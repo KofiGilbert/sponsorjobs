@@ -1929,7 +1929,8 @@ let orb = null;
 function ensureOrb() {
   if (!orb && win && !win.isDestroyed()) {
     orb = orbView.createOrb({ win, WebContentsView, server: SERVER, preload: path.join(__dirname, "orb_preload.js"),
-                              readPrefs, writePrefs });
+                              readPrefs, writePrefs,
+                              onReady: () => { if (win && !win.isDestroyed()) win.webContents.send("orb:event", { kind: "ready" }); } });
   }
   return orb;
 }

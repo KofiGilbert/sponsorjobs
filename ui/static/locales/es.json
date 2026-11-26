@@ -2224,5 +2224,14 @@
   "orb.soundDesc": "Un aviso suave cuando algo te necesita.",
   "orb.todayFail": "No pude leer tu Seguimiento ahora. Inténtalo de nuevo en un momento.",
   "orb.why": "Rellené cada campo con tu perfil guardado y tu currículum para este empleo. Donde no estaba seguro, lo dejé para ti y el puntero lo señala. No se envía nada hasta que pulses Enviar en el sitio.",
-  "orb.how": "Soy tu asistente de búsqueda de empleo. Solo leo lo que hay en SponsorJobs en este ordenador: tus currículums, tu Seguimiento y tu perfil. Cuando pulsas Autocompletar, relleno el formulario con tu perfil y señalo lo que no tengo claro. Nunca pulso Enviar, nunca resuelvo un captcha y nunca relleno un campo que no puedas ver. Yo sugiero, tú decides. Te aviso como mucho 3 veces al día y solo por cosas reales: un seguimiento pendiente, un currículum listo, una entrevista próxima. Haz clic derecho sobre mí para silenciarme o desactivarme, o cámbialo en Ajustes."
+  "orb.how": "Soy tu asistente de búsqueda de empleo. Solo leo lo que hay en SponsorJobs en este ordenador: tus currículums, tu Seguimiento y tu perfil. Cuando pulsas Autocompletar, relleno el formulario con tu perfil y señalo lo que no tengo claro. Nunca pulso Enviar, nunca resuelvo un captcha y nunca relleno un campo que no puedas ver. Yo sugiero, tú decides. Te aviso como mucho 3 veces al día y solo por cosas reales: un seguimiento pendiente, un currículum listo, una entrevista próxima. Haz clic derecho sobre mí para silenciarme o desactivarme, o cámbialo en Ajustes.",
+  "aa.ask.sponsor": "¿patrocinio de visa?",
+  "aa.ask.remote": "¿remoto u oficina?",
+  "aa.ask.auth": "¿autorizado para trabajar aquí?",
+  "aa.ask.relocate": "¿dispuesto a mudarte?",
+  "aa.ask.salary": "¿salario esperado?",
+  "aa.ask.start": "¿fecha de inicio?",
+  "aa.ask.heard": "¿cómo encontraste el empleo?",
+  "aa.ask.worked": "¿trabajaste aquí antes?",
+  "aa.ask.messages": "¿mensajes del reclutador?"
 }

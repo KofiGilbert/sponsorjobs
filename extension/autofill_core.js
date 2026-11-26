@@ -4904,6 +4904,35 @@ function qsaSafe(sel, root) {
     return false;
   }
   function needsCurEl() { return _needsCur ? elByRef(_needsCur) : null; }
+  // (2026-11-26, the owner, Stripe on Greenhouse) The apply agent's guided ask reads a field the
+  // way a person sees it: a react-select keeps its choice beside an empty search box, so the box's
+  // own value said "not answered" and the ask never moved on. {value, kind} or null.
+  function fieldValue(el) {
+    if (!el) return null;
+    const kind = needsKind(el);
+    let value = "";
+    if (tagOf(el) === "SELECT") { const o = el.options[el.selectedIndex]; value = o && o.value !== "" ? cleanText(o.text || "") : ""; }
+    else if (tagOf(el) === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "")) value = el.checked ? (cleanText(rawLabel(el) || "") || "checked") : "";
+    else if (isWidgetInput(el) || el.getAttribute("role") === "combobox") value = comboValue(el) || chosenPills(el).join(", ");
+    else value = String(el.value || "").trim();
+    return { value: String(value || "").slice(0, 300), kind };
+  }
+  /** The pointer on a field the agent asks the person about, with what to do there: a list or a
+   * choice moves on by itself once picked; a box once the person leaves it. */
+  function pointNeeds(el) {
+    const P = window.TailorPointer;
+    if (!el || !P) return "";
+    const k = needsKind(el);
+    const say = { choice: "Pick one, it moves on by itself", line: "Type your answer, it moves on by itself",
+                  multi: "Type your answer, it moves on by itself", file: "Add the file here" }[k];
+    try { P.at(visibleBox(el), say, { now: true, stay: true }); } catch (e) { return ""; }
+    return say;
+  }
+  /** Every field the person was asked about is answered: menus closed, the pointer on Submit. */
+  async function allDone() {
+    try { await tidyMenus(); } catch (e) { /* fine */ }
+    return !!(await restOnSubmit("All done. Press Submit when you're happy"));
+  }
   // (2026-11-26) The site's own window over the page (a privacy notice), as {title}, or null.
   function siteModal() {
     const P = window.TailorPointer;
@@ -5126,5 +5155,7 @@ function qsaSafe(sel, root) {
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
     orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
     siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike, needsNext, needsKind,
+    // (2026-11-26) the apply agent's guided ask: what a field holds, the pointer on it, then Submit
+    fieldValue, pointNeeds, allDone,
   };
 })();

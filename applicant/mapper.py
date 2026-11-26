@@ -47,6 +47,7 @@ KEYS: dict[str, str] = {
     "@salary": "desired salary or pay for the job",
     "@start_date": "when the person can start",
     "@notice_period": "notice period at the current job",
+    "@work_location": "whether the person wants to work remotely, hybrid or in the office (a standing preference, not one office)",
     "@heard_about": "how the person heard about the job",
     "@years_experience": "total years of professional experience",
     "@over_18": "whether the person is at least 18 years old",

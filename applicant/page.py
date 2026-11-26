@@ -210,6 +210,7 @@ ANSWERS = (("@salary", "Desired annual salary", "desired_salary", "salary"),
            ("@notice_period", "Notice period", "", "text"),
            ("@years_experience", "Years of experience", "years_experience", "text"),
            ("@heard_about", "How you heard about a job", "hear_about_us", "text"),
+           ("@work_location", "Where you want to work", "", "text"),
            ("accept_required_terms", "Terms a site requires to apply", "", "terms"))
 ANSWER_KEYS = frozenset(k for k, *_ in ANSWERS) | {"@citizenship", "@citizenship2", "@over_18", "relocate"}
 PREFS_FIELD = {k: f for k, _l, f, _e in ANSWERS if f} | {"@over_18": "over_18"}
@@ -492,7 +493,7 @@ def _fill_words(key: str) -> str:
     short = {"@salary": "salary", "@citizenship": "citizenship", "@citizenship2": "second citizenship",
              "@start_date": "start date", "@years_experience": "years of experience", "@heard_about": "how you heard",
              "@over_18": "age", "workauth": "work authorization", "@previously_worked": "worked here before",
-             "@notice_period": "notice period", "relocate": "relocation"}
+             "@notice_period": "notice period", "relocate": "relocation", "@work_location": "where you want to work"}
     if key in short:
         return short[key]
     if key.startswith("q:"):

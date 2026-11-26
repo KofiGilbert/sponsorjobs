@@ -112,6 +112,9 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     _k("relocate", "yes_no", choices=_YES_NO, ask="Are you willing to relocate?",
        legacy=("app_prefs.json:willing_to_relocate", "app_prefs.json:work_auth.relocate")),
     _k("remote", "yes_no", choices=_YES_NO),
+    # (2026-11-26, the owner) Remote, hybrid or in the office: asked once on a form, kept in Memory
+    # (Edit / Forget), reused on later forms by meaning (autoapply/answers.py "work_location").
+    _k("@work_location", ask="Where do you want to work: remote, hybrid or in the office?"),
     _k("@heard_about", ask="How did you hear about us?", legacy=("app_prefs.json:hear_about_us",)),
     _k("@years_experience", ask="How many years of experience do you have?",
        legacy=("app_prefs.json:years_experience",)),

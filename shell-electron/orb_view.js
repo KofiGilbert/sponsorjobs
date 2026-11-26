@@ -51,6 +51,7 @@ function orbRect({ anchor, offset, content, win, zoom }) {
 // The view itself. deps: { win, WebContentsView, server, preload, readPrefs, writePrefs }.
 function createOrb(deps) {
   const { win, WebContentsView, server, preload, readPrefs, writePrefs } = deps;
+  const onReady = deps.onReady || (() => {});   // tells the app page the Orb's page is up
   let view = null;
   let ready = false;
   let state = { visible: false, anchor: null, kind: "window" };
@@ -72,7 +73,8 @@ function createOrb(deps) {
   function ensure() {
     if (view) return view;
     view = new WebContentsView({
-      webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false },
+      webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false,
+                        transparent: true },
     });
     view.setBackgroundColor("#00000000");
     view.setVisible(false);
@@ -80,7 +82,9 @@ function createOrb(deps) {
     // The Orb's page never leaves /orb and never opens anything.
     wc.setWindowOpenHandler(() => ({ action: "deny" }));
     wc.on("will-navigate", (e) => e.preventDefault());
-    wc.on("did-finish-load", () => { ready = true; send(); layout(); });
+    // transparent: set again once the page is up, or the page's first paint brings an opaque ground
+    wc.on("dom-ready", () => { try { view.setBackgroundColor("#00000000"); } catch (e) { /* gone */ } });
+    wc.on("did-finish-load", () => { ready = true; send(); layout(); onReady(); });
     wc.on("render-process-gone", () => { ready = false; setTimeout(() => { try { if (view) wc.reload(); } catch (e) { /* gone */ } }, 1500); });
     win.contentView.addChildView(view);
     wc.setZoomFactor(zoom());
@@ -117,6 +121,8 @@ function createOrb(deps) {
       last = Object.assign({}, p);
       delete last.anchor;
       if (state.visible) ensure();
+      // the app page (re)loaded and says hello: the Orb's page is already up, say so
+      if (p.boot && ready) onReady();
       send();
       layout();
     },

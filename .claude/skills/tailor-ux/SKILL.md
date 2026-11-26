@@ -826,3 +826,11 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   bubbles a day, one per 30 minutes, never while typing or during Autofill, and the person clicks:
   the Orb never acts on its own. Off three ways: SJ_ORB=0, Settings, Appearance, or the broker's
   ORB_OFF remote switch. Rules: orb/rules.py.
+- 2026-11-26 (owner, watching the Orb on a real Stripe form): the apply agent's guided ask names
+  the item in plain words like the guided Autofill does, "1 needs you: remote or office?" (common
+  questions by meaning, else the page's words cut at a word; the full question is the tooltip),
+  and the pointer on the field says what to do ("Pick one, it moves on by itself"). A list picked
+  on the page closes and the ask moves on by itself; after the last one the pointer rests on the
+  site's Submit with "All done. Press Submit when you're happy". Remote, hybrid or office is a
+  standing preference: asked once, kept in Memory (Where you want to work, Edit / Forget), reused
+  on later forms by meaning.

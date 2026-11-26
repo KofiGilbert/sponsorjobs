@@ -50,6 +50,14 @@ function fakePane(P) {
         if (P.onLight) await P.onLight(i);
         return true;
       }
+      if (expr.includes("/*sj-all-done*/")) { P.log.push("all done"); return true; }
+      if (expr.includes("/*sj-tidy*/")) { P.log.push("tidy"); return 0; }
+      if (expr.includes("/*sj-point*/")) { P.log.push("point " + /element\((\d+)\)/.exec(expr)[1]); return "Pick one, it moves on by itself"; }
+      if (expr.includes("/*sj-choice*/")) {
+        // (2026-11-26, Stripe) a react-select: its choice is beside the box, never in the view's line
+        const i = Number(/element\((\d+)\)/.exec(expr)[1]);
+        return P.combo && P.combo[i] ? { value: P.combo[i], kind: "choice" } : null;
+      }
       if (expr.includes("/*sj-unhighlight*/")) { if (P.lit) P.log.push("unhl " + P.lit); P.lit = 0; return 1; }
       if (expr.includes("/*sj-value*/")) {
         const i = Number(/element\((\d+)\)/.exec(expr)[1]);
@@ -202,9 +210,26 @@ const hl = (s) => s.P.log.filter((l) => /^(hl|unhl) /.test(l));
     s.P.onLight = async () => { setTimeout(() => { s.P.vals[21] = "Yes"; }, 10); };
     const r = await s.agent.run(2, { url: s.P.url });
     assert(r && r.ready === true, "ready " + JSON.stringify(r));
-    assert(JSON.stringify(guides(s)) === JSON.stringify(["1 field needs you. 1 of 1"]), "singular " + JSON.stringify(guides(s)));
+    // (2026-11-26) answered on the page: then the pointer goes to Submit, "All done"
+    assert(JSON.stringify(guides(s)) === JSON.stringify(["1 field needs you. 1 of 1", "All done. Press Submit when you're happy"]), "singular " + JSON.stringify(guides(s)));
+    assert(s.P.log.includes("all done"), "the pointer goes to the site's Submit " + JSON.stringify(s.P.log));
     assert(s.E.answers.length === 1 && s.E.answers[0].answer === "Yes" && s.E.answers[0].exact === true, "Yes from the page " + JSON.stringify(s.E.answers));
     assert(!s.progress.some((x) => /could not tell/i.test(x.message || "")), "never a dead end");
+  }
+
+  // ---- (2026-11-26, Stripe on Greenhouse) a react-select answered on the page: the view's line
+  // never shows the choice (it sits beside an empty search box); it is read the way the person
+  // sees it, the open list is closed, and the pointer moves on to Submit by itself -----------------
+  {
+    const s = setup({ mode: "assisted", fields: [22] });
+    s.P.combo = {};
+    s.P.onLight = async (i) => { setTimeout(() => { s.P.combo[i] = "No"; }, 10); };
+    const r = await s.agent.run(2, { url: s.P.url });
+    assert(r && r.ready === true, "react-select: ready " + JSON.stringify(r));
+    assert(s.E.answers.length === 1 && s.E.answers[0].answer === "No" && s.E.answers[0].on_page === true, "the choice beside the box is taken " + JSON.stringify(s.E.answers));
+    const log = s.P.log.join(",");
+    assert(/point 22/.test(log) && /tidy/.test(log) && /all done/.test(log), "pointer on the field, list closed, then Submit " + log);
+    assert(guides(s).includes("All done. Press Submit when you're happy"), "the line says so " + JSON.stringify(guides(s)));
   }
 
   // ---- 2. HYBRID: Telegram's answer is filled into the form ---------------------------------------

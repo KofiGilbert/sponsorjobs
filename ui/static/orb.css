@@ -4,6 +4,7 @@
    the Autofill pointer, so the person reads the ball, its bubble and the pointer as one helper. */
 
 html, body.orb-page { background: transparent !important; height: auto; overflow: hidden; }
+:root:has(body.orb-page) { color-scheme: normal !important; }
 body.orb-page { margin: 0; font-size: 12.5px; user-select: none; -webkit-user-select: none; }
 .orb-page { --sj-pointer: #7957FC; --orb-deep: #4A2BD0; --orb-ink: #1F1452; }
 
@@ -105,9 +106,9 @@ body.orb-page { margin: 0; font-size: 12.5px; user-select: none; -webkit-user-se
 /* ---------------------------------------------------------------- the bubble
    The ONE message surface during Autofill (it replaces the Browser bar's status line, the same
    words and the same buttons), and the place an unasked nudge shows. Violet, white words. */
-.orb-bubble { position: relative; box-sizing: border-box; width: max-content; max-width: 360px; margin: 0 6px;
+.orb-bubble { position: relative; box-sizing: border-box; width: max-content; max-width: 360px; margin: 14px 14px 0;
   padding: 10px 12px; border-radius: 14px; background: var(--sj-pointer); color: #ffffff;
-  box-shadow: 0 10px 28px rgba(36, 18, 110, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  box-shadow: 0 6px 14px rgba(36, 18, 110, 0.26), inset 0 0 0 1px rgba(255, 255, 255, 0.16);
   font-size: 12.5px; line-height: 1.4; user-select: text; -webkit-user-select: text;
   animation: orb-rise 180ms cubic-bezier(.2, .8, .2, 1); }
 @keyframes orb-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -115,8 +116,10 @@ body.orb-page { margin: 0; font-size: 12.5px; user-select: none; -webkit-user-se
   transform: rotate(45deg); border-radius: 2px; }
 .orb-root[data-vert="up"] .orb-bubble::after { bottom: -5px; }
 .orb-root[data-vert="down"] .orb-bubble::after { top: -5px; }
-.orb-root[data-side="right"] .orb-bubble::after { right: 24px; }
-.orb-root[data-side="left"] .orb-bubble::after { left: 24px; }
+.orb-root[data-vert="down"] .orb-bubble { margin: 0 14px 14px; }
+/* the tail points at the ball's centre: 36 px in from the view's edge */
+.orb-root[data-side="right"] .orb-bubble::after { right: 16px; }
+.orb-root[data-side="left"] .orb-bubble::after { left: 16px; }
 /* the bar's markup, recoloured for the violet ground */
 .orb-bubble .bb-fill { --bg: #6a48f0; --surface: rgba(255, 255, 255, .12); --surface-2: rgba(255, 255, 255, .16);
   --ink: #ffffff; --ink-2: rgba(255, 255, 255, .9); --muted: rgba(255, 255, 255, .76); --faint: rgba(255, 255, 255, .6);
@@ -144,7 +147,7 @@ body.orb-page { margin: 0; font-size: 12.5px; user-select: none; -webkit-user-se
 .orb-bubble .act-spin { border-color: rgba(255, 255, 255, .35); border-top-color: #ffffff; }
 
 /* the Orb's own small menu (right click, or the menu key): sounds, and turning it off */
-.orb-menu { display: flex; flex-direction: column; padding: 4px; margin: 0 6px; border-radius: 10px;
+.orb-menu { display: flex; flex-direction: column; padding: 4px; margin: 14px 14px 0; border-radius: 10px;
   background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-md); }
 .orb-mi { border: 0; background: none; color: var(--ink); text-align: left; padding: 7px 10px; border-radius: 6px;
   font: 500 12.5px/1.2 var(--sans, system-ui); white-space: nowrap; }
