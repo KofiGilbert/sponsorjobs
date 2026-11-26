@@ -278,7 +278,10 @@ def test_the_route_answers_from_saved_facts_and_names_where_it_came_from(A, monk
     assert r["origins"]["Current company"] == "grounded" and r["facts"]["Current company"] == "job"
     assert r["facts"][GUSTO_Q] == "location"
     assert r["open"] == ["What is your notice period?"] and sent == []
-    assert EEO_SECRET not in stub.users[0] and "Gender" not in stub.users[0]
+    # the Gender question goes to the self-identification path, never to this call; (2026-11-26,
+    # owner decision) the saved self-identification answers may be among the facts it reads
+    asked = stub.users[0].split("</questions>")[0]
+    assert EEO_SECRET not in asked and "Gender" not in asked
     # a grounded answer is the fact's, never saved as a new answer of the person's
     lib = mod._answer_lib()
     try:
