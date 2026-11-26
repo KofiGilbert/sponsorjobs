@@ -1984,6 +1984,52 @@ a job, a wrong title and dates) and the street in County, and none of it was cor
 - Tests: tests/test_autofill_site_fills.py (fixture tests/fixtures/forms/workday_prefilled.html),
   tests/js/test_agent_site_fills.js.
 
+## 35. Autofill, then the agent finishes (2026-11-26)
+
+The Autofill button is ONE button: the fast fill first (about $0.004 an application), then the agent
+only where the fill falls short. It works with the apply agent switched off (the launch): it is the
+person's own click, attended, and it stops at Ready to send for the person's own Submit.
+
+- **The trigger** (`shell-electron/finish.js needsFinish`): after the fill, the agent steps in only
+  when required fields are still empty, the page marks a field invalid (`aria-invalid`), the form
+  has further pages, or Autofill landed on the job or overview page. A sign-in, a captcha, LinkedIn
+  and the other boards that forbid automation are never handed over. Otherwise it ends after
+  Autofill, as before.
+- **It carries on from the page Autofill filled**: `agent.run` with `finish: true` and
+  `resume.samePage`; no precheck, no fresh start, the job is never opened again (the ladder's
+  `reopen_job` does nothing in this mode). A step only the person can do ends the run with the page
+  as it is ("Press Autofill again when you want me to carry on"); nothing is parked to carry on by
+  itself.
+- **The plan is asked once per page** (`planKey`, `unplannedFields`): an agent step on a page whose
+  fields the plan already saw skips `/api/autoapply/plan`; a new field (a follow-up question)
+  is planned.
+- **One cost figure** for the application: the Autofill plan (`/api/autoapply/plan` returns
+  `cost`), each step's plan, the brain, the critic and a cover letter (`cost` from the letter
+  route). Cap $0.30 (`SJ_FINISH_COST_CAP_USD`): the run stops, everything filled stays, and the bar
+  says what is left in plain words.
+- **Never Submit**: `handOver` in finish mode never sends, whatever the mode, the lane or
+  `autonomous`; the bar has no Send button; the site's Submit is outlined; `send()` refuses a
+  finish run (`your-click`). No Ready to send notice goes to Telegram.
+- **The allowance** (enforced in the broker Worker, `worker/src/metering.ts`, migration 0018
+  `usage.agent_finishes`): applications the agent finishes a calendar month, Free 3, Student 40,
+  Standard 60 (the same as each plan's tailored resumes). `POST /apply/finish` counts one when the
+  agent steps in (the engine's `/api/autoapply/finish/start`, once per application a month; Autofill
+  alone is never counted), 402 `finish_limit` when used up: the fast Autofill stands with one line,
+  "The agent finish for this month is used up, so I filled what I could. It resets on <date>."
+  Extra packs hold live interviews only, so they add none. `/me/usage` reports `finishes_left`,
+  `finishes_limit` and `finishes_reset`; the account menu shows "Agent finishes: N of M left". On the
+  person's own AI key nothing is counted.
+- **The gate**: with `SJ_APPLY_AGENT` off the engine opens the agent's page routes only while a
+  finish run is open (`_finish_active`, 20 minutes at most, closed by `/finish/end`); Auto mode's
+  queue routes stay shut, the parked list stays empty, and `/api/submit/decision` never allows a
+  click on Submit. The Applications queue, Auto mode and "Apply for me" stay behind the flag.
+- **The pointer** (`extension/pointer_overlay.js`): while Autofill or the agent works, a drawn
+  pointer moves beside each field it fills or element it clicks, with a short label ("Filling:
+  First name", "Clicking: Next", "Uploading resume"). A picture in its own shadow root,
+  pointer-events none, placed right of the field (or under it) so it never covers it; glides
+  0.3 s, jumps under reduced motion; gone when the run ends or after 10 s idle.
+- Tests: tests/test_autofill_finish.py, tests/js/test_autofill_finish.js,
+  worker/test/finishes.test.ts.
 ## 36. Self-identification on any wording; the AI reads the saved answers (2026-11-26, owner decision)
 
 At Lam Research the agent asked for "Veteran" although the person's veteran status was saved: the

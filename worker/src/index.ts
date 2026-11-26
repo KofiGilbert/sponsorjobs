@@ -29,11 +29,11 @@ import { type Env, intVar } from "./env";
 import { aliasCreate, aliasDelete, aliasGet, aliasNotify, inboxRead, messagesRead, receiveMail } from "./mail";
 import {
   avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, type Interval, INTERVALS, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft,
-  passActive, periodOf, planFor, QuotaExceeded, recordedLeft, requireLlm, soldIntervals, status, subscriptionPlan, tierFor,
+  monthResets, passActive, periodOf, planFor, QuotaExceeded, recordedLeft, requireLlm, soldIntervals, status, subscriptionPlan, tierFor,
 } from "./metering";
 import {
   addCreditOnce, avatarSessionOwner, chargeableSeconds, consumeAvatar, grantPassOnce, sessionUsed, loadState, markAvatarEnded,
-  recordAvatarSession, recordLlm, takeFreePackage, takeFreeRecorded, takePassPackage,
+  recordAvatarSession, recordLlm, takeFinish, takeFreePackage, takeFreeRecorded, takePassPackage,
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
 import { handleSearch } from "./search";
@@ -253,6 +253,27 @@ const interviewRecorded: Handler = async ({ req, env, now, nowMs }) => {
                   tier, recorded_left: 0 }, 402);
   }
   return json({ recorded_left: recordedLeft({ ...state, recordedUsed: used }, now), tier });
+};
+
+/** The app calls this ONCE per application when the apply agent steps in after the fast
+ * Autofill (required fields still empty, more pages, or a job page instead of the form). Each
+ * plan includes that many a calendar month (Plan.agentFinishes: free 3, Student 40, Standard 60),
+ * counted here in one guarded statement. 402 finish_limit when used up: the app then keeps to the
+ * fast Autofill and says when it resets. Autofill alone is never counted. */
+const applyFinish: Handler = async ({ req, env, now, nowMs }) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const period = periodOf(nowMs);
+  const { state } = await loadState(env.DB, user, period, dayOf(nowMs));
+  const tier = tierFor(state, now);
+  const limit = planFor(state, now).agentFinishes;
+  const resets = monthResets(nowMs);
+  const used = await takeFinish(env.DB, user, period, limit);
+  if (used === null) {
+    return json({ error: "this month's agent finishes are used up", reason: "finish_limit", tier,
+                  finishes_left: 0, finishes_limit: limit, finishes_reset: resets }, 402);
+  }
+  return json({ finishes_left: Math.max(0, limit - used), finishes_limit: limit, finishes_reset: resets, tier });
 };
 
 // ---- live interviews on the company Tavus key (ported from backend/broker.py) ---------------- //
@@ -561,6 +582,7 @@ const ROUTES: Route[] = [
   ["POST", /^\/llm\/complete$/, llmComplete],
   ["POST", /^\/llm\/package$/, llmPackage],
   ["POST", /^\/interview\/recorded$/, interviewRecorded],
+  ["POST", /^\/apply\/finish$/, applyFinish],
   ["GET", /^\/me\/usage$/, meUsage],
 
   ["GET", /^\/billing\/offers$/, billingOffers],

@@ -568,8 +568,21 @@ function qsaSafe(sel, root) {
     return false;
   }
 
+  // (2026-11-26) The visible pointer (extension/pointer_overlay.js), while the desktop shell
+  // asks for it: each field this fill sets, named beside the drawn pointer.
+  let _pointerOn = false;
+  function pointTo(el, verb) {
+    if (!_pointerOn || !el) return;
+    try {
+      const P = window.TailorPointer;
+      if (!P) return;
+      const lab = cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40);
+      P.at(el, (verb || "Filling") + (lab ? ": " + lab : ""));
+    } catch (e) { /* only a picture */ }
+  }
   function markFilled(el, from) {
     _gen++; tick(1);                         // the form changed; one more field done
+    pointTo(el);
     el.classList.add("tailor-filled");
     setTimeout(() => el.classList.remove("tailor-filled"), 2500);
     logFill(el, from);
@@ -4350,6 +4363,7 @@ function qsaSafe(sel, root) {
   // with ``timed_out`` (the shell carries on from the page as it stands).
   async function fillAsync(payload, opts) {
     const base = startBudget("engine", opts && opts.budgetMs);
+    _pointerOn = !!(opts && opts.pointer);
     _keyOps = [];
     _searchOps = [];
     _keyGroups = [];

@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/accounts";
 import { addLlmTokens, FREE_POOL_USER } from "../src/store";
-import { dayOf, periodOf } from "../src/metering";
+import { dayOf, monthResets, periodOf } from "../src/metering";
 import { call, env, freshIp, givePass, newAccount, okReply, stubAnthropic } from "./helpers";
 
 afterEach(() => vi.restoreAllMocks());
@@ -87,6 +87,7 @@ describe("/me/usage", () => {
     const { id, token } = await newAccount();
     expect((await call("/me/usage", { token })).data).toEqual({
       plan: "free", tier: "free", pass_until: null, interviews_left: 0, packages_left: 3, recorded_left: 1,
+      finishes_left: 3, finishes_limit: 3, finishes_reset: monthResets(Date.now()),
       avatar_seconds_left: 0, llm_model: "claude-haiku-4-5", subscription: null });
     await givePass(id, "pass90");
     const b = (await call("/me/usage", { token })).data;

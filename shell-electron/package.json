@@ -40,6 +40,10 @@
       {
         "from": "../extension/agent_view.js",
         "to": "agent_view.js"
+      },
+      {
+        "from": "../extension/pointer_overlay.js",
+        "to": "pointer_overlay.js"
       }
     ],
     "icon": "../ui/static/icon.ico",

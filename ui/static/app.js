@@ -991,6 +991,7 @@
   /* ---------------------------------------------------------------- application package */
   let PKG_ID = null;
   let PKG_APPLY_URL = "";
+  let PKG_COMPANY = "";                       // for the agent finish's lines
   let PKG_FILL_URL = "", PKG_CV_PATH = "";   // the in-app fill: this package's link + resume file
 
   let PKG_ORIGIN = "dashboard";
@@ -1098,6 +1099,7 @@
     $("#pkgTier").textContent = sub.label || I18N.t("pkg.assisted", "Assisted, you review and click submit");
     $("#pkgSubmitMsg").textContent = (sub.result && sub.result.message) || "";
     PKG_APPLY_URL = p.apply_url || "";
+    PKG_COMPANY = p.company || "";
     $("#pkgSubmitBtn").textContent = sub.tier === "auto" ? "Auto-submit"
       : (PKG_APPLY_URL ? "Open posting & apply →" : "Submit");
     // Desktop app: ONE primary button. Assisted sites get "Fill application" (it opens the
@@ -1223,6 +1225,12 @@
 
   // One plain sentence for whatever the apply path reported. Same words on every page.
   function applyMessage(r) {
+    // (2026-11-26) Autofill handed the page to the agent: its own last line says where it ended.
+    if (r && r.agent && r.agent.message) return r.agent.message;
+    if (r && r.finish_note) return applyMessageFill(r) + " " + r.finish_note;
+    return applyMessageFill(r);
+  }
+  function applyMessageFill(r) {
     if (!r || r.ok === false) {
       const why = r && r.reason;
       if (why === "linkedin" || why === "fill-by-hand") {
@@ -1285,7 +1293,8 @@
     btn.disabled = true;
     note.textContent = "Filling…";
     fillCtx(PKG_ID, PKG_CV_PATH);
-    const r = await applyInPane({ url, recordId: PKG_ID, resumePath: PKG_CV_PATH, submit: false, here });
+    const r = await applyInPane({ url, recordId: PKG_ID, resumePath: PKG_CV_PATH, submit: false, here, finish: true,
+                                  company: PKG_COMPANY || "" });
     btn.disabled = false;
     note.textContent = applyMessage(r);
     if (r && r.ok !== false) { $("#pkgFillHereBtn").hidden = false; offerLearn(note); }
@@ -1304,10 +1313,11 @@
     if (!b || b.disabled) return;
     const label = b.textContent;
     b.disabled = true; b.textContent = T("aa.filling", "Filling\u2026");
-    const r = await applyInPane({ url: "", recordId: FILL_CTX.id, resumePath: FILL_CTX.cv, submit: false, here: true });
+    const r = await applyInPane({ url: "", recordId: FILL_CTX.id, resumePath: FILL_CTX.cv, submit: false, here: true, finish: true });
     b.disabled = false; b.textContent = label;
     const bar = $("#bbFill");
-    if (bar) { aaFeedHide(); bar.textContent = applyMessage(r); bar.classList.remove("is-wall", "is-live"); bar.hidden = false; }
+    // an agent finish leaves its own last line (and its Steps) on the bar
+    if (bar && !(r && r.agent)) { aaFeedHide(); bar.textContent = applyMessage(r); bar.classList.remove("is-wall", "is-live"); bar.hidden = false; }
     const note = $("#pkgAssistNote");
     if (note && PKG_ID && String(FILL_CTX.id) === String(PKG_ID)) note.textContent = applyMessage(r);
   }
@@ -12055,6 +12065,10 @@
         : onPass
         ? T("acct.planLeft", "{i} live interviews and {p} tailored packages left").replace("{i}", String(s.interviews_left ?? 0)).replace("{p}", String(s.packages_left ?? 0))
         : T("acct.freeLeft", "{p} tailored packages left this month").replace("{p}", String(s.packages_left));
+      // (2026-11-26) the apply agent's finishes after Autofill, this month
+      if (known && s.finishes_limit != null && s.finishes_left != null) {
+        left.textContent += ". " + T("acct.finishLeft", "Agent finishes: {f} of {m} left").replace("{f}", String(s.finishes_left)).replace("{m}", String(s.finishes_limit));
+      }
       // "Renews on <date>, cancel anytime" with a one-click Cancel, or "Ends on <date>".
       const renew = $("#acctMenuPlanRenew");
       if (renew) {
@@ -13563,7 +13577,8 @@
       return r;
     }
     fillCtx(id, it.cv_path || "");
-    const r = await applyInPane({ url: it.apply_url, recordId: id, resumePath: it.cv_path || "", submit: auto, here });
+    const r = await applyInPane({ url: it.apply_url, recordId: id, resumePath: it.cv_path || "", submit: auto, here, finish: !auto,
+                                  company: it.company || "" });
     if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; }
     aaNote(id, applyMessage(r), r && r.ok !== false && !r.submitted);
     if (r && r.submitted) {
@@ -14474,6 +14489,16 @@
         const first = bar.querySelector(".bb-batch .bb-answer");
         if (first) setTimeout(() => first.focus(), 50);
       }
+    } else if (info.state === "ready" && info.record_id != null && info.finish) {
+      // (2026-11-26) Autofill, then the agent: the site's own Submit is the person's click. The
+      // answers the run gave stay one click away.
+      const rk = String(info.record_id);
+      if (info.answers) AA_ANS.lists.set(rk, info.answers);
+      const list = AA_ANS.lists.get(rk);
+      if (AA_ANS.rid !== rk) { AA_ANS.rid = rk; AA_ANS.open = false; }
+      if (list && ((list.rows || []).length || (list.files || []).length)) bar.appendChild(aaAnsToggle(list, rk));
+      else AA_ANS.rid = null;
+      aaAnsRender();
     } else if (info.state === "ready" && info.record_id != null) {
       btn(T("aa.send", "Send"), "btn-primary bb-send", async (e) => {
         e.target.disabled = true;
