@@ -1070,6 +1070,68 @@ const FILL_CAPS = fillBudget.caps(process.env);
 const PLAN_MS = FILL_CAPS.plan;
 let _fillPhase = "";
 function fillPhase() { return _fillPhase; }
+// ---- (2026-11-26) Guided fill: top to bottom, visible, ends where the person acts --------------
+// The form's empty fields are read with their choices and the plan decides every one of them (the
+// same engine route as the fill's own plan). Then the walk: in page order, the page scrolls to
+// each field ("Scrolling"), the pointer moves to it ("Clicking: <field>"), text is typed a few
+// characters at a time, a choice is picked and its list closed ("Filling: <field>"), a file goes
+// in ("Uploading resume"); a field the person must answer gets a short pause and an outline
+// ("Needs you"). About 0.6 to 1.2 s a field. Nothing is ever submitted here.
+// The boxes the walk already filled on each page (record + page address): a second walk on the
+// same page (after the site's window was acknowledged, or the agent's next step) carries on where
+// the first stopped and never fills a box twice.
+const _walkDone = new Map();
+const _walkAsked = new Map();          // the boxes the walk left for the person, per page
+async function guidedWalk(wc, recordId, url, page, say, retryAsked) {
+  const pkey = finishRules.planKey(recordId, url);
+  return guided.walk({
+    js: (e, ms) => fillKeys.capped(wc.executeJavaScript(e, true), ms || 15000),
+    alive: () => !wc.isDestroyed(),
+    done: (() => { let d = _walkDone.get(pkey); if (!d) { d = new Set(); _walkDone.set(pkey, d); while (_walkDone.size > 40) _walkDone.delete(_walkDone.keys().next().value); } return d; })(),
+    asked: (() => { let d = _walkAsked.get(pkey); if (!d || retryAsked) { d = new Set(); _walkAsked.set(pkey, d); while (_walkAsked.size > 40) _walkAsked.delete(_walkAsked.keys().next().value); } return d; })(),
+    notePlanned: (fields) => { _planned.set(pkey, finishRules.notePlanned(_planned.get(pkey), fields)); },
+    plan: async (fields) => {
+      try {
+        const resp = await net.fetch(SERVER + "/api/autoapply/plan", {
+          method: "POST", headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1", ...SESSION_HEADER },
+          body: JSON.stringify({ url, record_id: recordId, fields }), signal: AbortSignal.timeout(30000) });
+        return resp.ok ? await resp.json() : null;
+      } catch (e) { return null; }
+    },
+    upload: async (refs, pathOf) => { const seen = []; const n = await cdpUploadFiles(wc, refs, pathOf, seen); return { n, seen }; },
+    say,
+  });
+}
+const guided = require("./guided");
+
+// (2026-11-26) Background answers, saved at submit time: the page's snapshot of its choice
+// questions, taken as the person presses Submit (autofill_core armSubmitSnapshot, a console line
+// only the shell reads), and sent to the engine once the site confirms the application through
+// the one shared signal (applied_watch.js onSubmitted). The engine keeps only the background
+// questions among them, as the person's own answers (autoapply/legalai.py). Never a guess.
+const _snapshots = new Map();            // webContents id -> { at, url, items }
+function watchSnapshots(wc) {
+  if (!wc || wc.__sjSnapWatch) return;
+  wc.__sjSnapWatch = true;
+  wc.on("console-message", (...args) => {
+    const msg = typeof args[0] === "object" && args[0] && "message" in args[0] ? args[0].message : args[2];
+    if (typeof msg === "string" && msg.startsWith("__sj_needs__")) {
+      // the item that needs the person now (autofill_core tellNeeds): the bar names the same one
+      try { const d = JSON.parse(msg.slice("__sj_needs__".length)); if (win && !win.isDestroyed()) win.webContents.send("assist:needs", d); } catch (e) { /* not ours */ }
+      return;
+    }
+    if (typeof msg !== "string" || !msg.startsWith("__sj_snapshot__")) return;
+    try { const d = JSON.parse(msg.slice("__sj_snapshot__".length)); _snapshots.set(wc.id, Object.assign({ at: Date.now() }, d)); } catch (e) { /* not ours */ }
+  });
+}
+appliedWatch.onSubmitted((ev) => {
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  const snap = wc ? _snapshots.get(wc.id) : null;
+  if (!snap || Date.now() - snap.at > 10 * 60 * 1000 || !(snap.items || []).length) return;
+  _snapshots.delete(wc.id);
+  postApp("/api/autoapply/background/capture", { record_id: ev.recordId, url: ev.url || snap.url, items: snap.items }).catch(() => null);
+});
+
 async function runAutoApplyOnPane(recordId, opts) {
   opts = opts || {};
   if (!pane) return { ok: false, reason: "no-page" };
@@ -1149,11 +1211,22 @@ async function runAutoApplyOnPane(recordId, opts) {
     const payload = await fetchAutofillPayload(recordId);
     lap("payload", "filling the page");
     const havePayload = !!(payload && payload.loaded !== false);
+    // (2026-11-26) Guided fill: the decisions first (the plan), then the walk, top to bottom, field
+    // after field, with the drawn pointer. Nothing on the page is filled out of sight (the owner,
+    // after Lam): when the walk ran, the engine's own fast pass and the second plan do not touch
+    // the page; a site window over the form stops the walk and is handed back (``modal``).
+    let walked = null;
+    watchSnapshots(wc);
+    if (opts.guided && pointer && havePayload) {
+      _fillPhase = "walking the form";
+      walked = await guidedWalk(wc, recordId, url, page, (t) => sendProgress(Object.assign({ record_id: recordId || null, page }, t)), !!opts.retryAsked);
+      lap("walk", "filling the page");
+    }
     const fillExpr = (budgetMs) => (havePayload
-      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.setPointer(${pointer}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
+      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.setPointer(${pointer && !walked}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
     const pres = [];
     let searchTrouble = [];                              // labels of lists whose search did not finish
-    if (havePayload) {
+    if (havePayload && !walked) {
       try { pres.push(await run("filling the page", "engine", (b) => wc.executeJavaScript(fillExpr(b), true), beatMain)); } catch (e) { /* fill what we can below */ }
       tally(pres[0]);
       if (pres[0] && debugLine) for (const line of (pres[0].trace || [])) debugLine("engine: " + line);
@@ -1231,7 +1304,8 @@ async function runAutoApplyOnPane(recordId, opts) {
       }
       return r.value || [];
     };
-    let fields = await readForm((expr) => wc.executeJavaScript(expr, true), beatMain);
+    // the page itself was walked: its boxes are done or the person's (frames are read as before)
+    let fields = walked ? [] : await readForm((expr) => wc.executeJavaScript(expr, true), beatMain);
     for (const ctx of liveFrames) fields = fields.concat(await readForm((expr) => fr.eval(ctx, expr), beatIn(ctx)));
     lap("extract", fields.length ? "the AI planned " + fields.length + " fields" : "checking what is left");
 
@@ -1242,7 +1316,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     // on a page that did not change asks the model nothing (6 to 17 plan calls an application).
     const pkey = finishRules.planKey(recordId, url);
     const unplanned = finishRules.unplannedFields(_planned.get(pkey), fields);
-    const skipPlan = !!opts.samePlanSkip && fields.length > 0 && unplanned.length === 0;
+    const skipPlan = !!(opts.samePlanSkip || walked) && fields.length > 0 && unplanned.length === 0;
     if (skipPlan) { counts.plan_skipped = 1; planReason = "already-planned"; }
     if (fields.length && !skipPlan && !(cut && cut.stalled) && fillBudget.room(C, "plan", Date.now() - t0)) {
       let plan = null;
@@ -1324,6 +1398,16 @@ async function runAutoApplyOnPane(recordId, opts) {
     let left = (await wc.executeJavaScript("window.TailorAutofill.leftover()", true)) || [];
     for (const ctx of liveFrames) left = left.concat((await fr.eval(ctx, "window.TailorAutofill.leftover()")) || []);
     left = [...new Set(left.concat(searchTrouble))].slice(0, 60);
+    if (walked && !walked.modal) {
+      // the required boxes still empty are outlined, in page order, for Next / Previous and the end
+      await wc.executeJavaScript(`(() => { const T = window.TailorAutofill; let n = 0;
+        for (const f of T.extractForm({ onlyEmpty: true })) if (f.required && T.markNeeds(f.ref)) n++; T.tidyMenus(); return n; })()`, true).catch(() => 0);
+    }
+    if (walked) {
+      applied.filled += walked.filled; applied.uploaded += walked.uploaded;
+      for (const f of walked.files) files.push(f);
+      planCost += walked.cost;
+    }
     // (the agent only) What this fill set and where each value came from, for the Review answers
     // list at Ready to send. Kept in the shell: never in the fill report, a log or a model call.
     let answers = [];
@@ -1338,13 +1422,22 @@ async function runAutoApplyOnPane(recordId, opts) {
     // (2026-11-26) A resume went in: the site's own parse may fill the contact boxes again over
     // ours a few seconds later (Ashby put the resume's email back). Guarded in the page for a
     // while; nothing waits for it.
-    if (applied.uploaded && havePayload) {
+    if (applied.uploaded && havePayload && !walked) {
       wc.executeJavaScript(`window.TailorAutofill.guardContact(${JSON.stringify(payload.fields || {})}, 15000)`, true).catch(() => null);
     }
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
+    watchSnapshots(wc);
+    wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitSnapshot && window.TailorAutofill.armSubmitSnapshot()", true).catch(() => null);
+    // Enter in a filled form never sends it; a script never clicks its Submit (Meriton, 2026-11-26)
+    wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitGuard && window.TailorAutofill.armSubmitGuard()", true).catch(() => null);
     if (fr) { fr.close(); fr = null; }
     const sig = await mainSignature(wc);
     if (!opts.fromWatch) armPageWatch(wc, recordId, page, sig);
+    if (walked && walked.modal) {
+      // the site's window is up: the caller reads it and acknowledges it in sight, then walks on
+      return { ok: true, modal: walked.modal, filled, uploaded: applied.uploaded, left: [], page, ms, counts, cost: planCost,
+               ...(opts.answers ? { answers, files } : {}) };
+    }
     if (!filled && !applied.uploaded && !fields.length && !left.length) {
       // A whole-page bot check instead of the form (SmartRecruiters' DataDome page): say so, so
       // the person clears it themselves; we never touch the challenge (CLAUDE.md section 7).
@@ -1507,8 +1600,34 @@ async function applyDecision(url, pageUrl) {
 // plain fill, the drawn pointer goes. The site's Submit is never pressed on this path.
 ipcMain.handle("assist:finish", async (_e, opts, report) => {
   const o = opts || {};
-  if (!o.finish) { if (pane) pointerOff(pane.webContents); return report; }
-  return finishAfterAutofill(o, report);
+  const r = o.finish ? await finishAfterAutofill(o, report) : report;
+  return guideEnd(r);
+});
+
+// (2026-11-26) The end of every Autofill: the pointer rests on the first field that needs the
+// person (outlined, with Next / Previous on the status line), else on the site's Submit, outlined,
+// with "Your turn: check and submit". Never pressed.
+async function guideEnd(r) {
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  if (!wc) return r;
+  let g = null;
+  try {
+    g = await fillKeys.capped(wc.executeJavaScript(`(async () => { const T = window.TailorAutofill; if (!T || !T.guideEnd) return null;
+      await T.tidyMenus(); return T.guideEnd(); })()`, true), 8000);
+  } catch (e) { g = null; }
+  if (!g || g === fillKeys.TIMED_OUT) return r;
+  return Object.assign({}, r || {}, { guide: { where: g.where, needs: g.n || 0, label: g.label || "" } });
+}
+// Next / Previous / Done on the status line: the pointer and the page go to each field that needs
+// the person, in page order; Done takes the outlines and the pointer away.
+ipcMain.handle("assist:guide-step", async (_e, dir) => {
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  if (!wc) return { n: 0 };
+  const d = dir === "done" ? "done" : Number(dir) || 0;
+  try {
+    return await wc.executeJavaScript(d === "done" ? "(window.TailorAutofill && window.TailorAutofill.clearNeeds(), { n: 0, done: true })"
+      : `window.TailorAutofill ? window.TailorAutofill.needsStep(${d}) : { n: 0 }`, true);
+  } catch (e) { return { n: 0 }; }
 });
 
 // After the fast Autofill: hand the page to the agent when it left required fields, more pages or
@@ -1518,7 +1637,7 @@ ipcMain.handle("assist:finish", async (_e, opts, report) => {
 // auto-submit, whatever is saved.
 async function finishAfterAutofill(o, r) {
   const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
-  const done = (x) => { if (wc) pointerOff(wc); return x; };
+  const done = (x) => x;                       // the pointer rests at the end (guideEnd)
   if (!wc || o.recordId === undefined || o.recordId === null || o.recordId === "" || agent.busy()) return done(r);
   let invalid = 0;
   try {
@@ -1598,7 +1717,7 @@ ipcMain.handle("assist:apply", async (_e, opts) => {
   if (!pane) return { ok: false, reason: "no-page" };
   const wc = pane.webContents;
 
-  const report = await runAutoApplyOnPane(recordId, { pointer: true });
+  const report = await runAutoApplyOnPane(recordId, { pointer: true, guided: true });
   const filledOk = !!(report && report.ok !== false);
   if (report && report.reason === "blocked") return report;   // never fight an auth wall
   let attached = !!(report && report.uploaded);

@@ -174,7 +174,11 @@ _ACK = re.compile(
     # an attestation that the application is true
     r"|\b(certify|attest|affirm|declare)\b[^?]{0,160}?\b(true|accurate|complete|correct|truthful)\b"
     r"|\binformation (i have |i've )?(provided|given|submitted)[^?]{0,80}?\b(true|accurate|complete|correct)\b"
-    r"|^\W*(\w+ )?acknowledge?ment\W*$|\backnowledge?ment of\b", re.I)
+    r"|^\W*(\w+ )?acknowledge?ment\W*$|\backnowledge?ment of\b"
+    # (2026-11-26, Vestmark) a privacy notice at collection (California's CCPA notice): a box under
+    # it only acknowledges the notice
+    r"|\b(ccpa|california consumer privacy act|california privacy rights act|notice at collection)\b"
+    r"|\bnotice (about|regarding|of) the collection (and use )?of (your )?personal information\b", re.I)
 # A question that asks the person to DISCLOSE something: a fact, never an acknowledgement.
 _DISCLOSE = re.compile(
     r"convict|criminal|felon|misdemeanor|arrest|pending charge|plead|guilty|offen[cs]e"
@@ -256,7 +260,28 @@ def acknowledge_answer(label: str, options, field_type: str = "select") -> str |
         return "Yes"
     if opts or t in ("select", "radio"):
         return affirm_option(opts)
-    return None
+    # (2026-11-26, Vestmark) a typed acknowledgement: the exact words the notice asks for, else
+    # "I acknowledge". Never a signature, initials, a name or a date: those are the person's.
+    lbl = " ".join(str(label or "").split())
+    if _SIGN.search(lbl):
+        return None
+    m = _TYPE_PHRASE.search(lbl)
+    return m.group(2).strip() if m else "I acknowledge"
+
+
+_SIGN = re.compile(r"\bsignature\b|\bsign (here|below|your)\b|\binitials?\b|\b(full|legal|your) name\b|\btoday'?s date\b|\bdate\W*$", re.I)
+_TYPE_PHRASE = re.compile(r"\b(type|enter|write|input)\s+(?:the (?:words?|phrase)\s+)?[\"\u201c'\u2018]([^\"\u201d'\u2019]{2,40})[\"\u201d'\u2019]", re.I)
+
+
+def suggestion(label: str, options, field_type: str = "text") -> str | None:
+    """(2026-11-26, the owner) What to suggest for an acknowledgement left for the person (no
+    standing consent): the words or the choice that acknowledges it, never committed by the app.
+    None for anything that is not an acknowledgement (a background or legal question never gets
+    one)."""
+    lbl = " ".join(str(label or "").split())
+    if not lbl or not is_acknowledgement(lbl) or is_optin(lbl):
+        return None
+    return acknowledge_answer(lbl, options, field_type)
 
 
 # ---------------------------------------------------------------------------- the rule

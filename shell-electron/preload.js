@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // The fill engine saw the site's "application received" page after the person submitted;
   // the shell already told the app to mark the job applied, this is the UI's cue.
   onApplied: (cb) => ipcRenderer.on("assist:applied", (_e, info) => cb(info)),
+  onNeeds: (cb) => ipcRenderer.on("assist:needs", (_e, info) => cb(info)),
   // The ONE apply path (Fill application, Review "Apply", Auto-apply "Open application"): open
   // the application in the pane and run the best fill (recipe, AI plan, resume upload).
   // opts = { url, recordId, resumePath, submit, here }. The site's submit is clicked ONLY when
@@ -56,6 +57,8 @@ contextBridge.exposeInMainWorld("tailorShell", {
   autoApplyRun: (url, recordId) => ipcRenderer.invoke("autoapply:run", url, recordId),
   // The apply agent (docs/apply-agent.md): run one application, press Send, stop.
   agentRun: (opts) => ipcRenderer.invoke("agent:run", opts || {}),
+  // (2026-11-26) Guided fill: Next (1) / Previous (-1) to each field that needs the person, "done".
+  guideStep: (dir) => ipcRenderer.invoke("assist:guide-step", dir),
   agentSend: (recordId, opts) => ipcRenderer.invoke("agent:send", recordId, opts || null),
   agentPoll: () => ipcRenderer.invoke("agent:poll"),
   agentStop: () => ipcRenderer.invoke("agent:stop"),

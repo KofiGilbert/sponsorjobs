@@ -254,10 +254,16 @@ function qsaSafe(sel, root) {
       if (m.dialog_text && successDialog(m.dialog_text)) return true;
     }
     if (!r && !formOpen) {       // no recipe: the generic wording most systems use
-      return /thank you for applying|application (has been|was) (submitted|received)|we('| ha)?ve received your application/.test(body);
+      if (SUCCESS_WORDS.test(body)) return true;
     }
-    return false;
+    // (2026-11-26, Lam Research's own careers site: "Thank you for your application, Kofi!" in a
+    // window over the profile page) the same words inside an open dialog are the site's answer to
+    // a submit, form or no form
+    return SUCCESS_WORDS_DIALOG.some((w) => successDialog(w));
   }
+  const SUCCESS_WORDS = /thank you for applying|thank you for your application|application (has been|was) (submitted|received)|we('| ha)?ve received your application/;
+  const SUCCESS_WORDS_DIALOG = ["thank you for applying", "thank you for your application", "application has been submitted",
+    "application was submitted", "application has been received", "we have received your application", "we've received your application"];
   function successDialog(words) {
     const want = norm(words);
     if (!want) return false;
@@ -1276,8 +1282,23 @@ function qsaSafe(sel, root) {
     return own + " " + (f.name || "") + " " + (f.id || "") + " " + (f.getAttribute("aria-label") || "");
   }
   function isLetterBox(f) { return !!f && LETTER_BOX_RE.test(fileBoxWords(f)); }
+  // (2026-11-26, the owner) The site's own "Autofill from resume" box (Ashby's, at the top of its
+  // form): a file there makes the SITE fill the form out of sight from its parse. The resume goes
+  // into the form's plain Resume / CV field, at its own place in the walk, never into this box.
+  const PARSE_BOX_RE = /\bauto-?fill\b|\bauto-?populate|\bpre-?fill (?:the |your )?(?:form|application)|\bparse (?:your )?r[eé]sum/i;
+  function siteParseBox(f) {
+    try {
+      if (PARSE_BOX_RE.test(fileBoxWords(f))) return true;
+      let n = f.parentElement;
+      for (let i = 0; n && i < 6; i++, n = n.parentElement) {
+        if (qsaSafe("input, textarea, select", n).some((x) => x !== f && x.type !== "hidden")) return false;   // the form's own area
+        if (PARSE_BOX_RE.test(String(n.textContent || "").slice(0, 400))) return true;
+      }
+    } catch (e) { /* plain box */ }
+    return false;
+  }
   function resumeInput() {
-    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled && !(f.files && f.files.length));
+    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled && !(f.files && f.files.length) && !siteParseBox(f));
     const named = boxes.find((f) => !isLetterBox(f) && RESUME_BOX_RE.test(fileBoxWords(f)));
     if (named) return named;
     const rest = boxes.filter((f) => !isLetterBox(f));
@@ -1435,7 +1456,7 @@ function qsaSafe(sel, root) {
   }
   // The resume's box even when it already holds a file (for the listing checks above).
   function resumeInputAny() {
-    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled);
+    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled && !siteParseBox(f));
     return boxes.find((f) => !isLetterBox(f) && RESUME_BOX_RE.test(fileBoxWords(f)))
       || (boxes.filter((f) => !isLetterBox(f)).length === 1 ? boxes.find((f) => !isLetterBox(f)) : null);
   }
@@ -1733,6 +1754,7 @@ function qsaSafe(sel, root) {
       if (["radio", "hidden", "submit", "button", "reset", "password", "image"].includes(raw)) return;
       if (isWidgetInput(el)) return;                                         // listed below as a widget
       if (siteSearch(el)) return;                                            // the site's job search
+      if (raw === "file" && siteParseBox(el)) return;                        // the site's own "Autofill from resume"
       if (onlyEmpty && raw !== "file" && raw !== "checkbox" && String(el.value || "").trim()
           && !/^(select|choose|--|please)/i.test(String(el.value))) return;
       const rect = el.getBoundingClientRect();
@@ -3066,7 +3088,7 @@ function qsaSafe(sel, root) {
 
   // extractForm, plus the option lists of custom dropdowns, which only exist in the page while
   // the menu is open: open each (at most 15), read up to 40 options, close it again.
-  const EXTRACT_BUDGET_MS = 8000;
+  const EXTRACT_BUDGET_MS = 15000;
   async function extractFormAsync(opts) {
     let n = 0;
     // ``budgetMs`` (the shell's): what is left of the form read across the page and its frames.
@@ -3076,7 +3098,9 @@ function qsaSafe(sel, root) {
     passStart();
     for (const el of comboboxes()) {
       // a real cap: a dropdown is only opened while there is time to read and close it
-      if (n >= 15 || Date.now() + 250 > budget) { if (n < 15) _timedOut = true; break; }
+      // (2026-11-26) up to 40: Axon's Greenhouse form has 23, and the 15 before left its Gender,
+      // Hispanic and Veteran Status lists without choices, so the saved answers could not be matched
+      if (n >= 40 || Date.now() + 250 > budget) { if (n < 40) _timedOut = true; break; }
       if (_comboOptions.has(el) || comboValue(el) || popupStuckFor(el) || stuckShowing()) continue;
       n++;
       tick();
@@ -4529,6 +4553,519 @@ function qsaSafe(sel, root) {
   // Only a REQUIRED question is ever "left for you": an optional box the person's material does
   // not answer (Workday's Field of Study, Skills, a second address line) stays empty silently, and
   // never stops a run or shows on the bar (2026-11-16: "3 left for you" on Uline, all optional).
+  // ---- (2026-11-26) Guided fill: the shell walks the form top to bottom with the drawn pointer,
+  // one field after another (shell-electron/main.js guidedWalk). The decisions are made first (the
+  // plan); these only place, type and tidy, so a person watching can follow it with their eyes.
+  function docOrder(a, b) {
+    if (a === b) return 0;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const ya = ra.top + (window.scrollY || 0), yb = rb.top + (window.scrollY || 0);
+    if (Math.abs(ya - yb) > 4) return ya - yb;                    // top to bottom
+    const pos = a.compareDocumentPosition(b);
+    return pos & 4 ? -1 : pos & 2 ? 1 : ra.left - rb.left;         // then in the page's own order
+  }
+  /** The refs in page order, top to bottom; refs no longer on the page are left out. */
+  function orderRefs(refs) {
+    const els = (refs || []).map((r) => [r, elByRef(r)]).filter(([, el]) => el && el.isConnected);
+    els.sort((x, y) => docOrder(visibleBox(x[1]), visibleBox(y[1])));
+    return els.map(([r]) => r);
+  }
+  // A hidden file input or a react-select's zero-width box: the visible box a person sees for it.
+  function visibleBox(el) {
+    let b = el;
+    for (let i = 0; b && i < 5; i++) {
+      const r = b.getBoundingClientRect();
+      if (r.width > 8 && r.height > 8) return b;
+      b = b.parentElement;
+    }
+    return el;
+  }
+  function inView(el) {
+    const r = el.getBoundingClientRect(), vh = window.innerHeight || 800;
+    return r.top >= 60 && r.bottom <= vh - 60;
+  }
+  /** Bring the field into view (smoothly unless reduced motion) and wait until the page stops
+   * moving, so the pointer lands where the field IS; {scrolled, label}. */
+  async function walkTo(ref) {
+    const r = walkStart(ref);
+    if (!r.ok || !r.scrolled) return r;
+    await settled(visibleBox(elByRef(ref)));
+    return r;
+  }
+  // Wait until the page stops moving under an element (a smooth scroll), 1.5 s at most.
+  async function settled(el) {
+    let last = null;
+    for (let i = 0; i < 30; i++) {
+      await plainSleep(50);
+      const t = Math.round(el.getBoundingClientRect().top);
+      if (last !== null && t === last) return;
+      last = t;
+    }
+  }
+  // The site's modal window over a field (pointer_overlay.js coverOf), or null.
+  function coveredBy(el) {
+    try { const P = window.TailorPointer; return P && P.coverOf ? P.coverOf(visibleBox(el)) : null; } catch (e) { return null; }
+  }
+  function walkStart(ref) {
+    const el = elByRef(ref);
+    if (!el) return { ok: false };
+    const box = visibleBox(el);
+    const cov = coveredBy(el);
+    if (cov) {                         // a window over the page: nothing scrolls behind it
+      let t = "";
+      try { t = window.TailorPointer.titleOf(cov) || "the window on the page"; } catch (e) { t = "the window on the page"; }
+      return { ok: true, scrolled: false, covered: t, label: cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40) };
+    }
+    let scrolled = false;
+    if (!inView(box)) {
+      let reduce = false;
+      try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { reduce = false; }
+      try { box.scrollIntoView({ block: "center", behavior: reduce ? "instant" : "smooth" }); } catch (e) { box.scrollIntoView(); }
+      scrolled = true;
+    }
+    return { ok: true, scrolled, label: cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40) };
+  }
+  /** The drawn pointer on a field (its visible box), with ``label``. */
+  function pointAt(ref, label) {
+    const el = elByRef(ref);
+    const P = window.TailorPointer;
+    if (!el || !P) return false;
+    return !!P.at(visibleBox(el), label, { now: true });
+  }
+  /** Type ``text`` into a text box a few characters at a time, the way a person types: about
+   * ``perChar`` ms a character for the first ``burst`` characters, then the rest at once. */
+  async function typeVisibly(ref, text, o) {
+    const el = elByRef(ref);
+    const t = String(text == null ? "" : text);
+    if (!el || !("value" in el) || /^(SELECT)$/.test(tagOf(el))) return false;
+    if (isWidgetInput(el) || el.getAttribute("role") === "combobox" || /^(checkbox|radio|file|hidden)$/i.test(el.type || "")) return false;
+    const per = Math.max(10, Math.min(120, Number(o && o.perChar) || 45));
+    const burst = Math.max(0, Math.min(t.length, Number(o && o.burst) || 14));
+    try { if (el.focus) el.focus(); } catch (e) { /* fine */ }
+
+    for (let i = 1; i <= burst; i++) { setNativeValue(el, t.slice(0, i)); await plainSleep(per); }
+    setNativeValue(el, t);
+    return String(el.value || "") === t;
+  }
+  /** Close every dropdown left open on the page (a react-select menu, a listbox), whoever opened
+   * it, and let go of the keyboard: the page is left tidy. Returns how many were open. */
+  async function tidyMenus() {
+    let n = 0;
+    for (const el of comboboxes()) {
+      if (!el.isConnected) continue;
+      // only a list a person can SEE (a phone widget's hidden country search says expanded forever)
+      if ((el.getAttribute("aria-expanded") === "true" && boxShown(el)) || optionsFor(el).length > 0) {
+        n++;
+        try { await closeCombo(el); } catch (e) { /* the next one */ }
+      }
+    }
+    try { await closeOpened(); } catch (e) { /* fine */ }
+    try { const a = document.activeElement; if (a && a !== document.body && a.blur && /^(INPUT|SELECT|TEXTAREA)$/.test(tagOf(a))) a.blur(); } catch (e) { /* fine */ }
+    return n;
+  }
+  // The fields that need the person, in page order: a glow ring each until answered (or Done), and
+  // the pointer can step through them (Next / Previous on the status line).
+  //
+  // (2026-11-26, the owner) The glow: a soft violet ring (#7957FC, the pointer's colour) around each
+  // field, gently pulsing (static under reduced motion); the current one brighter. Drawn in an
+  // overlay of its own (fixed, pointer-events none, its own shadow root), so the site's layout and
+  // styles never change, the field's own error text is never covered (the ring sits just outside
+  // the box), and it reads on white and dark pages (violet ring plus a white hairline). A field's
+  // ring goes as soon as the field holds an answer.
+  let _needs = [], _needsAt = -1;
+  const GLOW = "#7957FC";
+  let _glowHost = null, _glowRoot = null, _glowTimer = null;
+  const _glowEls = new Map();                  // element -> ring div
+  function glowRoot() {
+    if (_glowHost && _glowHost.isConnected) return _glowRoot;
+    _glowHost = document.createElement("div");
+    _glowHost.setAttribute("data-sj-glow", "");
+    _glowHost.setAttribute("aria-hidden", "true");
+    _glowHost.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;z-index:2147483645;pointer-events:none;";
+    _glowRoot = _glowHost.attachShadow({ mode: "open" });
+    const st = document.createElement("style");
+    st.textContent = `
+      .r { position: fixed; border-radius: 8px; pointer-events: none; box-sizing: border-box;
+           border: 2px solid ${GLOW}; outline: 1px solid rgba(255,255,255,.85); outline-offset: 0;
+           box-shadow: 0 0 0 3px rgba(121,87,252,.18), 0 0 14px 2px rgba(121,87,252,.35);
+           opacity: .55; animation: sjpulse 2s ease-in-out infinite; }
+      .r.cur { border-width: 3px; opacity: 1;
+               box-shadow: 0 0 0 4px rgba(121,87,252,.28), 0 0 22px 6px rgba(121,87,252,.55); }
+      .r.off { display: none; }
+      .chip { position: fixed; pointer-events: auto; cursor: pointer; padding: 3px 12px; border-radius: 999px;
+              background: ${GLOW}; color: #fff; border: 1px solid rgba(255,255,255,.6);
+              font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+      .chip[hidden] { display: none; }
+      @keyframes sjpulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.45); } }
+      @media (prefers-reduced-motion: reduce) { .r { animation: none; } }
+    `;
+    _glowRoot.appendChild(st);
+    (document.body || document.documentElement).appendChild(_glowHost);
+    try { window.addEventListener("scroll", placeGlows, true); window.addEventListener("resize", placeGlows); } catch (e) { /* fine */ }
+    if (!_glowTimer) _glowTimer = setInterval(() => {
+      const cur = needsCurEl();
+      const moveOn = !!(cur && needsKind(cur) === "choice" && filledNow(cur));
+      dropAnswered(); placeGlows();
+      if (moveOn) needsNext();                              // a list or a choice answered: on by itself
+    }, 400);
+    return _glowRoot;
+  }
+  /** Ring ``el`` (its visible box); ``cur``: the one to go to now. */
+  function glow(el, cur) {
+    if (!el) return false;
+    const root = glowRoot();
+    let r = _glowEls.get(el);
+    if (!r) { r = document.createElement("div"); r.className = "r"; root.appendChild(r); _glowEls.set(el, r); }
+    r.classList.toggle("cur", !!cur);
+    placeGlows();
+    return true;
+  }
+  function unglow(el) {
+    const r = _glowEls.get(el);
+    if (r) r.remove();
+    _glowEls.delete(el);
+    if (!_glowEls.size) stopGlows();
+  }
+  function stopGlows() {
+    if (_chip) { try { _chip.remove(); } catch (e) { /* fine */ } _chip = null; }
+    for (const r of _glowEls.values()) r.remove();
+    _glowEls.clear();
+    clearInterval(_glowTimer); _glowTimer = null;
+    if (_glowHost && _glowHost.parentNode) _glowHost.parentNode.removeChild(_glowHost);
+    _glowHost = _glowRoot = null;
+  }
+  function placeGlows() {
+    if (_chip && _chip.isConnected && !_chip.hidden) {
+      const c = needsCurEl();
+      const b = c ? visibleBox(c).getBoundingClientRect() : null;
+      if (b && (b.width || b.height) && !coveredBy(c)) { _chip.style.left = Math.max(4, b.right - 60) + "px"; _chip.style.top = (b.bottom + 8) + "px"; _chip.style.display = ""; }
+      else _chip.style.display = "none";
+    }
+    for (const [el, r] of _glowEls) {
+      if (!el.isConnected) { r.classList.add("off"); continue; }
+      const b = visibleBox(el).getBoundingClientRect();
+      if (!b.width && !b.height) { r.classList.add("off"); continue; }
+      if (coveredBy(el)) { r.classList.add("off"); continue; }     // never drawn over a site's window
+      r.classList.remove("off");
+      r.style.left = (b.left - 5) + "px"; r.style.top = (b.top - 5) + "px";
+      r.style.width = (b.width + 10) + "px"; r.style.height = (b.height + 10) + "px";
+    }
+  }
+  // a field that now holds an answer loses its ring (and leaves the list)
+  function dropAnswered() {
+    for (const el of [..._glowEls.keys()]) if (!el.isConnected || (filledNow(el) && !el.__sjFlash)) unglow(el);
+  }
+  let _chip = null;
+  function chipFor(el) {
+    const root = glowRoot();
+    if (!_chip || !_chip.isConnected) {
+      _chip = document.createElement("button");
+      _chip.type = "button"; _chip.className = "chip"; _chip.textContent = "Next";
+      _chip.addEventListener("mousedown", (e) => e.preventDefault());       // the box keeps the caret
+      _chip.addEventListener("click", (e) => { e.preventDefault(); const c = needsCurEl(); if (c) needsEnter(c); });
+      root.appendChild(_chip);
+    }
+    _chip.hidden = !(el && needsKind(el) === "multi");
+    placeGlows();
+  }
+  function currentGlow(ref) {
+    for (const r of _needs) { const el = elByRef(r); if (el && _glowEls.has(el)) _glowEls.get(el).classList.toggle("cur", r === ref); }
+    try { chipFor(elByRef(ref)); } catch (e) { /* fine */ }
+  }
+  const _needsSuggest = new Map();       // ref -> the suggestion for it (an acknowledgement), never committed
+  function markNeeds(ref, suggest) {
+    const el = elByRef(ref);
+    if (!el || filledNow(el)) return false;
+    if (suggest) _needsSuggest.set(ref, String(suggest).slice(0, 120));
+    try { glow(el, false); } catch (e) { return false; }
+    if (!_needs.includes(ref)) _needs.push(ref);
+    return true;
+  }
+  function needsList() {
+    _needs = orderRefs(_needs.filter((r) => { const el = elByRef(r); return el && !filledNow(el); }));
+    return _needs.slice();
+  }
+  function filledNow(el) {
+    if (tagOf(el) === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "")) return false;
+    if (isWidgetInput(el) || el.getAttribute("role") === "combobox") return !!(comboValue(el) || chosenPills(el).length);
+    return !!String(el.value || "").trim();
+  }
+  /** Move to the next (dir 1) or previous (-1) field that needs the person: scroll, pointer, label. */
+  async function needsStep(dir) {
+    const list = needsList();
+    if (!list.length) return { n: 0, i: -1 };
+    _needsAt = dir === 0 ? 0 : (_needsAt + (dir < 0 ? -1 : 1) + list.length) % list.length;
+    const ref = list[_needsAt];
+    const w = walkStart(ref);
+    const el = elByRef(ref);
+    if (w.scrolled && el) await settled(visibleBox(el));
+    _needsCur = ref;
+    currentGlow(ref);
+    try { if (el && el.focus) el.focus({ preventScroll: true }); } catch (e) { /* fine */ }
+    // (2026-11-26, the owner) a suggestion (an acknowledgement's words) is typed in and left
+    // selected, so typing replaces it and Enter accepts it; a list's suggestion is only named
+    const sug = _needsSuggest.get(ref) || "";
+    if (sug && el && /^(line|multi)$/.test(needsKind(el)) && !filledNow(el)) {
+      await typeVisibly(ref, sug, { perChar: 30, burst: 14 });
+      try { el.focus({ preventScroll: true }); el.select(); } catch (e) { /* fine */ }
+    }
+    const P = window.TailorPointer;
+    if (P && el) P.at(visibleBox(el), needsSay(el, sug), { now: true, stay: true });
+    const name = shortName(el);
+    tellNeeds({ n: list.length, i: _needsAt, label: name, suggest: sug });
+    return { n: list.length, i: _needsAt, label: name };
+  }
+  // The item's name in plain words, the same on the bar and beside the pointer: a long notice is
+  // "the privacy notice" (or "the terms"), anything else its own question, cut at a word.
+  function shortName(el) {
+    const raw = cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").replace(/\s+/g, " ").trim();
+    if (raw.length > 70 && /privacy|personal information|ccpa|data protection|gdpr/i.test(raw)) return "the privacy notice";
+    if (raw.length > 70 && /terms|conditions|agreement|acknowledg/i.test(raw)) return "the terms";
+    if (raw.length <= 70) return raw;
+    const cut = raw.slice(0, 70);
+    return cut.slice(0, Math.max(40, cut.lastIndexOf(" "))) + "...";
+  }
+  // The shell hears which item is current (a console line only it reads): the app's bar names the
+  // same item the pointer does.
+  function tellNeeds(d) {
+    try { console.debug("__sj_needs__" + JSON.stringify(d)); } catch (e) { /* fine */ }
+  }
+  // (2026-11-26, the owner) The fields that need the person, one after another: the caret in the
+  // first, with the strong ring and "Fill this, then press Enter". Enter in a one-line box (the form
+  // is never sent, armSubmitGuard) with a valid answer moves the caret, ring and pointer to the
+  // next one; an empty or invalid answer stays and says so. A list, a choice or a tick box moves
+  // on by itself once answered. A multi-line box keeps Enter for a new line: its "Next" chip (or
+  // Cmd/Ctrl+Enter) moves on. Tab works as always. After the last one: the pointer ON the site's
+  // Submit, "All done. Press Submit when you're happy". The bar's Previous / Next still work.
+  let _needsCur = "";
+  function needsKind(el) {
+    const t = tagOf(el);
+    if (t === "TEXTAREA") return "multi";
+    if (t === "INPUT" && /^file$/i.test(el.type || "")) return "file";
+    if (t === "SELECT" || isWidgetInput(el) || el.getAttribute("role") === "combobox" || /^(checkbox|radio)$/i.test(el.type || "")) return "choice";
+    return "line";
+  }
+  function needsSay(el, sug) {
+    const k = needsKind(el);
+    if (sug && (k === "line" || k === "multi")) return "Suggested: " + sug + ". Press Enter to accept, or type your own";
+    if (sug && k === "choice") return "Suggested: " + sug + ". Pick it, or choose another";
+    return { line: "Fill this, then press Enter", multi: "Fill this, then press Next", choice: "Choose an answer", file: "Add the file here" }[k];
+  }
+  function answerValid(el) {
+    if (!filledNow(el)) return false;
+    try { return typeof el.checkValidity === "function" ? el.checkValidity() : true; } catch (e) { return true; }
+  }
+  async function restOnSubmit(label) {
+    const recipe = recipeFor();
+    try { highlightSubmit(recipe); } catch (e) { /* fine */ }
+    let sub = qsaDeep(".tailor-submit-hint")[0];
+    if (!sub) {                       // no recipe for this site: the page's own Submit by its words
+      const SUBMIT_WORDS = /^(submit( (my )?application)?|send( (my )?application)?|review and submit|complete application|apply( now)?)$/i;
+      const cands = qsaDeep("button, input[type='submit'], [role='button'], a").filter((b) => shown(b)
+        && SUBMIT_WORDS.test(String(b.innerText || b.value || b.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
+      sub = cands[cands.length - 1] || null;
+      if (sub) { injectStyle(); try { sub.classList.add("tailor-submit-hint"); } catch (e) { /* fine */ } }
+    }
+    if (!sub) return null;
+    try { sub.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { sub.scrollIntoView(); }
+    await settled(sub);
+    try { window.TailorPointer && window.TailorPointer.at(sub, label, { now: true, stay: true, on: true }); } catch (e) { /* fine */ }
+    return sub;
+  }
+  let _needsMoving = false;
+  /** The current field is answered: on to the next one that needs the person, else to Submit. */
+  async function needsNext() {
+    if (_needsMoving) return null;
+    _needsMoving = true;
+    try {
+      const was = elByRef(_needsCur);
+      const list = needsList();
+      if (!list.length) {
+        _needsCur = ""; stopGlows();
+        tellNeeds({ n: 0, i: -1, label: "" });
+        await restOnSubmit("All done. Press Submit when you're happy");
+        return { done: true };
+      }
+      let i = was ? list.findIndex((r) => { const e = elByRef(r); return e && was.compareDocumentPosition(e) & 4; }) : 0;
+      if (i < 0) i = 0;
+      _needsAt = i - 1;
+      return await needsStep(1);
+    } finally { _needsMoving = false; }
+  }
+  // Enter (or the chip, or Cmd/Ctrl+Enter in a multi-line box) on the current field.
+  function needsEnter(el) {
+    if (answerValid(el)) { needsNext(); return true; }
+    const P = window.TailorPointer;
+    if (P) {
+      P.at(visibleBox(el), "This one still needs an answer", { now: true, stay: true });
+      setTimeout(() => { try { if (_needsCur && elByRef(_needsCur) === el) P.at(visibleBox(el), needsSay(el, _needsSuggest.get(_needsCur)), { now: true, stay: true }); } catch (e) { /* fine */ } }, 1600);
+    }
+    return false;
+  }
+  function needsCurEl() { return _needsCur ? elByRef(_needsCur) : null; }
+  // (2026-11-26) The site's own window over the page (a privacy notice), as {title}, or null.
+  function siteModal() {
+    const P = window.TailorPointer;
+    const m = P && P.openModal ? P.openModal() : null;
+    return m ? { title: (P.titleOf && P.titleOf(m)) || "the window on the page" } : null;
+  }
+  /** Read the site's window like a person: the pointer on its title ("Reading: <title>"), its text
+   * scrolled through at a readable pace for about ``ms`` (a few seconds, not all of it). */
+  async function readModal(ms) {
+    const P = window.TailorPointer;
+    const m = P && P.openModal ? P.openModal() : null;
+    if (!m) return null;
+    const title = (P.titleOf && P.titleOf(m)) || "";
+    const head = (P.headOf && P.headOf(m)) || m;
+    P.at(head, title ? "Reading: " + title : "Reading the window on the page", { now: true, stay: true });
+    // the part of the window that scrolls (its body), else the window itself
+    let box = null;
+    for (const n of [m, ...qsaSafe("*", m)]) {
+      if (n.scrollHeight > n.clientHeight + 40) { const g = getComputedStyle(n); if (/(auto|scroll)/.test(g.overflowY)) { box = n; break; } }
+    }
+    const total = Math.max(1500, Math.min(6000, Number(ms) || 3500));
+    const t0 = Date.now();
+    if (box) {
+      const span = Math.min(box.scrollHeight - box.clientHeight, box.clientHeight * 2);
+      while (Date.now() - t0 < total) {
+        const f = Math.min(1, (Date.now() - t0) / total);
+        box.scrollTop = Math.round(span * f);
+        await plainSleep(80);
+      }
+    } else await plainSleep(total);
+    return { title };
+  }
+  /** (2026-11-26, the owner) Before the walk: the boxes it will fill that the site already filled
+   * (its resume parse, a saved draft) are emptied in one quick reset, so the form looks empty and
+   * the walk fills each box once, top to bottom. Text boxes, text areas and plain lists with an
+   * empty first choice only; a file, a tick box, a radio or a custom list is left as it is (the
+   * walk picks our choice in it). Returns how many were emptied. */
+  function resetBoxes(refs) {
+    let n = 0;
+    for (const ref of refs || []) {
+      const el = elByRef(ref);
+      if (!el || el.disabled || el.readOnly) continue;
+      try {
+        if (tagOf(el) === "SELECT") {
+          const first = el.options[0];
+          if (el.selectedIndex > 0 && first && (!first.value || /^(select|choose|--|please)/i.test(first.text || ""))) {
+            el.selectedIndex = 0; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); n++;
+          }
+          continue;
+        }
+        if (isWidgetInput(el) || el.getAttribute("role") === "combobox") continue;
+        if (tagOf(el) === "INPUT" && /^(file|checkbox|radio|hidden|submit|button)$/i.test(el.type || "")) continue;
+        if ("value" in el && String(el.value || "")) { setNativeValue(el, ""); n++; }
+      } catch (e) { /* left as it is */ }
+    }
+    return n;
+  }
+  // The field being filled glows for the moment it is filled (the needs-you ring's look, brighter).
+  function flash(ref, on) {
+    const el = elByRef(ref);
+    if (!el) return false;
+    if (on) { if (!_glowEls.has(el)) { glow(el, true); el.__sjFlash = true; } }
+    else if (el.__sjFlash) { el.__sjFlash = false; unglow(el); }
+    return true;
+  }
+  function clearNeeds() {
+    stopGlows();
+    _needs = []; _needsAt = -1; _needsCur = ""; _needsSuggest.clear();
+    try { if (window.TailorPointer) window.TailorPointer.hide(); } catch (e) { /* fine */ }
+    return true;
+  }
+  /** The end of a run: the pointer rests on the first field that needs the person, else on the
+   * site's Submit (outlined, never pressed) with "Your turn: check and submit". */
+  async function guideEnd() {
+    const list = needsList();
+    if (list.length) { _needsAt = -1; const r = await needsStep(1); return { where: "needs", n: list.length, label: r.label }; }
+    if (await restOnSubmit("Your turn: check and submit")) return { where: "submit", n: 0 };
+    return { where: "none", n: 0 };
+  }
+
+  // (2026-11-26, Meriton) The app never submits, and no key ends up submitting for it. On a page
+  // the app filled: Enter in a one-line box of a form that has a Submit button does NOT send the
+  // form (the browser's "implicit submission"; the owner typed an answer the app asked for in the
+  // site's own box and the application went); the site's own Enter handlers still run (a list's
+  // search), only the form's default sending is stopped, and the pointer shows where the
+  // person's Submit is. A Submit control is never clicked by a script (an untrusted click is
+  // stopped before the site sees it). The person's own click on Submit is untouched.
+  const SUBMIT_TEXT_RE = /^(submit( (my |your |the )?application)?|send( (my |your )?application)?|apply( now)?|complete( (my )?application)?|finish( (my )?application)?|submit and finish)$/i;
+  function submitLike(node) {
+    const b = node && node.closest ? node.closest("button, input[type='submit'], input[type='button'], [role='button'], a") : null;
+    if (!b) return null;
+    const t = String(b.innerText || b.value || b.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+    return SUBMIT_TEXT_RE.test(t) ? b : null;
+  }
+  const ONE_LINE_RE = /^(text|email|tel|url|number|search|password|date|month|week|time|datetime-local)$/i;
+  function enterWouldSubmit(t) {
+    if (!t || tagOf(t) !== "INPUT" || !ONE_LINE_RE.test(t.type || "text")) return false;
+    if (t.getAttribute("role") === "combobox" || t.getAttribute("aria-autocomplete") || t.getAttribute("aria-expanded") === "true") return false;
+    const f = t.form || (t.closest && t.closest("form"));
+    if (!f) return false;
+    return qsaSafe("button, input[type='submit']", f).some((b) => b.type === "submit" || submitLike(b));
+  }
+  function armSubmitGuard() {
+    if (window.__sjSubmitGuard) return false;
+    window.__sjSubmitGuard = true;
+    document.addEventListener("keydown", (e) => {
+      try {
+        const cur = e.key === "Enter" && !e.isComposing ? needsCurEl() : null;
+        if (cur && (e.target === cur || cur.contains(e.target))) {
+          const kind = needsKind(cur);
+          if (kind === "multi" && !(e.metaKey || e.ctrlKey)) return;     // a new line, as always
+          if (kind === "line" || kind === "multi") { e.preventDefault(); needsEnter(cur); return; }
+        }
+        if (e.key !== "Enter" || e.isComposing || e.shiftKey || !enterWouldSubmit(e.target)) return;
+        e.preventDefault();                                 // the box keeps its words; the form is not sent
+        window.__sjEnterStopped = (window.__sjEnterStopped || 0) + 1;
+        const f = e.target.form || e.target.closest("form");
+        const sub = qsaSafe("button, input[type='submit']", f).find((b) => submitLike(b)) || null;
+        const P = window.TailorPointer;
+        if (P && sub) P.at(sub, "Press Submit yourself when you are ready", { now: true, stay: true, on: true });
+      } catch (err) { /* never in the page's way */ }
+    }, true);
+    document.addEventListener("click", (e) => {
+      try {
+        if (e.isTrusted) return;                            // the person's own click (or a real one)
+        if (submitLike(e.target)) { e.preventDefault(); e.stopImmediatePropagation(); window.__sjClickStopped = (window.__sjClickStopped || 0) + 1; }
+      } catch (err) { /* fine */ }
+    }, true);
+    return true;
+  }
+
+  // (2026-11-26) What the form's choice questions hold the moment the person presses the site's
+  // Submit: the shell keeps it (a console line it alone reads) and, once the site confirms the
+  // application (applied_watch.js onSubmitted), saves the background answers among them through
+  // the engine. Armed once per page; never in the page's way.
+  function armSubmitSnapshot() {
+    if (window.__sjSnapArmed) return false;
+    window.__sjSnapArmed = true;
+    const snap = () => {
+      try {
+        const items = [];
+        for (const f of extractForm({})) {
+          if (!f.options || !f.options.length) continue;
+          const el = elByRef(f.ref);
+          if (!el) continue;
+          const v = tagOf(el) === "SELECT" ? ((el.options[el.selectedIndex] || {}).text || "") : (comboValue(el) || chosenPills(el).join(", "));
+          if (String(v || "").trim()) items.push({ question: cleanLabel(f.label).slice(0, 300), value: String(v).trim().slice(0, 200), options: f.options.slice(0, 40) });
+        }
+        console.debug("__sj_snapshot__" + JSON.stringify({ url: location.href, items: items.slice(0, 60) }));
+      } catch (e) { /* never in the page's way */ }
+    };
+    document.addEventListener("submit", snap, true);
+    document.addEventListener("click", (e) => {
+      try {
+        const b = e.target && e.target.closest && e.target.closest("button, input[type='submit'], [role='button']");
+        const t = b ? String(b.innerText || b.value || "").replace(/\s+/g, " ").trim() : "";
+        if (b && (b.type === "submit" || /^(submit|send|apply)\b/i.test(t))) snap();
+      } catch (e2) { /* fine */ }
+    }, true);
+    return true;
+  }
+
   function leftover() {
     const out = [];
     for (const f of extractForm({ onlyEmpty: true })) {
@@ -4586,5 +5123,8 @@ function qsaSafe(sel, root) {
     honeypot, parkedOffCanvas,
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
+    // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
+    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
+    siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike, needsNext, needsKind,
   };
 })();

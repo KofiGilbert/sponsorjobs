@@ -2081,3 +2081,129 @@ empty, a site error, a closed posting, other. The person's own Stop makes none.
   every stop grouped by its question (else its host), seen most first, with the newest example and
   the agent's reason.
 - Tests: tests/test_stoplog.py, tests/js/test_stoplog_events.js, worker/test/stoplog.test.ts.
+
+## 38. Guided fill: top to bottom, visible, ends where the person acts (2026-11-26)
+
+The owner watched a live Autofill on a Greenhouse form (Axon) and could not follow it. Three bugs
+and a redesign:
+
+- **The pointer was not seen**: the fast fill's pointer only showed on boxes already in view, and
+  most were below the fold. Now the page scrolls to each field first.
+- **Lists left open**: Yes / No react-select menus hung open after the run. `tidyMenus` closes every
+  list a person can see after each field and at the end, whoever opened it, and lets go of the
+  keyboard.
+- **Veteran Status stayed "Select..."**: the form read stopped reading choices after 15 lists, and
+  that form has 23, so Gender, Hispanic and Veteran Status reached the plan without choices and the
+  saved answers could not be matched. It now reads up to 40 lists in 15 s.
+- **The walk** (`shell-electron/guided.js`): the decisions first (the form's empty fields read with
+  their choices, then the plan), then strictly in page order, one field after another: the page
+  scrolls to it ("Scrolling", waiting until it stops moving), the pointer moves to it ("Clicking:
+  <field>"), text is typed a few characters at a time, a choice is picked and its list closed
+  ("Filling: <field>"), a file goes in ("Uploading resume"); a field the person must answer gets a
+  short pause and an outline ("Needs you: <field>"). At least 0.65 s a field (about 30 to 45 s for
+  a 30-field form). Reduced motion: no glide, still in order. The engine's own pass then fills what
+  is still empty, quietly (pointer off, so it never jumps back up). The agent's pages are walked the
+  same way; a page already walked is not walked again.
+- **The end**: every Autofill (`assist:finish`, `guideEnd`) rests the pointer on the first field
+  that needs the person, outlined, else on the site's Submit, outlined, "Your turn: check and
+  submit". Never pressed.
+- **The status line** (`app.js say`): one short line ("Filled 27 of 30. 3 need you"), Previous /
+  Next to step the pointer and the page through those fields (`assist:guide-step`), Done, and the
+  long text only under "Details". Every message goes through `say({ line, actions, details })`, so
+  an assistant's speech bubble can replace the bar later.
+- Tests: tests/test_guided_fill.py, tests/js/test_guided_walk.js (fixture
+  tests/fixtures/forms/guided_form.html).
+
+## 39. The glow, immigration and background questions, and the end at submit (2026-11-26)
+
+- **The glow** (`autofill_core.js glow / markNeeds / needsStep`): every field that needs the person
+  gets a violet (#7957FC) ring drawn in its own overlay (a shadow root above the page), so the
+  site's layout and its own error text are never moved or covered. The ring pulses about every 2 s
+  (still under reduced motion); the current field is brighter, with the pointer resting on it and
+  "Needs you: <question>". Previous / Next scroll to and focus the current field. A ring goes as
+  soon as its field holds an answer. The agent's guided ask (Review answers) uses the same ring.
+  A white edge around the violet keeps it visible on white and dark sites.
+- **Immigration and work authorization** (`autoapply/legalai.py`): a choice question the rules left
+  open is read by the model, which says its topic and picks the option the saved work
+  authorization answers ("Are you an alien admitted under a nonimmigrant visa?" from "F-1 OPT").
+  Cached per question, options and facts (`legal_options.json`). Asked only when the profile lacks
+  the fact.
+- **Background questions** (convictions, court orders, fugitive status, controlled substances...):
+  never invented. The model may only pick from the person's own earlier answer to a question with
+  the same meaning; with none saved, the code drops any pick. Those answers are saved when the
+  person submits a form: the page's choice questions are read as Submit is pressed
+  (`armSubmitSnapshot`), and once the site confirms the application (the shared signal,
+  `applied_watch.js onSubmitted`) they go to `/api/autoapply/background/capture`, which keeps only
+  the background ones whose value is one of the options, as "Background: <question>". Memory shows
+  them under "Background answers" with Edit and Forget, and the setting "Always ask me about
+  background questions" (off by default) keeps them out of every fill. They are asked (the stop
+  log's asked_person) only the first time.
+- **The end at submit**: when the person presses the site's Submit during the guided ask and the
+  page turns into the confirmation, the ask closes, the record is Applied, the shared signal is
+  told, and the bar says "Submitted. Marked as applied" for a few seconds, then clears.
+- **Nothing filled out of sight; site windows first** (the owner, after Lam, 2026-11-26). The walk
+  fills every box itself, top to bottom; once it ran on a page, the engine's fast pass and the
+  second plan do not touch that page (frames, iCIMS, still use the engine's frame pass). A site
+  window (an open modal dialog, `pointer_overlay.js openModal`) open when the walk starts, or
+  opening during it (Lam's notice comes up when the resume goes in), stops the walk at once with
+  nothing filled under it (`modal: <title>`). The agent then reads the window in sight
+  (`readModal`: the pointer on its title, "Reading: <title>", its text scrolled for about 3.5 s),
+  moves the pointer to its button ("Clicking: I Acknowledge"), clicks, waits for the window to
+  close, and walks again from where it stopped (the boxes done on each page are kept, never filled
+  twice). A field under a window is never labelled (`coverOf`: the pointer goes to the window).
+- **Every box the same way** (the owner): "Filling: <field>", the box glowing while it is filled,
+  whether or not the site put something in it; what the site put in the boxes the walk will fill
+  is emptied in one quick reset before the first field (`resetBoxes`: text boxes, text areas, plain
+  lists; never a file, a tick box or a custom list), so each box is filled once, with no visible
+  delete then type. The
+  resume goes into the form's plain Resume / CV field at its own place, never into a site
+  "Autofill from resume" box (`siteParseBox`, Ashby's), so the site never fills the form from its
+  parse; Workday takes "Apply Manually".
+- **No key or script ever sends the form** (Meriton, 2026-11-26: the run asked for an optional
+  "Preferred First Name" with the caret in the site's own box; an Enter there sent the form, the
+  browser's implicit submission). On every page the app filled (`armSubmitGuard`): Enter in a
+  one-line box of a form that has a Submit button does not send it (the site's own Enter handlers
+  still run; only the browser's sending is stopped) and the pointer shows the person's Submit; an
+  untrusted (script) click on a Submit control is stopped. The person's own click is untouched.
+- **Optional fields never trigger an ask**: the walk flags only required fields the plan could not
+  answer. A preferred first name or nickname: optional, left empty; required, the profile's first
+  name (asked only when the profile has none).
+- **The fields that need the person, one after another** (the owner): the caret goes into the first
+  one, with the strong ring and "Fill this, then press Enter". Enter in a one-line box (the form is
+  never sent) with a valid answer moves the caret, ring and pointer to the next; an empty or
+  invalid answer stays ("This one still needs an answer"). A list, a choice or a tick box moves on
+  by itself once answered. A multi-line box keeps Enter for a new line; its "Next" chip (or
+  Cmd/Ctrl+Enter) moves on. Tab works as always; the bar's Previous / Next still work. After the
+  last one the pointer is ON the site's Submit: "All done. Press Submit when you're happy".
+- **"Other (please specify)"**: whenever "Other" is picked for a saved answer no choice says ("Job
+  board" on Meriton's "How did you hear about us?"), the "please specify" box next to it gets the
+  answer. A list with a job board choice takes that one.
+- **A typed acknowledgement of a notice** (Vestmark's California privacy notice): with the person's
+  standing "always accept" for required notices, a required box under a notice that only
+  acknowledges it is filled in the walk ("I acknowledge", or the exact words the notice asks
+  for); without that setting it stays a box that needs the person. Never a signature, initials, a
+  name or a date. Before the agent stops on "needs consent", the boxes left for the person on that
+  page are tried once more (`retryAsked`), so a box it can see never ends the run that way.
+- **Suggestions, and one item in two places** (the owner, Vestmark): a box left for the person that
+  only acknowledges a notice gets a suggestion (`consents.suggestion`, the plan's `left[].suggest`),
+  typed in and left selected ("Suggested: I acknowledge. Press Enter to accept, or type your own"):
+  Enter accepts it, typing replaces it; a list's suggestion is named, never picked. A background
+  or legal question never gets one. The bar and the pointer name the SAME current item in plain
+  words ("1 needs you: the privacy notice"): the page tells the shell each time it moves
+  (`__sj_needs__`). With a box marked on the page the agent never says it "could not find where".
+- **Any submit ends every run state** (Vestmark: the bar kept the stop message after the person's
+  own Submit): a job the agent stopped on its page (a notice, a question) is watched like one at
+  Ready to send (`armStopWatch`), so the person's Submit marks it Applied and the bar says
+  "Submitted. Marked as applied", then clears; the needs-you line never comes back after a submit.
+- **The end on Submit**: the pointer's tip is ON the button (its left centre), the label just past
+  its right edge, or under it when there is no room; never over it.
+- **The bar says one short line** (`app.js aaBarShort`): the agent's Ready line is "Your turn:
+  check and submit" (or "Ready to send. Check it, then press Send" where the app sends), and any
+  longer run message is cut to its first sentence; the whole text is under "Details". A question
+  to answer is never cut.
+- **Submitted, then clear**: the site's confirmation (the success watch, now also "Thank you for
+  your application" in a window, as on Lam's own careers site) makes the bar say "Submitted.
+  Marked as applied" for 5 s, then it clears.
+- Tests: tests/test_legal_background.py, tests/js/test_agent_guide.js (case 5),
+  tests/js/test_guided_walk.js (the ring, the window over the form, the confirmation window),
+  tests/test_guided_fill.py (the short line).

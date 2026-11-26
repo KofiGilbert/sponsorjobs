@@ -241,6 +241,21 @@ def answer_rows(st: Store | None, lib, prefs: dict) -> list[dict]:
     return out
 
 
+def background_rows(rows: list[dict]) -> list[dict]:
+    """(2026-11-26) The background answers saved from forms the person submitted ("Background: ..."
+    in the answer library, autoapply/legalai.py): one row each, Edit and Forget."""
+    from autoapply.legalai import BG_PREFIX
+    out = []
+    for r in rows or []:
+        q = str(r.get("question") or "")
+        if not q.startswith(BG_PREFIX):
+            continue
+        k = str(r.get("key") or "")
+        out.append({"id": "lib:" + k, "key": "bg:" + k, "kind": "text", "label": q[len(BG_PREFIX):], "value": str(r.get("answer") or ""),
+                    "raw": str(r.get("answer") or ""), "source": "you", "when": when(r.get("updated_at")), "chat": False})
+    return out
+
+
 def one_question(rows: list[dict]) -> list[dict]:
     """The answer library's rows the page lists under Other answers: never a self-identification
     answer (those sit behind Show) and never a key a row above already shows."""
@@ -252,6 +267,8 @@ def one_question(rows: list[dict]) -> list[dict]:
             continue
         if K.sensitivity(K.fact_key(k), str(r.get("question") or "")) == K.EEO:
             continue
+        if str(r.get("question") or "").startswith("Background: "):
+            continue                                  # its own card (background_rows)
         out.append(r)
     return out
 

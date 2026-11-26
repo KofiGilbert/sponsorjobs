@@ -116,7 +116,8 @@ def test_the_shell_handles_terms_with_consent_and_never_on_stop():
     assert 'reason: "needs-consent"' in body[:click]            # no answer: stop, nothing accepted
     assert "acceptedLine(opts.company" in src and "terms.accepted" in src
     run = src[src.index("async function run("):src.index("// ---- Submit: the shell's decision")]
-    assert run.count("handleTerms(wc, terms") == 3                  # before the fill, after it, and on needs-consent
+    # before the fill, after it, on needs-consent, and (2026-11-26) when a window stopped the walk
+    assert run.count("handleTerms(wc, terms") == 4
 
 
 # --------------------------------------------------------------------------- the routes

@@ -50,8 +50,9 @@ def test_the_bar_offers_review_answers_next_to_send():
     # after Send, before Read cover letter; the list comes from the Ready to send line
     assert ready.index('T("aa.send", "Send")') < ready.index("aaAnsToggle(") < ready.index("aa.agent.readLetter")
     assert "info.answers" in ready
-    # the Ready line itself stays the shell's one short message
-    assert "text.textContent = info.message" in js
+    # the Ready line itself is one short line; the shell's whole message is under Details
+    # (2026-11-26, tests/test_guided_fill.py runs aaBarShort)
+    assert "text.textContent = short.line" in js and "short.details" in js
 
 
 def test_every_review_answers_string_is_translated():

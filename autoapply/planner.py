@@ -70,7 +70,9 @@ _CONTACT: list[tuple[str, re.Pattern]] = [
     ("website", re.compile(r"website|portfolio|personal (site|url|page)|\bblog\b", re.I)),
     ("postal_code", re.compile(r"\bzip\b|postal|post code|postcode", re.I)),
     ("city", re.compile(r"^\W*(current )?city\b|\bcity\W*$|\btown\b", re.I)),
-    ("state", re.compile(r"^\W*(state|province|region)\b|state\s*/\s*province", re.I)),
+    ("state", re.compile(r"^\W*(state|province|region)\b(?!\s+(your|why|the|any|how|what|whether|if|briefly|clearly|reasons?)\b)|state\s*/\s*province"
+                         r"|\b(us |u\.s\. )?state (in which|where|that) you (currently )?(reside|live)"
+                         r"|\bwhat (us |u\.s\. )?state do you (currently )?(reside|live) in|\bstate of residence", re.I)),
     # (2026-11-19) SuccessFactors' "Country/Region of Residence:*" too
     ("country", re.compile(r"^\W*(current )?country(\s*(/|or)\s*region)?( of (current )?residence)?\W*$", re.I)),
     ("address", re.compile(r"^\W*(street |home |mailing |current )?address( line 1)?\W*$|street", re.I)),
@@ -84,6 +86,11 @@ _CONTACT: list[tuple[str, re.Pattern]] = [
 _NAME_PART = re.compile(r"middle|preferred|nick ?name|maiden|former|previous|prior|alias|suffix|prefix"
                         r"|other (first |last |given )?names?|birth ?name|pronunciation|phonetic", re.I)
 _STREET_EXTRA = re.compile(r"line.?[2-9]\b|address.?[2-9]\b|\bapt\b|apartment|\bsuite\b", re.I)
+
+
+_PREFERRED_NAME = re.compile(r"^\W*(preferred|chosen)\s+(first\s+|given\s+)?name\b|^\W*nick ?name\b|what (name )?should we call you"
+                             r"|^\W*name you (go|prefer to go) by", re.I)
+_NOT_PREFERRED = re.compile(r"last|family|sur ?name|pronoun|pronunciation|phonetic", re.I)
 
 
 def contact_key(label: str) -> str:
@@ -669,6 +676,34 @@ def _op_for(f: FormField) -> str:
     return "fill"
 
 
+# (2026-11-26, Meriton) "How did you hear about us?" got "Other (please specify)" and its "Please
+# specify" box was left empty. Whenever "Other" is picked for a saved answer no choice says, the
+# specify box next to it gets that answer ("Job board"). Filled per plan_known call.
+_OTHER_PICK = re.compile(r"^(other|others|something else|not listed|none of the above)\b")
+_SPECIFY = re.compile(r"^\W*(please |if (other|yes|so)\W*(please )?)?(specify|explain|describe|tell us)\b|\bplease specify\W*$"
+                      r"|^\W*other\W*(please specify|specify)?\W*$", re.I)
+_OTHER_TEXT: dict = {}
+
+
+def _fill_specify_boxes(fields: list, out) -> None:
+    """The "please specify" text box right after a choice answered with "Other" (the next one to
+    three fields, before any other question with options) gets the saved answer behind it."""
+    acted = {a.ref for a in out.actions}
+    for i, f in enumerate(fields):
+        text = _OTHER_TEXT.get(f.ref)
+        if not text:
+            continue
+        for g in fields[i + 1:i + 4]:
+            if g.options or (g.type or "text").lower() in ("select", "radio", "checkbox", "file"):
+                break
+            if g.ref in acted or not _SPECIFY.search(str(g.label or "")):
+                continue
+            out.actions.append(FillAction(g.ref, "fill", value=text, origin="library", sensitive=True))
+            out.left = [x for x in out.left if x.ref != g.ref]
+            out.rest = [x for x in out.rest if x.ref != g.ref]
+            break
+
+
 def _literal(f: FormField, text: str, key: str = "") -> str | None:
     """Fit a known answer to this field: an exact option for a choice field (a country by name
     or alias on a country question), Yes for a checkbox the answer affirms, the text itself for a
@@ -678,7 +713,11 @@ def _literal(f: FormField, text: str, key: str = "") -> str | None:
         return None
     t = (f.type or "text").lower()
     if f.options or t in ("select", "radio"):
-        return literal_for(key, text, f.options)
+        v = literal_for(key, text, f.options)
+        # an "Other" picked for an answer no choice says: its "please specify" box gets the answer
+        if v and _OTHER_PICK.match(_n(v)) and _n(v) != _n(text):
+            _OTHER_TEXT[f.ref] = text
+        return v
     if t == "checkbox":
         return "Yes" if workauth.polarity(text) is True else None
     return text
@@ -835,6 +874,7 @@ class KnownResult:
     left: list = field(default_factory=list)     # FormFields only the person can answer
     used_library: list = field(default_factory=list)   # library keys used (to mark last used)
     drafted_used: list = field(default_factory=list)   # (question, answer) drafted answers used
+    suggest: dict = field(default_factory=dict)  # ref -> a suggestion for a field left for the person
 
 
 def _newer(hit: dict | None, ended) -> bool:
@@ -910,6 +950,7 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
     """Answer every field the person's own material answers, in the planner's order; return the
     rest for the model and the fact questions nothing answered for the person."""
     out = KnownResult()
+    _OTHER_TEXT.clear()
     drafted = {}
     for qa in ctx.drafted or []:
         if isinstance(qa, dict) and str(qa.get("answer") or "").strip():
@@ -1216,6 +1257,15 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
 
         # 5. profile fields (placeholder keys, resolved locally)
         ck = contact_key(label)
+        # (2026-11-26, the owner) "Preferred first name", "Nickname": a required one is the first
+        # name on the profile; an optional one is left empty and never asked
+        if not ck and _PREFERRED_NAME.search(label) and not _NOT_PREFERRED.search(label):
+            if f.required:
+                if str(ctx.applicant.get("first_name") or "").strip():
+                    out.actions.append(FillAction(f.ref, _op_for(f), source="first_name", origin="profile"))
+                else:
+                    out.left.append(f)
+            continue
         if ck:
             if str(ctx.applicant.get(ck) or "").strip():
                 out.actions.append(FillAction(f.ref, _op_for(f), source=ck, origin="profile"))
@@ -1228,6 +1278,13 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             out.left.append(f)
             continue
         out.rest.append(f)
+    _fill_specify_boxes(fields, out)
+    # a suggestion for an acknowledgement left for the person (typed in and selected on the page,
+    # never committed by the app); a background or legal question never gets one
+    for f in out.left:
+        v = consents.suggestion(f.label, f.options, (f.type or "text").lower())
+        if v:
+            out.suggest[f.ref] = v
     return out
 
 

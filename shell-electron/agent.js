@@ -56,13 +56,20 @@ const MAX_LADDERS = 4;               // recovery ladders per application, then i
 const GUIDE_POLL_MS = Math.max(5, Number(process.env.SJ_AGENT_GUIDE_MS) || 1000);
 // The outline on the field the person is asked to fill, and its removal. Styles only, on the
 // element itself; what was there before is put back.
+// (2026-11-26, Vestmark) The notice to accept is a box on the page, marked for the person.
+const NOTICE_IN_BOX = "The site asks you to acknowledge its notice in the box marked on the page.";
 const HL_ON = (i) => `(() => { /*sj-highlight*/ const el = window.TailorAgent.element(${Number(i)}); if (!el) return false;
   el.scrollIntoView({ block: "center", inline: "nearest" });
+  // (2026-11-26) the guided fill's violet glow ring when the engine is there (an overlay: the site's
+  // own styles and layout untouched); the inline outline below otherwise
+  if (window.TailorAutofill && window.TailorAutofill.glow) { el.setAttribute("data-sj-hl", JSON.stringify([el.style.outline, el.style.outlineOffset, el.style.boxShadow]));
+    window.TailorAutofill.glow(el, true); return true; }
   el.setAttribute("data-sj-hl", JSON.stringify([el.style.outline, el.style.outlineOffset, el.style.boxShadow]));
-  el.style.outline = "3px solid #f5a524"; el.style.outlineOffset = "3px"; el.style.boxShadow = "0 0 0 7px rgba(245, 165, 36, 0.28)";
+  el.style.outline = "3px solid #7957FC"; el.style.outlineOffset = "3px"; el.style.boxShadow = "0 0 0 7px rgba(121, 87, 252, 0.3)";
   return true; })()`;
 const HL_OFF = `(() => { /*sj-unhighlight*/ let n = 0;
   for (const el of document.querySelectorAll("[data-sj-hl]")) {
+    if (window.TailorAutofill && window.TailorAutofill.unglow) window.TailorAutofill.unglow(el);
     let was = ["", "", ""]; try { was = JSON.parse(el.getAttribute("data-sj-hl")) || was; } catch (e) { /* plain */ }
     el.style.outline = was[0] || ""; el.style.outlineOffset = was[1] || ""; el.style.boxShadow = was[2] || "";
     el.removeAttribute("data-sj-hl"); n++;
@@ -776,6 +783,12 @@ function createAgent(deps) {
     w.tick().catch(() => {});                 // arms the page's Submit note at once
     return w;
   }
+  const stoppedOnPage = new Map();       // recordId -> the pane epoch it stopped in (its page still open)
+  function armStopWatch(recordId, wc0, url) {
+    const key = String(recordId), ep = paneEpoch;
+    stoppedOnPage.set(key, ep);
+    return armWatch(recordId, wc0, () => stoppedOnPage.get(key) === ep && ep === paneEpoch && !ready.has(recordId) && !parked.has(key), url);
+  }
   function armReadyWatch(recordId, wc0) {
     const r = ready.get(recordId);
     if (!r) return null;
@@ -795,6 +808,7 @@ function createAgent(deps) {
   // ``seen.posted``: the app's own success watch (main.js) already recorded it.
   async function sentByPerson(recordId, wc, url, seen) {
     if (readyWatch && String(readyWatch.recordId) === String(recordId)) disarmReadyWatch();
+    stoppedOnPage.delete(String(recordId));
     const r = ready.get(recordId);
     ready.delete(recordId);
     const key = String(recordId);
@@ -819,7 +833,7 @@ function createAgent(deps) {
     if (recordId == null || current) return false;
     const key = String(recordId);
     const rid = ready.has(recordId) ? recordId : ready.has(Number(recordId)) ? Number(recordId) : recordId;
-    if (!ready.has(rid) && !parked.has(key)) return false;
+    if (!ready.has(rid) && !parked.has(key) && !(stoppedOnPage.get(key) === paneEpoch)) return false;
     const i = info || {};
     const pane = deps.getPane();
     await sentByPerson(rid, pane && pane.webContents, i.url || "", { how: "marker", phrase: "", posted: true, pageUrl: i.pageUrl || "" });
@@ -1522,6 +1536,10 @@ function createAgent(deps) {
       // The person said yes: click the accept button / tick the box like a person would.
       const before = url;
       const press = async (index) => {
+        // the pointer on the window's own button first ("Clicking: I Acknowledge", Lam 2026-11-26)
+        let words = "";
+        try { words = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${Number(index)}); return el ? String(el.innerText || el.value || el.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim().slice(0, 40) : ""; })()`, true); } catch (e) { words = ""; }
+        if (await pointAt(wc, { op: "click", index }, words ? `[${index}]<button>${words}</button>` : "")) await delay(300);
         let r = await realClick(wc, index);
         if (!r) r = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index })})`, true),
                                 ACTION_MS, "accept").catch(() => null);
@@ -1583,9 +1601,23 @@ function createAgent(deps) {
         if (!dlg) { dlog("terms", "the notice's button opened no dialog with one accept button"); continue; }
         target = dlg.index;
       }
+      // (2026-11-26, the owner) a site window is read first, where the person can see it: the
+      // pointer on its title, "Reading: <title>", its text scrolled for a few seconds; then the
+      // pointer on its button and the click; then the window is let close before anything else
+      const seen = !(batchOn && batchOn.quiet);
+      if (seen) {
+        try { await guard(wc.executeJavaScript("window.TailorAutofill.readModal && window.TailorAutofill.readModal(3500)", true), 9000, "read"); } catch (e) { if (e && e.stopped) throw e; }
+      }
       let res = await press(target);
       if (!(res && res.ok)) continue;                    // tried again on the next pass
       await settle(wc, before);
+      for (let k = 0; k < 16; k++) {                     // the window closing (up to about 4 s)
+        let up = null;
+        try { up = await wc.executeJavaScript("window.TailorAutofill.siteModal ? window.TailorAutofill.siteModal() : null", true); } catch (e) { up = null; }
+        if (!up) break;
+        await delay(250);
+      }
+      if (seen) { try { await wc.executeJavaScript("window.TailorPointer && window.TailorPointer.hide()", true); } catch (e) { /* gone */ } }
       try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
       if (it.kind === "opener") {
         // the form's own record of the acceptance (SuccessFactors' fbclc_dpcsId), when it has one
@@ -1886,6 +1918,17 @@ function createAgent(deps) {
                       : await guide(wc, step, open, body);
       dlog("step " + step + " batch ask (" + where + ") ->", r && { ok: r.ok, reason: r.reason, n });
       if (r && r.reason === "stopped") return { ret: stopped("stopped", "Stopped.") };
+      if (r && r.reason === "sent") {
+        // the person sent it themselves: Applied, the run ends, the bar says so
+        let pageUrl = url || "";
+        try { pageUrl = wc.getURL() || pageUrl; } catch (e) { /* the pane went away */ }
+        await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: pageUrl, record_id: recordId }).catch(() => null);
+        // the shared signal (applied_watch.js) is announced once, by the shell's success watch
+        feed.close();
+        feed.push("sent", "Sent", "by you, and the site confirmed it", { state: "done" });
+        progress(recordId, "submitted", "Submitted. Marked as applied.", { steps: history.length });
+        return { ret: finish({ ok: true, submitted: true, steps: history.length }) };
+      }
       if (r && r.reason === "parked") return { ret: await park("questions", shown, { url, left, ask: batch ? undefined : ask }) };
       if (!(r && r.ok)) return { ret: stopped("needs-answers", blockedMessage("needs-answers", open.map((d) => d.question)), { url, left }) };
       // What the person set on the page (or the shell filled from their Telegram answer) is done;
@@ -1964,6 +2007,17 @@ function createAgent(deps) {
               return { ok: false, reason: "stopped" };
             }
             if (!r) return null;                   // the engine never took the ask
+            // (2026-11-26) the person answered and pressed the site's Submit: the page is the
+            // site's confirmation, so the ask ends here (the bar must not stay on "N fields need you")
+            {
+              let sg = null;
+              try { sg = await signature(wc); } catch (e) { if (e && e.stopped) throw e; sg = null; }
+              if (sg && sg.success) {
+                await unlight();
+                await deps.postApp("/api/autoapply/agent/ask/close", { id }).catch(() => null);
+                return { ok: false, reason: "sent" };
+              }
+            }
             let v2 = null;
             try { v2 = await view(wc, fr); } catch (e) { if (e && e.stopped) throw e; v2 = null; }
             const idx = v2 ? indexFor(v2.text, d.question) : 0;
@@ -2056,7 +2110,14 @@ function createAgent(deps) {
       feed.close();
       feed.push("stop", "Stopped", reason === "stopped" ? "as you asked" : "", { state: "parked", detail: reason === "stopped" ? "" : message });
       progress(recordId, "stopped", message, Object.assign({ reason, steps: history.length }, extra));
-      return finish({ ok: false, reason, steps: history.length });
+      const out = finish({ ok: false, reason, steps: history.length });
+      // (2026-11-26, Vestmark) the job stays on its page with a box for the person: they may fill
+      // it and press the site's Submit themselves; the page is watched the same way as at Ready to
+      // send, so the record is Applied and the bar says Submitted, then clears
+      if (reason !== "stopped") {
+        try { const wcS = wcNow && (wcNow.__real || wcNow); if (wcS && !wcS.isDestroyed()) armStopWatch(recordId, wcS, applyUrl); } catch (e) { /* no pane */ }
+      }
+      return out;
     };
     // (2026-11-26) The finish's cost cap: the run stops, everything filled stays on the page, and
     // the person is told in plain words what is left.
@@ -2560,13 +2621,30 @@ function createAgent(deps) {
           toolFill = false;                                   // the brain fills this page itself
           left = [];
         } else {
-          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true, pointer: !quiet }), FILL_MS, "fill")
+          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true, pointer: !quiet, guided: !quiet }), FILL_MS, "fill")
             .catch((e) => {
               // say where the fill stood when it ran out of time (section 13)
               const ph = e && e.hang && typeof deps.fillPhase === "function" ? deps.fillPhase() : "";
               if (ph) e.message = "fill timed out while " + ph;
               throw e;
             });
+          // (2026-11-26, the owner) the site's window stopped the walk (Lam's notice comes up when
+          // the resume goes in): it is read and acknowledged in sight, then the walk carries on
+          // from where it stopped; nothing is filled under it
+          for (let k = 0; k < 3 && rep && rep.modal; k++) {
+            dlog("step " + step + " walk stopped at the window: " + rep.modal);
+            const tm = await handleTerms(wc, terms);
+            if (tm.stop) return stopped(tm.stop.reason, tm.stop.message, { url });
+            if (tm.park) return park("terms", tm.park.question, { url, ask: batch ? undefined : tm.park.ask });
+            let still = null;
+            try { still = await wc.executeJavaScript("window.TailorAutofill.siteModal ? window.TailorAutofill.siteModal() : null", true); } catch (e) { still = null; }
+            if (still) break;                              // not one it may accept: the brain or the person
+            const more = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true, pointer: !quiet, guided: !quiet }), FILL_MS, "fill")
+              .catch((e) => { if (e && e.stopped) throw e; return null; });
+            if (!more) break;
+            rep = Object.assign({}, more, { filled: ((rep.filled) || 0) + (more.filled || 0), uploaded: (rep.uploaded || 0) + (more.uploaded || 0),
+                                            answers: (rep.answers || []).concat(more.answers || []), files: (rep.files || []).concat(more.files || []) });
+          }
           dlog("step " + step + " fill:", rep);
           dlog("step " + step + " fill cost: " + fillLogLine(rep));
           // the Autofill plan's model call (none when the page did not change), in the run's cost
@@ -3128,7 +3206,28 @@ function createAgent(deps) {
           const t = await handleTerms(wc, terms, true);
           if (t.stop) return stopped(t.stop.reason, t.stop.message, { url });
           if (t.park) return park("terms", t.park.question, { url, ask: batch ? undefined : t.park.ask });
-          if (!t.accepted) return stopped("needs-consent", blockedMessage("needs-consent"), { url });
+          if (!t.accepted && !terms.ackRetried) {
+            // (2026-11-26, Vestmark) a notice acknowledged in a box the model can see (a typed "I
+            // acknowledge" under a privacy notice): the fill's rules answer it under the person's
+            // standing consent to required notices; the boxes left for the person are tried once more
+            terms.ackRetried = true;
+            const again = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, samePlanSkip: true,
+                                                                          pointer: !quiet, guided: !quiet, retryAsked: true }), FILL_MS, "fill")
+              .catch((e) => { if (e && e.stopped) throw e; return null; });
+            dlog("step " + step + " needs-consent: the boxes left for the person tried again ->", again && { filled: again.filled, left: (again.left || []).length });
+            if (again && again.ok && again.filled > 0) {
+              pendingNudges.push("The notice's acknowledgement box was answered from the person's standing consent to required notices. Carry on.");
+              history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                             actions: ["(the notice's box answered from the person's standing consent)"], results: ["filled; continue"] });
+              continue;
+            }
+          }
+          if (!t.accepted) {
+            // a box the page marks for the person (the ring, the pointer): never "could not find where"
+            let marked = 0;
+            try { marked = Number(await wc.executeJavaScript("window.TailorAutofill.needsList ? window.TailorAutofill.needsList().length : 0", true)) || 0; } catch (e) { marked = 0; }
+            return stopped("needs-consent", marked ? NOTICE_IN_BOX : blockedMessage("needs-consent"), { url });
+          }
           history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
                          actions: ["(the person accepted the site's terms)"], results: ["accepted; continue"] });
           continue;
