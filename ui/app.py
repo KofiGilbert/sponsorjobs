@@ -19044,7 +19044,13 @@ def _liveness_tick() -> bool:
     finally:
         recs.close()
     try:
-        todo = _todo_liveness_kick()      # the To apply cards' own check (none due: it ends at once)
+        # the To apply cards' own check: a thread only when some card is due
+        w = _watchlist()
+        try:
+            jobs = w.board_jobs(None)
+        finally:
+            w.close()
+        todo = _todo_liveness_kick(jobs)
     except Exception:   # noqa: BLE001 - the records' check still runs
         todo = False
     return (_liveness_kick(rows) if rows else False) or todo

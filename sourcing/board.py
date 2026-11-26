@@ -82,6 +82,16 @@ def date_of(value) -> date | None:
         return None
 
 
+def _add_column(c: sqlite3.Connection, table: str, name: str, ddl: str) -> None:
+    """ALTER TABLE ADD COLUMN that tolerates a second connection having just added it (two opens
+    of a fresh database at once: the app's request and a background check)."""
+    try:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc).lower():
+            raise
+
+
 def migrate_board(c: sqlite3.Connection) -> None:
     """Idempotent: add the board columns to sourced_job and create the side tables."""
     cols = {r[1] for r in c.execute("PRAGMA table_info(sourced_job)")}
@@ -94,7 +104,7 @@ def migrate_board(c: sqlite3.Connection) -> None:
                       ("close_reason", "TEXT"), ("accepted_at", "TEXT"), ("kept_at", "TEXT"),
                       ("untracked_at", "TEXT"), ("live_status", "TEXT"), ("live_at", "TEXT")):
         if name not in cols:
-            c.execute(f"ALTER TABLE sourced_job ADD COLUMN {name} {ddl}")
+            _add_column(c, "sourced_job", name, ddl)
     c.execute("""CREATE TABLE IF NOT EXISTS tracker_activity (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
         from_stage TEXT, to_stage TEXT NOT NULL, at TEXT NOT NULL, note TEXT DEFAULT '')""")
@@ -110,7 +120,7 @@ def migrate_board(c: sqlite3.Connection) -> None:
                       ("prev_saved", "INTEGER"), ("prev_closed_at", "TEXT"),
                       ("prev_closed_reason", "TEXT")):
         if name not in acols:
-            c.execute(f"ALTER TABLE tracker_activity ADD COLUMN {name} {ddl}")
+            _add_column(c, "tracker_activity", name, ddl)
     # Mail the app has tied to an application: the thread lane of inbox matching reads it, and
     # the record says how each message was matched (thread, domain, company).
     c.execute("""CREATE TABLE IF NOT EXISTS tracker_mail (
