@@ -2233,5 +2233,8 @@
   "aa.ask.start": "¿fecha de inicio?",
   "aa.ask.heard": "¿cómo encontraste el empleo?",
   "aa.ask.worked": "¿trabajaste aquí antes?",
-  "aa.ask.messages": "¿mensajes del reclutador?"
+  "aa.ask.messages": "¿mensajes del reclutador?",
+  "fill.countryGo": "Rellenar de todos modos",
+  "fill.countryStop": "Este no",
+  "fill.countryNo": "Sin rellenar. Elegiste no postularte a este."
 }

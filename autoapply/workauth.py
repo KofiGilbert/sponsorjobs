@@ -421,9 +421,42 @@ def classify(question: str) -> str | None:
     return None
 
 
+# (2026-11-26, the owner, Instacart's "Are you legally entitled to work in Canada?") Countries of
+# citizenship (as countries.canonical names them) for the countries the profile has entries for.
+CITIZEN_CODES = {"United States": "US", "United Kingdom": "UK", "Canada": "CA", "Australia": "AU"}
+_ELSEWHERE_NO = ("authorized", "authorized_unrestricted", "authorized_no_sponsor", "citizen", "citizen_or_pr")
+_ELSEWHERE_SPONSOR = ("sponsor_now", "sponsor_any")
+
+
+def elsewhere(kind: str, wa: dict | None, country: str):
+    """A question about a country the saved work authorization says nothing about. When the person
+    DID save their work authorization (for another country) and their countries of citizenship are
+    known (``wa["citizenships"]``, codes) and do not include this one, the profile can tell: not
+    authorized there (so sponsorship would be needed now). None otherwise (the person is asked).
+    The EU is never inferred: citizenship of one member state is not listed by code here."""
+    w = wa or {}
+    cc = str(country or "").upper()
+    cits = [str(c).upper() for c in (w.get("citizenships") or [])]
+    if cc not in CITIZEN_CODES.values() or not (w.get("countries") or {}) or not cits:
+        return None
+    if any(((w.get("countries") or {}).get(cc) or {}).values()) or cc in cits:
+        return None
+    if kind in _ELSEWHERE_NO:
+        return False
+    if kind in _ELSEWHERE_SPONSOR:
+        return True
+    return None
+
+
 def fact(kind: str, wa: dict | None, country: str):
     """The profile's answer to one kind: True/False for yes/no kinds, a code for "status", a
-    date for "auth_end"; None when the profile does not say."""
+    date for "auth_end"; None when the profile does not say (then, for another country than the
+    ones saved, what the citizenships tell: ``elsewhere``)."""
+    v = _fact(kind, wa, country)
+    return elsewhere(kind, wa, country) if v is None else v
+
+
+def _fact(kind: str, wa: dict | None, country: str):
     e = entry(wa, country)
     if kind == "authorized":
         return _b(e["authorized"])

@@ -7626,9 +7626,32 @@ def _brain_prefs() -> dict:
 
 
 def _work_auth() -> dict:
-    """The person's work-authorization profile (structured, or built from the older answers)."""
+    """The person's work-authorization profile (structured, or built from the older answers),
+    with their countries of citizenship as codes (workauth.elsewhere: a question about a country
+    the profile says nothing about is answered from them when they tell)."""
     from autoapply import workauth as _wa
-    return _wa.load(_brain_prefs())
+    wa = _wa.load(_brain_prefs())
+    try:
+        from autoapply import countries as _C
+        lib = _answer_lib()
+        try:
+            saved = [str(((lib.lookup(q) if lib is not None else None) or {}).get("answer") or "").strip()
+                     for q in ("Country of citizenship", "Second country of citizenship")]
+        finally:
+            if lib is not None:
+                lib.close()
+        cits = []
+        for raw in saved:
+            name = _C.canonical(raw) if raw else ""
+            if raw and not name:
+                return wa                     # a citizenship we cannot read: nothing is inferred
+            if name:
+                cits.append(_wa.CITIZEN_CODES.get(name, name))
+        if cits:
+            wa["citizenships"] = cits
+    except Exception:          # noqa: BLE001 - the saved profile still answers its own countries
+        traceback.print_exc()
+    return wa
 
 
 def _eeo_decline() -> bool:
@@ -16110,6 +16133,42 @@ def autoapply_plan():
                     "ops": [{"ref": o.ref, "op": o.op, "text": o.text, "path": o.path,
                              "sensitive": o.is_sensitive, "from": o.origin} for o in ops],
                     "left": [{"ref": f.ref, "label": f.label, **({"suggest": res.suggest[f.ref]} if f.ref in res.suggest else {})} for f in res.left]})
+
+
+@app.get("/api/autoapply/country-note")
+@_guard
+def autoapply_country_note():
+    """(2026-11-26, the owner) Before Autofill starts: a job in a country the saved work
+    authorization does not cover is said plainly, so the person decides before anything is filled
+    ("This job is in Canada; your saved work authorization is for the US"). {note: ""} otherwise,
+    and when nothing is saved (the questions are asked as before)."""
+    from autoapply import workauth as _wa
+    from applicant.expiry import COUNTRY_NAMES
+    try:
+        rid = int(request.args.get("id") or 0)
+    except ValueError:
+        return jsonify({"note": ""})
+    recs = _records()
+    try:
+        rec = recs.get(rid) if rid else None
+    finally:
+        recs.close()
+    if not rec:
+        return jsonify({"note": ""})
+    return jsonify({"note": _country_note(_job_country(_record_data(rec)), _work_auth())})
+
+
+def _country_note(job_cc: str, wa: dict) -> str:
+    from autoapply import workauth as _wa
+    from applicant.expiry import COUNTRY_NAMES
+    saved = [cc for cc, e in ((wa or {}).get("countries") or {}).items() if any((e or {}).values())]
+    if not saved or job_cc in saved or job_cc not in _wa.COUNTRIES:
+        return ""
+    if _wa.is_authorized(wa, job_cc) is True:
+        return ""
+    name = lambda cc: COUNTRY_NAMES.get(cc, cc)
+    return (f"This job is in {name(job_cc)}; your saved work authorization is for "
+            f"{' and '.join(name(cc) for cc in saved)}")
 
 
 def _job_country(data: dict) -> str:

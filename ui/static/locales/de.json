@@ -2233,5 +2233,8 @@
   "aa.ask.start": "Startdatum?",
   "aa.ask.heard": "wie du die Stelle gefunden hast?",
   "aa.ask.worked": "schon hier gearbeitet?",
-  "aa.ask.messages": "Nachrichten vom Recruiter?"
+  "aa.ask.messages": "Nachrichten vom Recruiter?",
+  "fill.countryGo": "Trotzdem ausfüllen",
+  "fill.countryStop": "Diese nicht",
+  "fill.countryNo": "Nicht ausgefüllt. Du hast dich gegen diese Bewerbung entschieden."
 }

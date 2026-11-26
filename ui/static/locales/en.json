@@ -2233,5 +2233,8 @@
   "aa.ask.start": "start date?",
   "aa.ask.heard": "how you found the job?",
   "aa.ask.worked": "worked here before?",
-  "aa.ask.messages": "messages from the recruiter?"
+  "aa.ask.messages": "messages from the recruiter?",
+  "fill.countryGo": "Fill it anyway",
+  "fill.countryStop": "Not this one",
+  "fill.countryNo": "Not filled. You chose not to apply to this one."
 }

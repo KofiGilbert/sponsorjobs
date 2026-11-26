@@ -1233,7 +1233,21 @@
   // into view and outlined for the person.
   async function applyInPane(opts) {
     if (!window.tailorShell || !window.tailorShell.assistApply) return null;
+    // (2026-11-26, the owner) a job in a country the saved work authorization does not cover is
+    // said plainly BEFORE anything is filled, and the person decides
+    if (opts && opts.recordId != null && !opts.here && !(await countryGo(opts.recordId))) return { ok: false, reason: "declined" };
     try { return await window.tailorShell.assistApply(opts); } catch { return null; }
+  }
+  async function countryGo(recordId) {
+    let note = "";
+    try { note = ((await (await fetch("/api/autoapply/country-note?id=" + encodeURIComponent(recordId))).json()) || {}).note || ""; } catch { note = ""; }
+    if (!note) return true;
+    if (window.Panel) window.Panel.open("browser");          // where the line (or the Orb's bubble) shows
+    return new Promise((resolve) => {
+      const end = (go) => { say(null); resolve(go); };
+      say({ line: note, actions: [{ label: T("fill.countryGo", "Fill it anyway"), fn: () => end(true), primary: true },
+                                  { label: T("fill.countryStop", "Not this one"), fn: () => end(false) }] });
+    });
   }
 
   // One plain sentence for whatever the apply path reported. Same words on every page.
@@ -1255,6 +1269,7 @@
           : I18N.t("fill.againSignin", "This site wants you to sign in first. Sign in in the Browser tab, then press Autofill this page again.");
       }
       if (why === "no-page") return "Nothing is open in the Browser tab yet.";
+      if (why === "declined") return T("fill.countryNo", "Not filled. You chose not to apply to this one.");
       if (why === "not-a-form") {
         // The job page, not the application: nothing was typed (a search box is never filled).
         const btn = r.apply ? `\u201c${r.apply}\u201d` : "Apply";
