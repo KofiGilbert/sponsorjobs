@@ -42,6 +42,7 @@ export interface CfRow {
   worker_requests: number | null; d1_rows_read: number | null; d1_rows_written: number | null;
   d1_storage_bytes: number | null; d1_largest_bytes: number | null; d1_largest_name: string | null;
   load_rows: number | null; load_total: number | null; load_per_day: number | null; load_ready: number | null;
+  load_written: number | null; load_budget: number | null;   // the loader's own writes that day, and its budget
   warning: string | null;
 }
 
@@ -59,7 +60,7 @@ const limitOf = (raw: string | undefined, fallback: number) => {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 };
 const COLUMNS = "day, taken_at, worker_requests, d1_rows_read, d1_rows_written, d1_storage_bytes, d1_largest_bytes, " +
-  "d1_largest_name, load_rows, load_total, load_per_day, load_ready, warning";
+  "d1_largest_name, load_rows, load_total, load_per_day, load_ready, load_written, load_budget, warning";
 
 /** Read the snapshots and search's own counters (a few rows; the admin pages only). */
 export async function cfUsage(env: Env, nowMs: number): Promise<CfUsage> {
@@ -87,7 +88,8 @@ export async function cfUsage(env: Env, nowMs: number): Promise<CfUsage> {
 }
 
 export interface CfLine {
-  key: CfKey; label: string; limit: number; unit: string; bytes: boolean;
+  key: CfKey; label: string; limit: number; unit: string; bytes: boolean;   // as on the latest day
+  others: boolean;                                     // rows written by everything but the first load
   latest: number | null; peak: number | null;          // values; null = not read
   latestPct: number | null; peakPct: number | null;    // percent of the limit
 }
@@ -108,16 +110,20 @@ export function cfVerdict(u: CfUsage): CfVerdict {
   const inWindow = u.rows.filter((r) => r.day >= since && r.day < u.today);
   const win = inWindow.length ? inWindow : latest ? [latest] : [];
   const lines: CfLine[] = CF_LIMITS.map((l) => {
-    const vals = win.map((r) => r[l.key]).filter((v): v is number => v !== null && v !== undefined && Number.isFinite(Number(v))).map(Number);
-    const lv = latest?.[l.key];
-    const lat = lv === null || lv === undefined ? null : Number(lv);
-    const peak = vals.length ? Math.max(...vals) : null;
-    return { key: l.key, label: l.label, limit: l.limit, unit: l.unit, bytes: l.bytes, latest: lat, peak,
-             latestPct: lat === null ? null : (100 * lat) / l.limit, peakPct: peak === null ? null : (100 * peak) / l.limit };
+    const m = (r: CfRow | null) => (r ? measure(l, r) : null);
+    const points = win.map(m).filter((x): x is Measure => x !== null);
+    const top = points.length ? points.reduce((a, b) => (b.value / b.limit > a.value / a.limit ? b : a)) : null;
+    const lat = m(latest);
+    const shape = lat ?? top;
+    const others = shape?.others ?? false;
+    return { key: l.key, label: others ? "D1 rows written, not counting the search first load" : l.label,
+             limit: shape?.limit ?? l.limit, unit: others ? "a day beside the load" : l.unit, bytes: l.bytes, others,
+             latest: lat?.value ?? null, peak: top?.value ?? null,
+             latestPct: lat ? (100 * lat.value) / lat.limit : null, peakPct: top ? (100 * top.value) / top.limit : null };
   });
   const reasons: string[] = [];
   for (const l of lines) {
-    if (l.peakPct !== null && l.peakPct >= CF_PAY_AT) reasons.push(`${l.label} reached ${pctText(l.peakPct)} of the free ${limitText(l)}`);
+    if (l.peakPct !== null && l.peakPct >= CF_PAY_AT) reasons.push(reasonOf(l, l.peakPct));
   }
   if (u.budgetDays.length) {
     reasons.push(`Search hit its daily limit on ${u.budgetDays.length === 1 ? u.budgetDays[0] : `${u.budgetDays.length} days (last ${u.budgetDays[0]})`}`);
@@ -125,9 +131,31 @@ export function cfVerdict(u: CfUsage): CfVerdict {
   if (reasons.length) return { level: "pay", reasons, lines, latest, windowDays: win.length };
   if (!latest) return { level: "none", reasons, lines, latest, windowDays: 0 };
   const close = lines.filter((l) => l.peakPct !== null && l.peakPct >= CF_CLOSE_AT)
-    .map((l) => `${l.label} reached ${pctText(l.peakPct!)} of the free ${limitText(l)}`);
+    .map((l) => reasonOf(l, l.peakPct!));
   return { level: close.length ? "close" : "ok", reasons: close, lines, latest, windowDays: win.length };
 }
+
+interface Measure { value: number; limit: number; others: boolean }
+
+/** One day's value of a limit, and the limit it is judged against. While search's first load is
+ * unfinished, the loader spends its daily budget (80,000 rows by default) on purpose, so rows
+ * written are judged by everyone else's writes (the day's total less the loader's own) against
+ * what the budget leaves of the 100,000 (20,000 by default): the banner then only says to pay
+ * when the broker's own writes squeeze the load. Once the load is done, the plain total again. */
+function measure(l: (typeof CF_LIMITS)[number], r: CfRow): Measure | null {
+  const raw = r[l.key];
+  if (raw === null || raw === undefined || !Number.isFinite(Number(raw))) return null;
+  const value = Number(raw);
+  const budget = Number(r.load_budget ?? 0), own = r.load_written;
+  if (l.key === "d1_rows_written" && !r.load_ready && own !== null && own !== undefined && budget > 0 && budget < l.limit) {
+    return { value: Math.max(0, value - Number(own)), limit: l.limit - budget, others: true };
+  }
+  return { value, limit: l.limit, others: false };
+}
+
+const reasonOf = (l: CfLine, p: number) => l.others
+  ? `D1 rows written by everything but the search first load reached ${pctText(p)} of the ${num(l.limit)} a day the load leaves free`
+  : `${l.label} reached ${pctText(p)} of the free ${limitText(l)}`;
 
 // ---- words and numbers --------------------------------------------------------------------- //
 
@@ -181,7 +209,17 @@ export function cfCard(u: CfUsage, v: CfVerdict, nowS: number): string {
       `Cloudflare token has the Account Analytics Read permission.</p>` +
       (u.budgetDays.length ? `<p>${esc(v.reasons.join(". "))}.</p>` : ""), o);
   }
-  const rows = v.lines.map((l) => [esc(l.label), cell(l, l.latest, l.latestPct), cell(l, l.peak, l.peakPct), esc(limitText(l))]);
+  const rows = v.lines.map((l) => [esc(l.label), cell(l, l.latest, l.latestPct), cell(l, l.peak, l.peakPct),
+    esc(l.others ? `${num(l.limit)} a day (100,000 less the load's budget)` : limitText(l))]);
+  // The first load's own writes, on a line of their own: planned, inside its budget, never a warning.
+  if (!r.load_ready && r.load_written !== null && r.load_written !== undefined) {
+    const since = dayMinus(u.today, CF_WINDOW_DAYS);
+    const own = [r, ...u.rows.filter((x) => x.day >= since && x.day < u.today)]
+      .filter((x) => !x.load_ready && x.load_written !== null && x.load_written !== undefined).map((x) => Number(x.load_written));
+    const i = v.lines.findIndex((l) => l.key === "d1_rows_written") + 1;
+    rows.splice(i, 0, ["Search first load", `${num(Number(r.load_written))} rows, planned`, `${num(Math.max(...own))} rows, planned`,
+      esc(r.load_budget ? `up to ${num(Number(r.load_budget))} a day (its budget)` : "no daily budget")]);
+  }
   const taken = Date.parse(r.taken_at);
   const age = Number.isFinite(taken) ? Math.max(0, nowS - Math.floor(taken / 1000)) : null;
   const staleDays = Math.round((Date.parse(`${u.today}T00:00:00Z`) - Date.parse(`${r.day}T00:00:00Z`)) / 86_400_000);
@@ -190,12 +228,6 @@ export function cfCard(u: CfUsage, v: CfVerdict, nowS: number): string {
     ["Search first load", esc(loadText(r) ?? "Not known yet")],
     ["Search daily limit", u.budgetDays.length ? badge(`Hit on ${u.budgetDays.join(", ")}`, "bad") : badge("Not hit in 7 days", "ok")],
   ];
-  const written = v.lines.find((l) => l.key === "d1_rows_written");
-  if (!r.load_ready && r.load_total && written?.peakPct !== null && (written?.peakPct ?? 0) >= CF_CLOSE_AT) {
-    // The loader spends most of the day's write allowance on purpose (SEARCH_D1_DAILY_WRITES,
-    // 80,000 by default) until the first load is in, so this limit reads high until then.
-    info.push(["Rows written", esc("Mostly the search first load, which uses most of the daily allowance on purpose until it is done")]);
-  }
   if (r.d1_largest_name) info.push(["Largest database", esc(r.d1_largest_name)]);
   if (staleDays > 2) info.push(["Note", badge(`The last snapshot is ${staleDays} days old: check the feed workflow`, "warn")]);
   if (r.warning) info.push(["Not read", esc(r.warning)]);

@@ -107,6 +107,9 @@ def _snap(d1, opener, report=REPORT, now=NOW):
 
 def test_analytics_success_writes_one_row_for_yesterday_with_the_account_totals():
     d1, seen = FakeD1(), []
+    # The loader's own writes yesterday (it adds each run's to search_usage), and today's (not read).
+    d1.db.execute("INSERT INTO search_usage (day, rows_read, rows_written, requests) VALUES "
+                  "('2026-11-25', 0, 79500, 0), ('2026-11-26', 0, 1200, 0)")
     row, log = _snap(d1, cloudflare(seen=seen))
     assert row is not None and "WARNING" not in log and "::warning" not in log
     [u] = d1.usage()
@@ -120,6 +123,8 @@ def test_analytics_success_writes_one_row_for_yesterday_with_the_account_totals(
                                          "rows_written": 3_000, "bytes": 2_100_000}
     # First-load progress: 96,000 of 500,000 jobs, 80,000 writes a day at 2.5 a job = 32,000 a day.
     assert (u["load_rows"], u["load_total"], u["load_per_day"], u["load_ready"]) == (96_000, 500_000, 32_000, 0)
+    # The loader's planned share, so the dashboard judges rows written by everyone else during the load.
+    assert (u["load_written"], u["load_budget"]) == (79_500, 80_000)
     assert u["warning"] is None
     assert all(auth == "Bearer tok" for _, _, auth in seen)
     assert sum("graphql" in url for url, _, _ in seen) == 3     # one query a dataset
@@ -192,6 +197,7 @@ def test_the_loader_loads_and_snapshots_and_a_refused_analytics_query_does_not_f
     [u] = d1.usage()
     assert u["worker_requests"] is None and "not authorized" in u["warning"]
     assert (u["load_rows"], u["load_total"], u["load_ready"]) == (30, 30, 1)
+    assert u["load_written"] == 0 and u["load_budget"] == 0       # written today, not yesterday; no budget
     # SEARCH_CF_USAGE=0 switches the snapshot off.
     d1.db.execute("DELETE FROM cf_usage")
     monkeypatch.setenv("SEARCH_CF_USAGE", "0")

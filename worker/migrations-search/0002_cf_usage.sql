@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS cf_usage (
     load_total       INTEGER,            -- jobs in the feed the loader was loading
     load_per_day     INTEGER,            -- about how many jobs the daily write budget loads
     load_ready       INTEGER,            -- 1 once the first full load has finished
+    load_written     INTEGER,            -- D1 rows the search loader itself wrote that day
+                                         -- (search_usage.rows_written): planned, inside its budget
+    load_budget      INTEGER,            -- the loader's daily write budget (SEARCH_D1_DAILY_WRITES;
+                                         -- 0 = no limit). While the first load runs, the dashboard
+                                         -- judges rows written by everyone else against what the
+                                         -- budget leaves of the 100,000 (20,000 by default)
     warning          TEXT                -- what could not be read, in plain words (NULL = none)
 );
 

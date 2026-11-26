@@ -39,7 +39,7 @@ _ACCOUNT = re.compile(r"^[0-9a-fA-F]{32}$")
 
 COLUMNS = ("day", "taken_at", "worker_requests", "d1_rows_read", "d1_rows_written", "d1_storage_bytes",
            "d1_largest_bytes", "d1_largest_name", "d1_databases", "load_rows", "load_total",
-           "load_per_day", "load_ready", "warning")
+           "load_per_day", "load_ready", "load_written", "load_budget", "warning")
 
 
 def _queries(account: str, day: str) -> dict[str, str]:
@@ -206,6 +206,14 @@ def snapshot(client, *, account: str, token: str, report: dict | None, daily_wri
         except Exception as e:  # noqa: BLE001
             warnings.append(f"Cloudflare usage: {e}")
     values.update(progress(report, daily_writes))
+    # The loader's own writes that day (it adds every run's to search_usage): the dashboard tells
+    # the first load's planned writes apart from everyone else's.
+    try:
+        used = client.query("SELECT rows_written FROM search_usage WHERE day = ?", [day])
+        values["load_written"] = int(used[0]["rows_written"]) if used else 0
+        values["load_budget"] = max(0, int(daily_writes))
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"the loader's own writes: {e}")
     if warnings:
         values["warning"] = "; ".join(warnings)[:600]
         # "::warning::" puts it on the workflow run's summary page in GitHub Actions.

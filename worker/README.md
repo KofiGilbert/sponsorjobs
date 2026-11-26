@@ -142,7 +142,9 @@ The admin dashboard tracks how close the whole account is to these limits: the H
 **Cloudflare Free Plan** card (Workers requests, D1 rows read and written, D1 storage, each as used
 / limit and a percentage, latest day and 7-day peak) and a banner on every admin page, "Time to
 switch to Workers Paid ($5 a month)", once any 7-day peak reaches 70% or search answered
-`daily_budget` in the last 7 days ("Getting close" from 50%). The numbers are a daily snapshot the
+`daily_budget` in the last 7 days ("Getting close" from 50%). While search's first load runs,
+rows written are judged without the loader's own planned writes (against the 20,000 its budget
+leaves), so the load alone never raises it. The numbers are a daily snapshot the
 feed workflow writes into the search database from Cloudflare's GraphQL Analytics API
 (`src/admin_cf.ts`, `scripts/cf_usage_snapshot.py`, `migrations-search/0002_cf_usage.sql`), so
 the Worker writes nothing per request for it. Its Cloudflare token (`SEARCH_D1_TOKEN`) needs **D1

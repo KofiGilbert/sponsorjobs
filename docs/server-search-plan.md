@@ -355,6 +355,14 @@ every admin page shows a banner on top once it is time to upgrade (`worker/src/a
   `daily_budget` on any of the last 7 days. It names the limit and links to Cloudflare's plans
   page. From **50%** a softer "Getting close" note. Below 50%, nothing. The same line goes to the
   right sidebar's Notifications.
+* **During the first load, rows written are judged without the loader's own writes.** The loader
+  spends its daily budget (`SEARCH_D1_DAILY_WRITES`, 80,000) on purpose, so until the first load is
+  done "D1 rows written" counts everyone else's writes (the day's total less the loader's, which
+  the snapshot stores as `load_written`) against what the budget leaves (100,000 less 80,000 =
+  20,000), at the same 50% / 70%. 80,000 + 5,000 is fine; 80,000 + 15,000 (75% of 20,000) says to
+  pay, because the broker is squeezing the load. The card shows the loader's own writes on a line
+  of their own ("Search first load ... rows, planned"). Once the load is done: the plain total
+  against 100,000.
 * **If analytics cannot be read** (the token lacks Account Analytics Read, or an outage), the load
   still succeeds: the step logs a GitHub warning (`[cf-usage]`), the row keeps the progress and a
   "Not read" note, and a later run fills in the numbers. `SEARCH_CF_USAGE=0` switches it off.

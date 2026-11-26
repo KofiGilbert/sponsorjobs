@@ -14,7 +14,8 @@ const NOW_MS = Date.parse(`${TODAY}T09:00:00Z`);
 const row = (day: string, o: Partial<CfRow> = {}): CfRow => ({
   day, taken_at: `${TODAY}T03:23:00Z`, worker_requests: 10_000, d1_rows_read: 100_000, d1_rows_written: 5_000,
   d1_storage_bytes: 50_000_000, d1_largest_bytes: 40_000_000, d1_largest_name: "sponsorjobs-search",
-  load_rows: 96_000, load_total: 500_000, load_per_day: 32_000, load_ready: 0, warning: null, ...o,
+  load_rows: 96_000, load_total: 500_000, load_per_day: 32_000, load_ready: 0, load_written: null, load_budget: null,
+  warning: null, ...o,
 });
 const usage = (rows: CfRow[], budgetDays: string[] = []): CfUsage => ({ ok: true, today: TODAY, rows, budgetDays });
 /** A value at exactly `pct` percent of a limit. */
@@ -84,6 +85,48 @@ describe("the thresholds", () => {
   });
 });
 
+describe("rows written while search's first load runs (the loader's planned writes are not an alarm)", () => {
+  const loading = (loader: number, others: number, o: Partial<CfRow> = {}) =>
+    row("2026-11-25", { d1_rows_written: loader + others, load_written: loader, load_budget: 80_000, ...o });
+
+  it("80,000 by the loader + 5,000 by everyone else: no banner (5,000 of the 20,000 left)", () => {
+    const v = cfVerdict(usage([loading(80_000, 5_000)]));
+    expect(v.level).toBe("ok");
+    expect(cfBanner(v)).toBe("");
+    const w = v.lines.find((l) => l.key === "d1_rows_written")!;
+    expect([w.latest, w.limit, w.others]).toEqual([5_000, 20_000, true]);
+  });
+
+  it("80,000 + 15,000 by everyone else: Time to switch (75% of the 20,000 the load leaves free)", () => {
+    const v = cfVerdict(usage([loading(80_000, 15_000)]));
+    expect(v.level).toBe("pay");
+    expect(v.reasons).toEqual(["D1 rows written by everything but the search first load reached 75% of the 20,000 a day the load leaves free"]);
+    expect(cfBanner(v)).toContain("Time to switch to Workers Paid ($5 a month)");
+    expect(cfVerdict(usage([loading(80_000, 10_000)])).level).toBe("close");          // 50% of 20,000
+  });
+
+  it("load done, 85,000 in all: Time to switch, against the plain 100,000", () => {
+    const v = cfVerdict(usage([loading(80_000, 5_000, { load_ready: 1 })]));
+    expect(v.level).toBe("pay");
+    expect(v.reasons).toEqual(["D1 rows written reached 85% of the free 100,000 a day"]);
+  });
+
+  it("no loader numbers (an older row, or no budget): the plain total again", () => {
+    expect(cfVerdict(usage([row("2026-11-25", { d1_rows_written: 85_000 })])).level).toBe("pay");
+    expect(cfVerdict(usage([loading(80_000, 5_000, { load_budget: 0 })])).level).toBe("pay");
+  });
+
+  it("the card shows the loader's share on its own line, planned", () => {
+    const u = usage([loading(80_000, 5_000), row("2026-11-24", { d1_rows_written: 78_000, load_written: 76_000, load_budget: 80_000 })]);
+    const html = cfCard(u, cfVerdict(u), NOW_MS / 1000);
+    expect(html).toContain("D1 rows written, not counting the search first load");
+    expect(html).toContain("5,000 (25%)");
+    expect(html).toContain("20,000 a day (100,000 less the load&#39;s budget)");
+    expect(html).toContain("Search first load</td><td>80,000 rows, planned</td><td>80,000 rows, planned</td><td>up to 80,000 a day (its budget)");
+    expect(html).toContain("Within limits");
+  });
+});
+
 describe("the card", () => {
   it("shows each limit as used / limit with a percentage, latest and 7-day peak, the load and the snapshot date", () => {
     const u = usage([row("2026-11-25", { worker_requests: 72_431 }), row("2026-11-24", { worker_requests: 80_000 })]);
@@ -100,11 +143,8 @@ describe("the card", () => {
     expect(html).toContain("96,000 of 500,000 jobs loaded, about 13 days left");
     expect(html).toContain("2026-11-25, written 6 h ago");
     expect(html).toContain("Not hit in 7 days");
-    expect(html).not.toContain("Mostly the search first load");      // rows written are low here
+    expect(html).not.toContain("Search first load</td>");       // no loader numbers: no line for it
     expect(html).not.toMatch(/[\u2013\u2014]/);
-    // During the first load the loader spends most of the write allowance: the card says why.
-    const busy = usage([row("2026-11-25", { d1_rows_written: 80_000 })]);
-    expect(cfCard(busy, cfVerdict(busy), NOW_MS / 1000)).toContain("Mostly the search first load");
   });
 
   it("says what could not be read, and when the snapshot is old", () => {
@@ -134,7 +174,8 @@ describe("the search database (migration 0002 and the reads)", () => {
   it("creates cf_usage (one row a day) and search_budget_days", async () => {
     const cols = (await db.prepare("SELECT name FROM pragma_table_info('cf_usage')").all<{ name: string }>()).results.map((r) => r.name);
     expect(cols).toEqual(["day", "taken_at", "worker_requests", "d1_rows_read", "d1_rows_written", "d1_storage_bytes",
-      "d1_largest_bytes", "d1_largest_name", "d1_databases", "load_rows", "load_total", "load_per_day", "load_ready", "warning"]);
+      "d1_largest_bytes", "d1_largest_name", "d1_databases", "load_rows", "load_total", "load_per_day", "load_ready",
+      "load_written", "load_budget", "warning"]);
     await db.prepare("INSERT INTO cf_usage (day, taken_at) VALUES ('2026-11-25', 'x')").run();
     await expect(db.prepare("INSERT INTO cf_usage (day, taken_at) VALUES ('2026-11-25', 'y')").run()).rejects.toThrow();
     const hits = (await db.prepare("SELECT name FROM pragma_table_info('search_budget_days')").all<{ name: string }>()).results.map((r) => r.name);
