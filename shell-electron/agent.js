@@ -1873,6 +1873,7 @@ function createAgent(deps) {
       const id = Math.random().toString(16).slice(2, 10);
       const n = open.length;
       const qs = open.map(askItem);
+      for (const q of qs.slice(0, 3)) logStop("asked_person", { question: q.question, options: q.options || [], reason: reply.evaluation || "" });
       // (An Auto run never gets here: it never leaves a question for the person, 2026-11-19.)
       const shown = "I filled everything I could; " + (n === 1 ? "this one needs you." : "these " + n + " need you.");
       const ask = { id, question: qs[0].question, options: n === 1 ? qs[0].options : [], questions: qs, batch: true };
@@ -2048,6 +2049,10 @@ function createAgent(deps) {
       return res;
     };
     const stopped = (reason, message, extra) => {
+      if (reason !== "stopped") {
+        const t = reason === "needs-answers" ? "asked_person" : /no-upload|no-page|ai-unavailable|stalled/.test(reason) ? "site_error" : "other";
+        logStop(t, { reason: lastEval || reason });
+      }
       feed.close();
       feed.push("stop", "Stopped", reason === "stopped" ? "as you asked" : "", { state: "parked", detail: reason === "stopped" ? "" : message });
       progress(recordId, "stopped", message, Object.assign({ reason, steps: history.length }, extra));
@@ -2058,6 +2063,7 @@ function createAgent(deps) {
     const capStop = (left) => {
       const open = [...new Set(deferredOpen().map((d) => d.question).concat((left || []).map((x) => (typeof x === "string" ? x : (x && x.label) || ""))))]
         .filter(Boolean);
+      logStop("cost_cap", { question: open[0] || "", reason: lastEval || "the cost cap" });
       const what = open.length ? " Left for you: " + open.slice(0, 3).join(", ") + (open.length > 3 ? ", and " + (open.length - 3) + " more." : ".")
                                : " Check the page and click Next or Submit yourself.";
       const msg = "I stopped here to keep this application's AI cost under $" + FINISH_CAP_USD.toFixed(2) + ". Everything I filled stays." + what;
@@ -2070,6 +2076,7 @@ function createAgent(deps) {
     // closed-posting state ("Job closed") when `marked` (the engine's check did it).
     const closedStop = async (phrase, url, marked) => {
       dlog("closed:", phrase);
+      logStop("closed_posting", { reason: String(phrase || "the posting is closed") });
       if (!marked) await deps.postApp("/api/autoapply/agent/closed", { record_id: recordId, url, phrase }).catch(() => null);
       feed.close();
       feed.push("closed", "Stopped", "the job is closed", { state: "done", detail: phrase });
@@ -2091,6 +2098,25 @@ function createAgent(deps) {
       return finish({ ok: true, reason: "already-applied", closed: true, steps: history.length });
     };
     const where = () => (wcNow && !wcNow.isDestroyed() ? wcNow.getURL() || "" : "");
+    // (2026-11-26) Where the run stops, asks or gives up, for the stop log (autoapply/stoplog.py):
+    // where and why, the public question and choices, never a value. Fire-and-forget.
+    let lastEval = "";
+    let ladderParked = false;
+    const logStop = (type, o) => { try { logStopNow(type, o); } catch (e) { /* the log never stops a run */ } };
+    const logStopNow = (type, o) => {
+      if (quiet && type === "asked_person") return;
+      let kind = "other";
+      try {
+        const v = curV && curV.text ? curV.text : "";
+        kind = !v ? "other" : (isSigninView(v) || authForm(v)) ? "sign_in" : !formReached ? "job_page" : !notReady(v) ? "review" : "form";
+      } catch (e) { kind = "other"; }
+      let url = applyUrl;
+      try { url = where() || applyUrl; } catch (e) { url = applyUrl; }
+      const ev = Object.assign({ type, url, page_kind: kind, reason: (o && o.reason) || lastEval || "",
+                                 steps: history.length, cost: Math.round(spent * 10000) / 10000, version: deps.version || "" },
+                               o && o.question ? { question: String(o.question).slice(0, 300), options: (o.options || []).slice(0, 8) } : {});
+      try { Promise.resolve(deps.postApp("/api/autoapply/stoplog", { events: [ev] })).catch(() => null); } catch (e) { /* never in a run's way */ }
+    };
     terms.parkInfo = () => ({ page_url: where(), run: runOpts(opts), batch: quick });
     const lead = batch && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "";
     // The last thing the feed said the run was doing, for "took too long" and the ladder's park.
@@ -2102,6 +2128,13 @@ function createAgent(deps) {
     // an answer (or Continue) re-runs it. ``kind`` "questions" | "terms" (the engine already parked
     // the ask) or "captcha" | "person" (parked here, nothing to answer).
     const park = async (kind, message, extra) => {
+      {
+        const t = kind === "captcha" ? "captcha" : ladderParked ? "stuck_loop" : (extra && extra.identity) ? "sign_in_wall"
+          : (kind === "questions" || kind === "terms") ? "asked_person" : "other";
+        const a = extra && extra.ask;
+        logStop(t, Object.assign({ reason: lastEval || String(message || "").slice(0, 160) }, a && a.question ? { question: a.question, options: a.options || [] } : {}));
+        ladderParked = false;
+      }
       // (2026-11-26) After Autofill nothing is set aside to carry on by itself later: the page
       // stays as it is and the person is told what is left. Autofill again carries on from it.
       if (opts.finish) {
@@ -2323,7 +2356,7 @@ function createAgent(deps) {
       // (a skeleton that hangs, then waits, is one problem: wait for the form, reload, reopen).
       const key = hostOf(where()) + "|" + (o.hash || ladder.lastHash || "");
       if (ladder.key !== key) {
-        if (ladder.runs >= MAX_LADDERS) return { park: "I tried another way " + ladder.runs + " times on this application and it is still stuck: " + problem + "." };
+        if (ladder.runs >= MAX_LADDERS) { ladderParked = true; return { park: "I tried another way " + ladder.runs + " times on this application and it is still stuck: " + problem + "." }; }
         Object.assign(ladder, { key, stage: 0, tried: [], problem, runs: ladder.runs + 1 });
       }
       ladder.problem = problem;
@@ -2347,6 +2380,7 @@ function createAgent(deps) {
       const menu = o.menu || (curV && isSigninView(curV.text) ? SIGNIN_MENU.concat(STRATEGIES.filter((n) => !SIGNIN_MENU.includes(n))) : STRATEGIES);
       const next = menu.find((n) => !ladder.tried.includes(n) && canDo(wc, n));
       if (next) { await runStrategy(wc, next); return { go: true }; }
+      ladderParked = true;
       return { park: "I tried " + ladder.tried.join(", ") + " and could not get past this: " + problem + "." };
     }
     const HANG_MENU = ["wait_for form", "reload", "reopen_job"];
@@ -2870,6 +2904,7 @@ function createAgent(deps) {
           }), STEP_BRAIN_MS, "brain");
         } catch (e) { if (e && e.stopped) throw e; reply = null; }
         dlog("step " + step + " reply:", reply);
+        if (reply && reply.evaluation) lastEval = String(reply.evaluation).slice(0, 200);
         if (reply && reply.ok && reply.cost) { spent += Number(reply.cost) || 0; feed.cost = spent; }
         if (reply && reply.ok && Array.isArray(reply.plan) && reply.plan.length) { plan = reply.plan.slice(0, 12); feed.plan = plan; }
         if (!reply || reply.ok === false) {
@@ -3001,6 +3036,7 @@ function createAgent(deps) {
             // no decline choice) goes over at Ready to send, flagged "Needs you": the agent
             // never sends such an application alone (handOver), and the person sees it before Send.
             if (quiet) ans.needs = still.filter((q) => !leftEmpty(q)).map((q) => ({ page, label: q }));
+            if (ans.needs.length) logStop("required_left_empty", { question: ans.needs[0].label, reason: lastEval || (ans.needs.length + " required left for the person") });
           }
           // ---- SJ_AX hook 2 (shell-electron/ax_view.js, docs/apply-agent.md section 20): the final form
           // check. A blocker goes back to the brain once, then the person is asked once; never handed over unseen.

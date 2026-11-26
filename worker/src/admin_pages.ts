@@ -10,6 +10,7 @@ import {
 import { MAX_INTERVIEWS } from "./admin_actions";
 import { type CfUsage, type CfVerdict, cfCard } from "./admin_cf";
 import type { Env } from "./env";
+import type { StopGroup } from "./stoplog";
 import { INTERVIEW_SECONDS, PLANS, SUBSCRIPTION_PLANS } from "./metering";
 import {
   ago, badge, barChart, card, day, donut, esc, kpi, lineBlock, maskEmail, menu, mini, num,
@@ -325,7 +326,7 @@ export function usagePage(o: { stats: Stats; pool: PoolSetting; poolDays: Array<
 // ---- Health ------------------------------------------------------------------------------------- //
 
 export function healthPage(o: { stats: Stats; revenue: Revenue; env: Env; now: number; emailDays: Array<{ label: string; value: number }>;
-                                cf?: { usage: CfUsage; verdict: CfVerdict } }): string {
+                                cf?: { usage: CfUsage; verdict: CfVerdict }; stops?: { today: number; peak: number } }): string {
   const { stats: s, env } = o;
   const e = s.sign_in_emails;
   const ok = (v: unknown) => (v ? badge("On", "ok") : badge("Off", "bad"));
@@ -346,7 +347,7 @@ export function healthPage(o: { stats: Stats; revenue: Revenue; env: Env; now: n
     card("Services", table(["Service", "Status"], rows, ""), { span: 2 }) +
     card("Sign-in E-mails", barChart(o.emailDays.map((d) => ({ label: d.label.slice(5), value: d.value })),
       { aria: "Sign-in e-mails sent per day, last 14 days", single: true }), { span: 2, aside: `<span class="muted small">limit ${num(e.daily_cap)} a day</span>` }) +
-    (o.cf ? cfCard(o.cf.usage, o.cf.verdict, o.now) : "");
+    (o.cf ? cfCard(o.cf.usage, o.cf.verdict, o.now, o.stops) : "");
 }
 
 // ---- Job feed ----------------------------------------------------------------------------------- //
@@ -410,3 +411,41 @@ export function auditPage(o: { rows: AuditRow[]; more: boolean; now: number;
 }
 
 export const notFound = () => title("Not found") + `<p><a href="/">Overview</a></p>`;
+
+// ---- Autofill stops (src/stoplog.ts) ------------------------------------------------------------ //
+
+const STOP_WORDS: Record<string, string> = {
+  asked_person: "Asked the person", stuck_loop: "Stuck in a loop", cost_cap: "Cost cap", captcha: "Captcha",
+  sign_in_wall: "Sign-in wall", required_left_empty: "Required left empty", site_error: "Site error",
+  closed_posting: "Closed posting", other: "Other",
+};
+
+/** Where Autofill and the agent stop: by type over 7 and 30 days, then every stop grouped by its
+ * question (else its host), seen most first, with the newest example and the agent's reason. */
+export function stopsPage(o: { types: Array<{ type: string; n7: number; n30: number }>; groups: StopGroup[];
+                               hosts: Array<{ ats: string; host: string; n30: number }>; type: string; now: number;
+                               writes: { today: number; peak: number } }): string {
+  const t7 = o.types.reduce((a, t) => a + t.n7, 0), t30 = o.types.reduce((a, t) => a + t.n30, 0);
+  const top = o.types[0];
+  const typeRows = o.types.map((t) => [`<a href="/stops?type=${encodeURIComponent(t.type)}">${esc(STOP_WORDS[t.type] ?? t.type)}</a>`,
+    num(t.n7), num(t.n30)]);
+  const opts = (raw: string) => { try { return (JSON.parse(raw) as string[]).slice(0, 4).join(" | "); } catch { return ""; } };
+  const groupRows = o.groups.map((g) => [
+    esc(STOP_WORDS[g.type] ?? g.type),
+    g.question ? esc(g.question) + (opts(g.options) ? `<div class="muted small">${esc(opts(g.options))}</div>` : "") : `<span class="muted">no question</span>`,
+    esc([g.ats, g.host].filter(Boolean).join(", ")),
+    `<b>${num(g.n30)}</b>` + (g.n7 ? `<span class="muted small"> (${num(g.n7)} in 7 days)</span>` : ""),
+    esc(g.reason) || `<span class="muted">none</span>`,
+    when(g.last, o.now)]);
+  const hostRows = o.hosts.map((h) => [esc(h.ats || "careersite"), esc(h.host), num(h.n30)]);
+  return title("Autofill stops") +
+    kpi("Stops, 7 Days", num(t7), { tone: "a" }) +
+    kpi("Stops, 30 Days", num(t30), { tone: "b" }) +
+    kpi("Most Common", top ? (STOP_WORDS[top.type] ?? top.type) : "None", { tone: "a" }) +
+    kpi("Rows Written Today", `${num(o.writes.today)}`, { tone: "b" }) +
+    card("By type", table(["Type", "7 days", "30 days"], typeRows, "No stops yet."), { span: 2 }) +
+    card("By hiring system", table(["System", "Host", "30 days"], hostRows, "No stops yet."), { span: 2 }) +
+    card(o.type ? `Seen most: ${STOP_WORDS[o.type] ?? o.type}` : "Seen most",
+      table(["Type", "Question", "Where", "Seen", "Agent's reason", "Last"], groupRows, "No stops yet.") +
+      (o.type ? `<div class="pager"><a class="btn" href="/stops">All types</a></div>` : ""), { span: 4 });
+}

@@ -7311,6 +7311,67 @@ def _selfid_setup() -> None:
 _selfid_setup()
 
 
+# ---- where Autofill and the agent stop (autoapply/stoplog.py) -----------------------------------
+# A small event each time a run stops, asks the person, hits the cost cap, loops or ends with fields
+# left: where and why, never who. Kept in the data folder, sent to the broker in the background.
+def _stoplog_send(events: list) -> bool:
+    if not events:
+        return True
+    st, _data = _broker_post("/v1/autofill/events", {"events": events})
+    return st == 200
+
+
+def _stoplog_setup() -> None:
+    from autoapply import stoplog
+    stoplog.configure(_DATA / "stoplog.jsonl", send=_stoplog_send)
+
+
+_stoplog_setup()
+
+
+def _stoplog_values() -> dict:
+    """Every saved value an event's texts must not carry: the contact details and links, and the
+    saved answers long enough to mean something on their own."""
+    vals: dict = {}
+    try:
+        prof = _saved_full_profile() or {}
+        vals.update({k: v for k, v in _applicant_for(prof).items() if v})
+        ident = _saved_identity() or {}
+        vals.update({"id_" + k: v for k, v in ident.items() if isinstance(v, str) and v})
+        vals["application_email"] = _application_email()
+    except Exception:                                    # noqa: BLE001 - the patterns still apply
+        pass
+    try:
+        lib = _answer_lib()
+        try:
+            for i, r in enumerate(lib.list() if hasattr(lib, "list") else []):
+                a = str(r.get("answer") or "").strip()
+                if len(a) >= 6:
+                    vals[f"ans{i}"] = a
+        finally:
+            lib.close()
+    except Exception:                                    # noqa: BLE001
+        pass
+    return vals
+
+
+@app.post("/api/autoapply/stoplog")
+@_guard
+def autoapply_stoplog():
+    """The shell's events (autoapply/stoplog.py): kept on this computer, sent in the background.
+    Every field the event does not list is dropped, and every text is scrubbed of the person's
+    values here, whatever the caller sent."""
+    from autoapply import stoplog
+    b = request.json or {}
+    raw = b.get("events") if isinstance(b.get("events"), list) else [b]
+    values = _stoplog_values()
+    built = [e for e in (stoplog.build(r, values, str(b.get("version") or "")) for r in raw[:20]) if e]
+    n = stoplog.record(built)
+    if n:
+        stoplog.flush()
+    return jsonify({"ok": True, "kept": n})
+
+
 def _answer_lib():
     """Open the answer library: the brain's (BrainLibrary, same methods and answers) when the
     brain is on, else answers.db itself, seeded once from the older saved answers. The brain

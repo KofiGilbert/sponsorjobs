@@ -1506,11 +1506,23 @@ async function finishAfterAutofill(o, r) {
     invalid = await wc.executeJavaScript(`[...document.querySelectorAll('[aria-invalid="true"]')].filter((e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; }).length`, true);
   } catch (e) { invalid = 0; }
   const d = finishRules.needsFinish(r, { invalid });
+  // (2026-11-26) the stop log (autoapply/stoplog.py): the fast fill met a sign-in or a captcha
+  if (r && (r.reason === "blocked" || r.captcha)) {
+    postApp("/api/autoapply/stoplog", { events: [{ type: r.blocker === "captcha" || r.captcha ? "captcha" : "sign_in_wall",
+      url: wc.getURL() || o.url || "", page_kind: r.blocker === "auth" ? "sign_in" : "form", reason: "Autofill: " + (r.blocker || "captcha"),
+      steps: 0, cost: Number(r.cost) || 0, version: app.getVersion() }] }).catch(() => null);
+  }
   if (debugLine) debugLine("autofill finish: " + JSON.stringify({ go: d.go, why: d.why, left: ((r && r.left) || []).length, invalid, next: !!(r && r.next_page), reason: r && r.reason }));
   if (!d.go) return done(r);
   const claim = await postApp("/api/autoapply/finish/start", { record_id: o.recordId });
   if (!claim) return done(r);
-  if (claim.ok === false) return done(Object.assign({}, r || {}, { finish_note: claim.note || "" }));
+  if (claim.ok === false) {
+    const lft = ((r && r.left) || []).map((x) => (typeof x === "string" ? x : (x && x.label) || "")).filter(Boolean);
+    postApp("/api/autoapply/stoplog", { events: [{ type: "required_left_empty", url: wc.getURL() || o.url || "", page_kind: d.why === "job-page" ? "job_page" : "form",
+      question: lft[0] || "", reason: "Autofill only: this month's agent finishes are used up", steps: 0, cost: Number(r && r.cost) || 0,
+      version: app.getVersion() }] }).catch(() => null);
+    return done(Object.assign({}, r || {}, { finish_note: claim.note || "" }));
+  }
   _finishMsg.delete(String(o.recordId));
   let res = null;
   try {
@@ -1624,6 +1636,7 @@ const agent = createAgent({
   isNewPage, attachResume, attachViaChooser, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
   fixPhone, checkPrefill,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
+  version: app.getVersion(),
   pointerSource,
   stopSuccessWatch: () => disarmSuccessWatch(),          // the agent's own watch recorded the send
 });
