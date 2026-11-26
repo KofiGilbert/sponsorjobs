@@ -28,10 +28,11 @@ import {
   userDetail,
 } from "./admin_data";
 import {
-  type Attention, alertsPage, attention, auditPage, type ChartKey, feedPage, healthPage, notFound, overviewPage, rail, revenuePage,
+  type Attention, alertsPage, attention, auditPage, type ChartKey, feedPage, healthPage, notFound, overviewPage, rail, revenuePage, stopsPage,
   usagePage, userPage, usersPage,
 } from "./admin_pages";
 import { cfBanner, cfUsage, cfVerdict } from "./admin_cf";
+import { EVENT_TYPES, stopGroups, stopHosts, stopTypes, stopWrites } from "./stoplog";
 import { DEFAULT_FAVS, esc, KEY_SCRIPT, maskEmail, type PageId, type Prefs, type Shell, shell } from "./admin_ui";
 import { blendedPerToken, INPUT_SHARE, RATES, round2, TAVUS_PER_MINUTE } from "./admin_data";
 
@@ -485,8 +486,16 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   }
   if (path === "/health") {
     const todayStart = Math.floor(Date.parse(`${dayOf(nowMs)}T00:00:00Z`) / 1000);
-    const [rd, eDays] = await Promise.all([railData(env, nowMs), emailDays(env.DB, todayStart, 7)]);
-    return page("health", "Health", healthPage({ stats: rd.stats, revenue: rd.revenue, env, now, emailDays: eDays, cf: rd.cf }), { rd });
+    const [rd, eDays, sw] = await Promise.all([railData(env, nowMs), emailDays(env.DB, todayStart, 7),
+      stopWrites(env.DB, dayOf(nowMs), dayOf(nowMs - 6 * 86_400_000)).catch(() => undefined)]);
+    return page("health", "Health", healthPage({ stats: rd.stats, revenue: rd.revenue, env, now, emailDays: eDays, cf: rd.cf, stops: sw }), { rd });
+  }
+  if (path === "/stops") {
+    const type = (EVENT_TYPES as readonly string[]).find((t) => t === url.searchParams.get("type")) ?? "";
+    const [rd, types, groups, hosts, writes] = await Promise.all([railData(env, nowMs), stopTypes(env.DB, now),
+      stopGroups(env.DB, now, { type: type || undefined }), stopHosts(env.DB, now),
+      stopWrites(env.DB, dayOf(nowMs), dayOf(nowMs - 6 * 86_400_000))]);
+    return page("stops", "Autofill stops", stopsPage({ types, groups, hosts, type, now, writes }), { rd, sub: type || undefined });
   }
   if (path === "/feed") {
     const rd = await railData(env, nowMs);

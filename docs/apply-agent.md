@@ -2055,3 +2055,29 @@ lists break on the next site, so:
   ("no model, server or chat ever does") is removed; the privacy policy says the profile data,
   self-identification answers included, is sent to the AI provider to fill application forms.
 - Tests: tests/test_selfid.py (fixtures: real systems' wordings, tests/fixtures/selfid/wordings.json).
+
+## 37. Where Autofill and the agent stop: the stop log (2026-11-26)
+
+So the brain is fixed in general, not one site at a time, every stop makes one small event:
+asked the person, stuck in a loop, the cost cap, a captcha, a sign-in wall, required fields left
+empty, a site error, a closed posting, other. The person's own Stop makes none.
+
+- **The event** (`autoapply/stoplog.py build`): time, hiring system and host, the kind of page
+  (job page, form, review, sign-in), the type, the PUBLIC question and choices involved (cut), the
+  agent's one-line reason, steps, cost so far, app version. Only these fields are kept, and every
+  text loses the person's saved values (contact details, links, longer saved answers), email
+  addresses, links and long digit runs, whatever the shell sent. Never answers, names, resume text
+  or anything typed.
+- **Where they come from**: the agent loop (`agent.js logStop`: the cost cap, a park, a stop, the
+  ladder giving up, each question asked at the end, required fields left at Ready to send) and the
+  fast Autofill (`main.js`: a sign-in or captcha met, the month's agent finishes used up).
+- **Kept and sent**: `data/stoplog.jsonl` (the newest 2,000), sent by a background thread in
+  batches of 50 to the broker's `POST /v1/autofill/events` (account token). Fire-and-forget: never
+  in a run's way; offline, the next batch takes it.
+- **Broker** (`worker/src/stoplog.ts`, migration 0019 `autofill_events`): the same field list and
+  cleaning again; 50 events a request, 300 rows an account a UTC day, kept 90 days (pruned on about
+  one write in 50). Its rows written show as their own line on the Cloudflare Free Plan card.
+- **Admin**: "Autofill stops" (`/stops`): counts by type over 7 and 30 days, by hiring system, and
+  every stop grouped by its question (else its host), seen most first, with the newest example and
+  the agent's reason.
+- Tests: tests/test_stoplog.py, tests/js/test_stoplog_events.js, worker/test/stoplog.test.ts.

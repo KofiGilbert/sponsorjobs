@@ -26,6 +26,7 @@ import {
 } from "./billing";
 import { agentSign, directory, DIRECTORY_PATH } from "./botauth";
 import { type Env, intVar } from "./env";
+import { storeEvents } from "./stoplog";
 import { aliasCreate, aliasDelete, aliasGet, aliasNotify, inboxRead, messagesRead, receiveMail } from "./mail";
 import {
   avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, type Interval, INTERVALS, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft,
@@ -274,6 +275,18 @@ const applyFinish: Handler = async ({ req, env, now, nowMs }) => {
                   finishes_left: 0, finishes_limit: limit, finishes_reset: resets }, 402);
   }
   return json({ finishes_left: Math.max(0, limit - used), finishes_limit: limit, finishes_reset: resets, tier });
+};
+
+/** Where Autofill and the apply agent stop (src/stoplog.ts): a small batch of events from the app.
+ * Account token required. Fields the event does not list are dropped, texts are cut and cleaned,
+ * at most 50 an request and 300 rows an account a day; 200 with what was kept. */
+const autofillEvents: Handler = async ({ req, env, now, nowMs }) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const b = await body(req);
+  const events = Array.isArray(b.events) ? (b.events as unknown[]) : [];
+  const r = await storeEvents(env.DB, user, events, now, dayOf(nowMs));
+  return json({ ok: true, ...r });
 };
 
 // ---- live interviews on the company Tavus key (ported from backend/broker.py) ---------------- //
@@ -583,6 +596,7 @@ const ROUTES: Route[] = [
   ["POST", /^\/llm\/package$/, llmPackage],
   ["POST", /^\/interview\/recorded$/, interviewRecorded],
   ["POST", /^\/apply\/finish$/, applyFinish],
+  ["POST", /^\/v1\/autofill\/events$/, autofillEvents],
   ["GET", /^\/me\/usage$/, meUsage],
 
   ["GET", /^\/billing\/offers$/, billingOffers],

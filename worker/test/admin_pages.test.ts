@@ -93,7 +93,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("every page renders behind Access", () => {
   it("overview, users, a person, revenue, usage, health and audit all answer 200, and nothing without a token", async () => {
     const a = await signedInAccount();
-    for (const path of ["/", "/users", `/users/${a.id}`, "/revenue", "/usage", "/health", "/feed", "/alerts", "/audit"]) {
+    for (const path of ["/", "/users", `/users/${a.id}`, "/revenue", "/usage", "/health", "/feed", "/alerts", "/audit", "/stops", "/stops?type=captcha"]) {
       const r = await get(path);
       expect(r.status, path).toBe(200);
       expect(r.headers.get("content-security-policy")).toContain("default-src 'none'");

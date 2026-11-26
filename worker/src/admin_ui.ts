@@ -96,7 +96,7 @@ export const DEFAULT_FAVS = [{ href: "/", label: "Overview" }, { href: "/usage",
 
 // ---- the shell ---------------------------------------------------------------------------------- //
 
-export type PageId = "overview" | "revenue" | "usage" | "users" | "health" | "feed" | "audit" | "alerts";
+export type PageId = "overview" | "revenue" | "usage" | "users" | "health" | "feed" | "audit" | "alerts" | "stops";
 
 interface NavItem { id: PageId; label: string; href: string; children?: Array<{ label: string; href: string; key: string }> }
 /** The kit's sidebar, item for item: three dashboards and five pages, the first page expandable
@@ -118,6 +118,7 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
       { label: "Suspended", href: "/users?filter=suspended", key: "suspended" }] },
     { id: "health", label: "Health", href: "/health" },
     { id: "feed", label: "Job feed", href: "/feed" },
+    { id: "stops", label: "Autofill stops", href: "/stops" },
     { id: "audit", label: "Audit log", href: "/audit" },
     { id: "alerts", label: "Alerts", href: "/alerts" },
   ] },

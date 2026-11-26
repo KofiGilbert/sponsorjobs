@@ -198,7 +198,7 @@ const cell = (l: CfLine, v: number | null, p: number | null) =>
   v === null || p === null ? `<span class="muted">Not read</span>` : badge(`${valueText(l, v)} (${pctText(p)})`, tone(p));
 
 /** The Health page's "Cloudflare Free Plan" card. */
-export function cfCard(u: CfUsage, v: CfVerdict, nowS: number): string {
+export function cfCard(u: CfUsage, v: CfVerdict, nowS: number, stops?: { today: number; peak: number }): string {
   const status = v.level === "pay" ? badge("Time to pay", "bad") : v.level === "close" ? badge("Getting close", "warn")
     : v.level === "ok" ? badge("Within limits", "ok") : badge("No data yet", "plain");
   const o = { span: 4 as const, id: "cloudflare", aside: status };
@@ -219,6 +219,11 @@ export function cfCard(u: CfUsage, v: CfVerdict, nowS: number): string {
     const i = v.lines.findIndex((l) => l.key === "d1_rows_written") + 1;
     rows.splice(i, 0, ["Search first load", `${num(Number(r.load_written))} rows, planned`, `${num(Math.max(...own))} rows, planned`,
       esc(r.load_budget ? `up to ${num(Number(r.load_budget))} a day (its budget)` : "no daily budget")]);
+  }
+  // (2026-11-26) The Autofill stop log's own writes (src/stoplog.ts), on a line of their own.
+  if (stops) {
+    const i = v.lines.findIndex((l) => l.key === "d1_rows_written") + 1;
+    rows.splice(i, 0, ["Autofill stops log", `${num(stops.today)} rows`, `${num(stops.peak)} rows`, esc("up to 300 an account a day")]);
   }
   const taken = Date.parse(r.taken_at);
   const age = Number.isFinite(taken) ? Math.max(0, nowS - Math.floor(taken / 1000)) : null;
