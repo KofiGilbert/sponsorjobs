@@ -87,4 +87,10 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // A local desktop notification (the saved-search daily digest: "N new sponsor jobs"). Clicking
   // it brings the app window forward. No email, no network.
   notify: (title, body) => ipcRenderer.send("notify:show", { title, body }),
+  // (2026-11-26) The Orb, the app's floating assistant (orb_view.js): what it shows and where,
+  // and what the person did on it (its clicks, its bubble's buttons and answers, its menu).
+  orbSet: (payload) => ipcRenderer.send("orb:set", payload || {}),
+  onOrbEvent: (cb) => ipcRenderer.on("orb:event", (_e, data) => cb(data)),
+  // Is the app window in front? (an OS notification is only for a window out of sight)
+  isFocused: () => ipcRenderer.invoke("app:focused"),
 });

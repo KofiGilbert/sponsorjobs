@@ -99,6 +99,8 @@ hiddenimports = [
     "applicant", "applicant.keys", "applicant.store", "applicant.library", "applicant.migrate",
     "applicant.redact", "applicant.facts", "applicant.mapper", "applicant.expiry", "applicant.rules",
     "applicant.scope", "applicant.page", "applicant.profile",
+    # The Orb (orb/rules.py), imported inside functions in ui/app.py.
+    "orb", "orb.rules", "orb.store",
     # The OCR stack, imported lazily inside intake/cv_import.py.
     "intake.cv_import", "numpy", "cv2", "onnxruntime", "shapely", "shapely.geometry", "pyclipper", "yaml",
     "pypdfium2", *collect_submodules("rapidocr_onnxruntime"),

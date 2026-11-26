@@ -80,6 +80,16 @@ const HL_OFF = `(() => { /*sj-unhighlight*/ let n = 0;
 const VALUE_JS = (i) => `(() => { /*sj-value*/ const el = window.TailorAgent.element(${Number(i)}); if (!el) return null;
   if (el.tagName === "SELECT") { const o = el.options[el.selectedIndex]; return { value: o ? String(o.text || "").trim() : "", typing: false }; }
   return { value: String(el.value || "").trim().slice(0, 300), typing: document.activeElement === el }; })()`;
+// (2026-11-26, the owner, Stripe on Greenhouse) A list's choice as the person sees it (a
+// react-select keeps it beside an empty search box), only for a list or a choice; null otherwise.
+const CHOICE_JS = (i) => `(() => { /*sj-choice*/ const el = window.TailorAgent.element(${Number(i)}); const T = window.TailorAutofill;
+  if (!el || !T || !T.fieldValue) return null; const v = T.fieldValue(el); return v && v.kind === "choice" && v.value ? v : null; })()`;
+// The pointer on the field with what to do there ("Pick one, it moves on by itself").
+const POINT_JS = (i) => `(() => { /*sj-point*/ const el = window.TailorAgent.element(${Number(i)}); const T = window.TailorAutofill;
+  return el && T && T.pointNeeds ? T.pointNeeds(el) : ""; })()`;
+// After the person's last answer: the open list closed, the pointer on the site's Submit.
+const ALL_DONE_JS = `(async () => { /*sj-all-done*/ const T = window.TailorAutofill; return !!(T && T.allDone && await T.allDone()); })()`;
+const TIDY_JS = `(async () => { /*sj-tidy*/ const T = window.TailorAutofill; return T && T.tidyMenus ? T.tidyMenus() : 0; })()`;
 const SETTLE_QUIET_MS = 600;
 const SETTLE_CAP_MS = 8000;
 const LOOP_WINDOW = 12;
@@ -2021,12 +2031,14 @@ function createAgent(deps) {
             let v2 = null;
             try { v2 = await view(wc, fr); } catch (e) { if (e && e.stopped) throw e; v2 = null; }
             const idx = v2 ? indexFor(v2.text, d.question) : 0;
-            if (idx && idx !== lit && !v2.frameOf.has(idx)) { await unlight(); await js(HL_ON(idx)); lit = idx; }
+            if (idx && idx !== lit && !v2.frameOf.has(idx)) { await unlight(); await js(HL_ON(idx)); await js(POINT_JS(idx)); lit = idx; }
             // The field holds a value now: a choice counts at once; typed text once the person
-            // left the box (or stopped typing), so half a word is never taken.
+            // left the box (or stopped typing), so half a word is never taken. A list's choice the
+            // view does not show (a react-select) is read the way the person sees it.
             const lines = v2 ? linesFor(v2.text, d.question) : [];
-            if (idx && lines.some((ln) => FILLED_LINE_RE.test(ln))) {
-              const got = pageValue(lines) || null;
+            const seen = idx && !lines.some((ln) => FILLED_LINE_RE.test(ln)) && !v2.frameOf.has(idx) ? await js(CHOICE_JS(idx)) : null;
+            if (idx && (seen || lines.some((ln) => FILLED_LINE_RE.test(ln)))) {
+              const got = seen ? seen.value : (pageValue(lines) || null);
               const box = got == null ? ((await js(VALUE_JS(idx))) || {}) : { value: got, typing: false };
               const val = String(box.value || "").trim().slice(0, 300);
               same = val && val === last ? same + 1 : 0;
@@ -2035,6 +2047,7 @@ function createAgent(deps) {
                 await unlight();
                 const a = await once("/api/autoapply/agent/answer", { id, index: i, question: d.question, answer: val, exact: true, on_page: true });
                 onPage.add(d.question); settled.add(d.question); d.done = true;
+                if (seen || got != null) await js(TIDY_JS);     // a picked list closes, then on to the next
                 addAnswer(ans, { page: d.page || page, label: d.question, value: val, from: "you" });
                 feed.push("fill", "You answered", "on the page", { state: "done", detail: String(d.question).slice(0, 80) });
                 dlog("step " + step + " guide: answered on the page " + (i + 1) + "/" + n + " ->", a && { ok: a.ok, done: a.done });
@@ -2061,6 +2074,12 @@ function createAgent(deps) {
       } finally {
         st.guide = null;
         await unlight();
+      }
+      // (2026-11-26, the owner) the person answered every field on the page: the pointer goes to
+      // the site's Submit, "All done. Press Submit when you're happy" (they press it, never us)
+      if (open.length && open.every((d) => onPage.has(d.question)) && !st.stop) {
+        await js(ALL_DONE_JS);
+        progress(recordId, "guide", "All done. Press Submit when you're happy", { step, guide: { i: n, n, done: true } });
       }
       // Every field is answered or passed: the ask closes with what was answered and what was left.
       for (let tries = 0; !(r && r.ok) && tries < 20; tries++) {

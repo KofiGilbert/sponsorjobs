@@ -12,6 +12,7 @@
  *    the assisted-apply takeover hook (agent fills, the person watches and clicks).
  */
 const paneView = require("./pane_view");
+const orbView = require("./orb_view");
 const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme, shell, Notification } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
@@ -235,6 +236,7 @@ function ensurePane() {
   if (pane) return pane;
   pane = new WebContentsView();
   win.contentView.addChildView(pane);
+  if (orb) orb.raise();                     // the Orb stays above the pane (orb_view.js)
   const wc = pane.webContents;
   // Popups inside the pane stay inside the pane. Only http(s) is followed; nothing opens a window.
   wc.setWindowOpenHandler(({ url }) => {
@@ -455,8 +457,9 @@ async function createWindow() {
     win.loadURL(SERVER + "/");
   });
 
-  win.on("resize", layoutPane);
-  win.webContents.on("zoom-changed", () => setTimeout(layoutPane, 50));
+  win.on("resize", () => { layoutPane(); if (orb) orb.layout(); });
+  win.webContents.on("zoom-changed", () => setTimeout(() => { layoutPane(); if (orb) orb.layout(); }, 50));
+  win.webContents.on("did-start-loading", () => { if (orb) orb.set({ visible: false }); });
   // The session cookie goes in before the app page loads, so its first request already has it.
   await session.defaultSession.cookies.set(originGuard.sessionCookie(SERVER, PORT, SESSION_TOKEN));
   await win.loadURL(SERVER + "/");
@@ -1918,6 +1921,32 @@ ipcMain.handle("pane:read-job", async () => {
   } catch (e) { return null; }
   try { return await wc.executeJavaScript(READ_JOB_JS, true); } catch (e) { return { url }; }
 });
+
+// ---- the Orb (orb_view.js): its own small transparent view above the app and the pane. The app
+// page says what it shows and where (orb:set); the Orb's page reports its size, drags and clicks,
+// and each click is handed back to the app page, which decides what it means.
+let orb = null;
+function ensureOrb() {
+  if (!orb && win && !win.isDestroyed()) {
+    orb = orbView.createOrb({ win, WebContentsView, server: SERVER, preload: path.join(__dirname, "orb_preload.js"),
+                              readPrefs, writePrefs,
+                              onReady: () => { if (win && !win.isDestroyed()) win.webContents.send("orb:event", { kind: "ready" }); } });
+  }
+  return orb;
+}
+const fromApp = (e) => !!(win && !win.isDestroyed() && e.sender === win.webContents);
+const fromOrb = (e) => !!(orb && orb.isOrb(e.sender));
+ipcMain.on("orb:set", (e, payload) => { if (fromApp(e) && ensureOrb()) orb.set(payload); });
+ipcMain.on("orb:size", (e, s) => { if (fromOrb(e)) orb.size(s); });
+ipcMain.on("orb:drag", (e, d) => { if (fromOrb(e)) orb.drag(d && d.dx, d && d.dy); });
+ipcMain.on("orb:drag-end", (e) => { if (fromOrb(e)) orb.dragEnd(); });
+ipcMain.on("orb:move", (e, d) => { if (fromOrb(e)) orb.move(d && d.dx, d && d.dy); });
+ipcMain.on("orb:reset", (e) => { if (fromOrb(e)) orb.reset(); });
+ipcMain.on("orb:event", (e, data) => {
+  if (!fromOrb(e) || !win || win.isDestroyed()) return;
+  try { win.webContents.send("orb:event", JSON.parse(JSON.stringify(data || {}))); } catch (err) { /* not plain data */ }
+});
+ipcMain.handle("app:focused", () => !!(win && !win.isDestroyed() && win.isFocused() && win.isVisible()));
 
 // Dev only: start the managed-AI broker (avatar + bundled LLM) so the live interview works on
 // launch with no manual setup, and put the dev user on a plan with minutes. In production the

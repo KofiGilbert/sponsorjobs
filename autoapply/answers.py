@@ -143,6 +143,16 @@ _CANON: list[tuple[str, re.Pattern]] = [
         r"|^when (can|could|would) you (start|begin|join)"
         r"|^(how soon|when) (are you available|can you be available)")),
     ("notice_period", re.compile(r"notice period|how much notice")),
+    # (2026-11-26, the owner) Where the person wants to work, remote, hybrid or in the office: a
+    # standing preference, asked once and reused on later forms by meaning ("If this role offers
+    # the option to work from a remote location, do you plan to work remotely?", "Preferred work
+    # arrangement"). Never a question about one office ("Can you work on site in Austin?").
+    ("work_location", re.compile(
+        r"\b(plan|plans|intend|want|prefer|wish|expect|looking) (to )?work(ing)? (remotely|from home|remote|hybrid"
+        r"|on site|onsite|in (the |an |our )?office|in person)\b"
+        r"|\b(preferred|desired|which) (work|working) (arrangement|model|setting|style|environment)\b"
+        r"|\bwork(ing)? (arrangement|model|setting|style) (preference|do you prefer|would you prefer)\b"
+        r"|^(remote|hybrid|on site|onsite|in office)(( or | )(remote|hybrid|on site|onsite|in office)){1,2}( (work )?preference)?$")),
     ("heard_about", re.compile(
         r"how did you (hear|learn|find out) (about|of)|where did you (hear|find|learn|see)"
         r"|how did you find (this|the|our)|(referral|application|candidate) source|^source$"

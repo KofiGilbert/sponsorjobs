@@ -4,6 +4,8 @@ export interface Env {
   DB: D1Database;
   ANTHROPIC_API_KEY?: string;
   REGISTER_PER_IP_PER_DAY?: string;
+  // "1" turns the desktop app's assistant (the Orb) off everywhere: the remote switch, read from /health.
+  ORB_OFF?: string;
   FREE_POOL_DAILY_TOKENS?: string;
   TAILOR_FREE_MODEL?: string;
   TAILOR_PASS_MODEL?: string;

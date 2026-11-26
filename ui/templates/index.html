@@ -1654,6 +1654,27 @@
               <button class="seg-b" data-theme-opt="dark" type="button" data-i18n="settings.dark">Dark</button>
             </div>
           </div>
+          <!-- (2026-11-26) The Orb, the app's assistant: on or off, and its sounds (app.js "the Orb"). -->
+          <div class="set-row" id="setOrbRow" hidden>
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="orb.setName">Assistant</div>
+              <div class="set-row-d" id="setOrbDesc">The violet helper in the corner. It guides Autofill and tells you what is waiting.</div>
+            </div>
+            <div class="seg">
+              <button class="seg-b" data-orb-opt="on" type="button" data-i18n="orb.on">On</button>
+              <button class="seg-b" data-orb-opt="off" type="button" data-i18n="orb.offShort">Off</button>
+            </div>
+          </div>
+          <div class="set-row" id="setOrbSoundRow" hidden>
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="orb.sound">Assistant sounds</div>
+              <div class="set-row-d" data-i18n="orb.soundDesc">A soft chime when something needs you.</div>
+            </div>
+            <div class="seg">
+              <button class="seg-b" data-orb-sound="on" type="button" data-i18n="orb.on">On</button>
+              <button class="seg-b" data-orb-sound="off" type="button" data-i18n="orb.offShort">Off</button>
+            </div>
+          </div>
         </section>
 
         <section class="set-pane byok-only" data-pane="ai">
@@ -2092,7 +2113,10 @@
        style) and the in-app browser (desktop shell only). The header toggle at the
        top-right is always visible, so the panel is discoverable even when closed. -->
   <!-- Right icon rail: the panel's permanent handles (no floating buttons,
-       nothing to overlap content). Document = CV workspace, globe = browser. -->
+       nothing to overlap content). Document = CV workspace, globe = browser.
+       (2026-11-26, owner decision) ONE exception: the Orb, the app's assistant, floats bottom
+       right in its own view (shell-electron/orb_view.js). Nothing else floats, and chat
+       messages stay avatar-less. -->
   <div class="panel-rail" aria-label="Side panel controls">
     <button class="rail-ic" id="railCvBtn" type="button" title="Resume" aria-label="Toggle Resume panel">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2h6l3 3v9H4z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 2v3h3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
@@ -2190,6 +2214,8 @@
                 aria-label="Open in your browser">Open in browser &#8599;</button>
       </div>
       <div class="bb-fill" id="bbFill" role="status" aria-live="polite" hidden></div>
+      <!-- (2026-11-26) While the Orb is on, this line is shown in the Orb's bubble instead (the
+           same words and buttons, copied by app.js "the Orb"); with the Orb off it shows here. -->
       <!-- The apply agent's steps for the current run (the live activity feed): opened from the
            bar's Steps toggle, in the page flow so the browser below gets shorter, never covered. -->
       <div class="act-feed bb-feed" id="bbFeed" hidden></div>
@@ -2200,6 +2226,9 @@
       <div class="pdf-placeholder" id="bbNoShell" hidden>The in-app browser needs the desktop app (shell-electron). Links open in your system browser instead.</div>
     </div>
   </aside>
+
+  <!-- The Orb's nudge line (never shown here: the Orb's bubble shows a copy of it). -->
+  <div class="bb-fill orb-msg" id="orbMsg" aria-hidden="true" hidden></div>
 
   <script src="{{ url_for('static', filename='i18n.js') }}"></script>
   <script src="{{ url_for('static', filename='qr.js') }}"></script>
@@ -2221,6 +2250,8 @@
   <script src="{{ url_for('static', filename='pane_sync.js') }}"></script>
   <script src="{{ url_for('static', filename='answers_panel.js') }}"></script>
   <script src="{{ url_for('static', filename='interview_stage.js') }}"></script>
+  <!-- The Orb's pure parts (the bubble's copy of the bar, the ball's state), node-tested. -->
+  <script src="{{ url_for('static', filename='orb_core.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

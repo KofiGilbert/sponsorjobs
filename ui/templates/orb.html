@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <title>Assistant</title>
+  <!-- The Orb's own page (shell-electron/orb_view.js): a transparent view above the app and the
+       in-app browser. The app's stylesheet gives the bubble the same buttons and status line as
+       the Browser bar it replaces; orb.css draws the ball. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='orb.css') }}">
+</head>
+<body class="orb-page">
+  <div class="orb-root" id="orbRoot" data-side="right" data-vert="up" data-state="idle">
+    <div class="orb-bubble" id="orbBubble" role="status" aria-live="polite" hidden></div>
+    <div class="orb-menu" id="orbMenu" role="menu" hidden>
+      <button class="orb-mi" id="orbMute" type="button" role="menuitem">Mute sounds</button>
+      <button class="orb-mi" id="orbOff" type="button" role="menuitem">Turn off the assistant</button>
+    </div>
+    <button class="orb" id="orb" type="button" aria-label="Assistant" aria-haspopup="menu">
+      <span class="orb-glow" aria-hidden="true"></span>
+      <span class="orb-ring" aria-hidden="true"></span>
+      <span class="orb-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      <svg class="orb-ball" viewBox="0 0 100 100" aria-hidden="true">
+        <defs>
+          <radialGradient id="orbFill" cx="36%" cy="30%" r="78%">
+            <stop offset="0" stop-color="#B9A8FF"/>
+            <stop offset="0.34" stop-color="#8F72FF"/>
+            <stop offset="0.66" stop-color="#7957FC"/>
+            <stop offset="1" stop-color="#4A2BD0"/>
+          </radialGradient>
+          <radialGradient id="orbRim" cx="50%" cy="50%" r="50%">
+            <stop offset="0.82" stop-color="#ffffff" stop-opacity="0"/>
+            <stop offset="1" stop-color="#ffffff" stop-opacity="0.16"/>
+          </radialGradient>
+        </defs>
+        <circle class="orb-body" cx="50" cy="50" r="46" fill="url(#orbFill)"/>
+        <circle cx="50" cy="50" r="46" fill="url(#orbRim)"/>
+        <ellipse class="orb-shine" cx="33" cy="25" rx="15" ry="8.5" transform="rotate(-28 33 25)" fill="#ffffff" opacity="0.32"/>
+        <g class="orb-eyes">
+          <g class="orb-eye orb-eye-l">
+            <ellipse class="orb-white" cx="37" cy="50" rx="7.6" ry="9.2" fill="#ffffff"/>
+            <circle class="orb-pupil" cx="38.2" cy="52" r="3.9" fill="#1F1452"/>
+          </g>
+          <g class="orb-eye orb-eye-r">
+            <ellipse class="orb-white" cx="63" cy="50" rx="7.6" ry="9.2" fill="#ffffff"/>
+            <circle class="orb-pupil" cx="64.2" cy="52" r="3.9" fill="#1F1452"/>
+          </g>
+          <path class="orb-lid" d="M30 51 Q37 56 44 51 M56 51 Q63 56 70 51" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round"/>
+        </g>
+        <path class="orb-mouth" d="M41.5 64 Q50 71.5 58.5 64" fill="none" stroke="#ffffff" stroke-width="3.6" stroke-linecap="round"/>
+        <ellipse class="orb-mouth-o" cx="50" cy="66" rx="5" ry="4" fill="#1F1452" stroke="#ffffff" stroke-width="2.4"/>
+      </svg>
+      <span class="orb-spark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="orb-badge" id="orbBadge" aria-hidden="true" hidden></span>
+    </button>
+  </div>
+  <script src="{{ url_for('static', filename='orb.js') }}"></script>
+</body>
+</html>
