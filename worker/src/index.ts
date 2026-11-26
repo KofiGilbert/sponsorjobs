@@ -37,6 +37,7 @@ import {
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
 import { handleSearch } from "./search";
+import { FEED_ROUTE, handleFeed } from "./feed";
 import { studentEligible, studentGet, studentRow, studentStart, studentStatus, studentVerify } from "./student";
 import { applySubscriptionEvent, customerOf, liveSub, portalUrl, setCanceling, subView } from "./subscriptions";
 import { githubAvailable, githubCallback, githubClaim, githubConnect, githubRefresh, githubRevoke } from "./github";
@@ -617,10 +618,14 @@ const ROUTES: Route[] = [
   ["GET", /^\/notify\/telegram\/inbox$/, tg.inbox],
   ["POST", /^\/notify\/telegram\/file$/, tg.file],
   ["POST", /^\/telegram\/webhook$/, tg.webhook],
-  // Server-side job search (src/search.ts, docs/server-search-plan.md). Public postings only.
-  // 503 no_index until the search database is bound and loaded.
+  // Server-side job search (src/search.ts, docs/server-search-plan.md). Public postings, for
+  // SponsorJobs accounts only (401 no_account without a valid token). 503 no_index until the search
+  // database is bound and loaded.
   ["GET", /^\/v1\/jobs\/search$/, ({ req, env, nowMs, exec }) => handleSearch(req, env, "search", nowMs, exec)],
   ["GET", /^\/v1\/jobs\/candidates$/, ({ req, env, nowMs, exec }) => handleSearch(req, env, "candidates", nowMs, exec)],
+  // The locked job list (src/feed.ts, docs/feed.md "The locked route"): 302 to a short-lived
+  // presigned R2 URL for SponsorJobs accounts, 401 no_account for anyone else.
+  ["GET", FEED_ROUTE, ({ req, env, nowMs }) => handleFeed(req, env, nowMs)],
 ];
 
 export default {

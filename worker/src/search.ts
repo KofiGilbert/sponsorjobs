@@ -19,12 +19,15 @@
 //   * the rows read are added up per UTC day (search_usage) and search stops itself (503
 //     daily_budget) before it can use the allowance the broker's own database needs.
 //
-// Privacy: the request carries only the query, the facets and a cursor; nothing here logs them,
-// and the install token (X-Install-Token) is used only as a rate-limit key, never stored or logged.
-// Abuse: 60 requests a minute per install token and 300 per network (the Workers rate-limit
-// binding, when bound), at most 1,000 results deep per query.
+// Locked to SponsorJobs installs (src/installauth.ts): every request needs a valid broker account
+// token (`Authorization: Bearer`), else 401 no_account. The account id is used only as a rate-limit
+// key; it is never stored next to a query or logged.
+// Privacy: the request carries only the query, the facets and a cursor; nothing here logs them.
+// Abuse: 300 requests a minute per network (checked before the token is looked up), then 60 per
+// account (the Workers rate-limit bindings, when bound), at most 1,000 results deep per query.
 
 import type { Env } from "./env";
+import { accountFor, clientIp, overLimit } from "./installauth";
 
 export const SEARCH_MAX = 50;
 export const CANDIDATES_MAX = 500;
@@ -677,26 +680,19 @@ const reply = (data: unknown, status: number, extra: Record<string, string> = {}
   new Response(typeof data === "string" ? data : JSON.stringify(data),
                { status, headers: { "content-type": "application/json", ...extra } });
 
-/** Rate limits from the Workers rate-limit binding. A deployment (or test) without the binding
- * simply has no limit here; the daily budget above is the backstop either way. */
-async function limited(req: Request, env: Env): Promise<boolean> {
-  const token = req.headers.get("X-Install-Token") ?? "";
-  if (env.SEARCH_TOKEN_LIMITER && /^[A-Za-z0-9_-]{8,128}$/.test(token)) {
-    if (!(await env.SEARCH_TOKEN_LIMITER.limit({ key: `t:${token}` })).success) return true;
-  }
-  const ip = req.headers.get("CF-Connecting-IP") || "unknown";
-  if (env.SEARCH_IP_LIMITER && !(await env.SEARCH_IP_LIMITER.limit({ key: `ip:${ip}` })).success) return true;
-  return false;
-}
-
 export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: number,
                                    ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
   const noIndex = () => reply({ error: "the search index is not loaded yet", reason: "no_index" }, 503);
+  const tooMany = () => reply({ error: "too many searches; wait a minute and try again", reason: "rate_limited" },
+                              429, { "retry-after": "60" });
+  // The network first, so a flood of made-up tokens never reaches the account database; then the
+  // account. A deployment (or test) without a limiter binding has no limit there; the daily budget
+  // below is the backstop either way.
+  if (await overLimit(env.SEARCH_IP_LIMITER, `ip:${clientIp(req)}`)) return tooMany();
+  const account = await accountFor(req, env, nowMs);
+  if (!account) return reply({ error: "search is for SponsorJobs accounts", reason: "no_account" }, 401);
+  if (await overLimit(env.SEARCH_ACCOUNT_LIMITER, `a:${account}`)) return tooMany();
   if (!env.SEARCH_DB) return noIndex();          // the search database is not bound in this deployment
-  if (await limited(req, env)) {
-    return reply({ error: "too many searches; wait a minute and try again", reason: "rate_limited" }, 429,
-                 { "retry-after": "60" });
-  }
   let p: Parsed;
   try {
     p = parseParams(new URL(req.url).searchParams, mode);
@@ -736,13 +732,14 @@ export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: nu
     }
   }
 
-  // The edge cache: normalized facets + page + index_version. Never the install token.
+  // The edge cache: normalized facets + page + index_version. Never the token or the account: the
+  // answer is the same for every account, and it is looked up only after the token check above.
   const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
   const key = new Request(`https://search-cache.sponsorjobs.internal/v1/jobs/${mode}?` + new URLSearchParams({
     f: facetKey(p.facets), limit: String(p.limit), cursor: p.cursor, iv: version }).toString());
   if (cache) {
     const hit = await cache.match(key);
-    if (hit) { noteUsage(env.SEARCH_DB, nowMs, 0, ctx); return hit; }
+    if (hit) { noteUsage(env.SEARCH_DB, nowMs, 0, ctx); return forClient(hit); }
   }
   const page = await searchPage(env, p.facets, p.limit, after, info, nowMs,
                                 { cap: mode === "candidates" ? CANDIDATES_SCAN_CAP : SCAN_CAP });
@@ -757,5 +754,13 @@ export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: nu
     const put = cache.put(key, res.clone());
     if (ctx) ctx.waitUntil(put); else await put;
   }
-  return res;
+  return forClient(res);
+}
+
+/** The copy the app gets: `private`, since it answered a request that carried a token (the edge
+ * cache's own copy above stays `public`, which the Cache API needs to store it). */
+function forClient(r: Response): Response {
+  const out = new Response(r.body, r);
+  out.headers.set("cache-control", `private, max-age=${CACHE_SECONDS}`);
+  return out;
 }

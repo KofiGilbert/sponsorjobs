@@ -48,6 +48,16 @@ block: roles first seen in the last 7 days, in the same stable layout, fetched, 
 reported exactly as above. The header then carries "board_count", the whole list's size. A feed
 with no slice yet is read whole, as before. Rows the search API returned are remembered (a bounded
 map, `remember`), so opening one resolves through `get` like a cached row.
+
+THE LOCKED ROUTE (2026-11-25). The official app reads the feed from the broker's
+`/v1/feed/<file>` (worker/src/feed.ts), which answers only installs holding a valid broker account
+token, so a copycat app cannot read our crawl. `token()` (ui/app.py `_account_token`, which
+registers the anonymous account on first need) is sent as `Authorization: Bearer`; a 401 asks
+`on_unauthorized()` (ui/app.py `_recover_from_401`) to replace a token the broker no longer knows,
+then retries once. No token to be had (offline, the network's sign-up limit) or a 401 that stays is
+a failed download like any other: the cache keeps serving and the back-off applies. The header is
+sent only on the request it was given to, never on a redirect to another host. Everything else
+(ETag, gzip, parts, sha256 checks, resume) is unchanged.
 """
 
 from __future__ import annotations
@@ -112,11 +122,21 @@ def is_placeholder(url: str) -> bool:
     return not host or host == "example" or host.endswith(".example")
 
 
+def _request(url: str, headers: dict) -> urllib.request.Request:
+    """The request, asking for gzip (the stored bytes; loads_maybe_gz reads either form). An
+    Authorization header is added UNREDIRECTED: urllib sends it on this request only, so a redirect
+    can never carry the account token to another host."""
+    auth = {k: v for k, v in headers.items() if k.lower() == "authorization"}
+    rest = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept-Encoding": "gzip", **rest})
+    for v in auth.values():
+        req.add_unredirected_header("Authorization", v)
+    return req
+
+
 def _http_fetch(url: str, headers: dict, timeout: float = DEFAULT_TIMEOUT) -> tuple[int, dict, bytes]:
-    """(status, response headers, body). A 304 is returned as a status, not raised. Asks for gzip
-    (the stored bytes); loads_maybe_gz reads either form."""
-    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept-Encoding": "gzip",
-                                               **headers})
+    """(status, response headers, body). A 304 is returned as a status, not raised."""
+    req = _request(url, headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read()
@@ -136,8 +156,7 @@ def _http_download(url: str, headers: dict, dest, on_progress=None,
     `on_progress(bytes_so_far, total_or_None)` is called after each chunk."""
     stall = STALL_TIMEOUT if stall is None else stall
     cap = DOWNLOAD_CAP if cap is None else cap
-    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept-Encoding": "gzip",
-                                               **headers})
+    req = _request(url, headers)
     start = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=stall) as resp:
@@ -181,8 +200,16 @@ class StaticFeed:
                  timeout: float = DEFAULT_TIMEOUT, download=None, wait: float | None = None,
                  tries: int | None = None, retry_pause: float | None = None,
                  parts: bool | None = None, manifest_fetch=None, legacy_parts: bool = False,
-                 slice_only: bool = False):
+                 slice_only: bool = False, token=None, on_unauthorized=None):
         self.base_url = (base_url or "").rstrip("/")
+        # The locked route (module docstring): `token() -> str | None` makes every request carry
+        # the account's bearer token; `on_unauthorized() -> bool` repairs a token the broker
+        # rejected (True = worth one retry). Neither: an open feed, no header at all.
+        self._token = token
+        self._on_unauthorized = on_unauthorized
+        self._auth_lock = threading.Lock()
+        self._no_token_until = 0.0              # no token could be had: not asked again until then
+        self._repair_after = 0.0                # on_unauthorized runs at most once per RETRY_AFTER
         self.cache_dir = Path(cache_dir)
         self._fetch = fetch or (lambda u, h: _http_fetch(u, h, timeout))
         # The list streams to disk. An injected `fetch` (tests) serves the list too, as one body.
@@ -431,6 +458,68 @@ class StaticFeed:
         self._state.pop("first_fail", None)
         self._state.pop("fail_count", None)
 
+    # -- the locked route ------------------------------------------------------------------ #
+
+    def _auth_headers(self) -> dict | None:
+        """{} for an open feed; the bearer header for a locked one; None when locked and no token
+        can be had right now (asked again after RETRY_AFTER, not on every file)."""
+        if self._token is None:
+            return {}
+        with self._auth_lock:
+            now = self._clock()
+            if now < self._no_token_until:
+                return None
+            try:
+                tok = self._token()
+            except Exception:                             # noqa: BLE001 - no token = no feed for now
+                tok = None
+            if not tok:
+                self._no_token_until = now + RETRY_AFTER
+                return None
+            return {"Authorization": f"Bearer {tok}"}
+
+    def _repair(self) -> bool:
+        """A 401: let the app replace a token the broker no longer knows. True = retry once."""
+        if self._on_unauthorized is None:
+            return False
+        with self._auth_lock:
+            now = self._clock()
+            if now < self._repair_after:
+                return False
+            self._repair_after = now + RETRY_AFTER
+            try:
+                ok = bool(self._on_unauthorized())
+            except Exception:                             # noqa: BLE001 - treated as not repaired
+                ok = False
+            if ok:
+                self._no_token_until = 0.0
+            return ok
+
+    def _authed(self, call):
+        """Run one request, `call(extra_headers)` -> (status, ...), with the account's token when
+        the feed is locked. A 401 (raised or returned) gets one retry after `_repair`; one that
+        stays, or no token at all, raises FeedUnavailable ("HTTP 401": not retried in seconds)."""
+        auth = self._auth_headers()
+        if auth is None:
+            raise FeedUnavailable("the job list needs a SponsorJobs account and none could be set "
+                                  "up right now (HTTP 401)")
+        for attempt in range(2):
+            try:
+                res = call(auth)
+                status = int(res[0])
+            except urllib.error.HTTPError as exc:
+                if exc.code != 401 or self._token is None:
+                    raise
+                status = 401
+            if status != 401 or self._token is None:
+                return res
+            if attempt == 0 and self._repair():
+                auth = self._auth_headers()
+                if auth is not None:
+                    continue
+            break
+        raise FeedUnavailable("the job list refused this install's account (HTTP 401)")
+
     def _download(self) -> bool:
         """One attempt: the parted download when the manifest lists parts, else the single file."""
         if self._parts:
@@ -445,9 +534,9 @@ class StaticFeed:
         the result carries "kind" ("stable" or "parts"). A network error raises: the attempt
         failed."""
         try:
-            status, _, body = self._manifest_fetch(f"{self.base_url}/{MANIFEST_FILE}",
-                                                   {"Accept": "application/json",
-                                                    "Cache-Control": "no-cache"})
+            status, _, body = self._authed(lambda auth: self._manifest_fetch(
+                f"{self.base_url}/{MANIFEST_FILE}",
+                {"Accept": "application/json", "Cache-Control": "no-cache", **auth}))
         except urllib.error.HTTPError as exc:
             if 400 <= exc.code < 500:
                 return None
@@ -552,7 +641,12 @@ class StaticFeed:
                     with os.fdopen(fd, "wb") as out:
                         def prog(got, _total, i=i):
                             report(i, got)
-                        status, _ = self._stream(f"{self.base_url}/{f['url']}", {}, out, prog)
+
+                        def get(auth, out=out, f=f, prog=prog):
+                            out.seek(0)                   # a retried request starts the file over
+                            out.truncate()
+                            return self._stream(f"{self.base_url}/{f['url']}", dict(auth), out, prog)
+                        status, _ = self._authed(get)
                     if status != 200:
                         raise OSError(f"feed part {f['url']} returned status {status}")
                     if not _part_ok(Path(tmp), f):
@@ -563,6 +657,8 @@ class StaticFeed:
                 except Exception as exc:                  # noqa: BLE001 - this part is retried
                     last = exc
                     report(i)
+                    if isinstance(exc, FeedUnavailable):
+                        raise                             # no account: another try won't fix it
                     if isinstance(exc, urllib.error.HTTPError) and exc.code < 500:
                         # A 404 means the manifest moved on (a new build replaced these parts):
                         # stop this attempt, so the next one re-reads the manifest.
@@ -693,8 +789,12 @@ class StaticFeed:
         fd, tmp = tempfile.mkstemp(dir=str(self.cache_dir), prefix=JOBS_FILE + ".", suffix=".part")
         try:
             with os.fdopen(fd, "wb") as f:
-                status, hdrs = self._stream(f"{self.base_url}/{JOBS_FILE}", headers, f,
-                                            self._on_progress)
+                def get(auth, f=f):
+                    f.seek(0)                             # a retried request starts the file over
+                    f.truncate()
+                    return self._stream(f"{self.base_url}/{JOBS_FILE}", {**headers, **auth}, f,
+                                        self._on_progress)
+                status, hdrs = self._authed(get)
             with self._lock:
                 return self._publish(status, hdrs or {}, Path(tmp))
         finally:
@@ -885,7 +985,8 @@ class StaticFeed:
         fresh = path.exists() and (self._clock() - path.stat().st_mtime) < JD_TTL
         if not fresh and self.base_url:               # no feed configured: nowhere to fetch a shard from
             try:
-                status, _, body = self._fetch(f"{self.base_url}/{JD_DIR}/{shard}.json.gz", {})
+                status, _, body = self._authed(
+                    lambda auth: self._fetch(f"{self.base_url}/{JD_DIR}/{shard}.json.gz", dict(auth)))
                 if status == 200:
                     data = loads_maybe_gz(body)
                     if isinstance(data, dict):

@@ -40,13 +40,14 @@ const CDP_PORT = originGuard.debugPort({ isPackaged: app.isPackaged, env: proces
 // lets a test that starts the engine itself share one token with the shell.
 const SESSION_TOKEN = process.env.TAILOR_SESSION_TOKEN || crypto.randomBytes(32).toString("hex");
 const SESSION_HEADER = { "X-Tailor-Session": SESSION_TOKEN };
-// The STATIC job feed (docs/feed.md): a scheduled GitHub Action crawls and uploads jobs.json.gz
-// + JD shards to Cloudflare R2 behind our domain; the engine downloads the slim list hourly and
-// filters locally, so every user sees the fresh, sponsor-tagged board with no server to keep
-// alive. Override with TAILOR_FEED_URL (e.g. a staging bucket). The `.example` placeholder is an
-// RFC 2606 reserved name the engine recognises as "not configured", so until the real domain is
-// set the app simply runs on its local crawl instead of waiting on a lookup that cannot succeed.
-const FEED_URL = process.env.TAILOR_FEED_URL || "https://feed.sponsorjobs.ai/feed";
+// The STATIC job feed (docs/feed.md): a scheduled GitHub Action crawls and uploads the list + JD
+// shards to Cloudflare R2; the engine downloads the slim list hourly and filters locally, so every
+// user sees the fresh, sponsor-tagged board with no server to keep alive. It is read ONLY through
+// the broker's locked route, <broker>/v1/feed (docs/feed.md "The locked route"): the engine sends
+// its account token, so only SponsorJobs installs can read our crawl. Override with TAILOR_FEED_URL
+// or JOBS_FEED_URL (e.g. a staging broker).
+const DEFAULT_BROKER = "https://api.sponsorjobs.ai";
+const feedUrl = (broker) => process.env.TAILOR_FEED_URL || `${broker.replace(/\/+$/, "")}/v1/feed`;
 // A fixed CDP port for dev tooling (e2e scripts) to attach to the pane; none in a release build.
 if (CDP_PORT) app.commandLine.appendSwitch("remote-debugging-port", CDP_PORT);
 // Every IPC handler below answers only the app's own page (origin_guard.guardIpc).
@@ -122,17 +123,22 @@ async function ensureServer() {
                     "working, most likely an older SponsorJobs engine that was left running. " +
                     "Restart your computer, then open SponsorJobs again.");
   }
-  const env = { ...process.env, TAILOR_SERVER_ONLY: "1", TAILOR_SESSION_TOKEN: SESSION_TOKEN,
-    // Pull the jobs board from the static feed (fresh, high-volume) unless the user pointed us
-    // elsewhere. This is what turns "82 stale local roles" into the full central feed.
-    JOBS_FEED_URL: process.env.JOBS_FEED_URL || FEED_URL };
+  const env = { ...process.env, TAILOR_SERVER_ONLY: "1", TAILOR_SESSION_TOKEN: SESSION_TOKEN };
   if (app.isPackaged) {
     // The official installer is the "SponsorJobs" edition: AI runs on the company service, so
     // nobody needs a key (docs/editions in memory: decided 2026-10-07). Running from source is
     // the open-source Community edition, bring-your-own-key.
     env.TAILOR_EDITION = env.TAILOR_EDITION || "official";
-    env.TAILOR_BROKER_URL = env.TAILOR_BROKER_URL || "https://api.sponsorjobs.ai";
+    env.TAILOR_BROKER_URL = env.TAILOR_BROKER_URL || DEFAULT_BROKER;
   }
+  // Pull the jobs board from the static feed (fresh, high-volume) unless the user pointed us
+  // elsewhere. This is what turns "82 stale local roles" into the full central feed. The feed is
+  // on the broker the engine holds an account with (the token is sent only to that origin). A run
+  // on the local dev broker (http://127.0.0.1, no feed route) gets no feed and uses its local
+  // crawl, as the Community edition does.
+  const feed = process.env.JOBS_FEED_URL
+    || (/^https:\/\//.test(env.TAILOR_BROKER_URL || "") ? feedUrl(env.TAILOR_BROKER_URL) : process.env.TAILOR_FEED_URL);
+  if (feed) env.JOBS_FEED_URL = feed;
   // macOS keeps every large block the engine frees in a per-process cache, and that cache counts
   // against the app's memory: reading the job descriptions left ~250 MB of freed blocks parked
   // there (measured 2026-10-21). Off, a freed block goes straight back to the system. Other

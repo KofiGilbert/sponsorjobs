@@ -502,16 +502,41 @@ def _static_feed():
         with _STATIC_FEEDS_LOCK:
             sf = _STATIC_FEEDS.get(key)
             if sf is None:
-                sf = StaticFeed(key[0], _DATA / "feed_slice", slice_only=True)
+                sf = StaticFeed(key[0], _DATA / "feed_slice", slice_only=True,
+                                **_broker_auth_for(key[0]))
                 _STATIC_FEEDS[key] = sf
         return sf
     key = (_feed_base_url(), str(_DATA))
     with _STATIC_FEEDS_LOCK:
         sf = _STATIC_FEEDS.get(key)
         if sf is None:
-            sf = StaticFeed(key[0], _DATA / "feed_cache")
+            sf = StaticFeed(key[0], _DATA / "feed_cache", **_broker_auth_for(key[0]))
             _STATIC_FEEDS[key] = sf
     return sf
+
+
+def _same_origin(url: str, other: str) -> bool:
+    """Same scheme, host and port (default ports filled in)? Never true for an empty URL."""
+    from urllib.parse import urlsplit
+
+    def origin(u):
+        p = urlsplit((u or "").strip())
+        if not p.scheme or not p.hostname:
+            return None
+        port = p.port or {"https": 443, "http": 80}.get(p.scheme.lower())
+        return (p.scheme.lower(), p.hostname.lower(), port)
+    a = origin(url)
+    return a is not None and a == origin(other)
+
+
+def _broker_auth_for(url: str | None) -> dict:
+    """The locked job list and search (docs/feed.md "The locked route"): when `url` is on the
+    broker's own origin, the client sends this install's account token (registered on first need)
+    and, on a 401, replaces a token the broker no longer knows. Any other host gets nothing: the
+    account token never leaves for a third-party address."""
+    if not url or not _same_origin(url, BROKER_URL):
+        return {}
+    return {"token": _account_token, "on_unauthorized": _recover_from_401}
 
 
 # -- server-side search (docs/server-search-plan.md, phase 3) --------------------------------- #
@@ -538,7 +563,7 @@ def _remote_search():
     with _STATIC_FEEDS_LOCK:
         rs = _REMOTE_SEARCH.get(key)
         if rs is None:
-            rs = RemoteSearch(base, _DATA)
+            rs = RemoteSearch(base, _DATA, **_broker_auth_for(base))
             _REMOTE_SEARCH[key] = rs
     return rs
 

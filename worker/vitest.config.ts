@@ -16,11 +16,14 @@ export default defineConfig(async () => {
           // is stubbed in the tests, so this value never leaves the test runtime.
           bindings: { TEST_MIGRATIONS: migrations, TEST_SEARCH_MIGRATIONS: searchMigrations, ANTHROPIC_API_KEY: "sk-test-not-real" },
           // The search database and its rate limits are not in wrangler.jsonc until go-live
-          // (docs/server-search-plan.md); the tests bind their own.
+          // (docs/server-search-plan.md); the tests bind their own. The feed bucket comes from
+          // wrangler.jsonc (a local, empty test bucket); its rate limits are repeated here.
           d1Databases: { SEARCH_DB: "sponsorjobs-search-test" },
           ratelimits: {
-            SEARCH_TOKEN_LIMITER: { namespace_id: "7101", simple: { limit: 60, period: 60 } },
+            SEARCH_ACCOUNT_LIMITER: { namespace_id: "7101", simple: { limit: 60, period: 60 } },
             SEARCH_IP_LIMITER: { namespace_id: "7102", simple: { limit: 300, period: 60 } },
+            FEED_ACCOUNT_LIMITER: { namespace_id: "7103", simple: { limit: 120, period: 60 } },
+            FEED_IP_LIMITER: { namespace_id: "7104", simple: { limit: 600, period: 60 } },
           },
         },
       }),

@@ -169,11 +169,15 @@ so they run locally.
 
 ### Abuse and rate limiting
 
-- An anonymous random install token sent in a header. It is not tied to an account and never logged
-  with the query.
+- Locked to SponsorJobs installs (2026-11-25, `worker/src/installauth.ts`): every request carries
+  the install's broker account token (`Authorization: Bearer`), and anything else gets
+  `401 no_account`, so a copycat app cannot spend the search allowance. The account id is only a
+  rate-limit key: never stored next to a query, never logged. (It replaced an anonymous install
+  token that was only a rate-limit key.) The app treats a 401 like being offline: it replaces a
+  token the broker no longer knows, retries once, else serves the slice with its note.
 - The Workers [rate-limit binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/):
-  60 requests/60 s per token and 300/60 s per IP. It is approximate and per location, so a
-  Cloudflare WAF rule is the backstop.
+  300/60 s per IP, checked before the token is looked up, then 60 requests/60 s per account. It is
+  approximate and per location, so a Cloudflare WAF rule is the backstop.
 - The 1,000-result depth limit and the 500-row candidates limit.
 
 ### Migration phases
@@ -249,7 +253,8 @@ a plain ordered walk that SQLite stops when the page is full, bounded to about 2
 a cursor that carries on from where the scan stopped. No counting past the page: the count is
 exact once the scan reached the end, else "about N" (the sponsor or whole-board size, a keyword's
 match count up to 250, or the share of rows walked that matched), else "N+". 1,000 results deep at
-most. Rate limits 60 a minute per install token and 300 per network. A daily budget
+most. A valid broker account token is required (401 `no_account` otherwise). Rate limits 300 a
+minute per network, then 60 per account. A daily budget
 (`SEARCH_DAILY_ROWS_READ` 3,500,000 and `SEARCH_DAILY_REQUESTS` 60,000; "0" turns a cap off)
 answers 503 `daily_budget` before search can use the free allowance the broker needs.
 Two D1 details found while measuring: D1 binds a JavaScript number as REAL, and FTS5 then ignores a
@@ -334,9 +339,11 @@ Not verified: that production D1 counts rows read and written exactly as the loc
 1. **Create the database:** `cd worker && npx wrangler d1 create sponsorjobs-search`. Uncomment
    the `SEARCH_DB` block in `wrangler.jsonc` (inside `"d1_databases"`) and paste the id it printed.
 2. **Apply its migrations:** `npx wrangler d1 migrations apply SEARCH_DB --remote`.
-3. **Rate limits and cursor secret:** uncomment the `"ratelimits"` block;
-   `npx wrangler secret put SEARCH_CURSOR_SECRET` (any long random string). Deploy the Worker.
-   `/v1/jobs/search` answers 503 `no_index` until step 5 finishes.
+3. **Rate limits and cursor secret:** uncomment the two `SEARCH_*` lines in the `"ratelimits"`
+   block (`SEARCH_ACCOUNT_LIMITER`, `SEARCH_IP_LIMITER`; the feed's two are already live);
+   `npx wrangler secret put SEARCH_CURSOR_SECRET` (any long random string). No other new secret:
+   search checks the same account tokens as the rest of the broker. Deploy the Worker.
+   `/v1/jobs/search` answers 401 without a token, and 503 `no_index` with one until step 5 finishes.
 4. **Loader credentials (GitHub, repo settings):** secret `SEARCH_D1_TOKEN` (a Cloudflare API
    token with D1 Edit), variables `SEARCH_D1_ACCOUNT_ID` and `SEARCH_D1_DATABASE_ID` (from step 1).
    Optional: `SEARCH_D1_DAILY_WRITES` ("0" for a paid month).

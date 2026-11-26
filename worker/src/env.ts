@@ -93,12 +93,22 @@ export interface Env {
   // The rate limiters are `ratelimits` bindings. The cursor secret is optional (`wrangler secret
   // put SEARCH_CURSOR_SECRET`): without it cursors are signed with a public key. The two daily
   // limits keep search inside its share of the free plan (defaults in search.ts; "0" = no limit).
+  // Both /v1/jobs/* routes need a valid account token (src/installauth.ts); the account limiter is
+  // keyed on the account id.
   SEARCH_DB?: D1Database;
-  SEARCH_TOKEN_LIMITER?: RateLimit;
+  SEARCH_ACCOUNT_LIMITER?: RateLimit;
   SEARCH_IP_LIMITER?: RateLimit;
   SEARCH_CURSOR_SECRET?: string;
   SEARCH_DAILY_ROWS_READ?: string;
   SEARCH_DAILY_REQUESTS?: string;
+  // The locked job list (src/feed.ts, docs/feed.md "The locked route"): GET /v1/feed/<file> for
+  // installs with a valid account token, streamed from the feed bucket through this binding (the
+  // existing sponsorjobs-feed bucket, wrangler.jsonc "r2_buckets"; no secret). Without the binding
+  // every file answers 503 feed_not_configured.
+  FEED_BUCKET?: R2Bucket;
+  FEED_R2_PREFIX?: string;              // key prefix in the bucket; default "feed" (the workflow's R2_PREFIX)
+  FEED_ACCOUNT_LIMITER?: RateLimit;     // Workers rate limits (wrangler.jsonc "ratelimits")
+  FEED_IP_LIMITER?: RateLimit;
 }
 
 /** A numeric var with a fallback, so a missing or mistyped value never turns into NaN limits. */

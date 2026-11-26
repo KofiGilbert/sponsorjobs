@@ -8,9 +8,11 @@ import fixture from "./fixtures/search-parity.json";
 import { env } from "./helpers";
 
 // The rate limiters are real in the test runtime; the parity walk makes far more than 300 calls.
-// No daily budget either: the walk reads the small table many times over.
-const free = { ...env, SEARCH_IP_LIMITER: undefined, SEARCH_TOKEN_LIMITER: undefined,
-               SEARCH_DAILY_ROWS_READ: "0", SEARCH_DAILY_REQUESTS: "0" };
+// No daily budget either: the walk reads the small table many times over. Search needs an account
+// (src/installauth.ts): the dev header stands in for one here; search.test.ts checks real tokens.
+const free = { ...env, SEARCH_IP_LIMITER: undefined, SEARCH_ACCOUNT_LIMITER: undefined,
+               SEARCH_DAILY_ROWS_READ: "0", SEARCH_DAILY_REQUESTS: "0", DEV_HEADER_AUTH: "1" };
+const asAccount = { headers: { "X-Tailor-User": "acct_parity" } };
 const db = env.SEARCH_DB!;
 
 interface Case { mode: "search" | "candidates"; params: Record<string, string>; ids: string[] }
@@ -27,7 +29,7 @@ async function walk(c: Case, limit: number) {
   let last: any = null;
   for (let page = 0; page < 200; page++) {
     const qs = new URLSearchParams({ ...c.params, limit: String(limit), ...(cursor ? { cursor } : {}) });
-    const res = await handleSearch(new Request(`https://api.test/v1/jobs/${c.mode}?${qs}`), free,
+    const res = await handleSearch(new Request(`https://api.test/v1/jobs/${c.mode}?${qs}`, asAccount), free,
                                    c.mode, fixture.now_ms);
     expect(res.status).toBe(200);
     last = await res.json();
@@ -95,7 +97,7 @@ describe("parity with sourcing/filters.apply_facets", () => {
   it("returns the slim row the feed carries, employer fields and tags joined back", async () => {
     const sample: any = fixture.sample;
     const qs = new URLSearchParams({ q: sample.title, limit: "50" });
-    const res = await handleSearch(new Request(`https://api.test/v1/jobs/search?${qs}`), free,
+    const res = await handleSearch(new Request(`https://api.test/v1/jobs/search?${qs}`, asAccount), free,
                                    "search", fixture.now_ms);
     const data: any = await res.json();
     expect(data.jobs.find((j: any) => j.source_id === sample.source_id)).toEqual(sample);

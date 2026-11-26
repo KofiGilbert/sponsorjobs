@@ -78,14 +78,28 @@
   //        { "binding": "SEARCH_DB", "database_name": "sponsorjobs-search",
   //          "database_id": "<the id>", "migrations_dir": "migrations-search" }
   //   2. `npx wrangler d1 migrations apply SEARCH_DB --remote`
-  //   3. Uncomment the rate limits (60 a minute per install token, 300 per network; the
-  //      namespace ids are our own labels, not created resources):
-  // "ratelimits": [
-  //   { "name": "SEARCH_TOKEN_LIMITER", "namespace_id": "7101", "simple": { "limit": 60, "period": 60 } },
-  //   { "name": "SEARCH_IP_LIMITER", "namespace_id": "7102", "simple": { "limit": 300, "period": 60 } }
-  // ],
+  //   3. Uncomment the two SEARCH_* rate limits in "ratelimits" below (60 a minute per account,
+  //      300 per network).
   //   Optional vars: SEARCH_DAILY_ROWS_READ (default 3500000) and SEARCH_DAILY_REQUESTS (default
   //   60000) cap what search may use of the free plan in one UTC day; "0" removes a cap (paid plan).
+
+
+  // ---- The locked job list (src/feed.ts, docs/feed.md "The locked route"): GET /v1/feed/<file>
+  // streams the job list from the EXISTING public feed bucket (the feed workflow uploads to it,
+  // under the R2_PREFIX "feed") to installs with a valid account token. Binding an existing bucket
+  // creates nothing on Cloudflare and needs no secret. Optional var: FEED_R2_PREFIX (default "feed").
+  "r2_buckets": [
+    { "binding": "FEED_BUCKET", "bucket_name": "sponsorjobs-feed" }
+  ],
+
+  // Workers rate limits. The namespace ids are our own labels, not created resources. The feed's
+  // are live: 120 files a minute per account, 600 per network. Search's wait for its go-live above.
+  "ratelimits": [
+    { "name": "FEED_ACCOUNT_LIMITER", "namespace_id": "7103", "simple": { "limit": 120, "period": 60 } },
+    { "name": "FEED_IP_LIMITER", "namespace_id": "7104", "simple": { "limit": 600, "period": 60 } }
+    // { "name": "SEARCH_ACCOUNT_LIMITER", "namespace_id": "7101", "simple": { "limit": 60, "period": 60 } },
+    // { "name": "SEARCH_IP_LIMITER", "namespace_id": "7102", "simple": { "limit": 300, "period": 60 } }
+  ],
 
   // Defaults matching backend/broker.py and backend/metering.py. Override per deployment here or
   // in the dashboard; they are plain settings, not secrets.

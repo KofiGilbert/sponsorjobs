@@ -42,7 +42,8 @@ implementation; it does not replace or change anything in `backend/`.
 | `GET /mail/messages?after=<cursor>&limit=<n>` | whole messages for the in-app Inbox, oldest first, at most 25, `{messages, cursor, more}`; `after` acknowledges and deletes; kept until downloaded, 30 days at most |
 | `POST /agent/sign` `{method, authority, path}` | Web Bot Auth headers for one page request the apply agent makes: `{signature_input, signature, signature_agent, expires}` (60 s; 120 per account per minute, `429 rate_limited`; `503 not_configured` without `AGENT_SIGNING_KEY`) |
 | `GET /.well-known/http-message-signatures-directory` | the agent's public key (a signed JWKS); routed here from sponsorjobs.ai as well, the registered Signature-Agent |
-| `GET /v1/jobs/search`, `GET /v1/jobs/candidates` | server-side job search (`src/search.ts`, docs/server-search-plan.md): the board's facets plus `scope`, cursors, at most 50 / 500 rows a page and 1,000 deep. Its own D1 database (`SEARCH_DB`, `migrations-search/`), not bound until go-live, so it answers `503 no_index`; `503 daily_budget` once the day's free allowance for search is used. `scripts/local-d1.mjs` and `scripts/measure-search.mjs` try it locally |
+| `GET /v1/jobs/search`, `GET /v1/jobs/candidates` | server-side job search (`src/search.ts`, docs/server-search-plan.md), for SponsorJobs accounts only (`401 no_account` without a valid bearer token; 300 a minute per network, then 60 per account): the board's facets plus `scope`, cursors, at most 50 / 500 rows a page and 1,000 deep. Its own D1 database (`SEARCH_DB`, `migrations-search/`), not bound until go-live, so it answers `503 no_index`; `503 daily_budget` once the day's free allowance for search is used. `scripts/local-d1.mjs` and `scripts/measure-search.mjs` try it locally |
+| `GET /v1/feed/<file>` | the locked job list (`src/feed.ts`, docs/feed.md "The locked route"): `manifest.json`, `jobs.json.gz`, `parts/*.json.gz`, `jd/*.json.gz`, streamed from the `sponsorjobs-feed` bucket through the `FEED_BUCKET` binding (stored gzip passed through, ETag / `304`). `401 no_account` without a valid bearer token; 600 a minute per network, then 120 per account; `503 feed_not_configured` without the binding |
 
 Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one plan or pass price;
 see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
@@ -120,6 +121,8 @@ The tests never touch the network: every call to Anthropic is stubbed.
 7. Point the official app build at `https://api.sponsorjobs.ai` (`TAILOR_BROKER_URL`).
 8. Request signing for the apply agent: the key, the extra route and the Cloudflare registration
    are in `docs/signed-agent.md`.
+9. The locked job list: right after the deploy that adds `/v1/feed/*`, block the job files on
+   `feed.sponsorjobs.ai` with the one WAF rule in docs/feed.md ("Go-live"). No secret is needed.
 
 Moving existing accounts from Render: the D1 tables use the same names and columns as the Python
 broker's SQLite file (`users`, `usage`, `accounts`, `tokens`), so existing tokens keep working
@@ -130,4 +133,7 @@ after an export and import of those tables.
 The free plan allows 100,000 requests a day and 10 ms of CPU per request. Time spent waiting on
 Anthropic or D1 does not count as CPU. A completion uses roughly 1 to 3 ms of CPU (one SHA-256 of
 the token, parsing and re-serialising the request, three short D1 round trips), so it fits; very
-large conversation histories (hundreds of KB) are the one case to watch in the dashboard.
+large conversation histories (hundreds of KB) are the one case to watch in the dashboard. The
+locked job list (`/v1/feed/*`) costs one request per file the app reads, ~25 to 80 a day per
+install with the app open (docs/feed.md, "Worker requests per install"), and almost no CPU (the body
+is streamed from R2 untouched).
