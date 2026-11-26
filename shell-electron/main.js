@@ -1131,7 +1131,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     lap("payload", "filling the page");
     const havePayload = !!(payload && payload.loaded !== false);
     const fillExpr = (budgetMs) => (havePayload
-      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs, pointer })}))` : "null");
+      ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.setPointer(${pointer}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
     const pres = [];
     let searchTrouble = [];                              // labels of lists whose search did not finish
     if (havePayload) {
@@ -1483,13 +1483,13 @@ async function applyDecision(url, pageUrl) {
 // opts: { url, recordId, resumePath, submit, here }
 //   here   -> fill the page already open in the pane (after the person pressed Next / signed in)
 //   submit -> the caller is an Apply button; the engine still has the final say per site
-ipcMain.handle("assist:apply", async (_e, opts) => {
+// (2026-11-26) The Autofill button's second half (preload's assistApply calls it with the fill's
+// own result): the agent finishes only what the fast fill left (finish.js needsFinish), or, for a
+// plain fill, the drawn pointer goes. The site's Submit is never pressed on this path.
+ipcMain.handle("assist:finish", async (_e, opts, report) => {
   const o = opts || {};
-  // (2026-11-26) The Autofill button: the fast fill first; the agent finishes only what it left
-  // (finish.js needsFinish). The site's Submit is never pressed on this path.
-  const r = await assistFill(o.finish ? Object.assign({}, o, { submit: false }) : o);
-  if (!o.finish) { if (pane) pointerOff(pane.webContents); return r; }
-  return finishAfterAutofill(o, r);
+  if (!o.finish) { if (pane) pointerOff(pane.webContents); return report; }
+  return finishAfterAutofill(o, report);
 });
 
 // After the fast Autofill: hand the page to the agent when it left required fields, more pages or
@@ -1534,7 +1534,9 @@ async function finishAfterAutofill(o, r) {
 }
 const _finishMsg = new Map();        // record -> the finish run's last line, for the caller's note
 
-async function assistFill(opts) {
+ipcMain.handle("assist:apply", async (_e, opts) => {
+  // an Autofill the agent may finish never clicks the site's Submit, whatever else it says
+  if (opts && opts.finish) opts = Object.assign({}, opts, { submit: false });
   const { url, recordId, resumePath, submit, here } = opts || {};
   let startUrl = url || "";
   if (here) {
@@ -1595,7 +1597,7 @@ async function assistFill(opts) {
     return /thank you|application (was )?(submitted|received)|we('| ha)?ve received/.test(t);
   })()`, true);
   return { ...base, submitted: true, confirmed: !!confirmed, clicked: res.label };
-}
+});
 
 
 // Open the apply URL in the pane, let it settle, then AI-fill it.

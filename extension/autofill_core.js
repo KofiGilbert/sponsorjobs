@@ -4361,9 +4361,11 @@ function qsaSafe(sel, root) {
   // The keyword fill plus the custom widgets: what the desktop shell runs.
   // ``opts.budgetMs``: past it the engine starts no further widget and returns what it filled,
   // with ``timed_out`` (the shell carries on from the page as it stands).
+  // the shell turns the pointer on (or off) for the fill that follows
+  function setPointer(on) { _pointerOn = !!on; return _pointerOn; }
   async function fillAsync(payload, opts) {
     const base = startBudget("engine", opts && opts.budgetMs);
-    _pointerOn = !!(opts && opts.pointer);
+    if (opts && "pointer" in opts) _pointerOn = !!opts.pointer;
     _keyOps = [];
     _searchOps = [];
     _keyGroups = [];
@@ -4563,6 +4565,6 @@ function qsaSafe(sel, root) {
     // the agent's page view leaves out what a person cannot see or must not fill
     honeypot, parkedOffCanvas,
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
-    enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype,
+    enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
   };
 })();
