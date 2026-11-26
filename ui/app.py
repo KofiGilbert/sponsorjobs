@@ -19,7 +19,7 @@ import uuid
 from collections import OrderedDict
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, jsonify, make_response, render_template, request, send_file
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -10384,6 +10384,14 @@ def memory_erase():
         mem.erase_everything()
     finally:
         mem.close()
+    try:                     # the Orb's nudges, its event log, its chat summaries
+        orb = _orb_store()
+        try:
+            orb.erase()
+        finally:
+            orb.close()
+    except Exception:        # noqa: BLE001
+        traceback.print_exc()
     _erase_diary(PALACE_DIR)
     gone = _erase_brain_and_answers()
     recs = _records()
@@ -21014,7 +21022,27 @@ def agent_ask():
     kind = route(text)
     if kind in ("jd", "url"):
         return jsonify({"ok": True, "kind": kind})
-    intent = _agent_parse(text)
+    # (2026-11-26, the Orb) "mute" and "unmute" are handled here, with no AI call; past the chat's
+    # per-hour message cap or the day's spend cap the assistant answers from the rules only.
+    orb, now = _orb_store(), _orb_now()
+    try:
+        cmd = _orb_rules().mute_command(text)
+        if cmd:
+            orb.set_pref("muted", cmd == "mute", now)
+            orb.log("mute" if cmd == "mute" else "unmute", "chat", now)
+            return jsonify({"ok": True, "kind": "agent", "orb": {"muted": cmd == "mute"}, "buttons": [],
+                            "text": "Sounds off." if cmd == "mute" else "Sounds on."})
+        mode = orb.chat_mode(now)
+        orb.log("chat", mode, now)
+        orb.add_turn("user", text, now)
+    finally:
+        orb.close()
+    if mode == "ai":
+        intent = _agent_parse(text)
+        _orb_spend(now)
+    else:
+        from agent.home import parse_request_rules
+        intent = parse_request_rules(text)
     _AGENT["pending"] = None              # a new request replaces one waiting on a connect
     if body.get("change") and _AGENT.get("intent"):
         prev = _AGENT["intent"]
@@ -21026,7 +21054,384 @@ def agent_ask():
         intent = {**merged, "intent": "find_and_apply"}
     need = _agent_missing(intent)         # check first: never plan around a missing connection
     out = _agent_hold(text, intent, need) if need else _agent_answer(intent)
-    return jsonify({"ok": True, "kind": "agent", "intent": intent, **out})
+    _orb_turn("assistant", out.get("text") or "")
+    return jsonify({"ok": True, "kind": "agent", "intent": intent, "mode": mode, **out})
+
+
+# ---------------------------------------------------------------- the Orb (orb/rules.py)
+# The app's floating assistant. Local only: its nudges come from the person's own records, its
+# tables sit in the app's SQLite file (orb/store.py), and the pure rules are in orb/rules.py.
+# Three ways to turn it off: SJ_ORB=0 in the engine's environment (the kill switch), the Settings
+# toggle, or the broker's remote switch (its /health says features.orb = false).
+def _orb_rules():
+    from orb import rules
+    return rules
+
+
+def _orb_now():
+    from datetime import datetime
+    return datetime.now()
+
+
+def _orb_store():
+    from orb.store import OrbStore
+    return OrbStore(DB_PATH)
+
+
+def _orb_spend(now) -> None:
+    orb = _orb_store()
+    try:
+        orb.add_spend(now)
+    finally:
+        orb.close()
+
+
+def _orb_turn(role: str, text: str) -> None:
+    """One chat turn kept for the open chat's summary (orb_chat, the last 40 only)."""
+    if not text:
+        return
+    orb = _orb_store()
+    try:
+        orb.add_turn(role, text, _orb_now())
+    except Exception:                  # noqa: BLE001 - memory never breaks a reply
+        traceback.print_exc()
+    finally:
+        orb.close()
+
+
+_ORB_REMOTE: dict = {}                 # base url -> (checked_at, on): one probe every 10 minutes
+
+
+def _orb_remote_on() -> bool:
+    """The broker's remote switch: its /health may carry features.orb. Missing, unreachable or
+    anything but false means on, so an outage never hides the Orb by itself."""
+    import json as _json
+    import urllib.request
+    base = os.environ.get("TAILOR_BROKER_URL", "").rstrip("/")
+    if not base:
+        return True
+    hit = _ORB_REMOTE.get(base)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    on = hit[1] if hit else True
+    try:
+        from llm.broker_client import BROKER_USER_AGENT
+        req = urllib.request.Request(base + "/health", headers={"User-Agent": BROKER_USER_AGENT})
+        with urllib.request.urlopen(req, timeout=2) as r:   # nosec - our own broker
+            feats = (_json.loads(r.read() or b"{}") or {}).get("features")
+            on = not (isinstance(feats, dict) and feats.get("orb") is False)
+    except Exception:                  # noqa: BLE001 - unreachable: keep the last answer
+        pass
+    _ORB_REMOTE[base] = (time.time(), on)
+    return on
+
+
+def _orb_quiet(now) -> bool:
+    try:
+        prefs = _notify_state().prefs()
+    except Exception:                  # noqa: BLE001
+        prefs = {}
+    return _orb_rules().in_quiet_hours(now.hour, int(prefs.get("quiet_start", 22)), int(prefs.get("quiet_end", 8)))
+
+
+def _orb_config(orb=None) -> dict:
+    R = _orb_rules()
+    own = orb is None
+    orb = orb or _orb_store()
+    try:
+        setting = orb.pref("enabled", True) is not False
+        muted = bool(orb.pref("muted", False))
+    finally:
+        if own:
+            orb.close()
+    on, why = R.enabled(env_on=R.flag("SJ_ORB"), setting_on=setting, remote_on=_orb_remote_on())
+    now = _orb_now()
+    return {"ok": True, "enabled": on, "off_reason": why, "setting": setting, "muted": muted,
+            "nudges": on and R.flag("SJ_ORB_NUDGES"), "quiet": _orb_quiet(now),
+            "env_off": not R.flag("SJ_ORB")}
+
+
+@app.get("/orb")
+def orb_page():
+    """The Orb's own small page: the shell shows it in a transparent view above the app and the
+    in-app browser (shell-electron/orb_view.js). It holds no data; the app sends it what to show."""
+    resp = make_response(render_template("orb.html"))
+    resp.headers["Content-Security-Policy"] = APP_CSP
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/orb/config")
+@_guard
+def orb_config():
+    return jsonify(_orb_config())
+
+
+@app.post("/api/orb/settings")
+@_guard
+def orb_settings():
+    """{enabled?, muted?}: the Settings toggle, the Orb's own menu, or "mute" typed in the chat."""
+    body = request.json or {}
+    orb, now = _orb_store(), _orb_now()
+    try:
+        if "enabled" in body:
+            orb.set_pref("enabled", bool(body["enabled"]), now)
+            orb.log("enabled" if body["enabled"] else "disabled", str(body.get("from") or "")[:20], now)
+        if "muted" in body:
+            orb.set_pref("muted", bool(body["muted"]), now)
+            orb.log("mute" if body["muted"] else "unmute", str(body.get("from") or "")[:20], now)
+        return jsonify(_orb_config(orb))
+    finally:
+        orb.close()
+
+
+@app.post("/api/orb/event")
+@_guard
+def orb_event():
+    """The page's own events for the log: a kind and an id, never text."""
+    body = request.json or {}
+    kind = re.sub(r"[^a-z_]", "", str(body.get("kind") or "").lower())[:30]
+    if not kind:
+        return jsonify({"ok": False}), 400
+    orb = _orb_store()
+    try:
+        orb.log(kind, re.sub(r"[^A-Za-z0-9_:.-]", "", str(body.get("ref") or ""))[:60], _orb_now())
+    finally:
+        orb.close()
+    return jsonify({"ok": True})
+
+
+def _orb_who(r: dict) -> str:
+    return ((r.get("company") or "").strip() or ((r.get("role") or r.get("title") or "").split(" · ")[0].strip())
+            or "a job")
+
+
+def _orb_candidates(now) -> list[dict]:
+    """Every nudge the data supports right now, each {type, key, text, action}. Real data only:
+    nothing is made up to fill a quiet day."""
+    import hashlib
+    from submit.stages import is_waiting_to_submit
+    out: list[dict] = []
+    today = now.date()
+    recs = _records()
+    try:
+        rows = recs.list(limit=2000)
+    finally:
+        recs.close()
+    ready = [r for r in rows if is_waiting_to_submit(_record_data(r))]
+    # The Tracker's own board: the follow-ups due today and the jobs at Interviewing.
+    w = _watchlist()
+    try:
+        due = w.due_followups(today)
+        interviews = w.board_jobs("interviewing")
+    finally:
+        w.close()
+    h = lambda ids: hashlib.sha1(",".join(sorted(str(i) for i in ids)).encode()).hexdigest()[:10]
+    if due:
+        text = (f"Time to follow up with {_orb_who(due[0])}" if len(due) == 1
+                else f"{len(due)} follow-ups are due")
+        out.append({"type": "followup", "key": "followup:" + h([r.get("source_id") for r in due]), "text": text,
+                    "action": {"nav": "tracker", "label": "Open Tracker"}})
+    if ready:
+        text = (f"Your resume for {_orb_who(ready[0])} is ready to apply" if len(ready) == 1
+                else f"{len(ready)} resumes are ready to apply")
+        out.append({"type": "ready", "key": "ready:" + h([r["id"] for r in ready]), "text": text,
+                    "action": {"nav": "tracker", "label": "Open Tracker"}})
+    for r in interviews[:1]:
+        out.append({"type": "practice", "key": f"practice:{r.get('source_id')}",
+                    "text": f"Practice for your {_orb_who(r)} interview",
+                    "action": {"nav": "prep", "label": "Practice"}})
+    try:
+        out += _orb_match_candidates(now)
+    except Exception:                  # noqa: BLE001 - the other nudges still stand
+        traceback.print_exc()
+    try:
+        out += _orb_fact_candidates(today)
+    except Exception:                  # noqa: BLE001
+        traceback.print_exc()
+    waiting = len(due) + len(ready) + len(interviews)
+    if waiting >= 2:
+        out.append({"type": "daily", "key": f"daily:{today.isoformat()}",
+                    "text": f"{waiting} things wait on you today", "action": {"chat": "waiting", "label": "Show me"}})
+    return out
+
+
+_ORB_MATCHES: dict = {}                # the saved-search counts, worked out at most every 30 minutes
+
+
+def _orb_match_candidates(now) -> list[dict]:
+    """New jobs on a saved search since it was last opened (the digest the Jobs page shows); this
+    moved here from the page's own desktop notification while the Orb is on."""
+    hit = _ORB_MATCHES.get("v")
+    if hit and time.time() - hit[0] < 1800:
+        return hit[1]
+    out = []
+    store = _strategies()
+    try:
+        items = store.list()
+        if items:
+            for st in _strategy_with_counts(store, items):
+                n = int(st.get("new_count") or 0)
+                if n and st.get("newest_at"):
+                    out.append({"type": "matches", "key": f"matches:{st['id']}:{st['newest_at']}",
+                                "text": f"{n} new {'job' if n == 1 else 'jobs'} for {st.get('name') or 'your search'}",
+                                "action": {"nav": "jobs", "label": "See jobs"}})
+    finally:
+        store.close()
+    out = out[:2]
+    _ORB_MATCHES["v"] = (time.time(), out)
+    return out
+
+
+def _orb_fact_candidates(today) -> list[dict]:
+    """A saved fact that stopped being safe to send: a start date that passed, a work
+    authorization whose end date passed (applicant/expiry.py; with the brain on only)."""
+    st = _brain()
+    if st is None:
+        return []
+    from applicant import expiry as _E
+    from applicant.library import BrainLibrary
+    out = []
+    start = BrainLibrary(st).best("@start_date")
+    d = _E.start_date_passed((start or {}).get("answer"), today)
+    if d:
+        out.append({"type": "facts", "key": f"facts:start:{d.isoformat()}", "text": "Your saved start date has passed",
+                    "action": {"nav": "profile", "label": "Update it"}})
+    ended = _E.workauth_ended(_work_auth(), "US", today)
+    if ended:
+        out.append({"type": "facts", "key": f"facts:workauth:{ended.isoformat()}",
+                    "text": "Your saved work permit end date has passed", "action": {"nav": "profile", "label": "Update it"}})
+    return out
+
+
+def _orb_public(n: dict | None) -> dict | None:
+    if not n:
+        return None
+    return {"id": n["id"], "type": n["type"], "text": n["text"], "action": n.get("action") or None}
+
+
+@app.get("/api/orb/nudge")
+@_guard
+def orb_nudge():
+    """The one unasked bubble the Orb may show now, if any, and what is waiting (for the chat's
+    first turn). ?typing=1 / ?autofill=1 / ?peek=1 (the chat asking, not a bubble)."""
+    R = _orb_rules()
+    cfg = _orb_config()
+    if not cfg["enabled"]:
+        return jsonify({"ok": True, "nudge": None, "waiting": [], "count": 0, "why": "off"})
+    now = _orb_now()
+    orb = _orb_store()
+    try:
+        try:
+            orb.sync(_orb_candidates(now), now)
+        except Exception:              # noqa: BLE001 - an old table still answers
+            traceback.print_exc()
+        orb.prune(now)
+        snoozed = orb.snoozed(now)
+        rows = [r for r in orb.nudges() if r["type"] not in snoozed]
+        rows.sort(key=lambda r: -int(r.get("priority") or 0))
+        waiting = [_orb_public(r) for r in rows[:3]]
+        nudge, why = None, "nudges_off"
+        if cfg["nudges"] and request.args.get("peek") != "1":
+            shown, last = orb.shown_today(now)
+            ok, why = R.may_show(now=now, shown_today=shown, last_shown=last,
+                                 typing=request.args.get("typing") == "1",
+                                 autofill=request.args.get("autofill") == "1", quiet=cfg["quiet"])
+            if ok:
+                n = R.pick(rows, snoozed=snoozed)
+                if n:
+                    orb.mark(n["id"], "shown", now)
+                    nudge = _orb_public(n)
+                    why = ""
+                else:
+                    why = "none"
+        return jsonify({"ok": True, "nudge": nudge, "waiting": waiting, "count": len(rows), "why": why})
+    finally:
+        orb.close()
+
+
+@app.post("/api/orb/nudge/<int:nid>")
+@_guard
+def orb_nudge_mark(nid: int):
+    """{status: acted | dismissed}. Two dismissals of one kind in a row turn it off for 7 days."""
+    status = str((request.json or {}).get("status") or "")
+    if status not in ("acted", "dismissed"):
+        return jsonify({"error": "status is acted or dismissed"}), 400
+    orb = _orb_store()
+    try:
+        row = orb.mark(nid, status, _orb_now())
+    finally:
+        orb.close()
+    if not row:
+        return jsonify({"error": "no such nudge"}), 404
+    return jsonify({"ok": True, "status": row["status"]})
+
+
+@app.get("/api/orb/today")
+@_guard
+def orb_today():
+    """"Which jobs should I apply to today?", answered from the person's own records with no AI
+    call: the resumes ready to apply (oldest first), then the follow-ups due."""
+    from submit.stages import is_waiting_to_submit
+    now = _orb_now()
+    recs = _records()
+    try:
+        rows = recs.list(limit=2000)
+    finally:
+        recs.close()
+    ready = [(str(r.get("created_at") or ""), r) for r in rows if is_waiting_to_submit(_record_data(r))]
+    w = _watchlist()
+    try:
+        due = w.due_followups(now.date())
+    finally:
+        w.close()
+    ready.sort(key=lambda x: x[0])
+    names = [f"{(r.get('role') or 'a role').split(' · ')[0]} at {r['company']}" if r.get("company")
+             else (r.get("role") or "a role").split(" · ")[0] for _c, r in ready[:3]]
+    if names:
+        text = ("Apply to these first, their resumes are ready: " + "; ".join(names) + "."
+                + (f" {len(ready) - 3} more wait on the Tracker." if len(ready) > 3 else ""))
+    else:
+        text = "No resume is waiting to be sent. Pick a job on Home and I will tailor one."
+    if due:
+        text += f" Also, {len(due)} {'follow-up is' if len(due) == 1 else 'follow-ups are'} due."
+    return jsonify({"ok": True, "kind": "agent", "text": text,
+                    "buttons": [{"id": "open_tracker", "label": "Open Tracker"}] if (ready or due) else []})
+
+
+_ORB_SUMMARY_SYSTEM = (
+    "You keep a short memory of a chat between a job seeker and their job-search assistant. "
+    "Write the TOPICS only, as one line of at most 25 words, comma separated (for example: "
+    "follow-ups due, interview practice for a data analyst role). No names of people, no "
+    "contact details, no dashes, no sentence about the assistant.")
+
+
+@app.post("/api/orb/chat/close")
+@_guard
+def orb_chat_close():
+    """The chat closed: its turns become one short topics line on the small model (the narrate
+    model), and the raw turns are dropped. No model (no key, offline, past the spend cap): the
+    turns are simply dropped."""
+    orb, now = _orb_store(), _orb_now()
+    try:
+        turns = orb.turns()
+        topics = ""
+        if len([t for t in turns if t["role"] == "you"]) >= 1 and orb.chat_mode(now) == "ai":
+            convo = "\n".join(f"{t['role']}: {t['text']}" for t in turns[-20:])
+            try:
+                llm = _make_llm()
+                narrate = getattr(llm, "narrate", None)
+                if callable(narrate):
+                    topics = " ".join(str(narrate(_ORB_SUMMARY_SYSTEM, convo, max_tokens=80) or "").split())
+                    topics = re.sub("[\\u2013\\u2014]", ",", topics)[:300]
+                    orb.add_spend(now)
+            except Exception:          # noqa: BLE001 - nothing to remember this time
+                topics = ""
+        orb.close_chat(topics, now)
+        orb.log("chat_closed", str(len(turns)), now)
+        return jsonify({"ok": True, "topics": bool(topics)})
+    finally:
+        orb.close()
 
 
 @app.post("/api/agent/connected")

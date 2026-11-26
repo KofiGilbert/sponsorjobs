@@ -16,6 +16,11 @@ describe("health", () => {
     expect((await call("/health", { env: { ANTHROPIC_API_KEY: "" } })).data)
       .toMatchObject({ ok: true, real_providers: false });
   });
+
+  it("carries the Orb's remote switch: on unless ORB_OFF is 1", async () => {
+    expect((await call("/health")).data).toMatchObject({ features: { orb: true } });
+    expect((await call("/health", { env: { ORB_OFF: "1" } })).data).toMatchObject({ features: { orb: false } });
+  });
 });
 
 describe("accounts", () => {

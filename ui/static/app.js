@@ -4878,6 +4878,7 @@
     const val = composerInput.value.trim();
     if (!val) return;
     composerInput.value = ""; autoGrow();
+    if (AGENT.on && orbMuteCmd(val)) return;       // "mute" / "unmute": the Orb's sounds, no AI call
     if (AGENT.on) {                                // assistant mode: not a resume-session turn
       // A posting or a link pasted here starts its tailoring, as it does in the Home box (the
       // assistant says "Paste a job here"); before, the server's {kind: "jd"} answer was dropped.
@@ -5122,6 +5123,7 @@
   async function agentAsk(text) {
     if (AGENT.busy || !text) return null;
     AGENT.busy = true;
+    orbChatTurn(); orbPush();                 // the Orb thinks while the assistant does
     bubble("user", esc(text).replace(/\n/g, "<br>"));
     const change = AGENT.change; AGENT.change = false;
     let out = null;
@@ -5130,7 +5132,7 @@
         out = await api("/api/agent/ask", { text, change });
         if (out.kind === "agent") agentReply(out);
       }, agentT("agent.thinking", "Thinking..."));
-    } finally { AGENT.busy = false; }
+    } finally { AGENT.busy = false; orbPush(); }
     return out;
   }
 
@@ -5182,6 +5184,7 @@
     await refreshLiveNav();
     await showSavedResume(r.record_id);
     toast(agentT("agent.savedToResumes", "Saved to Resumes"), { label: agentT("agent.open", "Open"), run: () => openPackage(r.record_id) });
+    orbCelebrate();                                // a resume ready: the Orb hops once
   });
   /* Apply, step two after tailoring (Kofi, 2026-11-16: "that is only step one, what about the
      applying for the job part?"). A built one-page resume in the desktop app offers Apply as the
@@ -7124,6 +7127,7 @@
       renderTrackerMetrics();
       renderTracker();
       if (TRK_OPEN === sid) openTrackerPanel(sid);
+      if (stage === "interviewing") orbCelebrate();   // an interview booked
       toast(trkT("tracker.movedTo", "Moved {company} to {stage}").replace("{company}", coName(card)).replace("{stage}", trkColName(trkColOf(stage))),
         { label: trkT("tracker.undo", "Undo"), run: () => trkUndo(sid) });
     } catch {
@@ -16671,6 +16675,7 @@
     try { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {}); } catch { /* not available */ }
   }
   function stratMaybeNotify() {
+    if (orbOwnsNudges()) return;                   // the Orb says it (its "new jobs" nudge, capped)
     const seen = stratReadNotified();
     const fresh = STRATS.filter(s => (Number(s.new_count) || 0) > 0 && s.newest_at && seen[String(s.id)] !== s.newest_at);
     if (!fresh.length) return;
@@ -16689,6 +16694,396 @@
   function stratPoll() { stratLoad(); }
   setTimeout(stratPoll, 4000);
   setInterval(stratPoll, 600000);
+
+
+  /* ---------------------------------------------------------------- the Orb (2026-11-26)
+     SponsorJobs' floating assistant, owner approved: a violet ball with a face (orb.css) in its
+     own small view above the app and the in-app browser (shell-electron/orb_view.js). The ONE
+     floating thing in the app. What it does:
+       * During Autofill its bubble IS the Browser bar's status line: the same words and the same
+         buttons, copied from #bbFill (orb_core.js snapshot), which hides while the Orb is on. A
+         click in the bubble is played on the bar's own button, so every Autofill rule stays as it
+         is (never submits, nothing filled out of sight). With the Orb off the bar is back as before.
+       * A click opens the assistant chat (openAgent) with what is waiting and suggested questions.
+       * Nudges come from the person's own data only (/api/orb/nudge), at most 3 a day, one per 30
+         minutes, never while they type or during Autofill; the person clicks, the Orb never acts.
+     Off: SJ_ORB=0, the Settings toggle, or the broker's remote switch (/api/orb/config). */
+  const ORB_SHELL = window.tailorShell && window.tailorShell.orbSet ? window.tailorShell : null;
+  const OrbCore = window.OrbCore || null;
+  const ORB = { on: false, ready: false, cfg: null, count: 0, waiting: [], nudge: null, nudgeTimer: null,
+                flash: "", flashUntil: 0, flashTimer: null, chime: 0, mood: "", typingAt: 0, queued: false,
+                src: null, turns: 0, lastDone: "" };
+  const OT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  const ORB_OVERLAYS = ".ai-modal, .wiz, .tpl-modal, [aria-modal=true]";
+
+  // The Orb's own calls never open the outage screen: a failure just leaves the Orb as it was.
+  async function orbApi(url, body) {
+    const r = await fetch(url, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" },
+                                                           body: JSON.stringify(body) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+  function orbLabels() {
+    return { assistant: OT("orb.name", "Assistant"), waiting: OT("orb.waitingN", "{n} things wait on you"),
+             mute: OT("orb.mute", "Mute sounds"), unmute: OT("orb.unmute", "Turn sounds on"),
+             off: OT("orb.off", "Turn off the assistant") };
+  }
+  function orbAutofillBar() {
+    const bar = $("#bbFill");
+    return bar && !bar.hidden && (bar.textContent || "").trim() ? bar : null;
+  }
+  function orbBarMood() {
+    const bar = orbAutofillBar();
+    if (!bar || !OrbCore) return "";
+    return OrbCore.mood({ hidden: false, text: (bar.querySelector(".bb-fill-text") || bar).textContent || "",
+                          wall: bar.classList.contains("is-wall"), input: !!bar.querySelector("input"),
+                          primary: !!bar.querySelector(".btn-primary"), spin: !!bar.querySelector(".act-spin") });
+  }
+  function orbCameraOn() {
+    // an interview with the camera on: the Orb steps out of the way
+    return [...document.querySelectorAll("#view-prep video")].some((v) => v.getClientRects().length > 0 && v.srcObject);
+  }
+  function orbFlash(kind, ms) {
+    ORB.flash = kind; ORB.flashUntil = Date.now() + (ms || 1400);
+    clearTimeout(ORB.flashTimer);
+    ORB.flashTimer = setTimeout(() => { ORB.flash = ""; orbPush(); }, (ms || 1400) + 20);
+    orbPush();
+  }
+  function orbCelebrate() { if (ORB.on) orbFlash("celebrating", 1600); }
+  function orbTyping() { return Date.now() - ORB.typingAt < 20000; }
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) ORB.typingAt = Date.now();
+  }, true);
+
+  // What the ball shows and where. Coalesced to one message a frame.
+  function orbPush() {
+    if (!ORB_SHELL || ORB.queued) return;
+    ORB.queued = true;
+    requestAnimationFrame(() => { ORB.queued = false; orbSend(); });
+  }
+  function orbSend() {
+    if (!ORB_SHELL) return;
+    if (!ORB.on) { if (ORB.lastKey !== "off") { ORB.lastKey = "off"; ORB_SHELL.orbSet({ visible: false }); } return; }
+    const overlay = [...document.querySelectorAll(ORB_OVERLAYS)].some((x) => x.getClientRects().length > 0);
+    const visible = !overlay && !orbCameraOn() && document.visibilityState !== "hidden";
+    // the anchor: the Browser pane while it shows, else the window
+    let anchor = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }, kind = "window";
+    const slot = $("#browserSlot");
+    if (window.Panel && window.Panel.isOpen("browser") && slot) {
+      const r = slot.getBoundingClientRect();
+      if (r.width > 80 && r.height > 80) { anchor = { x: r.x, y: r.y, width: r.width, height: r.height }; kind = "pane"; }
+    }
+    // the bubble: the Browser bar while Autofill talks there (the pane showing), else a nudge
+    const bar = orbAutofillBar();
+    let src = null;
+    if (bar && kind === "pane") src = bar;
+    else if (!$("#orbMsg").hidden && ($("#orbMsg").textContent || "").trim()) src = $("#orbMsg");
+    ORB.src = src;
+    let bubble = null;
+    if (src && OrbCore) { bubble = OrbCore.snapshot(src); if (bubble) { delete bubble.hidden; bubble.cls = (bubble.cls || "") + " bb-fill"; } }
+    const mood = orbBarMood();
+    if (mood !== ORB.mood) {
+      // a new ask: the soft chime, once (never for a line that only says what it is doing)
+      if (mood === "needs" && ORB.mood !== "needs") ORB.chime = Date.now();
+      if (mood === "done") {
+        const said = (bar && bar.textContent) || "";
+        if (said !== ORB.lastDone) { ORB.lastDone = said; setTimeout(orbCelebrate, 0); }
+      }
+      ORB.mood = mood;
+    }
+    const flash = ORB.flash && Date.now() < ORB.flashUntil ? ORB.flash : "";
+    const state = OrbCore ? OrbCore.state({
+      offline: navigator.onLine === false, celebrating: flash === "celebrating",
+      thinking: typeof AGENT !== "undefined" && AGENT.busy, mood, attention: flash === "attention",
+      sleeping: !!(ORB.cfg && ORB.cfg.quiet) && !bubble,
+    }) : "idle";
+    const payload = {
+      visible, anchor, kind, state, bubble, count: ORB.count,
+      theme: document.documentElement.getAttribute("data-theme") || "dark",
+      lang: document.documentElement.lang || "en", labels: orbLabels(),
+      muted: !!(ORB.cfg && ORB.cfg.muted), chime: ORB.chime,
+    };
+    const key = JSON.stringify(payload);
+    if (key === ORB.lastKey) return;             // nothing changed: no message
+    ORB.lastKey = key;
+    ORB_SHELL.orbSet(payload);
+  }
+
+  // A click, a typed answer or Enter in the bubble, played on the original element.
+  function orbAct(d) {
+    const src = ORB.src;
+    if (!src || !OrbCore || !Array.isArray(d.p)) return;
+    const node = OrbCore.resolve(src, d.p);
+    if (!node || node.nodeType !== 1) return;
+    if (d.op === "click") {
+      if (node.tagName !== "BUTTON" || node.disabled) return;
+      // the copy may be a frame old: only the button with the same words is pressed
+      if (typeof d.label === "string" && (node.textContent || "") !== d.label) return;
+      node.click();
+    } else if (d.op === "input" && node.tagName === "INPUT") {
+      node.value = String(d.value == null ? "" : d.value).slice(0, 600);
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    } else if (d.op === "key" && node.tagName === "INPUT" && d.key === "Enter") {
+      node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    }
+  }
+
+  async function orbSettings(body) {
+    try {
+      ORB.cfg = await orbApi("/api/orb/settings", body);
+    } catch { return; }
+    orbApplyConfig();
+  }
+  function orbApplyConfig() {
+    const cfg = ORB.cfg || {};
+    const on = !!(ORB_SHELL && OrbCore && cfg.enabled);
+    ORB.on = on && ORB.ready;
+    document.documentElement.classList.toggle("orb-on", ORB.on);
+    if (!on) orbHideMsg();
+    if (on && !ORB.ready) orbSendBoot();
+    orbPaintSettings();
+    orbPush();
+  }
+  function orbPaintSettings() {
+    const row = $("#setOrbRow");
+    if (!row) return;
+    const cfg = ORB.cfg || {};
+    row.hidden = !ORB_SHELL || cfg.env_off;
+    $("#setOrbSoundRow").hidden = row.hidden || !cfg.setting;
+    document.querySelectorAll("[data-orb-opt]").forEach((b) => {
+      b.classList.toggle("is-on", (b.dataset.orbOpt === "on") === !!cfg.setting);
+      b.disabled = cfg.off_reason === "remote";
+    });
+    document.querySelectorAll("[data-orb-sound]").forEach((b) => b.classList.toggle("is-on", (b.dataset.orbSound === "on") === !cfg.muted));
+    $("#setOrbDesc").textContent = cfg.off_reason === "remote"
+      ? OT("orb.setPaused", "Paused by SponsorJobs for now.")
+      : OT("orb.setDesc", "The violet helper in the corner. It guides Autofill and tells you what is waiting.");
+  }
+  document.querySelectorAll("[data-orb-opt]").forEach((b) => b.addEventListener("click", () =>
+    orbSettings({ enabled: b.dataset.orbOpt === "on", from: "settings" })));
+  document.querySelectorAll("[data-orb-sound]").forEach((b) => b.addEventListener("click", () =>
+    orbSettings({ muted: b.dataset.orbSound !== "on", from: "settings" })));
+
+  // ---- nudges: a line, the one button for it, and Not now
+  function orbHideMsg() {
+    const box = $("#orbMsg");
+    if (box) { box.hidden = true; box.textContent = ""; }
+    ORB.nudge = null;
+    clearTimeout(ORB.nudgeTimer);
+  }
+  function orbShowNudge(n) {
+    const box = $("#orbMsg");
+    if (!box || !n) return;
+    box.textContent = "";
+    const text = el("span", "bb-fill-text is-one");
+    text.textContent = n.text;
+    box.appendChild(text);
+    const act = n.action || {};
+    if (act.label) {
+      const b = el("button", "btn btn-sm btn-primary");
+      b.type = "button"; b.textContent = act.label;
+      b.addEventListener("click", () => orbNudgeAct(n));
+      box.appendChild(b);
+    }
+    const later = el("button", "btn btn-sm btn-ghost");
+    later.type = "button"; later.textContent = OT("orb.notNow", "Not now");
+    later.addEventListener("click", () => {
+      orbApi(`/api/orb/nudge/${n.id}`, { status: "dismissed" }).catch(() => {});
+      orbHideMsg(); orbPush();
+    });
+    box.appendChild(later);
+    ORB.nudge = n;
+    box.hidden = false;
+    orbFlash("attention", 900);
+    // an unanswered bubble steps back after a while; it stays in the chat's list
+    clearTimeout(ORB.nudgeTimer);
+    ORB.nudgeTimer = setTimeout(() => { orbHideMsg(); orbPush(); }, 45000);
+  }
+  function orbGo(act) {
+    if (!act) return;
+    if (act.nav === "profile") { openMemory({}); return; }
+    if (act.nav) { navTo(act.nav); return; }
+    if (act.chat === "waiting") { orbOpenChat(); agentAsk(OT("orb.q.waiting", "What's waiting on me?")); }
+  }
+  function orbNudgeAct(n) {
+    orbApi(`/api/orb/nudge/${n.id}`, { status: "acted" }).catch(() => {});
+    orbHideMsg(); orbPush();
+    orbGo(n.action);
+  }
+  async function orbPoll(peek) {
+    if (!ORB.on || !ORB.cfg) return;
+    const autofill = !!orbAutofillBar() || !!(typeof AGENT !== "undefined" && AGENT.busy);
+    const q = new URLSearchParams({ typing: orbTyping() ? "1" : "0", autofill: autofill ? "1" : "0" });
+    if (peek || !ORB.cfg.nudges || ORB.nudge) q.set("peek", "1");
+    let r = null;
+    try { r = await orbApi("/api/orb/nudge?" + q.toString()); } catch { return; }
+    if (!r) return;
+    ORB.waiting = r.waiting || [];
+    ORB.count = Number(r.count) || 0;
+    if (r.nudge) {
+      orbShowNudge(r.nudge);
+      // out of sight: an OS notification too (the bubble is there when they come back)
+      let front = true;
+      try { front = await window.tailorShell.isFocused(); } catch { front = !document.hidden; }
+      if (!front && window.tailorShell.notify) window.tailorShell.notify("SponsorJobs", r.nudge.text);
+    }
+    orbPush();
+  }
+  // Saved-search news used to be its own desktop notification (stratMaybeNotify); with the Orb on
+  // it is one of the Orb's nudges instead, under the same daily cap.
+  function orbOwnsNudges() { return !!(ORB.on && ORB.cfg && ORB.cfg.nudges); }
+
+  // ---- the chat: the existing assistant, with what is waiting first and suggested questions
+  function orbSuggest() {
+    const qs = [["waiting", OT("orb.q.waiting", "What's waiting on me?")],
+                ["today", OT("orb.q.today", "Which jobs should I apply to today?")],
+                ["practice", OT("orb.q.practice", "Practice for my next interview")],
+                ["how", OT("orb.q.how", "How do you work?")]];
+    if (orbAutofillBar()) qs.unshift(["why", OT("orb.q.why", "Why did you fill this?")]);
+    const wrap = el("div", "agent-acts orb-suggest");
+    qs.forEach(([id, label]) => {
+      const b = el("button", "btn btn-sm btn-ghost");
+      b.type = "button"; b.textContent = label;
+      b.addEventListener("click", () => { wrap.remove(); orbAsk(id, label); });
+      wrap.appendChild(b);
+    });
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+  }
+  const ORB_HOW = "I am your job search assistant. I read only what is in SponsorJobs on this computer: "
+    + "your resumes, your Tracker and your profile. When you press Autofill I fill the form from your "
+    + "profile and point at anything I am not sure of. I never press Submit, never solve a captcha and "
+    + "never fill a field you cannot see. I suggest, you decide. I nudge you at most 3 times a day, only "
+    + "about real things: a follow-up due, a resume ready, an interview coming. Right click me to mute "
+    + "my sounds or turn me off, or change that in Settings.";
+  async function orbAsk(id, label) {
+    if (id === "waiting") { agentAsk(label); return; }
+    bubble("user", esc(label));
+    if (id === "how") { bubble("agent", esc(OT("orb.how", ORB_HOW))); orbSuggestLater(); return; }
+    if (id === "practice") {
+      bubble("agent", esc(OT("orb.practiceGo", "Opening Interview prep. Pick the role and start a practice round.")));
+      setTimeout(() => navTo("prep"), 500);
+      return;
+    }
+    if (id === "why") {
+      const bar = $("#bbFill");
+      const said = (bar && bar.querySelector(".bb-details-box")) ? bar.querySelector(".bb-details-box").textContent : "";
+      bubble("agent", esc(OT("orb.why", "I filled each field from your saved profile and your resume for this job. Where I was not sure, I left it for you and the pointer shows it. Nothing is sent until you press Submit on the site."))
+        + (said ? "<br><br>" + esc(said).replace(/\n/g, "<br>") : ""));
+      return;
+    }
+    if (id === "today") {
+      let r = null;
+      await withWorking(async () => { try { r = await orbApi("/api/orb/today"); } catch { r = null; } }, OT("agent.thinking", "Thinking..."));
+      if (r && r.text) agentReply(r);
+      else bubble("agent", esc(OT("orb.todayFail", "I could not read your Tracker just now. Try again in a moment.")));
+    }
+  }
+  function orbSuggestLater() { setTimeout(orbSuggest, 0); }
+  function orbOpenChat() {
+    if (!(AGENT.on && $("#view-builder").classList.contains("is-active"))) openAgent();
+    else composerInput.focus();
+    orbApi("/api/orb/event", { kind: "chat_opened" }).catch(() => {});
+    const w = (ORB.waiting || []).filter(Boolean);
+    if (ORB.nudge) w.unshift(ORB.nudge);
+    const seen = new Set();
+    const list = w.filter((n) => !seen.has(n.id) && seen.add(n.id)).slice(0, 3);
+    orbHideMsg(); orbPush();
+    if (list.length) {
+      bubble("agent", esc(list.length === 1 ? OT("orb.oneWaits", "One thing waits on you:") : OT("orb.fewWait", "Here is what waits on you:"))
+        + "<br>" + list.map((n) => "&bull; " + esc(n.text)).join("<br>"));
+      const wrap = el("div", "agent-acts");
+      list.forEach((n) => {
+        if (!n.action || !n.action.label) return;
+        const b = el("button", "btn btn-sm btn-ghost");
+        b.type = "button"; b.textContent = n.action.label + ": " + n.text;
+        b.addEventListener("click", () => { wrap.remove(); orbNudgeAct(n); });
+        wrap.appendChild(b);
+      });
+      if (wrap.children.length) { chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight; }
+    }
+    orbSuggest();
+  }
+  // "mute" / "unmute" typed in the chat: handled here, no AI call
+  function orbMuteCmd(text) {
+    const t = String(text || "").toLowerCase().replace(/[.!]+$/, "").trim();
+    const cmd = /^(mute|mute sounds?|be quiet|sound off)$/.test(t) ? "mute" : /^(unmute|unmute sounds?|sound on)$/.test(t) ? "unmute" : "";
+    if (!cmd || !ORB_SHELL) return false;
+    bubble("user", esc(text));
+    bubble("agent", esc(cmd === "mute" ? OT("orb.muted", "Sounds off.") : OT("orb.unmuted", "Sounds on.")));
+    orbSettings({ muted: cmd === "mute", from: "chat" });
+    return true;
+  }
+  function orbChatTurn() { ORB.turns += 1; }
+  // The chat closed (the assistant view left): its turns become a short topics line, once.
+  new MutationObserver(() => {
+    const open = $("#view-builder").classList.contains("is-active") && AGENT.on;
+    if (!open && ORB.turns > 0) {
+      ORB.turns = 0;
+      orbApi("/api/orb/chat/close", {}).catch(() => {});
+    }
+  }).observe($("#view-builder"), { attributes: true, attributeFilter: ["class"] });
+
+  if (window.tailorShell && window.tailorShell.onOrbEvent) {
+    window.tailorShell.onOrbEvent((d) => {
+      if (!d || !ORB_SHELL) return;
+      if (d.kind === "ready") { ORB.ready = true; ORB.lastKey = ""; orbApplyConfig(); return; }
+      if (!ORB.on) return;
+      if (d.kind === "open") {
+        // a nudge on screen: its own button is the action; the ball opens the chat with it listed
+        orbOpenChat();
+      } else if (d.kind === "act") {
+        orbAct(d);
+      } else if (d.kind === "menu") {
+        if (d.id === "off") {
+          orbSettings({ enabled: false, from: "orb" });
+          toast(OT("orb.offToast", "Assistant off. Turn it back on in Settings, Appearance."));
+        } else orbSettings({ muted: d.id === "mute", from: "orb" });
+      } else if (d.kind === "moved" || d.kind === "reset") {
+        orbApi("/api/orb/event", { kind: d.kind }).catch(() => {});
+      }
+    });
+  }
+
+  async function orbStart() {
+    if (!ORB_SHELL || !OrbCore) return;
+    try { ORB.cfg = await orbApi("/api/orb/config"); } catch { ORB.cfg = null; }
+    orbPaintSettings();
+    if (!ORB.cfg || !ORB.cfg.enabled) { ORB_SHELL.orbSet({ visible: false }); return; }
+    // The Orb's page says "ready" once it has loaded; until then the bar stays where it is.
+    ORB.on = false;
+    orbSendBoot();
+  }
+  // The first message creates the Orb's view (it loads, then says ready and the Orb turns on).
+  function orbSendBoot() { ORB_SHELL.orbSet({ visible: true, anchor: null, kind: "window", state: "idle", labels: orbLabels(),
+                                              theme: document.documentElement.getAttribute("data-theme") || "dark" }); }
+  if (ORB_SHELL && OrbCore) {
+    // Everything that can move the ball or change its bubble asks for one repaint.
+    const watch = new MutationObserver(() => orbPush());
+    const barEl = $("#bbFill");
+    if (barEl) watch.observe(barEl, { childList: true, subtree: true, characterData: true, attributes: true });
+    watch.observe($("#orbMsg"), { childList: true, subtree: true, characterData: true, attributes: true });
+    watch.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    new MutationObserver(() => orbPush()).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden", "aria-modal"] });
+    new MutationObserver(() => orbPush()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    window.addEventListener("resize", () => orbPush());
+    window.addEventListener("online", () => orbPush());
+    window.addEventListener("offline", () => orbPush());
+    document.addEventListener("visibilitychange", () => orbPush());
+    window.addEventListener("focus", () => { orbPush(); setTimeout(() => orbPoll(false), 1500); });
+    setTimeout(orbStart, 800);
+    setTimeout(() => orbPoll(false), 25000);
+    setInterval(() => orbPoll(false), 5 * 60000);
+    // config (quiet hours, the remote switch) every 10 minutes
+    setInterval(async () => {
+      if (!ORB.cfg) return;
+      try { ORB.cfg = await orbApi("/api/orb/config"); } catch { return; }
+      if (!ORB.cfg.enabled && ORB.on) { ORB.on = false; }
+      if (ORB.cfg.enabled && !ORB.on && ORB.ready) ORB.on = true;
+      if (ORB.cfg.enabled && !ORB.ready) orbSendBoot();
+      orbApplyConfig();
+    }, 10 * 60000);
+  }
 
 })();
 

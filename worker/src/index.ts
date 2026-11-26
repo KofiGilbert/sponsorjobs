@@ -83,9 +83,12 @@ const health: Handler = async ({ env }) => {
   // broker that says so. Without the key this Worker has no model at all (there is no fake).
   // `ai` says whether model calls are going through right now (src/outage.ts): "ok",
   // "company_outage since <time>" or "transient". The cause stays on the admin page.
+  // `features` are the app's remote switches: orb is false when ORB_OFF="1" (the desktop app
+  // then hides its assistant within ten minutes; ui/app.py _orb_remote_on).
   const ai = await aiStatus(env.DB);
   return json({ ok: true, real_providers: Boolean(env.ANTHROPIC_API_KEY), ai: describeAi(ai),
-                ai_state: ai.state, ai_since: ai.state === "ok" ? null : ai.since });
+                ai_state: ai.state, ai_since: ai.state === "ok" ? null : ai.since,
+                features: { orb: env.ORB_OFF !== "1" } });
 };
 
 const accountRegister: Handler = async ({ req, env, nowMs }) => {

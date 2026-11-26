@@ -530,7 +530,8 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   what is missing, the page fill, what changed or was cut, connections, buttons); the AI writes
   ONE message from it (agent/narrate.py, WebIntake._speak), with the fixed lines only as the
   fallback. The chat renders that message the way Claude, ChatGPT and Gemini answer: flowing
-  text across the chat column, 14px/1.6 in --ink, no bubble and no avatar on any message; the
+  text across the chat column, 14px/1.6 in --ink, no bubble and no avatar on any message (still
+  true with the Orb, 2026-11-26: the Orb floats, the chat's messages never carry it); the
   build row (the quiet "Updated your resume · ..." line) and the buttons and cards sit inline in
   the same turn with no left indent; the person's words stay the right-aligned pill. A little
   markdown (paragraphs, bold, "- " and "1. " lists, line breaks) is rendered AFTER escaping, so a
@@ -806,3 +807,22 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   "Show older (N)" link under its cards; the header counts them all; a search and the Table view
   show everything. Old cards were given reasons once: archived = Passed, a closed posting = Job
   closed, rejected = Not selected.
+- 2026-11-26 (owner decision): the Orb, the app's assistant, is the ONE floating thing in the app.
+  Look: option B of the avatar study, a violet ball with a face in the pointer token --sj-pointer
+  (#7957FC), 56 px (64 while it talks), a slow glow; states idle, attention (one bounce on a real
+  nudge), thinking (eyes up, orbiting dots), talking, working (pulse ring during Autofill), needs
+  you (eyes wide, a soft chime unless muted), celebrating (once: submitted, interview booked,
+  resume saved), sleeping (quiet hours), offline (grey). Reduced motion keeps only the face and
+  the glow. It lives in its own small transparent view above the app and the in-app browser
+  (shell-electron/orb_view.js, the pane is native so nothing in the page can sit above it), bottom
+  right of the window, docked to the Browser pane while that shows; drag with a 4 px threshold,
+  the spot kept per anchor, double click resets, Shift and the arrows move it, right click for
+  Mute and Turn off. ONE message surface at a time: during Autofill its bubble IS the Browser
+  bar's status line (the same words and buttons; #bbFill hides while the Orb is on and comes back
+  exactly as before when it is off). The bubble is violet with white words, one short line and up
+  to three buttons, the line on top and the buttons under it on the right. Chat messages stay
+  avatar-less: a click on the Orb opens the existing assistant chat with what is waiting first and
+  suggested questions as quiet ghost buttons. Nudges only from real data, at most 3 unasked
+  bubbles a day, one per 30 minutes, never while typing or during Autofill, and the person clicks:
+  the Orb never acts on its own. Off three ways: SJ_ORB=0, Settings, Appearance, or the broker's
+  ORB_OFF remote switch. Rules: orb/rules.py.

@@ -2078,6 +2078,9 @@ mark.jd-gap { text-decoration-color: var(--flag); }
   color: #b7e4c7; font-size: 12.5px; line-height: 1.4;
 }
 .bb-fill.is-wall { background: #241c10; color: #f5d08a; }
+/* (2026-11-26) The Orb on: its bubble is the status line (app.js "the Orb"), so the bar steps
+   aside; the nudge source is never painted in the page itself. */
+html.orb-on #bbFill, #orbMsg { display: none !important; }
 /* the apply agent's status line: the message, then Send or Stop at the right */
 .bb-fill { display: flex; align-items: center; gap: 10px; }
 .bb-fill .bb-fill-text { flex: 1 1 auto; min-width: 0; }

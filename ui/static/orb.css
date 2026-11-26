@@ -1,0 +1,160 @@
+/* The Orb (2026-11-26, owner approved: option B, a violet ball with a face). Its page is a small
+   transparent view above the app and the in-app browser (shell-electron/orb_view.js), so nothing
+   here may paint a background. One colour, the pointer token --sj-pointer (#7957FC), shared with
+   the Autofill pointer, so the person reads the ball, its bubble and the pointer as one helper. */
+
+html, body.orb-page { background: transparent !important; height: auto; overflow: hidden; }
+body.orb-page { margin: 0; font-size: 12.5px; user-select: none; -webkit-user-select: none; }
+.orb-page { --sj-pointer: #7957FC; --orb-deep: #4A2BD0; --orb-ink: #1F1452; }
+
+.orb-root { position: absolute; display: flex; flex-direction: column; gap: 4px; width: max-content; }
+.orb-root[data-side="right"] { right: 0; align-items: flex-end; }
+.orb-root[data-side="left"] { left: 0; align-items: flex-start; }
+.orb-root[data-vert="up"] { bottom: 0; }
+.orb-root[data-vert="down"] { top: 0; flex-direction: column-reverse; }
+
+/* ---------------------------------------------------------------- the ball */
+.orb { position: relative; flex: none; width: 72px; height: 72px; padding: 0; border: 0; background: none;
+  border-radius: 50%; cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent; outline: none; }
+.orb:active { cursor: grabbing; }
+.orb-ball { position: absolute; left: 8px; top: 8px; width: 56px; height: 56px; overflow: visible;
+  filter: drop-shadow(0 3px 6px rgba(36, 18, 110, 0.32));
+  transition: transform 260ms cubic-bezier(.2, .8, .2, 1), filter 260ms ease; }
+.orb-glow { position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle, rgba(121, 87, 252, 0.55) 30%, rgba(121, 87, 252, 0.18) 52%, rgba(121, 87, 252, 0) 70%);
+  animation: orb-breathe 4.2s ease-in-out infinite; }
+@keyframes orb-breathe { 0%, 100% { opacity: .55; transform: scale(.94); } 50% { opacity: .95; transform: scale(1.04); } }
+.orb:focus-visible::after { content: ""; position: absolute; inset: 5px; border-radius: 50%;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4.5px var(--sj-pointer); }
+.orb:hover .orb-ball { transform: scale(1.04); }
+
+/* the face: SVG parts animate around their own centre */
+.orb-ball * { transform-box: fill-box; transform-origin: center; }
+.orb-pupil { transition: transform 240ms ease; }
+.orb-white { transition: transform 240ms ease; }
+.orb-lid, .orb-mouth-o { opacity: 0; }
+.orb-mouth { transition: opacity 160ms ease; }
+.orb-eyes { animation: orb-blink 6s infinite; }
+@keyframes orb-blink { 0%, 95%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.12); } }
+
+/* the extras each state turns on */
+.orb-ring { position: absolute; left: 8px; top: 8px; width: 56px; height: 56px; border-radius: 50%;
+  border: 2px solid var(--sj-pointer); opacity: 0; pointer-events: none; }
+.orb-dots { position: absolute; inset: 2px; opacity: 0; pointer-events: none; }
+.orb-dots i { position: absolute; left: 50%; top: 0; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%;
+  background: #ffffff; box-shadow: 0 0 0 1.5px var(--sj-pointer); transform-origin: 3px 34px; }
+.orb-dots i:nth-child(2) { transform: rotate(120deg); opacity: .8; }
+.orb-dots i:nth-child(3) { transform: rotate(240deg); opacity: .6; }
+.orb-spark { position: absolute; inset: 0; pointer-events: none; }
+.orb-spark i { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 1px;
+  background: #ffffff; box-shadow: 0 0 0 1px var(--sj-pointer); opacity: 0; transform: rotate(45deg); }
+.orb-badge { position: absolute; right: 6px; top: 6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: #ffffff; color: var(--orb-deep); font: 700 10.5px/18px var(--sans, system-ui); text-align: center;
+  box-shadow: 0 1px 3px rgba(36, 18, 110, 0.35); }
+
+/* idle: the slow glow above. attention: one bounce on a real nudge */
+.orb-root[data-state="attention"] .orb-ball { animation: orb-bounce 700ms cubic-bezier(.3, 1.6, .5, 1) 1; }
+@keyframes orb-bounce { 0%, 100% { transform: translateY(0); } 35% { transform: translateY(-9px); } 65% { transform: translateY(1px); } }
+
+/* thinking: eyes up, three dots orbit */
+.orb-root[data-state="thinking"] .orb-pupil { transform: translate(-1px, -4px); }
+.orb-root[data-state="thinking"] .orb-dots { opacity: 1; animation: orb-orbit 1.4s linear infinite; }
+@keyframes orb-orbit { to { transform: rotate(360deg); } }
+
+/* talking: 64 px, the mouth moves while the bubble's words arrive */
+.orb-root.is-talking .orb-ball { transform: scale(1.14); }
+.orb-root.is-talking .orb-mouth { opacity: 0; }
+.orb-root.is-talking .orb-mouth-o { opacity: 1; animation: orb-talk 260ms ease-in-out infinite alternate; }
+@keyframes orb-talk { from { transform: scaleY(.45); } to { transform: scaleY(1.05); } }
+
+/* working (Autofill running): a pulse ring */
+.orb-root[data-state="working"] .orb-ring { animation: orb-pulse 1.6s ease-out infinite; }
+@keyframes orb-pulse { 0% { opacity: .7; transform: scale(1); } 100% { opacity: 0; transform: scale(1.32); } }
+.orb-root[data-state="working"] .orb-pupil { animation: orb-look 3.2s ease-in-out infinite; }
+@keyframes orb-look { 0%, 100% { transform: translateX(-1.5px); } 50% { transform: translateX(1.5px); } }
+
+/* needs you: eyes wide, the glow a step brighter */
+.orb-root[data-state="needs"] .orb-white { transform: scale(1.16); }
+.orb-root[data-state="needs"] .orb-pupil { transform: translateY(-1px) scale(1.08); }
+.orb-root[data-state="needs"] .orb-glow { animation-duration: 2.2s; }
+
+/* celebrating: one hop and a few sparks */
+.orb-root[data-state="celebrating"] .orb-ball { animation: orb-hop 900ms cubic-bezier(.3, 1.5, .5, 1) 1; }
+@keyframes orb-hop { 0%, 100% { transform: translateY(0) scale(1); } 30% { transform: translateY(-10px) scale(1.06); } 60% { transform: translateY(0) scale(.98); } }
+.orb-root[data-state="celebrating"] .orb-mouth { d: path("M40 62 Q50 74 60 62"); }
+.orb-root[data-state="celebrating"] .orb-spark i { animation: orb-spark 900ms ease-out 1 forwards; }
+.orb-spark i:nth-child(1) { --dx: -30px; --dy: -24px; }
+.orb-spark i:nth-child(2) { --dx: 30px; --dy: -26px; animation-delay: 60ms !important; }
+.orb-spark i:nth-child(3) { --dx: -34px; --dy: 6px; animation-delay: 120ms !important; }
+.orb-spark i:nth-child(4) { --dx: 34px; --dy: 4px; animation-delay: 90ms !important; }
+.orb-spark i:nth-child(5) { --dx: 0px; --dy: -36px; animation-delay: 30ms !important; }
+@keyframes orb-spark { 0% { opacity: 0; transform: translate(0, 0) rotate(45deg) scale(.4); }
+  30% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(45deg) scale(1); } }
+
+/* sleeping (quiet hours, or nudges paused): eyes closed, the glow low */
+.orb-root[data-state="sleeping"] .orb-white, .orb-root[data-state="sleeping"] .orb-pupil { opacity: 0; }
+.orb-root[data-state="sleeping"] .orb-lid { opacity: 1; }
+.orb-root[data-state="sleeping"] .orb-eyes { animation: none; }
+.orb-root[data-state="sleeping"] .orb-glow { animation: none; opacity: .35; }
+.orb-root[data-state="sleeping"] .orb-mouth { d: path("M45 65 Q50 67 55 65"); }
+
+/* offline: grey, no glow */
+.orb-root[data-state="offline"] .orb-ball { filter: grayscale(1) brightness(.92) drop-shadow(0 3px 6px rgba(0, 0, 0, .3)); }
+.orb-root[data-state="offline"] .orb-glow { opacity: 0; animation: none; }
+
+/* ---------------------------------------------------------------- the bubble
+   The ONE message surface during Autofill (it replaces the Browser bar's status line, the same
+   words and the same buttons), and the place an unasked nudge shows. Violet, white words. */
+.orb-bubble { position: relative; box-sizing: border-box; width: max-content; max-width: 360px; margin: 0 6px;
+  padding: 10px 12px; border-radius: 14px; background: var(--sj-pointer); color: #ffffff;
+  box-shadow: 0 10px 28px rgba(36, 18, 110, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  font-size: 12.5px; line-height: 1.4; user-select: text; -webkit-user-select: text;
+  animation: orb-rise 180ms cubic-bezier(.2, .8, .2, 1); }
+@keyframes orb-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.orb-bubble::after { content: ""; position: absolute; width: 12px; height: 12px; background: var(--sj-pointer);
+  transform: rotate(45deg); border-radius: 2px; }
+.orb-root[data-vert="up"] .orb-bubble::after { bottom: -5px; }
+.orb-root[data-vert="down"] .orb-bubble::after { top: -5px; }
+.orb-root[data-side="right"] .orb-bubble::after { right: 24px; }
+.orb-root[data-side="left"] .orb-bubble::after { left: 24px; }
+/* the bar's markup, recoloured for the violet ground */
+.orb-bubble .bb-fill { --bg: #6a48f0; --surface: rgba(255, 255, 255, .12); --surface-2: rgba(255, 255, 255, .16);
+  --ink: #ffffff; --ink-2: rgba(255, 255, 255, .9); --muted: rgba(255, 255, 255, .76); --faint: rgba(255, 255, 255, .6);
+  --border: rgba(255, 255, 255, .3); --border-strong: rgba(255, 255, 255, .46);
+  --accent: #ffffff; --accent-hover: #f1edff; --accent-ink: #3a1fb8; --accent-ring: rgba(255, 255, 255, .55);
+  position: relative; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: 8px; padding: 0; border: 0; background: transparent; color: #ffffff; font-size: 12.5px; }
+.orb-bubble .bb-fill.is-wall, .orb-bubble .bb-fill.is-ready { background: transparent; color: #ffffff; }
+.orb-bubble .bb-fill .bb-fill-text { flex: 1 1 100%; min-width: 0; text-align: left; font-weight: 550; }
+.orb-bubble .bb-fill .bb-fill-text.is-one { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; }
+.orb-bubble .bb-fill .btn { padding: 5px 12px; font-size: 12px; }
+.orb-bubble .bb-fill .btn-ghost { color: #ffffff; border-color: rgba(255, 255, 255, .46); }
+.orb-bubble .bb-fill .btn-ghost:hover { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .7); }
+.orb-bubble .bb-fill .btn-primary { background: #ffffff; color: #3a1fb8; box-shadow: none; }
+.orb-bubble .bb-fill .btn:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }
+.orb-bubble .bb-fill .bb-details { color: rgba(255, 255, 255, .82); margin-right: auto; }
+.orb-bubble .bb-fill .bb-details-box { color: rgba(255, 255, 255, .9); white-space: pre-line; max-height: 140px; overflow: auto; }
+.orb-bubble .fld, .orb-bubble input[type="text"] { box-sizing: border-box; height: 28px; padding: 0 9px; border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, .42); background: rgba(255, 255, 255, .14); color: #ffffff; font: inherit; }
+.orb-bubble .fld::placeholder { color: rgba(255, 255, 255, .72); }
+.orb-bubble .fld:focus { outline: 2px solid #ffffff; outline-offset: 0; }
+.orb-bubble .bb-batch { max-height: 300px; overflow: auto; }
+.orb-bubble .act-verb { color: #ffffff; }
+.orb-bubble .act-spin { border-color: rgba(255, 255, 255, .35); border-top-color: #ffffff; }
+
+/* the Orb's own small menu (right click, or the menu key): sounds, and turning it off */
+.orb-menu { display: flex; flex-direction: column; padding: 4px; margin: 0 6px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-md); }
+.orb-mi { border: 0; background: none; color: var(--ink); text-align: left; padding: 7px 10px; border-radius: 6px;
+  font: 500 12.5px/1.2 var(--sans, system-ui); white-space: nowrap; }
+.orb-mi:hover, .orb-mi:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent); outline: none; }
+
+/* reduced motion: the face and the glow only, nothing moves */
+@media (prefers-reduced-motion: reduce) {
+  .orb-glow, .orb-eyes, .orb-dots, .orb-ring, .orb-ball, .orb-pupil, .orb-mouth-o, .orb-spark i, .orb-bubble {
+    animation: none !important; transition: none !important; }
+  .orb-root[data-state="thinking"] .orb-dots { opacity: 1; }
+  .orb-root[data-state="working"] .orb-ring { opacity: .6; }
+  .orb-root.is-talking .orb-ball { transform: none; }
+}
