@@ -172,13 +172,15 @@ def test_the_prefs_view_round_trips_the_prefs_answers(st):
 # --------------------------------------------------------------------------- redact
 def test_the_three_more_self_identification_keys_are_eeo(st):
     """Transgender, sexual orientation and first-generation professional are as private as gender:
-    EEO-sensitive, refused from chat or a resume, withheld from a model payload."""
+    EEO-sensitive and refused from chat or a resume. (2026-11-26, owner decision) No longer withheld
+    from the model by default; the guard still withholds them when a caller asks for EEO values."""
     for key in ("@transgender", "@sexual_orientation", "@first_gen"):
         assert K.sensitivity(key) == K.EEO
         with pytest.raises(RefusedWrite):
             st.add_fact(key, "Yes", source="chat")
     st.add_fact("@sexual_orientation", "Pansexual", source="you")      # invented, for the test only
-    vals = redact.sensitive_values(st)
+    assert "Pansexual" not in redact.sensitive_values(st)               # the default: legal values only
+    vals = redact.sensitive_values(st, kinds=(K.EEO, K.LEGAL))
     assert "Pansexual" in vals
     payload = {"note": "The person is pansexual", "fields": [{"label": "Sexual orientation", "options": ["Gay"]}]}
     clean = redact.for_model(payload, vals, ["Sexual orientation", "Gay"])
@@ -191,7 +193,8 @@ def test_redact_finds_and_withholds_stored_values_outside_the_forms_own_text(st)
     st.add_fact("@citizenship", "Ghana", source="you")
     st.add_fact("@over_18", "Yes", source="you")                   # too common to mean anything
     st.add_fact("workauth", json.dumps({"status": "f1_opt", "authorized": "Yes"}), source="you", subject="US")
-    vals = redact.sensitive_values(st)
+    assert set(redact.sensitive_values(st)) == {"Ghana", "f1_opt"}     # (2026-11-26) legal only by default
+    vals = redact.sensitive_values(st, kinds=(K.EEO, K.LEGAL))
     assert set(vals) == {"Female", "Asian", "Ghana", "f1_opt"}
     payload = {"fields": [{"label": "Gender", "options": ["Male", "Female"]}],
                "note": "She is from Ghana and on f1_opt"}

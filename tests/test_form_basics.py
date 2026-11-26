@@ -868,9 +868,10 @@ class _SpyLLM:
         return json.dumps({"memory": "", "evaluation": "", "actions": [], "done": {"outcome": "blocked", "reason": "needs-person"}})
 
 
-def test_choices_the_engine_made_on_self_identification_never_reach_the_model(app, monkeypatch):
-    """legal-2: the engine filled Workday's Voluntary Disclosures page; the view the shell sends
-    still carries the choices (an older view), and the brain's prompt must not."""
+def test_self_identification_choices_reach_the_model_as_the_page_shows_them(app, monkeypatch):
+    """(Updated 2026-11-26, owner decision: the agent reads self-identification answers like any
+    other profile fact, autoapply/selfid.py.) The engine filled Workday's Voluntary Disclosures
+    page; the brain's prompt shows the choices as the page holds them."""
     A, c = app
     _seed_card(c)
     spy = _SpyLLM()
@@ -891,16 +892,19 @@ def test_choices_the_engine_made_on_self_identification_never_reach_the_model(ap
                headers={"X-Tailor-Extension": "1"})
     assert r.status_code == 200 and spy.user, r.get_data(as_text=True)
     prompt = spy.user[0]
-    for word in ('value="Male"', 'value="Asian', "checked=true", "{{answer_"):
-        assert word not in prompt, word
-    assert 'value="(filled)"' in prompt and "answered=true" in prompt and 'value="Canada"' in prompt
+    for word in ('value="Male"', 'value="Asian', "checked=true", 'value="Canada"'):
+        assert word in prompt, word
+    assert "{{answer_" not in prompt and "answered=true" not in prompt
 
 
-def test_mask_self_id_keeps_the_choices_and_hides_the_choice():
-    from autoapply.brain import mask_self_id
+def test_hide_self_id_keeps_the_choices_and_hides_the_choice():
+    # (2026-11-26) the brain no longer masks (mask_self_id passes the view as it is); the old
+    # masking stays as hide_self_id for a caller that wants it
+    from autoapply.brain import hide_self_id, mask_self_id
+    assert mask_self_id("[1]<radio label=\"Gender\" option=\"Male\" checked=true>") == "[1]<radio label=\"Gender\" option=\"Male\" checked=true>"
     v = ('[1]<radio label="Gender" option="Male" checked=false>\n[2]<radio label="Gender" option="Female" checked=true>\n'
          '[3]<radio label="Remote?" option="Yes" checked=true>\n*[4]<select label="Race" value="" options=3 first="A|B|C">')
-    out = mask_self_id(v)
+    out = hide_self_id(v)
     assert 'option="Male" checked=hidden answered=true' in out and 'option="Female" checked=hidden answered=true' in out
     assert '[3]<radio label="Remote?" option="Yes" checked=true>' in out
     assert '*[4]<select label="Race" value=""' in out

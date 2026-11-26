@@ -1,0 +1,17 @@
+{
+  "_about": "Public self-identification questions and options as real application systems word them (2026-11-26). Lam Research's are read from its live apply page (careers.lamresearch.com, the questionId veteran and disability lists and the Title 38 notice above them). The others are the systems' standard EEO text. No person's answers are here.",
+  "lam_veteran": {"question": "Veteran To meet U.S. Department of Labor requirements, your voluntary cooperation is appreciated. Title 38, United States Code, Section 4212(d), PL 105-339 and PL, 107-288 require that we ask about veteran status.",
+                   "options": ["Choose not to disclose", "No", "Yes"]},
+  "lam_disability": {"question": "Disability", "options": ["Choose not to disclose", "No", "Yes"]},
+  "workday_veteran": {"question": "Please confirm your veteran status:",
+                      "options": ["I am not a protected veteran", "I identify as one or more of the classifications of protected veteran", "I do not wish to self-identify"]},
+  "greenhouse_veteran": {"question": "Veteran Status",
+                         "options": ["I am not a protected veteran", "I identify as one or more of the classifications of protected veteran", "I don't wish to answer"]},
+  "icims_veteran": {"question": "Protected Veteran Status",
+                    "options": ["Disabled Veteran", "Recently Separated Veteran", "Active Duty Wartime or Campaign Badge Veteran", "Armed Forces Service Medal Veteran", "I am not a protected veteran", "I choose not to self-identify"]},
+  "lever_veteran": {"question": "Veteran status", "options": ["I am a veteran", "I am not a veteran", "Decline to self-identify"]},
+  "greenhouse_gender": {"question": "Gender", "options": ["Male", "Female", "Decline To Self Identify"]},
+  "greenhouse_hispanic": {"question": "Are you Hispanic/Latino?", "options": ["Yes", "No", "Decline To Self Identify"]},
+  "greenhouse_disability": {"question": "Disability Status",
+                            "options": ["Yes, I have a disability, or have had one in the past", "No, I do not have a disability and have not had one in the past", "I do not want to answer"]}
+}

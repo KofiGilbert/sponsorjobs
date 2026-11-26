@@ -191,7 +191,6 @@ def build_facts(applicant: dict, profile: dict, library=None, *, questions=(), s
     answers most related to them are sent, at most MAX_ANSWERS). ``skip_keys``: answer library
     keys held or withheld for this job (a salary conflict, an expired start date)."""
     from applicant import keys as K
-    from autoapply.asks import is_eeo
     out: list[Fact] = []
     ap = applicant or {}
     city = _short(ap.get("city"), 60)
@@ -229,14 +228,15 @@ def build_facts(applicant: dict, profile: dict, library=None, *, questions=(), s
     if skills:
         out.append(Fact("skills", "skills", {"id": "skills", "about": "the person's skills", "skills": skills},
                         {"skills": skills}))
-    # The person's own saved answers: never a self-identification, legal, drafted or secret one.
+    # The person's own saved answers: never a legal, drafted or secret one. (2026-11-26, owner
+    # decision) Their self-identification answers are facts like any other.
     qwords = set().union(*[_words(q) for q in questions]) if questions else set()
     rows = []
     for r in _library_rows(library):
         key, q, a = str(r.get("key") or ""), str(r.get("question") or ""), str(r.get("answer") or "").strip()
         if not a or not q or str(r.get("source") or "") in ("drafted", "derived") or key in skip_keys:
             continue
-        if K.sensitivity(K.fact_key(key), q) != K.NORMAL or is_eeo(q) or workauth.classify(q):
+        if K.sensitivity(K.fact_key(key), q) not in (K.NORMAL, K.EEO) or workauth.classify(q):
             continue
         if _LEGAL_TOPIC.search(q) or _SECRET_Q.search(q) or unusable(key, a) or len(a) > 300:
             continue

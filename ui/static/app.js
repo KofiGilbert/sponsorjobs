@@ -5449,7 +5449,6 @@
     wants: APPLY_AGENT ? ["setup.l.wants", "Tailor & queue picks roles by your titles and places, and skips the companies you name."]
                        : ["setup.l.wantsA", "Forms ask what you want. Every one gets the same answer."],
     forms: ["setup.l.forms", "Questions most forms ask. Leave any blank and I ask you when a form needs it."],
-    selfid: ["setup.l.selfid", "Only you see these, on this computer. Forms get them; no model, server or chat ever does."],
     apply: ["setup.l.apply", "You can change this any time on Applications."],
     finish: ["setup.l.finish", "What is still open, I ask when a form needs it."],
   };
@@ -5761,7 +5760,8 @@
       `<button type="button" class="su-step${j === i ? " is-on" : ""}${j < i ? " is-past" : ""}" data-su-go="${id}"${j === i ? ' aria-current="step"' : ""}>${esc(suT(k, f))}</button>`).join("");
     $("#suH").textContent = suT(s[1], s[2]);
     const l = SU_LEDE[SU.step];
-    $("#suLede").textContent = suT(l[0], l[1]);
+    $("#suLede").textContent = l ? suT(l[0], l[1]) : "";
+    $("#suLede").hidden = !l;
     if (SU.step === "workauth") { SU.wa = JSON.parse(JSON.stringify(SU.d.workauth.work_auth || { countries: {} })); }
     $("#suBody").innerHTML = SU_BODY[SU.step]();
     SU.init = suCollect();

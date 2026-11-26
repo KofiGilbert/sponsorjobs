@@ -15,6 +15,11 @@ the model may see. So the guard works against the form's own text:
 
 Phase 1 ships the guard and a test that scans what the planner hands the model. Phase 4 runs it
 on the label mapper's batched call.
+
+(2026-11-26, owner decision) Self-identification answers are no longer withheld: the AI reads
+them, like any other profile fact, to answer those questions on any form's wording
+(autoapply/selfid.py). ``sensitive_values`` withholds the LEGAL values only, unless a caller asks
+for EEO ones by name.
 """
 from __future__ import annotations
 
@@ -52,10 +57,10 @@ def _leaves(value: str) -> list[str]:
     return [v]
 
 
-def sensitive_values(store, kinds=(K.EEO, K.LEGAL)) -> list[str]:
-    """Every current EEO and legal value in the brain (or only the ``kinds`` given), longest first."""
+def sensitive_values(store, kinds=(K.LEGAL,)) -> list[str]:
+    """Every current legal value in the brain (or the ``kinds`` given), longest first."""
     vals: set[str] = set()
-    kinds = tuple(kinds) or (K.EEO, K.LEGAL)
+    kinds = tuple(kinds) or (K.LEGAL,)
     rows = store.q("SELECT value FROM fact WHERE sensitivity IN (" + ",".join("?" * len(kinds)) + ")"
                    " AND status IN ('active', 'needs_check')", kinds)
     for r in rows:

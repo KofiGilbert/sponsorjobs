@@ -26,7 +26,7 @@ from autoapply.answers import normalize
 # shell-electron/agent.js and extension/agent_view.js DECLINE_RE.
 DECLINE = re.compile(r"decline|prefer not|do not wish|don['’]?t wish|not wish to"
                      r"|(do not|don['’]?t) want to (answer|disclose|say|self[- ]?identify|provide)"
-                     r"|choose not|rather not|not to (say|answer|disclose)|not declared", re.I)
+                     r"|choose not|rather not|not to (say|answer|disclose)|not declared|undisclosed", re.I)
 
 # The canonical question for each self-identification key (how the library is asked for it).
 QUESTIONS = {"@gender": "Gender", "@sex": "Sex", "@race": "Race", "@ethnicity": "Ethnicity",
@@ -46,6 +46,17 @@ def decline_option(options) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
+def decline_pick(options, key: str = "", question: str = "") -> str | None:
+    """The standing "Decline to self-identify": the page's decline choice, in the usual words, else
+    in the form's own words as the model reads them (autoapply/selfid.py). Always wins over any
+    saved answer."""
+    v = decline_option(options)
+    if v or not key:
+        return v
+    from autoapply import selfid
+    return selfid.decline(key, question, [str(o) for o in (options or []) if str(o).strip()])
+
+
 def _n(s: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9+#$ ]+", " ", str(s or "").lower())).strip()
 
@@ -62,8 +73,9 @@ def _core(s: str) -> str:
 # --------------------------------------------------------------------------- value classes
 _I_AM = r"(i identify as |i am |identify as |i m )?(a |an )?"
 _GENDER = (
-    ("male", re.compile(_I_AM + r"(male|man|m|men|cis ?(gender )?(male|man))")),
-    ("female", re.compile(_I_AM + r"(female|woman|f|women|cis ?(gender )?(female|woman))")),
+    # (2026-11-26) "Male / Man", "Woman (she/her)": one choice in two words is still that choice
+    ("male", re.compile(_I_AM + r"(male|man|m|men|cis ?(gender )?(male|man))( (male|man))?")),
+    ("female", re.compile(_I_AM + r"(female|woman|f|women|cis ?(gender )?(female|woman))( (female|woman))?")),
     ("nonbinary", re.compile(_I_AM + r"(non ?binary|enby|gender ?queer|gender ?non ?conforming|gender ?non ?binary)"
                              r"(( or | and | )(non ?binary|gender ?non ?conforming|non ?conforming|gender ?queer))?")),
 )
@@ -108,13 +120,22 @@ def hispanic_class(text: str, *, bare: bool = True) -> str | None:
     full, c = _n(t), _core(t)
     if re.search(r"\b(not|non) (hispanic|latin)", full):
         return "no"
-    if re.match(r"(hispanic|latin[oax]|latine)\b", c):
+    if re.match(r"(yes )?(i am |i m |i identify as )?(hispanic|latin[oax]|latine)\b", c):
         return "yes"
     if bare and re.match(r"no\b", c):
         return "no"
     if bare and re.match(r"yes\b", c):
         return "yes"
     return None
+
+
+_VET_KINDS = (
+    ("kind_disabled", re.compile(r"\bdisabled veterans?\b")),
+    ("kind_recent", re.compile(r"\brecently separated veterans?\b")),
+    ("kind_wartime", re.compile(r"\bactive duty wartime\b|\bcampaign badge veterans?\b")),
+    ("kind_medal", re.compile(r"\bservice medal veterans?\b")),
+)
+VET_KINDS = tuple(k for k, _ in _VET_KINDS)
 
 
 def veteran_class(text: str, *, saved: bool = False) -> str | None:
@@ -134,10 +155,17 @@ def veteran_class(text: str, *, saved: bool = False) -> str | None:
     c = _core(t)
     if re.search(r"\bveteran\b.*\bnot an? protected veterans?\b|\bveteran\b.*\bnot protected\b", c):
         return "veteran_not_protected"
-    if re.search(r"\bnot an? protected veterans?\b", c):
+    if re.search(r"\bnot an? protected veterans?\b|\b(do not|don t|dont) identify as (one or more of the classifications of )?"
+                 r"(an? )?protected veterans?\b|^not protected$", c):
         return "not"
     if re.search(r"\bnot an? veterans?\b|\bnever served\b|\bhave not served\b", c):
         return "not_veteran"
+    # (2026-11-26) The protected veteran classifications by name (iCIMS and Workday list them one
+    # by one): each is a protected veteran of that kind.
+    if not re.search(r"\b(not|non|never)\b|\bdon t\b", c):          # "I am not a disabled veteran" is none
+        for cat, rx in _VET_KINDS:
+            if rx.search(c):
+                return cat
     if re.search(r"\bidentify as (one or more of the classifications of )?(an? )?protected veterans?\b"
                  r"|\bi am an? protected veteran\b|^protected veterans?$", c):
         return "protected"
@@ -393,7 +421,9 @@ def _race_or_ethnicity(key: str, opts: list, answers: dict) -> str | None:
 
 
 # A question about PROTECTED veteran status, where a plain Yes or No says it.
-_PROTECTED_Q = re.compile(r"protected", re.I)
+# (2026-11-26, Lam Research) A form may ask only "Veteran" with Yes / No under the federal notice
+# (Title 38, Section 4212, VEVRAA): that notice makes it the protected veteran question too.
+_PROTECTED_Q = re.compile(r"protected|\b4212\b|vevraa|vietnam era", re.I)
 
 
 def _veteran(want: str, opts: list, a: str, question: str) -> str | None:
@@ -407,6 +437,7 @@ def _veteran(want: str, opts: list, a: str, question: str) -> str | None:
         "not_veteran": ["not_veteran", "not", "no"],
         "veteran_not_protected": ["veteran_not_protected", "veteran", "not"] + (["no"] if protected_q else []),
         "protected": ["protected", "yes", "veteran"],
+        **{k: [k, "protected", "yes", "veteran"] for k in VET_KINDS},
     }.get(want, [])
     for c in order:
         hits = [o for o in opts if cls[o] == c]
@@ -416,6 +447,21 @@ def _veteran(want: str, opts: list, a: str, question: str) -> str | None:
 
 
 def choose(key: str, options, answers: dict, question: str = "") -> str | None:
+    """The one option the saved answer names: these word rules first (instant, no model), then
+    (2026-11-26) the general path in autoapply/selfid.py: the meaning of the site's PUBLIC options,
+    read once by the model and cached here, matched to the saved answer on this machine. The
+    saved answer itself never leaves it."""
+    got = _choose_local(key, options, answers, question)
+    if got is not None:
+        return got
+    a = str((answers or {}).get(key) or "").strip()
+    if not a:
+        return None
+    from autoapply import selfid
+    return selfid.choose(key, question, [str(o) for o in (options or []) if str(o).strip()], a)
+
+
+def _choose_local(key: str, options, answers: dict, question: str = "") -> str | None:
     """The one option of a self-identification question (``key`` is its normalized key, and
     ``question`` its words when known) that the person's saved ``answers`` ({key: answer}) name:
     the saved words themselves, else the option that makes the same choice in the form's own
