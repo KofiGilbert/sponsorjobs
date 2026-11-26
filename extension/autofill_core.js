@@ -4567,15 +4567,18 @@ function qsaSafe(sel, root) {
   async function walkTo(ref) {
     const r = walkStart(ref);
     if (!r.ok || !r.scrolled) return r;
-    const el = visibleBox(elByRef(ref));
+    await settled(visibleBox(elByRef(ref)));
+    return r;
+  }
+  // Wait until the page stops moving under an element (a smooth scroll), 1.5 s at most.
+  async function settled(el) {
     let last = null;
-    for (let i = 0; i < 30; i++) {                               // 1.5 s at most
+    for (let i = 0; i < 30; i++) {
       await plainSleep(50);
       const t = Math.round(el.getBoundingClientRect().top);
-      if (last !== null && t === last) break;
+      if (last !== null && t === last) return;
       last = t;
     }
-    return r;
   }
   function walkStart(ref) {
     const el = elByRef(ref);
@@ -4590,12 +4593,12 @@ function qsaSafe(sel, root) {
     }
     return { ok: true, scrolled, label: cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40) };
   }
-  /** The drawn pointer on a field (its visible box), with ``label``; stays until moved. */
+  /** The drawn pointer on a field (its visible box), with ``label``. */
   function pointAt(ref, label) {
     const el = elByRef(ref);
     const P = window.TailorPointer;
     if (!el || !P) return false;
-    return !!P.at(visibleBox(el), label, { now: true, stay: true });
+    return !!P.at(visibleBox(el), label, { now: true });
   }
   /** Type ``text`` into a text box a few characters at a time, the way a person types: about
    * ``perChar`` ms a character for the first ``burst`` characters, then the rest at once. */
@@ -4656,13 +4659,16 @@ function qsaSafe(sel, root) {
     return !!String(el.value || "").trim();
   }
   /** Move to the next (dir 1) or previous (-1) field that needs the person: scroll, pointer, label. */
-  function needsStep(dir) {
+  async function needsStep(dir) {
     const list = needsList();
     if (!list.length) return { n: 0, i: -1 };
     _needsAt = dir === 0 ? 0 : (_needsAt + (dir < 0 ? -1 : 1) + list.length) % list.length;
     const ref = list[_needsAt];
     const w = walkStart(ref);
-    setTimeout(() => pointAt(ref, "Needs you" + (w.label ? ": " + w.label : "")), w.scrolled ? 450 : 0);
+    const el = elByRef(ref);
+    if (w.scrolled && el) await settled(visibleBox(el));
+    const P = window.TailorPointer;
+    if (P && el) P.at(visibleBox(el), "Needs you" + (w.label ? ": " + w.label : ""), { now: true, stay: true });
     return { n: list.length, i: _needsAt, label: w.label || "" };
   }
   function clearNeeds() {
@@ -4673,9 +4679,9 @@ function qsaSafe(sel, root) {
   }
   /** The end of a run: the pointer rests on the first field that needs the person, else on the
    * site's Submit (outlined, never pressed) with "Your turn: check and submit". */
-  function guideEnd() {
+  async function guideEnd() {
     const list = needsList();
-    if (list.length) { _needsAt = -1; const r = needsStep(1); return { where: "needs", n: list.length, label: r.label }; }
+    if (list.length) { _needsAt = -1; const r = await needsStep(1); return { where: "needs", n: list.length, label: r.label }; }
     const recipe = recipeFor();
     try { highlightSubmit(recipe); } catch (e) { /* fine */ }
     let sub = qsaDeep(".tailor-submit-hint")[0];
@@ -4688,7 +4694,8 @@ function qsaSafe(sel, root) {
     }
     if (sub) {
       try { sub.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { sub.scrollIntoView(); }
-      setTimeout(() => { try { window.TailorPointer && window.TailorPointer.at(sub, "Your turn: check and submit", { now: true, stay: true }); } catch (e) { /* fine */ } }, 450);
+      await settled(sub);
+      try { window.TailorPointer && window.TailorPointer.at(sub, "Your turn: check and submit", { now: true, stay: true }); } catch (e) { /* fine */ }
       return { where: "submit", n: 0 };
     }
     return { where: "none", n: 0 };

@@ -2174,5 +2174,7 @@
   "fill.needsAt": "Te necesita: {q} ({i} de {n})",
   "fill.prev": "Anterior",
   "fill.next": "Siguiente",
-  "fill.done": "Listo"
+  "fill.done": "Listo",
+  "fill.pageSome": "Página {p}: {f} rellenados. {n} te necesitan",
+  "fill.pageAll": "Página {p}: {f} rellenados"
 }

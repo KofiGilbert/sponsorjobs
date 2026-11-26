@@ -92,6 +92,9 @@ async function walk(deps) {
     const spent = Date.now() - t0;
     if (spent < t.min) await wait(t.min - spent);
   }
+  // the walk is over: the pointer goes (a pointer left behind sits over the wrong field once the
+  // page moves); the run's end puts it where the person acts (guideEnd)
+  await js("window.TailorPointer && window.TailorPointer.hide()", 2000);
   return out;
 }
 

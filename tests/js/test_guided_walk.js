@@ -44,7 +44,8 @@ async function run(o) {
     const at = window.TailorPointer.at;
     window.TailorPointer.at = (el, label, opt) => {
       const r = el.getBoundingClientRect();
-      window.__moves.push({ label, top: r.top + window.scrollY, inView: r.top >= 0 && r.bottom <= innerHeight });
+      const f = el.closest(".field"); const words = f && f.querySelector("label") ? f.querySelector("label").textContent.replace(/\s*\*\s*$/, "").trim() : "";
+      window.__moves.push({ label, top: r.top + window.scrollY, inView: r.top >= 0 && r.bottom <= innerHeight, words });
       return at(el, label, opt);
     };
   });
@@ -79,6 +80,10 @@ async function run(o) {
   // the pointer is on the field, in view, when it fills it; the page scrolled to the far ones
   assert(r.moves.filter((m) => /^Filling/.test(m.label)).every((m) => m.inView), "in view when filled " + JSON.stringify(r.moves));
   assert(r.moves.some((m) => m.label === "Scrolling"), "scrolled to the far fields");
+  // the label names the field the pointer is on (never another one)
+  for (const m of r.moves.filter((x) => /^(Clicking|Filling|Needs you): /.test(x.label))) {
+    assert(m.words && m.label.endsWith(": " + m.words), "the label names this field: " + JSON.stringify(m));
+  }
   assert(r.moves.some((m) => m.label === "Needs you: Are you a fugitive from justice?"), "the person's question is shown: " + r.moves.map((m) => m.label).join(" | "));
   assert(r.out.needs.length === 1 && r.out.filled === 5, "counts " + JSON.stringify(r.out));
   // paced: every field took at least the minimum (the waits top each field up to it)

@@ -70,13 +70,31 @@
     const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
     const room = vw - r.right - GAP;
     if (room >= 330) return { x: Math.round(r.right + GAP), y: Math.round(Math.max(4, Math.min(vh - 30, r.top + r.height / 2 - 6))), side: "right" };
-    return { x: Math.round(Math.max(4, Math.min(vw - 330, r.left))), y: Math.round(Math.min(vh - 60, r.bottom + GAP / 2)), side: "below" };
+    // no room on the right (a narrow pane): the tip on the field's lower edge, near its left end, so
+    // it plainly points at THIS field and not the one below; the label hangs under it
+    return { x: Math.round(Math.max(4, Math.min(vw - 330, r.left + 10))), y: Math.round(Math.min(vh - 60, r.bottom - 8)), side: "below" };
   }
   function visible(r) {
     const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
     return r && (r.width > 0 || r.height > 0) && r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
   }
   let stay = false;                    // a resting pointer (the end of a guided run) is never idled away
+  // (2026-11-26) The pointer stays ON the element its label names: when the page scrolls or
+  // resizes, it follows that element, and it goes away when the element leaves the view.
+  let cur = null;                      // { el, label }
+  function follow() {
+    if (!cur || !shown || !wrap) return;
+    if (!cur.el || !cur.el.isConnected) { hide(); return; }
+    const r = cur.el.getBoundingClientRect();
+    if (!visible(r)) { wrap.classList.remove("on"); return; }
+    const m = spot(r);
+    wrap.classList.add("still");                       // follow at once, no glide behind the page
+    wrap.style.transform = "translate(" + m.x + "px, " + m.y + "px)";
+    wrap.classList.add("on");
+    shown.x = m.x; shown.y = m.y;
+    requestAnimationFrame(() => { if (wrap) wrap.classList.toggle("still", reduced()); });
+  }
+  try { window.addEventListener("scroll", follow, true); window.addEventListener("resize", follow); } catch (e) { /* no window */ }
   function show(m) {
     if (!ensure()) return;
     wrap.classList.toggle("still", reduced());
@@ -121,11 +139,14 @@
         w = f.ownerDocument && f.ownerDocument.defaultView;
       }
       if (dx || dy) r = { left: r.left + dx, right: r.right + dx, top: r.top + dy, bottom: r.bottom + dy, width: r.width, height: r.height };
-      return point(r, label, opts);
+      const ok = point(r, label, opts);
+      if (ok) cur = dx || dy ? null : { el, label };      // a frame's element: placed once, not followed
+      return ok;
     } catch (e) { return false; }
   }
   function hide() {
     stay = false;
+    cur = null;
     clearTimeout(idle); clearTimeout(timer); timer = null;
     queue.length = 0;
     shown = null;

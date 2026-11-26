@@ -1431,6 +1431,13 @@
         return;
       }
       if (info.guide) { say({ line: info.message }); return; }       // the walk: "Filling 5 of 27"
+      // (2026-11-26) a page's fill: one short line, the fields left only under Details
+      if (!info.wall && typeof info.filled === "number") {
+        const nl = (info.left || []).length;
+        say({ line: (nl ? T("fill.pageSome", "Page {p}: filled {f}. {n} need you") : T("fill.pageAll", "Page {p}: filled {f}"))
+          .replace("{p}", info.page || 1).replace("{f}", info.filled).replace("{n}", nl), details: nl ? (info.left || []).join(", ") : "" });
+        return;
+      }
       const bar = $("#bbFill");
       if (bar) {
         aaFeedHide();

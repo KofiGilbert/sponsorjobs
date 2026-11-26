@@ -2174,5 +2174,7 @@
   "fill.needsAt": "Needs you: {q} ({i} of {n})",
   "fill.prev": "Previous",
   "fill.next": "Next",
-  "fill.done": "Done"
+  "fill.done": "Done",
+  "fill.pageSome": "Page {p}: filled {f}. {n} need you",
+  "fill.pageAll": "Page {p}: filled {f}"
 }
