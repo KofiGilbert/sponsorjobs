@@ -67,12 +67,18 @@
       "database_name": "sponsorjobs-broker",
       "database_id": "e1bb6376-c3c6-489d-aa32-a10eed4fdb96",
       "migrations_dir": "migrations"
+    },
+    {
+      "binding": "SEARCH_DB",
+      "database_name": "sponsorjobs-search",
+      "database_id": "783f6c95-cd8c-4987-a543-c0a6416df2b6",
+      "migrations_dir": "migrations-search"
     }
   ],
 
-  // ---- Server-side job search (src/search.ts, docs/server-search-plan.md): OFF until go-live.
-  // Nothing below is bound yet, so /v1/jobs/* answers 503 no_index and a deploy is unchanged.
-  // To switch it on (the go-live checklist in the plan):
+  // ---- Server-side job search (src/search.ts, docs/server-search-plan.md): LIVE on the free plan
+  // since 2026-11-26 (SEARCH_DB above, rate limits below). /v1/jobs/* answers 503 no_index until the
+  // feed workflow's first full load finishes. How it was switched on (the go-live checklist):
   //   1. `npx wrangler d1 create sponsorjobs-search`, then add this entry to "d1_databases"
   //      above with the id it prints (its own database, so search never queues behind the broker):
   //        { "binding": "SEARCH_DB", "database_name": "sponsorjobs-search",
@@ -93,12 +99,12 @@
   ],
 
   // Workers rate limits. The namespace ids are our own labels, not created resources. The feed's
-  // are live: 120 files a minute per account, 600 per network. Search's wait for its go-live above.
+  // are live: 120 files a minute per account, 600 per network. Search's are live too (60 a minute per account, 300 per network).
   "ratelimits": [
     { "name": "FEED_ACCOUNT_LIMITER", "namespace_id": "7103", "simple": { "limit": 120, "period": 60 } },
-    { "name": "FEED_IP_LIMITER", "namespace_id": "7104", "simple": { "limit": 600, "period": 60 } }
-    // { "name": "SEARCH_ACCOUNT_LIMITER", "namespace_id": "7101", "simple": { "limit": 60, "period": 60 } },
-    // { "name": "SEARCH_IP_LIMITER", "namespace_id": "7102", "simple": { "limit": 300, "period": 60 } }
+    { "name": "FEED_IP_LIMITER", "namespace_id": "7104", "simple": { "limit": 600, "period": 60 } },
+    { "name": "SEARCH_ACCOUNT_LIMITER", "namespace_id": "7101", "simple": { "limit": 60, "period": 60 } },
+    { "name": "SEARCH_IP_LIMITER", "namespace_id": "7102", "simple": { "limit": 300, "period": 60 } }
   ],
 
   // Defaults matching backend/broker.py and backend/metering.py. Override per deployment here or
