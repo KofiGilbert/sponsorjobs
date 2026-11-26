@@ -152,3 +152,13 @@ def test_the_status_line_stays_one_short_line_when_the_agent_stops():
     s = app[app.index("  function say(msg) {"):]
     s = s[:s.index("\n  }\n")]
     assert "line.length > 80" in s and '"bb-fill-text is-one"' in s
+
+
+def test_the_state_question_in_its_longer_wordings():
+    """(Vestmark, 2026-11-26) "Please provide the US state in which you currently reside" was not
+    read as the state, so the walk left it for the person; "State your reason..." is no state."""
+    from autoapply.planner import contact_key
+    assert contact_key("Please provide the US state in which you currently reside:") == "state"
+    assert contact_key("What state do you currently live in?") == "state"
+    assert contact_key("State") == "state" and contact_key("State/Province") == "state"
+    assert contact_key("State your reason for applying") == "" and contact_key("State why you want this role") == ""
