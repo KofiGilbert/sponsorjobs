@@ -15,7 +15,7 @@ const id = (i: number) => 2 ** 40 + (DAY0 + Math.floor(i / 60)) * 2 ** 24 + 64 *
 /** N plain rows: every third a "Data Engineer", the rest nurses; row i newer than row i-1,
  * pay = i*100. Row i is a sponsor row unless i % 4 == 3. */
 async function seed(version = "v1") {
-  await db.exec("DELETE FROM jobs; DELETE FROM extras; DELETE FROM search_meta; DELETE FROM search_usage;");
+  await db.exec("DELETE FROM jobs; DELETE FROM extras; DELETE FROM search_meta; DELETE FROM search_usage; DELETE FROM search_budget_days;");
   const stmts = [];
   for (let i = 0; i < N; i++) {
     const sid = `t:${String(i).padStart(4, "0")}`;
@@ -238,6 +238,9 @@ describe("the daily budget (free plan)", () => {
     const r = await get("/v1/jobs/search?limit=5&q=x1", {}, { SEARCH_DAILY_ROWS_READ: "1000" });
     expect(r.status).toBe(503);
     expect(r.data.reason).toBe("daily_budget");
+    // The day is noted once per isolate (for the admin dashboard's banner), never once per request.
+    expect((await get("/v1/jobs/search?limit=5&q=x4", {}, { SEARCH_DAILY_ROWS_READ: "1000" })).status).toBe(503);
+    expect(await db.prepare("SELECT day, hits FROM search_budget_days").all().then((x) => x.results)).toEqual([{ day, hits: 1 }]);
     expect((await get("/v1/jobs/search?limit=5&q=x2", {}, { SEARCH_DAILY_ROWS_READ: "0" })).status).toBe(200);
     expect((await get("/v1/jobs/search?limit=5&q=x3", {}, { SEARCH_DAILY_ROWS_READ: "5000" })).status).toBe(200);
   });

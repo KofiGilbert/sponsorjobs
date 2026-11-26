@@ -132,6 +132,7 @@ export interface Shell {
   body: string;
   rail?: string;               // the right sidebar
   flash?: { kind: "ok" | "bad"; text: string } | null;
+  notice?: string;             // a banner on top of the page (already HTML: src/admin_cf.ts cfBanner)
   query?: string;              // keeps the search box filled on the Users page
   badges?: Partial<Record<PageId, string>>;   // e.g. a count of problems beside Health
   prefs: Prefs;
@@ -192,7 +193,7 @@ export function shell(s: Shell): string {
 <a class="hbtn" href="/alerts" title="Alerts" aria-label="Alerts">${icon("bell")}${s.badges?.health ? '<span class="hdot"></span>' : ""}</a>
 <a class="hbtn" href="${pref(s, "toggle=rail")}" title="${p.railHidden ? "Show" : "Hide"} the right sidebar" aria-label="${p.railHidden ? "Show" : "Hide"} the right sidebar">${icon("sidebar")}</a>
 </div></div></header>
-<main class="content">${flash}${s.body}
+<main class="content">${s.notice ?? ""}${flash}${s.body}
 <footer class="foot">Design: ByeWind SnowUI (CC BY 4.0). Icons: Phosphor.</footer>
 </main></div>
 ${showRail ? `<aside class="rail"><div class="railin">${s.rail}</div></aside>` : ""}
@@ -528,6 +529,7 @@ td:first-child{overflow-wrap:anywhere}
 .wrapc{white-space:normal;display:block;max-width:28ch}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 .flash{display:flex;align-items:center;gap:8px;border-radius:12px;padding:8px 12px;background:var(--fill)}
+.flash.notice{flex-wrap:wrap}.flash.notice .nt{font-weight:600}.flash.notice .nlinks{margin-left:auto;display:flex;gap:8px}
 .filters{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
 .chip{border-radius:8px;padding:4px 8px;font-size:12px;line-height:16px;color:var(--t2)}.chip:hover{background:var(--fill)}.chip.on{background:var(--fill);color:var(--t1)}
 .fsep{width:1px;height:16px;background:var(--ln);margin:0 8px}

@@ -5,7 +5,9 @@
 // search, sort), /users/<id>, /health, /feed (job feed and GitHub jobs), /audit, /alerts, and
 // /admin/api/stats (the overview numbers as JSON). /prefs sets the dashboard's own cookie (theme,
 // sidebar and right sidebar shown or hidden, Favorites / Recently tab, starred pages) and returns.
-// The pages are in src/admin_pages.ts, the extra reads in src/admin_data.ts.
+// The pages are in src/admin_pages.ts, the extra reads in src/admin_data.ts. How close the
+// Cloudflare account is to the free plan (the Health card, and the "Time to switch to Workers Paid"
+// banner on every page) is src/admin_cf.ts.
 //
 // Actions (POST, src/admin_actions.ts): give a pass, add interviews, suspend or restore an account,
 // reveal a person's full e-mail, change or pause the free AI limit, send a test alert. Each needs
@@ -29,6 +31,7 @@ import {
   type Attention, alertsPage, attention, auditPage, type ChartKey, feedPage, healthPage, notFound, overviewPage, rail, revenuePage,
   usagePage, userPage, usersPage,
 } from "./admin_pages";
+import { cfBanner, cfUsage, cfVerdict } from "./admin_cf";
 import { DEFAULT_FAVS, esc, KEY_SCRIPT, maskEmail, type PageId, type Prefs, type Shell, shell } from "./admin_ui";
 import { blendedPerToken, INPUT_SHARE, RATES, round2, TAVUS_PER_MINUTE } from "./admin_data";
 
@@ -380,12 +383,14 @@ const idOf = (raw: string) => { try { return decodeURIComponent(raw); } catch { 
 /** What every page's right sidebar and badges need. Stripe, the feed and GitHub are cached. */
 async function railData(env: Env, nowMs: number, stats?: Stats) {
   const now = Math.floor(nowMs / 1000);
-  const [st, pool, rev, fd, runs, activity, suspended] = await Promise.all([
+  const [st, pool, rev, fd, runs, activity, suspended, cfu] = await Promise.all([
     stats ? Promise.resolve(stats) : collectStats(env, nowMs), poolSetting(env), revenue(env, nowMs), feed(nowMs), githubRuns(env, nowMs),
-    recentActivity(env.DB, 6), suspendedCount(env.DB)]);
-  const att = attention({ stats: st, pool, revenue: rev, feed: fd, runs, env, now, suspended });
+    recentActivity(env.DB, 6), suspendedCount(env.DB), cfUsage(env, nowMs)]);
+  const cf = { usage: cfu, verdict: cfVerdict(cfu) };
+  const att = attention({ stats: st, pool, revenue: rev, feed: fd, runs, env, now, suspended, cf: cf.verdict });
   const contacts = st.recent_sign_ins.map((r) => ({ account_id: r.account_id, email: r.email }));
-  return { stats: st, pool, revenue: rev, feed: fd, runs, att, rail: rail({ attention: att, activity, contacts, now }) };
+  return { stats: st, pool, revenue: rev, feed: fd, runs, att, cf, notice: cfBanner(cf.verdict),
+           rail: rail({ attention: att, activity, contacts, now }) };
 }
 
 export async function handleAdmin(req: Request, env: Env, nowMs: number): Promise<Response> {
@@ -438,7 +443,7 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
     const rd = o.rd ?? await railData(env, nowMs, o.stats);
     const p2 = visited(prefs, here, ttl);
     return html(shell({ page: id, title: ttl, body, viewer: admin, generatedAt: now, flash: flashOf(url), prefs: p2, here, rail: rd.rail,
-      badges: badgesFor(rd.att), ...o }), 200, prefsCookie(p2));
+      badges: badgesFor(rd.att), notice: rd.notice, ...o }), 200, prefsCookie(p2));
   };
 
   if (path === "/" || path === "/admin") {
@@ -481,7 +486,7 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   if (path === "/health") {
     const todayStart = Math.floor(Date.parse(`${dayOf(nowMs)}T00:00:00Z`) / 1000);
     const [rd, eDays] = await Promise.all([railData(env, nowMs), emailDays(env.DB, todayStart, 7)]);
-    return page("health", "Health", healthPage({ stats: rd.stats, revenue: rd.revenue, env, now, emailDays: eDays }), { rd });
+    return page("health", "Health", healthPage({ stats: rd.stats, revenue: rd.revenue, env, now, emailDays: eDays, cf: rd.cf }), { rd });
   }
   if (path === "/feed") {
     const rd = await railData(env, nowMs);
@@ -508,7 +513,7 @@ async function userResponse(env: Env, id: string, nowMs: number, admin: string, 
                             o: { revealed?: boolean; flash?: Shell["flash"]; act?: string | null }): Promise<Response> {
   const now = Math.floor(nowMs / 1000);
   const [u, history, rd] = await Promise.all([userDetail(env.DB, id, now), auditLog(env.DB, { target: id, limit: 20 }), railData(env, nowMs)]);
-  const base = { viewer: admin, generatedAt: now, flash: o.flash ?? null, rail: rd.rail, badges: badgesFor(rd.att), here };
+  const base = { viewer: admin, generatedAt: now, flash: o.flash ?? null, rail: rd.rail, badges: badgesFor(rd.att), notice: rd.notice, here };
   if (!u) return html(shell({ ...base, prefs, page: "users", title: "Not found", crumbs: [{ label: "Users", href: "/users" }], body: notFound() }), 404);
   const masked = u.email ? maskEmail(u.email) : "Anonymous account";
   const p2 = visited(prefs, `/users/${encodeURIComponent(id)}`, masked);          // never the revealed e-mail

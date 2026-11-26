@@ -764,6 +764,9 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client=None,
     save_state(state_path, token, live, live_extras)
     report.update({"applied_deletes": done_deletes, "applied_upserts": done_upserts,
                    "left": plan.pending - done_deletes - done_upserts,
+                   # For the usage snapshot (scripts/cf_usage_snapshot.py): first-load progress.
+                   "indexed": len(live), "ready": complete or not first_load,
+                   "per_row": round(cost["per_row"], 3),
                    "rows_written": written, "written_today": spent_today + written,
                    "requests": client.requests, "complete": complete})
     print(f"[search-index] {'loaded' if complete else 'stopped at the ' + stopped}: "
@@ -797,8 +800,19 @@ def main(argv=None) -> int:
             return 2
         client = D1(env["SEARCH_D1_ACCOUNT_ID"], env["SEARCH_D1_DATABASE_ID"], env["SEARCH_D1_TOKEN"],
                     url=url, spacing=0.0 if url else 0.3)
-    run(a.feed, a.state, dry_run=a.dry_run, client=client, daily_writes=a.daily_writes,
-        max_writes=a.max_writes)
+    report = None
+    try:
+        report = run(a.feed, a.state, dry_run=a.dry_run, client=client, daily_writes=a.daily_writes,
+                     max_writes=a.max_writes)
+    finally:
+        # Yesterday's Cloudflare usage for the admin dashboard, one row a day in the same database.
+        # It runs after a failed load too (with no progress) and can never fail the step itself.
+        if client is not None and os.environ.get("SEARCH_CF_USAGE", "1") != "0":
+            from scripts.cf_usage_snapshot import Cloudflare, snapshot  # noqa: PLC0415
+            gql = os.environ.get("SEARCH_CF_GRAPHQL_URL") or None        # a local stand-in, for testing
+            cf = Cloudflare(env["SEARCH_D1_ACCOUNT_ID"], env["SEARCH_D1_TOKEN"], graphql_url=gql) if gql else None
+            snapshot(client, account=env["SEARCH_D1_ACCOUNT_ID"], token=env["SEARCH_D1_TOKEN"], report=report,
+                     daily_writes=a.daily_writes, cf=cf, lit=lit)
     return 0
 
 
