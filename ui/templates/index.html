@@ -665,6 +665,18 @@
             <div class="ans-list mem-rows" id="memEeoRows"></div>
           </section>
 
+          <!-- (2026-11-26) Background answers: saved from forms the person submitted, reused on the
+               same question in other words; never guessed. -->
+          <section class="ans-card mem-card" id="memBg" data-jump="background" aria-labelledby="memBgH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="memBgH" data-i18n="mem.bg">Background answers</h2>
+            </div>
+            <label class="ans-check mem-decline"><input type="checkbox" id="memBgAsk" />
+              <span data-i18n="mem.bgAsk">Always ask me about background questions</span></label>
+            <div class="ans-list mem-rows" id="memBgRows"></div>
+            <p class="mem-dim" id="memBgNone" data-i18n="mem.bgNone">None yet. Your answers are kept here once you submit a form that asks.</p>
+          </section>
+
           <section class="ans-card mem-card" id="memCareer" data-jump="career" aria-labelledby="memCareerH">
             <div class="ans-card-h">
               <h2 class="ans-h" id="memCareerH" data-i18n="mem.career">Career</h2>

@@ -4630,22 +4630,88 @@ function qsaSafe(sel, root) {
     try { const a = document.activeElement; if (a && a !== document.body && a.blur && /^(INPUT|SELECT|TEXTAREA)$/.test(tagOf(a))) a.blur(); } catch (e) { /* fine */ }
     return n;
   }
-  // The fields that need the person, in page order: outlined until Done, and the pointer can step
-  // through them (Next / Previous on the status line).
+  // The fields that need the person, in page order: a glow ring each until answered (or Done), and
+  // the pointer can step through them (Next / Previous on the status line).
+  //
+  // (2026-11-26, the owner) The glow: a soft violet ring (#7957FC, the pointer's colour) around each
+  // field, gently pulsing (static under reduced motion); the current one brighter. Drawn in an
+  // overlay of its own (fixed, pointer-events none, its own shadow root), so the site's layout and
+  // styles never change, the field's own error text is never covered (the ring sits just outside
+  // the box), and it reads on white and dark pages (violet ring plus a white hairline). A field's
+  // ring goes as soon as the field holds an answer.
   let _needs = [], _needsAt = -1;
-  const NEEDS_STYLE = "tailor-needs";
+  const GLOW = "#7957FC";
+  let _glowHost = null, _glowRoot = null, _glowTimer = null;
+  const _glowEls = new Map();                  // element -> ring div
+  function glowRoot() {
+    if (_glowHost && _glowHost.isConnected) return _glowRoot;
+    _glowHost = document.createElement("div");
+    _glowHost.setAttribute("data-sj-glow", "");
+    _glowHost.setAttribute("aria-hidden", "true");
+    _glowHost.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;z-index:2147483645;pointer-events:none;";
+    _glowRoot = _glowHost.attachShadow({ mode: "open" });
+    const st = document.createElement("style");
+    st.textContent = `
+      .r { position: fixed; border-radius: 8px; pointer-events: none; box-sizing: border-box;
+           border: 2px solid ${GLOW}; outline: 1px solid rgba(255,255,255,.85); outline-offset: 0;
+           box-shadow: 0 0 0 3px rgba(121,87,252,.18), 0 0 14px 2px rgba(121,87,252,.35);
+           opacity: .55; animation: sjpulse 2s ease-in-out infinite; }
+      .r.cur { border-width: 3px; opacity: 1;
+               box-shadow: 0 0 0 4px rgba(121,87,252,.28), 0 0 22px 6px rgba(121,87,252,.55); }
+      .r.off { display: none; }
+      @keyframes sjpulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.45); } }
+      @media (prefers-reduced-motion: reduce) { .r { animation: none; } }
+    `;
+    _glowRoot.appendChild(st);
+    (document.body || document.documentElement).appendChild(_glowHost);
+    try { window.addEventListener("scroll", placeGlows, true); window.addEventListener("resize", placeGlows); } catch (e) { /* fine */ }
+    if (!_glowTimer) _glowTimer = setInterval(() => { dropAnswered(); placeGlows(); }, 500);
+    return _glowRoot;
+  }
+  /** Ring ``el`` (its visible box); ``cur``: the one to go to now. */
+  function glow(el, cur) {
+    if (!el) return false;
+    const root = glowRoot();
+    let r = _glowEls.get(el);
+    if (!r) { r = document.createElement("div"); r.className = "r"; root.appendChild(r); _glowEls.set(el, r); }
+    r.classList.toggle("cur", !!cur);
+    placeGlows();
+    return true;
+  }
+  function unglow(el) {
+    const r = _glowEls.get(el);
+    if (r) r.remove();
+    _glowEls.delete(el);
+    if (!_glowEls.size) stopGlows();
+  }
+  function stopGlows() {
+    for (const r of _glowEls.values()) r.remove();
+    _glowEls.clear();
+    clearInterval(_glowTimer); _glowTimer = null;
+    if (_glowHost && _glowHost.parentNode) _glowHost.parentNode.removeChild(_glowHost);
+    _glowHost = _glowRoot = null;
+  }
+  function placeGlows() {
+    for (const [el, r] of _glowEls) {
+      if (!el.isConnected) { r.classList.add("off"); continue; }
+      const b = visibleBox(el).getBoundingClientRect();
+      if (!b.width && !b.height) { r.classList.add("off"); continue; }
+      r.classList.remove("off");
+      r.style.left = (b.left - 5) + "px"; r.style.top = (b.top - 5) + "px";
+      r.style.width = (b.width + 10) + "px"; r.style.height = (b.height + 10) + "px";
+    }
+  }
+  // a field that now holds an answer loses its ring (and leaves the list)
+  function dropAnswered() {
+    for (const el of [..._glowEls.keys()]) if (!el.isConnected || filledNow(el)) unglow(el);
+  }
+  function currentGlow(ref) {
+    for (const r of _needs) { const el = elByRef(r); if (el && _glowEls.has(el)) _glowEls.get(el).classList.toggle("cur", r === ref); }
+  }
   function markNeeds(ref) {
     const el = elByRef(ref);
-    if (!el) return false;
-    const box = visibleBox(el);
-    try {
-      if (!document.getElementById("tailor-needs-style")) {
-        const st = document.createElement("style"); st.id = "tailor-needs-style";
-        st.textContent = "." + NEEDS_STYLE + "{outline:3px solid #7957FC !important;outline-offset:3px !important;border-radius:6px}";
-        (document.head || document.documentElement).appendChild(st);
-      }
-      box.classList.add(NEEDS_STYLE);
-    } catch (e) { return false; }
+    if (!el || filledNow(el)) return false;
+    try { glow(el, false); } catch (e) { return false; }
     if (!_needs.includes(ref)) _needs.push(ref);
     return true;
   }
@@ -4667,12 +4733,14 @@ function qsaSafe(sel, root) {
     const w = walkStart(ref);
     const el = elByRef(ref);
     if (w.scrolled && el) await settled(visibleBox(el));
+    currentGlow(ref);
+    try { if (el && el.focus) el.focus({ preventScroll: true }); } catch (e) { /* fine */ }
     const P = window.TailorPointer;
     if (P && el) P.at(visibleBox(el), "Needs you" + (w.label ? ": " + w.label : ""), { now: true, stay: true });
     return { n: list.length, i: _needsAt, label: w.label || "" };
   }
   function clearNeeds() {
-    for (const el of qsaDeep("." + NEEDS_STYLE)) el.classList.remove(NEEDS_STYLE);
+    stopGlows();
     _needs = []; _needsAt = -1;
     try { if (window.TailorPointer) window.TailorPointer.hide(); } catch (e) { /* fine */ }
     return true;
@@ -4699,6 +4767,37 @@ function qsaSafe(sel, root) {
       return { where: "submit", n: 0 };
     }
     return { where: "none", n: 0 };
+  }
+
+  // (2026-11-26) What the form's choice questions hold the moment the person presses the site's
+  // Submit: the shell keeps it (a console line it alone reads) and, once the site confirms the
+  // application (applied_watch.js onSubmitted), saves the background answers among them through
+  // the engine. Armed once per page; never in the page's way.
+  function armSubmitSnapshot() {
+    if (window.__sjSnapArmed) return false;
+    window.__sjSnapArmed = true;
+    const snap = () => {
+      try {
+        const items = [];
+        for (const f of extractForm({})) {
+          if (!f.options || !f.options.length) continue;
+          const el = elByRef(f.ref);
+          if (!el) continue;
+          const v = tagOf(el) === "SELECT" ? ((el.options[el.selectedIndex] || {}).text || "") : (comboValue(el) || chosenPills(el).join(", "));
+          if (String(v || "").trim()) items.push({ question: cleanLabel(f.label).slice(0, 300), value: String(v).trim().slice(0, 200), options: f.options.slice(0, 40) });
+        }
+        console.debug("__sj_snapshot__" + JSON.stringify({ url: location.href, items: items.slice(0, 60) }));
+      } catch (e) { /* never in the page's way */ }
+    };
+    document.addEventListener("submit", snap, true);
+    document.addEventListener("click", (e) => {
+      try {
+        const b = e.target && e.target.closest && e.target.closest("button, input[type='submit'], [role='button']");
+        const t = b ? String(b.innerText || b.value || "").replace(/\s+/g, " ").trim() : "";
+        if (b && (b.type === "submit" || /^(submit|send|apply)\b/i.test(t))) snap();
+      } catch (e2) { /* fine */ }
+    }, true);
+    return true;
   }
 
   function leftover() {
@@ -4759,6 +4858,6 @@ function qsaSafe(sel, root) {
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
-    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd,
+    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
   };
 })();

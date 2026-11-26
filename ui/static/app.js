@@ -1424,6 +1424,8 @@
       if (info.quiet) { aaAutoQuiet(info); return; }
       if (info.agent) {
         aaAgentBar(info);
+        // (2026-11-26) sent: the line says so for a moment, then the bar clears
+        if (info.state === "submitted") setTimeout(() => { const b = $("#bbFill"); if (b && /Submitted|Sent/.test(b.textContent || "")) say(null); }, 5000);
         applyChatProgress(info);      // a run the builder's Apply started is told in its chat too
         if (/^(ready|submitted|stopped|parked|batch-done|sendall-done)$/.test(info.state || "")) {
           if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
@@ -1460,6 +1462,12 @@
   // The engine saw the site's "application received" page after the person submitted.
   if (window.tailorShell && window.tailorShell.onApplied) {
     window.tailorShell.onApplied((info) => {
+      // (2026-11-26) the site took it: the status line says so briefly, the outlines go
+      if (info && info.matched) {
+        try { window.tailorShell.guideStep && window.tailorShell.guideStep("done"); } catch { /* fine */ }
+        say({ line: T("fill.submitted", "Submitted. Marked as applied") });
+        setTimeout(() => say(null), 5000);
+      }
       const note = $("#pkgAssistNote");
       if (note) {
         note.textContent = info && info.matched
@@ -5215,7 +5223,7 @@
                      builder: ["choice.backResume", "Resume"], settings: ["mem.backSettings", "Settings"] };
   const MEM_JUMP = [["about", "mem.about", "About you"], ["work", "mem.work", "Work and visa"],
                     ["answers", "mem.answers", "Form answers"], ["may", "consent.mayShort", "What I may do"],
-                    ["eeo", "mem.eeo", "Self-identification"],
+                    ["eeo", "mem.eeo", "Self-identification"], ["background", "mem.bg", "Background answers"],
                     ["career", "mem.career", "Career"], ["choices", "choice.title", "Resume choices"],
                     ["history", "mem.history", "History"]]
     .filter(([k]) => APPLY_AGENT || k !== "may");   // "What I may do" is the agent's (hidden while it is off)
@@ -5286,7 +5294,7 @@
     $("#profImport").hidden = !empty;
     $("#memAddResume").hidden = empty;
     $("#memJump").innerHTML = MEM_JUMP.map(([k, key, f]) => `<button type="button" class="mem-jump-b" data-jump-to="${k}">${esc(MT(key, f))}</button>`).join("");
-    memPaintNoted(); memPaintNeeds(); memPaintAbout(); memPaintWork(); memPaintAnswers(); memPaintEeo(); memPaintCareer(); memPaintHistory();
+    memPaintNoted(); memPaintNeeds(); memPaintAbout(); memPaintWork(); memPaintAnswers(); memPaintEeo(); memPaintBg(); memPaintCareer(); memPaintHistory();
   }
   function memPaintNoted() {
     const list = MEM.data.noted || [];
@@ -5340,6 +5348,15 @@
       editor: x => memEditor(x, r.kind === "terms" ? "terms" : r.kind === "salary" ? "salary" : "text", r.kind === "terms" ? "always" : (x.raw || x.value)),
     })).join("");
     $("#memAnswerRows").hidden = !rows.length;
+  }
+  // (2026-11-26) Background answers: from forms the person submitted; Edit and Forget per row.
+  function memPaintBg() {
+    const d = MEM.data, rows = d.background || [];
+    if (!$("#memBgRows")) return;
+    $("#memBgAsk").checked = !!d.bg_always_ask;
+    $("#memBgRows").innerHTML = rows.map(r => memRow(r, { editor: x => memEditor(x, "text", x.raw || x.value) })).join("");
+    $("#memBgRows").hidden = !rows.length;
+    $("#memBgNone").hidden = !!rows.length;
   }
   function memPaintEeo() {
     const d = MEM.data, rows = d.eeo || [];
@@ -6059,6 +6076,13 @@
     if (MEM.show) { MEM.show = false; MEM.eeo = null; memPaintEeo(); return; }
     try { await memReveal(); MEM.show = true; } catch (err) { toast(err.message); }
     memPaintEeo();
+  });
+  $("#memBgAsk")?.addEventListener("change", async e => {
+    const box = e.target, want = box.checked;
+    box.disabled = true;
+    try { await memPost("/api/memory/background-ask", { on: want }); }
+    catch (err) { box.checked = !want; toast(err.message); }
+    box.disabled = false;
   });
   $("#memEeoDecline")?.addEventListener("change", async e => {
     const box = e.target, want = box.checked;

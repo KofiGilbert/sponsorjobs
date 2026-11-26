@@ -60,10 +60,17 @@ async function run(o) {
   await page.waitForTimeout(600);
   const rest = await page.evaluate("window.TailorPointer.state()");
   const steps = [await js("window.TailorAutofill.needsStep(1)"), await js("window.TailorAutofill.needsStep(-1)")];
-  const outlined = await page.evaluate("document.querySelectorAll('.tailor-needs').length");
+  // the glow: rings in their own overlay, the current one brighter, gone once a field is answered
+  const glow = await page.evaluate(() => { const h = document.querySelector("[data-sj-glow]"); const rs = h ? [...h.shadowRoot.querySelectorAll(".r")] : [];
+    return { n: rs.length, cur: rs.filter((r) => r.classList.contains("cur")).length, layout: getComputedStyle(h || document.body).position }; });
+  // the person answers it (here through the engine's own pick, as a person's click would)
+  await js("(async () => { const T = window.TailorAutofill; const ref = T.needsList()[0]; return T.applyOpsAsync([{ ref, op: 'select', text: 'No' }]); })()");
+  await page.waitForTimeout(800);
+  const after = await page.evaluate(() => { const h = document.querySelector("[data-sj-glow]"); return h ? h.shadowRoot.querySelectorAll(".r").length : 0; });
+  const outlined = glow.n;
   const submitted = await page.evaluate("document.getElementById('submit').dataset.clicked || ''");
   await b.close();
-  return { out, v, moves, end, rest, steps, outlined, submitted, waits };
+  return { out, v, moves, end, rest, steps, outlined, submitted, waits, glow, after };
 }
 
 (async () => {
@@ -92,6 +99,8 @@ async function run(o) {
   assert(r.end.where === "needs" && r.end.n === 1 && r.outlined === 1, "ends on the person's field " + JSON.stringify(r.end));
   assert(r.rest && /^Needs you/.test(r.rest.label), "the pointer rests there " + JSON.stringify(r.rest));
   assert(r.steps[0].n === 1 && r.steps[0].i === 0, "Next steps through them " + JSON.stringify(r.steps));
+  assert(r.glow.n === 1 && r.glow.cur === 1 && r.glow.layout === "fixed", "a glow ring, the current one bright, in an overlay " + JSON.stringify(r.glow));
+  assert(r.after === 0, "the ring goes once the field is answered: " + r.after);
   assert(!r.submitted, "never submitted");
 
   // ---- nothing left for the person: the end rests on Submit, outlined, never pressed -----------

@@ -2176,5 +2176,9 @@
   "fill.next": "Next",
   "fill.done": "Done",
   "fill.pageSome": "Page {p}: filled {f}. {n} need you",
-  "fill.pageAll": "Page {p}: filled {f}"
+  "fill.pageAll": "Page {p}: filled {f}",
+  "mem.bg": "Background answers",
+  "mem.bgAsk": "Always ask me about background questions",
+  "mem.bgNone": "None yet. Your answers are kept here once you submit a form that asks.",
+  "fill.submitted": "Submitted. Marked as applied"
 }

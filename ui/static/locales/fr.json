@@ -2176,5 +2176,9 @@
   "fill.next": "Suivant",
   "fill.done": "Terminé",
   "fill.pageSome": "Page {p} : {f} remplis. {n} ont besoin de toi",
-  "fill.pageAll": "Page {p} : {f} remplis"
+  "fill.pageAll": "Page {p} : {f} remplis",
+  "mem.bg": "Réponses sur les antécédents",
+  "mem.bgAsk": "Toujours me demander pour les questions d'antécédents",
+  "mem.bgNone": "Aucune pour l'instant. Tes réponses sont gardées ici quand tu envoies un formulaire qui les demande.",
+  "fill.submitted": "Envoyée. Marquée comme postulée"
 }

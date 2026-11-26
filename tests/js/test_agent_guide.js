@@ -42,7 +42,7 @@ function fakePane(P) {
     executeJavaScript: async (expr) => {
       if (expr.includes("!!window.TailorAutofill && !!window.TailorAgent")) return true;
       if (expr.includes("__tailorQuiet.at")) return "5000|complete";
-      if (expr.includes("pageSignature")) return { labels: ["form"] };
+      if (expr.includes("pageSignature")) return P.sent ? { labels: [], success: true } : { labels: ["form"] };
       if (expr.includes("/*sj-highlight*/")) {
         const i = Number(/element\((\d+)\)/.exec(expr)[1]);
         P.lit = i; P.log.push("hl " + i);
@@ -148,7 +148,7 @@ function setup(o) {
     },
   };
   const agent = createAgent(deps);
-  return { agent, posts, progress, P, E };
+  return { agent, posts, progress, P, E, deps };
 }
 const guides = (s) => s.progress.filter((x) => x.state === "guide").map((x) => x.message);
 const hl = (s) => s.P.log.filter((l) => /^(hl|unhl) /.test(l));
@@ -252,6 +252,22 @@ const hl = (s) => s.P.log.filter((l) => /^(hl|unhl) /.test(l));
     assert(r && r.ok === false && r.reason === "stopped", "stopped " + JSON.stringify(r));
     assert(s.E.closed === true && s.P.lit === 0, "the ask is closed and the outline is gone");
     assert(s.agent.guideNext().ok === false, "Next does nothing once the run is over");
+  }
+  // ---- 5. (2026-11-26) the person answers and presses the site's own Submit during the ask: the
+  // page turns into the confirmation, so the ask ends, the record is Applied and the bar says so
+  {
+    const s = setup({ mode: "assisted", fields: [22] });
+    const announced = [];
+    s.P.onLight = async () => { setTimeout(() => { s.P.sent = true; }, 10); };
+    const deps0 = s.agent;
+    // the shared submit signal (applied_watch.js) is told once
+    s.agent = createAgent(Object.assign({}, s.deps, { announceSubmitted: (x) => announced.push(x) }));
+    const r = await s.agent.run(7, { url: s.P.url });
+    assert(deps0 && r && r.ok === true && r.submitted === true, "the run ends Submitted " + JSON.stringify(r) + "\n" + s.P.log.join("\n"));
+    assert(s.E.closed === true && s.P.lit === 0, "the ask is closed and the outline is gone");
+    assert(s.posts.some(([p, b]) => p === "/api/autofill/applied" && b.record_id === 7), "marked Applied " + JSON.stringify(s.posts.map((x) => x[0])));
+    assert(announced.length === 1 && announced[0].recordId === 7 && announced[0].matched === true, "announced once " + JSON.stringify(announced));
+    assert(s.progress.some((x) => x.state === "submitted"), "the bar says Submitted " + JSON.stringify(s.progress.map((x) => x.state)));
   }
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });

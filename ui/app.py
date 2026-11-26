@@ -2800,6 +2800,8 @@ def _set_prefs(patch: dict) -> dict:
         cur["min_gap"] = max(0.0, float(patch["min_gap"]))
     if "inbox_auto_verify" in patch:
         cur["inbox_auto_verify"] = bool(patch["inbox_auto_verify"])
+    if "bg_always_ask" in patch:             # "Always ask me about background questions"
+        cur["bg_always_ask"] = bool(patch["bg_always_ask"])
     if "folders" in patch:
         cur["folders"] = [str(f).strip()[:60] for f in (patch["folders"] or [])
                           if str(f).strip()][:50]
@@ -7382,8 +7384,45 @@ def _selfid_model(system: str, user: str) -> str:
 
 
 def _selfid_setup() -> None:
-    from autoapply import selfid
+    from autoapply import legalai, selfid
     selfid.configure(_DATA / "selfid_options.json", model=_selfid_model)
+    legalai.configure(_DATA / "legal_options.json", model=_selfid_model)
+
+
+def _legal_facts(lib=None) -> tuple[str, list]:
+    """(the saved work authorization in words, the saved background answers) for autoapply/legalai.py.
+    The background answers are left out while the person asked to be asked every time."""
+    from autoapply import basics, legalai, workauth as _wa
+    wa = _work_auth()
+    parts = [n for n in (_wa.note(wa, c) for c in _wa.COUNTRIES) if n]
+    own = lib is None
+    lib = lib or _answer_lib()
+    try:
+        b = basics.read(lib)
+        rows = lib.list()
+    finally:
+        if own:
+            lib.close()
+    for k in ("citizenship", "citizenship2"):
+        v = str((b.get("values") or {}).get(k) or "").strip()
+        if v:
+            parts.append(f"Country of citizenship: {v}.")
+    bg = [] if _prefs().get("bg_always_ask") else legalai.saved_background(rows)
+    return " ".join(parts), bg
+
+
+def _legal_pick(question: str, options, lib=None):
+    """(value, origin) for a choice question the engine's rules left open, when the saved work
+    authorization or a saved background answer settles it by meaning (autoapply/legalai.py)."""
+    from autoapply import legalai
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if not opts:
+        return None
+    wa_text, bg = _legal_facts(lib)
+    v, topic = legalai.pick(question, opts, wa_text, bg)
+    if not v:
+        return None
+    return v, ("workauth" if topic == "work_authorization" else "library")
 
 
 _selfid_setup()
@@ -7431,6 +7470,43 @@ def _stoplog_values() -> dict:
     except Exception:                                    # noqa: BLE001
         pass
     return vals
+
+
+@app.post("/api/memory/background-ask")
+@_guard
+def memory_background_ask():
+    """{on}: "Always ask me about background questions" (default off): while on, a saved background
+    answer is never used to fill a form; the person answers each time."""
+    _set_prefs({"bg_always_ask": bool((request.json or {}).get("on"))})
+    return _nostore(jsonify(_memory_page_payload()))
+
+
+@app.post("/api/autoapply/background/capture")
+@_guard
+def autoapply_background_capture():
+    """(2026-11-26) The person submitted a form: the shell sends what its choice questions held just
+    before the submit ({record_id, url, items: [{question, value, options}]}). Each one the model
+    reads as a background question (autoapply/legalai.py) is saved as the person's own answer,
+    "Background: <question>", so a later form with the same meaning is answered from it (unless
+    they asked to be asked every time). Never a guess: only what was on the page they sent."""
+    from autoapply import legalai
+    b = request.json or {}
+    items = [it for it in (b.get("items") or [])[:60] if isinstance(it, dict)]
+    saved = 0
+    lib = _answer_lib()
+    try:
+        for it in items:
+            q, v = str(it.get("question") or "").strip(), str(it.get("value") or "").strip()
+            opts = [str(o) for o in (it.get("options") or []) if str(o).strip()]
+            if not q or not v or not opts or v not in opts:
+                continue
+            if legalai.topic(q, opts) != "background":
+                continue
+            lib.save(legalai.BG_PREFIX + q[:300], v, "you")
+            saved += 1
+    finally:
+        lib.close()
+    return jsonify({"ok": True, "saved": saved})
 
 
 @app.post("/api/autoapply/stoplog")
@@ -9555,7 +9631,9 @@ def _memory_page_payload() -> dict:
         eeo = _P.eeo_rows(st, lib, bool(prefs.get("eeo_decline")))
         bas = basics.read(lib, eeo_decline=bool(prefs.get("eeo_decline")), salary_fallback=prefs.get("desired_salary") or "")
         needs = _P.needs(st, conflict=conflict, wa=wa, lib=lib, prefs=prefs)
-        others = len(_P.one_question(lib.list()))
+        all_rows = lib.list()
+        others = len(_P.one_question(all_rows))
+        background = _P.background_rows(all_rows)
     finally:
         lib.close()
     its = _R.items(prof)
@@ -9565,6 +9643,8 @@ def _memory_page_payload() -> dict:
         "has_profile": bool(identity.get("name") or material),
         "about": about, "work": work, "answers": answers, "others": others,
         "eeo": eeo, "eeo_decline": bool(prefs.get("eeo_decline")),
+        # (2026-11-26) background answers from forms the person submitted, and their choice
+        "background": background, "bg_always_ask": bool(_prefs().get("bg_always_ask")),
         "basics": {k: bas[k] for k in ("answered", "total", "missing")},
         # a chat value that disagrees with a saved one is ONE question (Needs a look), never
         # also an "I noted" chip
@@ -9972,6 +10052,17 @@ def memory_answer():
         fld = _P.PREFS_FIELD.get(key)
         if fld:
             _merge_prefs({fld: value})
+    elif key.startswith("bg:"):
+        # a background answer saved from a submitted form (autoapply/legalai.py): the person's own
+        from autoapply import legalai
+        lib = _answer_lib()
+        try:
+            row = next((r for r in lib.list() if r.get("key") == key[3:]), None)
+            if not row or not str(row.get("question") or "").startswith(legalai.BG_PREFIX):
+                return jsonify({"error": "Which answer?"}), 400
+            lib.save(str(row["question"]), value, "you")
+        finally:
+            lib.close()
     elif key.startswith("contact:"):
         fld = key.split(":", 1)[1]
         if fld not in IDENTITY_KEYS:
@@ -15737,6 +15828,15 @@ def autoapply_plan():
                 # route offers the one tap where a saved answer stands behind it)
                 ctx.mapped, ctx.confirm = mapped, confirm
                 res = plan_known(fields, ctx)
+        # (2026-11-26) a choice the rules left for the person that the saved work authorization or a
+        # saved background answer settles by meaning (autoapply/legalai.py); never a guess
+        from autoapply.planner import FillAction as _FA, _op_for as _opf
+        for f in list(res.left):
+            if f.options and (f.type or "").lower() in ("select", "radio", "combobox"):
+                got = _legal_pick(f.label, f.options, lib)
+                if got:
+                    res.left.remove(f)
+                    res.actions.append(_FA(f.ref, _opf(f), value=got[0], origin=got[1], sensitive=True))
         if res.rest:
             try:
                 llm = _make_llm()
@@ -16999,6 +17099,10 @@ def autoapply_agent_ask():
                                     company=company, full=it["full"], **sense)
                 if k:
                     it["answer"], it["origin"] = k
+                elif it["page_options"]:
+                    k = _legal_pick(it["question"], it["page_options"], lib)
+                    if k:
+                        it["answer"], it["origin"] = k
             # Before anything is asked: what the person's saved facts answer (one call per page,
             # every answer verified against the fact it cites). Never a self-identification,
             # legal or consent question, nor one job's own answer or a waiting one-tap confirm.

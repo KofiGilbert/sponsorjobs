@@ -58,11 +58,16 @@ const GUIDE_POLL_MS = Math.max(5, Number(process.env.SJ_AGENT_GUIDE_MS) || 1000)
 // element itself; what was there before is put back.
 const HL_ON = (i) => `(() => { /*sj-highlight*/ const el = window.TailorAgent.element(${Number(i)}); if (!el) return false;
   el.scrollIntoView({ block: "center", inline: "nearest" });
+  // (2026-11-26) the guided fill's violet glow ring when the engine is there (an overlay: the site's
+  // own styles and layout untouched); the inline outline below otherwise
+  if (window.TailorAutofill && window.TailorAutofill.glow) { el.setAttribute("data-sj-hl", JSON.stringify([el.style.outline, el.style.outlineOffset, el.style.boxShadow]));
+    window.TailorAutofill.glow(el, true); return true; }
   el.setAttribute("data-sj-hl", JSON.stringify([el.style.outline, el.style.outlineOffset, el.style.boxShadow]));
-  el.style.outline = "3px solid #f5a524"; el.style.outlineOffset = "3px"; el.style.boxShadow = "0 0 0 7px rgba(245, 165, 36, 0.28)";
+  el.style.outline = "3px solid #7957FC"; el.style.outlineOffset = "3px"; el.style.boxShadow = "0 0 0 7px rgba(121, 87, 252, 0.3)";
   return true; })()`;
 const HL_OFF = `(() => { /*sj-unhighlight*/ let n = 0;
   for (const el of document.querySelectorAll("[data-sj-hl]")) {
+    if (window.TailorAutofill && window.TailorAutofill.unglow) window.TailorAutofill.unglow(el);
     let was = ["", "", ""]; try { was = JSON.parse(el.getAttribute("data-sj-hl")) || was; } catch (e) { /* plain */ }
     el.style.outline = was[0] || ""; el.style.outlineOffset = was[1] || ""; el.style.boxShadow = was[2] || "";
     el.removeAttribute("data-sj-hl"); n++;
@@ -1886,6 +1891,17 @@ function createAgent(deps) {
                       : await guide(wc, step, open, body);
       dlog("step " + step + " batch ask (" + where + ") ->", r && { ok: r.ok, reason: r.reason, n });
       if (r && r.reason === "stopped") return { ret: stopped("stopped", "Stopped.") };
+      if (r && r.reason === "sent") {
+        // the person sent it themselves: Applied, the run ends, the bar says so
+        let pageUrl = url || "";
+        try { pageUrl = wc.getURL() || pageUrl; } catch (e) { /* the pane went away */ }
+        await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: pageUrl, record_id: recordId }).catch(() => null);
+        if (deps.announceSubmitted) deps.announceSubmitted({ recordId, url: applyUrl, pageUrl, how: "marker", matched: true });
+        feed.close();
+        feed.push("sent", "Sent", "by you, and the site confirmed it", { state: "done" });
+        progress(recordId, "submitted", "Submitted. Marked as applied.", { steps: history.length });
+        return { ret: finish({ ok: true, submitted: true, steps: history.length }) };
+      }
       if (r && r.reason === "parked") return { ret: await park("questions", shown, { url, left, ask: batch ? undefined : ask }) };
       if (!(r && r.ok)) return { ret: stopped("needs-answers", blockedMessage("needs-answers", open.map((d) => d.question)), { url, left }) };
       // What the person set on the page (or the shell filled from their Telegram answer) is done;
@@ -1964,6 +1980,17 @@ function createAgent(deps) {
               return { ok: false, reason: "stopped" };
             }
             if (!r) return null;                   // the engine never took the ask
+            // (2026-11-26) the person answered and pressed the site's Submit: the page is the
+            // site's confirmation, so the ask ends here (the bar must not stay on "N fields need you")
+            {
+              let sg = null;
+              try { sg = await signature(wc); } catch (e) { if (e && e.stopped) throw e; sg = null; }
+              if (sg && sg.success) {
+                await unlight();
+                await deps.postApp("/api/autoapply/agent/ask/close", { id }).catch(() => null);
+                return { ok: false, reason: "sent" };
+              }
+            }
             let v2 = null;
             try { v2 = await view(wc, fr); } catch (e) { if (e && e.stopped) throw e; v2 = null; }
             const idx = v2 ? indexFor(v2.text, d.question) : 0;

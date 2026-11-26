@@ -2113,3 +2113,33 @@ and a redesign:
   an assistant's speech bubble can replace the bar later.
 - Tests: tests/test_guided_fill.py, tests/js/test_guided_walk.js (fixture
   tests/fixtures/forms/guided_form.html).
+
+## 39. The glow, immigration and background questions, and the end at submit (2026-11-26)
+
+- **The glow** (`autofill_core.js glow / markNeeds / needsStep`): every field that needs the person
+  gets a violet (#7957FC) ring drawn in its own overlay (a shadow root above the page), so the
+  site's layout and its own error text are never moved or covered. The ring pulses about every 2 s
+  (still under reduced motion); the current field is brighter, with the pointer resting on it and
+  "Needs you: <question>". Previous / Next scroll to and focus the current field. A ring goes as
+  soon as its field holds an answer. The agent's guided ask (Review answers) uses the same ring.
+  A white edge around the violet keeps it visible on white and dark sites.
+- **Immigration and work authorization** (`autoapply/legalai.py`): a choice question the rules left
+  open is read by the model, which says its topic and picks the option the saved work
+  authorization answers ("Are you an alien admitted under a nonimmigrant visa?" from "F-1 OPT").
+  Cached per question, options and facts (`legal_options.json`). Asked only when the profile lacks
+  the fact.
+- **Background questions** (convictions, court orders, fugitive status, controlled substances...):
+  never invented. The model may only pick from the person's own earlier answer to a question with
+  the same meaning; with none saved, the code drops any pick. Those answers are saved when the
+  person submits a form: the page's choice questions are read as Submit is pressed
+  (`armSubmitSnapshot`), and once the site confirms the application (the shared signal,
+  `applied_watch.js onSubmitted`) they go to `/api/autoapply/background/capture`, which keeps only
+  the background ones whose value is one of the options, as "Background: <question>". Memory shows
+  them under "Background answers" with Edit and Forget, and the setting "Always ask me about
+  background questions" (off by default) keeps them out of every fill. They are asked (the stop
+  log's asked_person) only the first time.
+- **The end at submit**: when the person presses the site's Submit during the guided ask and the
+  page turns into the confirmation, the ask closes, the record is Applied, the shared signal is
+  told, and the bar says "Submitted. Marked as applied" for a few seconds, then clears.
+- Tests: tests/test_legal_background.py, tests/js/test_agent_guide.js (case 5),
+  tests/js/test_guided_walk.js (the ring).

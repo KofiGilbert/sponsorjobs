@@ -1097,6 +1097,30 @@ async function guidedWalk(wc, recordId, url, page, say) {
   });
 }
 const guided = require("./guided");
+const appliedWatch = require("./applied_watch");
+
+// (2026-11-26) Background answers, saved at submit time: the page's snapshot of its choice
+// questions, taken as the person presses Submit (autofill_core armSubmitSnapshot, a console line
+// only the shell reads), and sent to the engine once the site confirms the application through
+// the one shared signal (applied_watch.js onSubmitted). The engine keeps only the background
+// questions among them, as the person's own answers (autoapply/legalai.py). Never a guess.
+const _snapshots = new Map();            // webContents id -> { at, url, items }
+function watchSnapshots(wc) {
+  if (!wc || wc.__sjSnapWatch) return;
+  wc.__sjSnapWatch = true;
+  wc.on("console-message", (...args) => {
+    const msg = typeof args[0] === "object" && args[0] && "message" in args[0] ? args[0].message : args[2];
+    if (typeof msg !== "string" || !msg.startsWith("__sj_snapshot__")) return;
+    try { const d = JSON.parse(msg.slice("__sj_snapshot__".length)); _snapshots.set(wc.id, Object.assign({ at: Date.now() }, d)); } catch (e) { /* not ours */ }
+  });
+}
+appliedWatch.onSubmitted((ev) => {
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  const snap = wc ? _snapshots.get(wc.id) : null;
+  if (!snap || Date.now() - snap.at > 10 * 60 * 1000 || !(snap.items || []).length) return;
+  _snapshots.delete(wc.id);
+  postApp("/api/autoapply/background/capture", { record_id: ev.recordId, url: ev.url || snap.url, items: snap.items }).catch(() => null);
+});
 
 async function runAutoApplyOnPane(recordId, opts) {
   opts = opts || {};
@@ -1387,6 +1411,8 @@ async function runAutoApplyOnPane(recordId, opts) {
       wc.executeJavaScript(`window.TailorAutofill.guardContact(${JSON.stringify(payload.fields || {})}, 15000)`, true).catch(() => null);
     }
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
+    watchSnapshots(wc);
+    wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitSnapshot && window.TailorAutofill.armSubmitSnapshot()", true).catch(() => null);
     if (fr) { fr.close(); fr = null; }
     const sig = await mainSignature(wc);
     if (!opts.fromWatch) armPageWatch(wc, recordId, page, sig);
@@ -1726,6 +1752,7 @@ const agent = createAgent({
   isNewPage, attachResume, attachViaChooser, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
   fixPhone, checkPrefill,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
+  announceSubmitted: (info) => appliedWatch.announceSubmitted(info),
   version: app.getVersion(),
   pointerSource,
   stopSuccessWatch: () => disarmSuccessWatch(),          // the agent's own watch recorded the send
