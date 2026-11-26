@@ -2191,6 +2191,10 @@ and a redesign:
   or legal question never gets one. The bar and the pointer name the SAME current item in plain
   words ("1 needs you: the privacy notice"): the page tells the shell each time it moves
   (`__sj_needs__`). With a box marked on the page the agent never says it "could not find where".
+- **Any submit ends every run state** (Vestmark: the bar kept the stop message after the person's
+  own Submit): a job the agent stopped on its page (a notice, a question) is watched like one at
+  Ready to send (`armStopWatch`), so the person's Submit marks it Applied and the bar says
+  "Submitted. Marked as applied", then clears; the needs-you line never comes back after a submit.
 - **The end on Submit**: the pointer's tip is ON the button (its left centre), the label just past
   its right edge, or under it when there is no room; never over it.
 - **The bar says one short line** (`app.js aaBarShort`): the agent's Ready line is "Your turn:

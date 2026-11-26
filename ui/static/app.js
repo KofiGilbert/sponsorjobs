@@ -1449,7 +1449,11 @@
       if (info.agent) {
         aaAgentBar(info);
         // (2026-11-26) sent: the line says so for a moment, then the bar clears
-        if (info.state === "submitted") setTimeout(() => { const b = $("#bbFill"); if (b && /Submitted|Sent/.test(b.textContent || "")) say(null); }, 5000);
+        if (info.state === "submitted") {
+          GUIDE_MSG = null;
+          try { window.tailorShell.guideStep && window.tailorShell.guideStep("done"); } catch { /* fine */ }
+          setTimeout(() => { const b = $("#bbFill"); if (b && /Submitted|Sent/.test(b.textContent || "")) say(null); }, 5000);
+        }
         applyChatProgress(info);      // a run the builder's Apply started is told in its chat too
         if (/^(ready|submitted|stopped|parked|batch-done|sendall-done)$/.test(info.state || "")) {
           if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
@@ -1478,6 +1482,7 @@
     window.tailorShell.onApplied((info) => {
       // (2026-11-26) the site took it: the status line says so briefly, the outlines go
       try { window.tailorShell.guideStep && window.tailorShell.guideStep("done"); } catch { /* fine */ }
+      GUIDE_MSG = null;                  // any submit ends every run state: no needs-you line comes back
       say({ line: info && info.matched ? T("fill.submitted", "Submitted. Marked as applied") : T("fill.submittedOnly", "Submitted") });
       setTimeout(() => { const b = $("#bbFill"); if (b && /Submitted/.test(b.textContent || "")) say(null); }, 5000);
       const note = $("#pkgAssistNote");

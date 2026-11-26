@@ -43,6 +43,7 @@ function fakePane(P) {
       if (expr.includes("!!window.TailorAutofill && !!window.TailorAgent")) return true;
       if (expr.includes("__tailorQuiet.at")) return "5000|complete";
       if (expr.includes("pageSignature")) return P.sent ? { labels: [], success: true } : { labels: ["form"] };
+      if (expr.includes("__sjSubmitAt")) return P.sent ? { success: true, url: P.url + "/confirmation", phrase: "Track your application" } : { url: P.url };
       if (expr.includes("/*sj-highlight*/")) {
         const i = Number(/element\((\d+)\)/.exec(expr)[1]);
         P.lit = i; P.log.push("hl " + i);
@@ -140,7 +141,7 @@ function setup(o) {
       posts.push([p, JSON.parse(JSON.stringify(b || {}))]);
       if (p === "/api/autoapply/agent/step") {
         P.log.push("step " + b.step);
-        return { ok: true, summary: "Working on it", actions: [], done: { outcome: "ready_to_submit" }, cost: 0.01 };
+        return { ok: true, summary: "Working on it", actions: [], done: o.done || { outcome: "ready_to_submit" }, cost: 0.01 };
       }
       if (p === "/api/autoapply/agent/critic") return { ok: true, issues: [] };
       const e = E.post(p, JSON.parse(JSON.stringify(b || {})));
@@ -265,5 +266,20 @@ const hl = (s) => s.P.log.filter((l) => /^(hl|unhl) /.test(l));
     assert(s.posts.some(([p, b]) => p === "/api/autofill/applied" && b.record_id === 7), "marked Applied " + JSON.stringify(s.posts.map((x) => x[0])));
     assert(s.progress.some((x) => x.state === "submitted"), "the bar says Submitted " + JSON.stringify(s.progress.map((x) => x.state)));
   }
+  // ---- 6. (Vestmark, 2026-11-26) the run STOPS on a notice the person must accept; they do it on
+  // the page and press the site's own Submit: the stopped job's page is watched, so the record is
+  // Applied and the bar says Submitted (then clears), not the old stop message
+  {
+    const s = setup({ mode: "assisted", fields: [22], done: { outcome: "blocked", reason: "needs-consent" } });
+    s.P.vals[22] = "No";                                   // nothing left to ask: straight to the stop
+    const r = await s.agent.run(8, { url: s.P.url });
+    assert(r && r.ok === false && r.reason === "needs-consent", "stopped on the notice " + JSON.stringify(r) + "\n" + s.P.log.join("\n"));
+    s.P.sent = true;                                       // the person's own Submit; the site confirms
+    await new Promise((res) => setTimeout(res, 2900));
+    assert(s.posts.some(([p, b]) => p === "/api/autofill/applied" && b.record_id === 8), "marked Applied " + JSON.stringify(s.posts.map((x) => x[0])));
+    const sub = s.progress.filter((x) => x.state === "submitted" && x.record_id === 8);
+    assert(sub.length === 1, "the bar is told Submitted once " + JSON.stringify(s.progress.map((x) => [x.state, x.record_id])));
+  }
   console.log("ok");
+  process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

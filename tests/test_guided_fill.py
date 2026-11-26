@@ -220,3 +220,17 @@ def test_suggestions_only_for_acknowledgements_and_the_bar_names_the_same_item()
     assert '"__sj_needs__"' in main and '"assist:needs"' in main
     agent = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
     assert "marked ? NOTICE_IN_BOX : blockedMessage(\"needs-consent\")" in agent
+
+
+def test_any_submit_ends_the_needs_you_state_on_the_bar():
+    """(Vestmark, 2026-11-26) After the person's own Submit the bar kept the old stop message with
+    Previous / Next / Done. Any submit (the shell's success watch, or the agent's watch on a job it
+    stopped on its page) ends the guided state: the bar says Submitted, then clears
+    (tests/js/test_agent_guide.js case 6 runs the stopped job's watch)."""
+    app = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    i = app.index("window.tailorShell.onApplied((info) => {")
+    assert "GUIDE_MSG = null;" in app[i:i + 700]
+    j = app.index('if (info.state === "submitted") {')
+    assert "GUIDE_MSG = null;" in app[j:j + 400] and 'guideStep("done")' in app[j:j + 400]
+    agent = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
+    assert "armStopWatch(recordId, wcS, applyUrl)" in agent

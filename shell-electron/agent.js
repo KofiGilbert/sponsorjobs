@@ -783,6 +783,12 @@ function createAgent(deps) {
     w.tick().catch(() => {});                 // arms the page's Submit note at once
     return w;
   }
+  const stoppedOnPage = new Map();       // recordId -> the pane epoch it stopped in (its page still open)
+  function armStopWatch(recordId, wc0, url) {
+    const key = String(recordId), ep = paneEpoch;
+    stoppedOnPage.set(key, ep);
+    return armWatch(recordId, wc0, () => stoppedOnPage.get(key) === ep && ep === paneEpoch && !ready.has(recordId) && !parked.has(key), url);
+  }
   function armReadyWatch(recordId, wc0) {
     const r = ready.get(recordId);
     if (!r) return null;
@@ -802,6 +808,7 @@ function createAgent(deps) {
   // ``seen.posted``: the app's own success watch (main.js) already recorded it.
   async function sentByPerson(recordId, wc, url, seen) {
     if (readyWatch && String(readyWatch.recordId) === String(recordId)) disarmReadyWatch();
+    stoppedOnPage.delete(String(recordId));
     const r = ready.get(recordId);
     ready.delete(recordId);
     const key = String(recordId);
@@ -826,7 +833,7 @@ function createAgent(deps) {
     if (recordId == null || current) return false;
     const key = String(recordId);
     const rid = ready.has(recordId) ? recordId : ready.has(Number(recordId)) ? Number(recordId) : recordId;
-    if (!ready.has(rid) && !parked.has(key)) return false;
+    if (!ready.has(rid) && !parked.has(key) && !(stoppedOnPage.get(key) === paneEpoch)) return false;
     const i = info || {};
     const pane = deps.getPane();
     await sentByPerson(rid, pane && pane.webContents, i.url || "", { how: "marker", phrase: "", posted: true, pageUrl: i.pageUrl || "" });
@@ -2103,7 +2110,14 @@ function createAgent(deps) {
       feed.close();
       feed.push("stop", "Stopped", reason === "stopped" ? "as you asked" : "", { state: "parked", detail: reason === "stopped" ? "" : message });
       progress(recordId, "stopped", message, Object.assign({ reason, steps: history.length }, extra));
-      return finish({ ok: false, reason, steps: history.length });
+      const out = finish({ ok: false, reason, steps: history.length });
+      // (2026-11-26, Vestmark) the job stays on its page with a box for the person: they may fill
+      // it and press the site's Submit themselves; the page is watched the same way as at Ready to
+      // send, so the record is Applied and the bar says Submitted, then clears
+      if (reason !== "stopped") {
+        try { const wcS = wcNow && (wcNow.__real || wcNow); if (wcS && !wcS.isDestroyed()) armStopWatch(recordId, wcS, applyUrl); } catch (e) { /* no pane */ }
+      }
+      return out;
     };
     // (2026-11-26) The finish's cost cap: the run stops, everything filled stays on the page, and
     // the person is told in plain words what is left.
