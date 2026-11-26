@@ -1527,6 +1527,10 @@ function createAgent(deps) {
       // The person said yes: click the accept button / tick the box like a person would.
       const before = url;
       const press = async (index) => {
+        // the pointer on the window's own button first ("Clicking: I Acknowledge", Lam 2026-11-26)
+        let words = "";
+        try { words = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${Number(index)}); return el ? String(el.innerText || el.value || el.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim().slice(0, 40) : ""; })()`, true); } catch (e) { words = ""; }
+        if (await pointAt(wc, { op: "click", index }, words ? `[${index}]<button>${words}</button>` : "")) await delay(300);
         let r = await realClick(wc, index);
         if (!r) r = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index })})`, true),
                                 ACTION_MS, "accept").catch(() => null);

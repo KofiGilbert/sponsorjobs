@@ -2141,5 +2141,19 @@ and a redesign:
 - **The end at submit**: when the person presses the site's Submit during the guided ask and the
   page turns into the confirmation, the ask closes, the record is Applied, the shared signal is
   told, and the bar says "Submitted. Marked as applied" for a few seconds, then clears.
+- **A site's window over the form** (Lam, the Data Privacy Agreement: "Filling: Disability" sat on
+  top of it): `pointer_overlay.js coverOf` finds an open modal dialog that does not hold the field
+  (or another fixed layer drawn over it). The pointer then goes to the window, "Reading: <its
+  title>", never to a field hidden under it; a resting pointer goes away when a window opens over
+  its field; no ring is drawn over a window. The walk fills what was decided quietly underneath,
+  and the agent's press on the window's own button shows "Clicking: I Acknowledge".
+- **The bar says one short line** (`app.js aaBarShort`): the agent's Ready line is "Your turn:
+  check and submit" (or "Ready to send. Check it, then press Send" where the app sends), and any
+  longer run message is cut to its first sentence; the whole text is under "Details". A question
+  to answer is never cut.
+- **Submitted, then clear**: the site's confirmation (the success watch, now also "Thank you for
+  your application" in a window, as on Lam's own careers site) makes the bar say "Submitted.
+  Marked as applied" for 5 s, then it clears.
 - Tests: tests/test_legal_background.py, tests/js/test_agent_guide.js (case 5),
-  tests/js/test_guided_walk.js (the ring).
+  tests/js/test_guided_walk.js (the ring, the window over the form, the confirmation window),
+  tests/test_guided_fill.py (the short line).

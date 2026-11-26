@@ -6,7 +6,7 @@
 // itself stays in view. Moves glide (about 0.3 s) unless the person asked for reduced motion,
 // then they jump. Gone with hide(), and by itself after 10 s with nothing new.
 //
-// window.TailorPointer = { at(el, label, opts), point(rect, label, opts), hide(), state(), COLOR }
+// window.TailorPointer = { at(el, label, opts), point(rect, label, opts), hide(), state(), coverOf(el), titleOf(modal), COLOR }
 //
 // (2026-11-26) One signature colour, ONE token (--sj-pointer): the arrow's fill and the label's
 // background. The owner's pick (2026-11-26): violet, one shade deeper than #7C5CFF so the white label
@@ -78,6 +78,65 @@
     const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
     return r && (r.width > 0 || r.height > 0) && r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
   }
+  // (2026-11-26, Lam: "Filling: Disability" sat on top of the site's Data Privacy Agreement
+  // window) A field under a site's modal window is never labelled: the pointer goes to the window
+  // itself ("Reading: <its title>"), and a pointer resting on a field goes away when a window opens
+  // over it. Covered = an open dialog that does not hold the field and is modal (aria-modal, a
+  // modal <dialog>) or lies over the field's box; or, the field in view, another fixed layer drawn
+  // at its centre (a site's own overlay without dialog roles).
+  const MODAL_SEL = "[role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true']";
+  const ours = (n) => !!(n && n.closest && n.closest("[data-sj-pointer], [data-sj-glow]"));
+  function openRect(d) {
+    try {
+      if (d.getAttribute("aria-hidden") === "true") return null;
+      const g = window.getComputedStyle(d);
+      if (g.display === "none" || g.visibility === "hidden" || Number(g.opacity) === 0) return null;
+      const r = d.getBoundingClientRect(), vh = window.innerHeight || 800;
+      return r.width > 40 && r.height > 40 && r.bottom > 0 && r.top < vh ? r : null;
+    } catch (e) { return null; }
+  }
+  const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  function coverOf(el) {
+    try {
+      if (!el || !el.isConnected || el.ownerDocument !== document || ours(el)) return null;
+      const er = el.getBoundingClientRect();
+      for (const d of document.querySelectorAll(MODAL_SEL)) {
+        if (d.contains(el) || el.contains(d) || ours(d)) continue;
+        const r = openRect(d);
+        if (!r) continue;
+        let modal = d.getAttribute("aria-modal") === "true";
+        try { modal = modal || (d.tagName === "DIALOG" && d.matches(":modal")); } catch (e) { /* old engine */ }
+        if (modal || ((er.width || er.height) && overlaps(r, er))) return d;
+      }
+      const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+      const cx = er.left + er.width / 2, cy = er.top + er.height / 2;
+      if (!(er.width || er.height) || cx < 0 || cy < 0 || cx > vw || cy > vh) return null;
+      const hit = document.elementFromPoint(cx, cy);
+      if (!hit || hit === el || el.contains(hit) || hit.contains(el) || ours(hit)) return null;
+      for (let n = hit, i = 0; n && n !== document.body && i < 30; n = n.parentElement, i++) {
+        if (n.contains(el)) return null;                  // the field's own wrapper, a label drawn over it
+        const g = window.getComputedStyle(n);
+        if (g.position === "fixed") {
+          const r = n.getBoundingClientRect();
+          return r.width * r.height >= 0.12 * vw * vh ? (n.querySelector(MODAL_SEL) || n) : null;
+        }
+      }
+    } catch (e) { /* never in the page's way */ }
+    return null;
+  }
+  function headOf(m) {
+    try {
+      const id = m.getAttribute("aria-labelledby");
+      const byId = id && document.getElementById(id.split(/\s+/)[0]);
+      const h = byId || m.querySelector("h1, h2, h3, h4, [role='heading']");
+      return h && String(h.innerText || h.textContent || "").trim() ? h : null;
+    } catch (e) { return null; }
+  }
+  function titleOf(m) {
+    const h = headOf(m);
+    const t = h ? (h.innerText || h.textContent) : (m.getAttribute("aria-label") || "");
+    return String(t || "").replace(/\s+/g, " ").trim().slice(0, 48);
+  }
   let stay = false;                    // a resting pointer (the end of a guided run) is never idled away
   // (2026-11-26) The pointer stays ON the element its label names: when the page scrolls or
   // resizes, it follows that element, and it goes away when the element leaves the view.
@@ -86,7 +145,7 @@
     if (!cur || !shown || !wrap) return;
     if (!cur.el || !cur.el.isConnected) { hide(); return; }
     const r = cur.el.getBoundingClientRect();
-    if (!visible(r)) { wrap.classList.remove("on"); return; }
+    if (!visible(r) || (!cur.modal && coverOf(cur.el))) { wrap.classList.remove("on"); return; }
     const m = spot(r);
     wrap.classList.add("still");                       // follow at once, no glide behind the page
     wrap.style.transform = "translate(" + m.x + "px, " + m.y + "px)";
@@ -95,6 +154,8 @@
     requestAnimationFrame(() => { if (wrap) wrap.classList.toggle("still", reduced()); });
   }
   try { window.addEventListener("scroll", follow, true); window.addEventListener("resize", follow); } catch (e) { /* no window */ }
+  // a window the site opens later (no scroll): looked for twice a second while a pointer is out
+  try { setInterval(() => { if (cur && shown) follow(); }, 500); } catch (e) { /* no timers */ }
   function show(m) {
     if (!ensure()) return;
     wrap.classList.toggle("still", reduced());
@@ -129,6 +190,13 @@
   function at(el, label, opts) {
     try {
       if (!el || !el.getBoundingClientRect) return false;
+      const cov = coverOf(el);
+      if (cov) {                                         // the site's window, never the field under it
+        const h = headOf(cov) || cov, t = titleOf(cov);
+        const ok = point(h.getBoundingClientRect(), t ? "Reading: " + t : "Reading the window on the page", opts);
+        if (ok) cur = { el: h, label: t, modal: true };
+        return ok;
+      }
       let r = el.getBoundingClientRect();
       // a box inside a same-origin frame: add the frame's own place on the page
       let w = el.ownerDocument && el.ownerDocument.defaultView;
@@ -155,5 +223,5 @@
     return true;
   }
   const state = () => (shown ? Object.assign({ queued: queue.length, reduced: reduced() }, shown) : null);
-  window.TailorPointer = { at, point, hide, state, COLOR, MOVE_MS };
+  window.TailorPointer = { at, point, hide, state, coverOf, titleOf, COLOR, MOVE_MS };
 })();

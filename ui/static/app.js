@@ -1440,18 +1440,8 @@
           .replace("{p}", info.page || 1).replace("{f}", info.filled).replace("{n}", nl), details: nl ? (info.left || []).join(", ") : "" });
         return;
       }
-      const bar = $("#bbFill");
-      if (bar) {
-        aaFeedHide();
-        bar.classList.remove("is-live");
-        let text = info.message;
-        if (!info.wall && info.left && info.left.length) {
-          text += " " + info.left.slice(0, 4).join(", ") + (info.left.length > 4 ? ", and more." : ".");
-        }
-        bar.textContent = text;
-        bar.classList.toggle("is-wall", !!info.wall);
-        bar.hidden = false;
-      }
+      // one short line here too; the fields left only under Details
+      say({ line: info.message, details: !info.wall && info.left && info.left.length ? info.left.join(", ") : "", tone: info.wall ? "wall" : "" });
       const note = $("#pkgAssistNote");
       if (note && PKG_ID && String(info.record_id) === String(PKG_ID) && (info.page > 1 || info.wall)) {
         note.textContent = info.message;
@@ -1463,11 +1453,9 @@
   if (window.tailorShell && window.tailorShell.onApplied) {
     window.tailorShell.onApplied((info) => {
       // (2026-11-26) the site took it: the status line says so briefly, the outlines go
-      if (info && info.matched) {
-        try { window.tailorShell.guideStep && window.tailorShell.guideStep("done"); } catch { /* fine */ }
-        say({ line: T("fill.submitted", "Submitted. Marked as applied") });
-        setTimeout(() => say(null), 5000);
-      }
+      try { window.tailorShell.guideStep && window.tailorShell.guideStep("done"); } catch { /* fine */ }
+      say({ line: info && info.matched ? T("fill.submitted", "Submitted. Marked as applied") : T("fill.submittedOnly", "Submitted") });
+      setTimeout(() => { const b = $("#bbFill"); if (b && /Submitted/.test(b.textContent || "")) say(null); }, 5000);
       const note = $("#pkgAssistNote");
       if (note) {
         note.textContent = info && info.matched
@@ -14522,6 +14510,24 @@
     } catch { return null; }
   }
 
+  // The bar's one short line for a run's message, and the whole message under Details when it
+  // says more. A question to answer (ask, parked, guide, basics) is never cut.
+  function aaBarShort(info) {
+    const full = String((info && info.message) || "").trim();
+    const st = (info && info.state) || "";
+    if (/^(ask|parked|guide|basics)$/.test(st)) return { line: full, details: "", one: false };
+    if (st === "submitted") return { line: T("fill.submitted", "Submitted. Marked as applied"), details: "", one: true };
+    if (st === "ready") {
+      const line = info.finish || info.record_id == null ? T("fill.yourTurn", "Your turn: check and submit")
+                                                         : T("fill.readySend", "Ready to send. Check it, then press Send");
+      return { line, details: full && full !== line ? full : "", one: true };
+    }
+    if (full.length <= 70) return { line: full, details: "", one: true };
+    const m = /^(.{8,}?[.!?])\s+\S/.exec(full);
+    const first = m && m[1].length <= 90 ? m[1] : "";
+    return first ? { line: first, details: full, one: true } : { line: full, details: "", one: false };
+  }
+
   function aaAgentBar(info) {
     const bar = $("#bbFill");
     if (!bar) return;
@@ -14529,7 +14535,10 @@
     if (info.state !== "ready") { AA_ANS.rid = null; AA_ANS.open = false; aaAnsRender(); }
     const text = document.createElement("span");
     text.className = "bb-fill-text";
-    text.textContent = info.message || "";
+    // (2026-11-26, the owner) ONE short line; the run's long words only under Details
+    const short = aaBarShort(info);
+    text.textContent = short.line;
+    if (short.one) text.classList.add("is-one");
     bar.appendChild(text);
     aaFeedBar(bar, text, info);
     const btn = (label, cls, fn) => {
@@ -14838,6 +14847,14 @@
       setTimeout(() => answer.focus(), 50);
     } else if (info.state === "running") {
       btn(T("aa.stop", "Stop"), "btn-ghost bb-stop", () => { try { window.tailorShell.agentStop(); } catch {} });
+    }
+    if (short.details) {
+      const d = document.createElement("button");
+      d.type = "button"; d.className = "bb-details"; d.textContent = T("fill.details", "Details");
+      const box = document.createElement("div");
+      box.className = "bb-details-box"; box.textContent = short.details; box.hidden = true;
+      d.addEventListener("click", () => { box.hidden = !box.hidden; bar.classList.toggle("bb-stack", !box.hidden); });
+      bar.append(d, box);
     }
     bar.classList.toggle("is-wall", info.state === "stopped");
     bar.classList.toggle("is-ready", /^(ready|ask|guide|basics|parked|answered|batch-done|sendall-done)$/.test(info.state || ""));

@@ -50,3 +50,43 @@ def test_the_shell_walks_every_autofill_and_ends_where_the_person_acts():
     assert "guided: !quiet" in agent                          # the agent's pages are walked the same way
     app = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     assert "function say(msg)" in app and "guideStep" in app   # one status line, Next / Previous / Done
+
+
+def _bar_short(cases):
+    """Run app.js's aaBarShort under node on ``cases`` (the function cut out of the file)."""
+    import json
+    app = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    i = app.index("  function aaBarShort(info) {")
+    j = app.index("\n  }\n", i) + 4
+    src = "const T = (k, d) => d;\n" + app[i:j] + f"\nconsole.log(JSON.stringify({json.dumps(cases)}.map(aaBarShort)));"
+    out = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="needs node")
+def test_the_bar_says_one_short_line_and_keeps_the_rest_under_details():
+    # (2026-11-26, Lam) the long "Ready to send. Accepted ... for you. Check it, then click Submit
+    # on the site." stayed on the bar, over two lines, even after the owner submitted
+    long_ready = ("Ready to send. Accepted Example Corp's Data Privacy Agreement for you. "
+                  "Check it, then click Submit on the site.")
+    ready, sent, wall, ask, short = _bar_short([
+        {"state": "ready", "record_id": 7, "finish": True, "message": long_ready},
+        {"state": "submitted", "record_id": 7, "message": "Sent, and the site confirmed it. Marked as applied in your Tracker."},
+        {"state": "stopped", "message": "This site wants you to sign in first. Sign in in the Browser tab, then press Autofill this page again."},
+        {"state": "ask", "message": "Are you willing to relocate to a city you have never lived in before for this role?"},
+        {"state": "running", "message": "Reading the job page"},
+    ])
+    assert ready == {"line": "Your turn: check and submit", "details": long_ready, "one": True}
+    assert sent["line"] == "Submitted. Marked as applied" and not sent["details"]
+    assert wall["line"] == "This site wants you to sign in first." and wall["details"].startswith("This site")
+    assert ask["line"].startswith("Are you willing") and not ask["details"]          # a question is never cut
+    assert short == {"line": "Reading the job page", "details": "", "one": True}
+
+
+def test_the_bar_clears_after_the_site_confirms_the_application():
+    app = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    i = app.index("window.tailorShell.onApplied((info) => {")
+    block = app[i:i + 900]
+    assert 'T("fill.submitted"' in block and "say(null)" in block and "5000" in block
+    assert "const short = aaBarShort(info);" in app

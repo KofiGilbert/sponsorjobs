@@ -122,6 +122,74 @@ async function run(o) {
     assert(outlined && !clicked, "Submit outlined, never pressed");
   }
 
+  // ---- (Lam, 2026-11-26) a site window over the form: the pointer reads the window, never labels
+  // a field hidden under it; no ring is drawn over the window; once it closes, fields are labelled
+  {
+    const b = await chromium.launch();
+    const page = await b.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.goto(FIX);
+    await page.evaluate(CORE); await page.evaluate(POINTER);
+    await page.evaluate(() => {
+      const back = document.createElement("div");
+      back.id = "dpa";
+      back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center";
+      back.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="dpaH" style="background:#fff;width:520px;padding:20px">'
+        + '<h2 id="dpaH">Data Privacy Agreement</h2><p>Made-up notice text.</p><button id="ack" type="button">I Acknowledge</button></div>';
+      document.body.appendChild(back);
+      document.getElementById("ack").addEventListener("click", () => back.remove());
+      window.__labels = [];
+      const show = window.TailorPointer.at;
+      window.TailorPointer.at = (el, label, opt) => { const ok = show(el, label, opt); const st = window.TailorPointer.state(); window.__labels.push(st ? st.label : ""); return ok; };
+    });
+    const js = (e) => page.evaluate(`(async () => (${e}))()`);
+    const out = await guided.walk({ js, plan: async (f) => planFor(f, {}), upload: async () => ({ n: 0, seen: [] }), wait: () => new Promise((res) => setTimeout(res, 10)) });
+    const labels = await page.evaluate("window.__labels");
+    const v = await page.evaluate("window.fxValues()");
+    await js("window.TailorAutofill.guideEnd()");          // the run's end, the window still open
+    const st = await page.evaluate("window.TailorPointer.state()");
+    // the field under the window: covered, its ring never drawn over the window
+    const cov = await page.evaluate(() => !!window.TailorPointer.coverOf(document.getElementById("first_name")));
+    const ring = await js("(() => { const T = window.TailorAutofill; T.markNeeds(T.needsList()[0] || ''); const h = document.querySelector('[data-sj-glow]'); return h ? [...h.shadowRoot.querySelectorAll('.r')].filter((r) => !r.classList.contains('off')).length : 0; })()");
+    // the window's own button is not covered: the agent's "Clicking: I Acknowledge" lands on it
+    const ackFree = await page.evaluate(() => !window.TailorPointer.coverOf(document.getElementById("ack")));
+    await page.click("#ack");
+    await page.waitForTimeout(700);
+    const covAfter = await page.evaluate(() => !!window.TailorPointer.coverOf(document.getElementById("first_name")));
+    const after = await page.evaluate(() => { window.scrollTo(0, 0); window.TailorPointer.at(document.getElementById("last_name"), "Filling: Last Name", { now: true }); return window.TailorPointer.state(); });
+    await b.close();
+    assert(labels.length && labels.every((l) => l === "Reading: Data Privacy Agreement"), "only the window is labelled while it is open " + JSON.stringify(labels));
+    assert(!labels.some((l) => /^(Filling|Clicking|Scrolling|Needs you)/.test(l)), "never a field hidden under it");
+    assert(v.first === "Avery" && v.veteran === "I am not a protected veteran", "what was decided still goes in, quietly " + JSON.stringify(v));
+    assert(out.covered >= 4 && out.needs.length === 1, "walked under the window " + JSON.stringify(out));
+    assert(st && /^Reading: Data Privacy Agreement/.test(st.label), "the end rests on the window, not on the field under it " + JSON.stringify(st));
+    assert(cov && ackFree && !covAfter, "covered while open, the window's button free, uncovered after " + JSON.stringify([cov, ackFree, covAfter]));
+    assert(ring === 0, "no ring drawn over the window: " + ring);
+    assert(after && after.label === "Filling: Last Name", "fields labelled again once it is gone " + JSON.stringify(after));
+  }
+
+  // ---- (Lam, 2026-11-26) the site's confirmation in a window over its profile page counts as
+  // submitted (the run and its bar end); the same words in the open form's text never do
+  {
+    const b = await chromium.launch();
+    const page = await b.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.goto(FIX);
+    await page.evaluate(CORE);
+    const seen = () => page.evaluate("window.TailorAutofill.detectSuccess(null, 'https://careers.example.com/careers/apply?pid=1')");
+    const before = await seen();
+    await page.evaluate(() => { const p = document.createElement("p"); p.textContent = "Thank you for your application in advance."; document.body.prepend(p);
+      const f = document.createElement("input"); f.type = "file"; document.getElementById("application-form").appendChild(f); });
+    const formWords = await seen();
+    await page.evaluate(() => { const d = document.createElement("div"); d.setAttribute("role", "dialog"); d.style.cssText = "position:fixed;inset:20%;background:#fff";
+      d.innerHTML = "<h2>Thank you for your interest</h2>"; document.body.appendChild(d); });
+    const interest = await seen();
+    await page.evaluate(() => { const d = document.createElement("div"); d.setAttribute("role", "dialog"); d.style.cssText = "position:fixed;inset:20%;background:#fff";
+      d.innerHTML = "<h2>Thank you for your application, Avery!</h2><button>Continue</button>"; document.body.appendChild(d); });
+    const thanks = await seen();
+    await b.close();
+    assert(before === false && formWords === false && interest === false, "not before the submit " + JSON.stringify([before, formWords, interest]));
+    assert(thanks === true, "the confirmation window counts as submitted");
+  }
+
   // ---- reduced motion: no glide, still in order ---------------------------------------------
   const rr = await run({ reduced: true });
   const fm = rr.moves.filter((m) => /^(Clicking|Needs you)/.test(m.label));

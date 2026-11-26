@@ -45,7 +45,15 @@ async function walk(deps) {
   for (const o of ops) if (!byRef.has(o.ref)) byRef.set(o.ref, o);
   const order = await js(`window.TailorAutofill.orderRefs(${q([...byRef.keys(), ...left.filter((r) => !byRef.has(r))])})`);
   const refs = Array.isArray(order) ? order : [];
-  let i = 0;
+  const upload = async (op) => {
+    const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
+    if (rep && (rep.uploads || []).length && deps.upload) {
+      const u = await deps.upload(rep.uploads, (r) => uploadPath.get(r) || "");
+      out.uploaded += (u && u.n) || 0;
+      for (const x of (u && u.seen) || []) out.files.push({ kind: op.from === "letter" ? "cover_letter" : "resume", path: x.path, how: x.how, earlier: !!x.earlier });
+    }
+  };
+  let i = 0, cover = "";
   for (const ref of refs) {
     if (deps.alive && !deps.alive()) break;
     const t0 = Date.now();
@@ -53,9 +61,25 @@ async function walk(deps) {
     if (!w || !w.ok) continue;
     const name = w.label || "this field";
     const pt = (label) => js(`window.TailorAutofill.pointAt(${q(ref)}, ${q(label)})`, 3000);
-    if (w.scrolled) { await pt("Scrolling"); await wait(t.scroll); }
     const op = byRef.get(ref);
     out.order.push(ref);
+    if (w.covered) {
+      // (Lam, 2026-11-26) the site opened a window over the form: the pointer reads the window
+      // (pointer_overlay.js points there, "Reading: <its title>"), never labels a field hidden
+      // under it; what was decided goes in quietly, and a field left for the person is kept for
+      // the end (its ring is drawn once the window is gone)
+      if (cover !== w.covered) { cover = w.covered; await pt("Reading"); await wait(t.needs); }
+      if (!op) { await js(`window.TailorAutofill.markNeeds(${q(ref)})`, 3000); out.needs.push(name); continue; }
+      if (op.op === "upload") await upload(op);
+      else {
+        const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
+        out.filled += (rep && rep.filled) || 0;
+      }
+      out.covered = (out.covered || 0) + 1;
+      continue;
+    }
+    cover = "";
+    if (w.scrolled) { await pt("Scrolling"); await wait(t.scroll); }
     if (!op) {                                               // the person's: a pause and an outline
       await pt("Needs you: " + name);
       await js(`window.TailorAutofill.markNeeds(${q(ref)})`, 3000);
@@ -67,12 +91,7 @@ async function walk(deps) {
     if (deps.say) deps.say({ guide: { i, n: byRef.size }, message: "Filling " + i + " of " + byRef.size });
     if (op.op === "upload") {
       await pt(op.from === "letter" ? "Uploading cover letter" : "Uploading resume");
-      const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
-      if (rep && (rep.uploads || []).length && deps.upload) {
-        const u = await deps.upload(rep.uploads, (r) => uploadPath.get(r) || "");
-        out.uploaded += (u && u.n) || 0;
-        for (const x of (u && u.seen) || []) out.files.push({ kind: op.from === "letter" ? "cover_letter" : "resume", path: x.path, how: x.how, earlier: !!x.earlier });
-      }
+      await upload(op);
     } else {
       await pt("Clicking: " + name);
       await wait(t.move);

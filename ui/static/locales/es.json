@@ -2180,5 +2180,8 @@
   "mem.bg": "Respuestas de antecedentes",
   "mem.bgAsk": "Preguntarme siempre las preguntas de antecedentes",
   "mem.bgNone": "Aún no hay. Tus respuestas se guardan aquí cuando envías un formulario que las pide.",
+  "fill.yourTurn": "Tu turno: revisa y envía",
+  "fill.readySend": "Listo para enviar. Revísalo y pulsa Enviar",
+  "fill.submittedOnly": "Enviada",
   "fill.submitted": "Enviada. Marcada como aplicada"
 }

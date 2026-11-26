@@ -254,10 +254,16 @@ function qsaSafe(sel, root) {
       if (m.dialog_text && successDialog(m.dialog_text)) return true;
     }
     if (!r && !formOpen) {       // no recipe: the generic wording most systems use
-      return /thank you for applying|application (has been|was) (submitted|received)|we('| ha)?ve received your application/.test(body);
+      if (SUCCESS_WORDS.test(body)) return true;
     }
-    return false;
+    // (2026-11-26, Lam Research's own careers site: "Thank you for your application, Kofi!" in a
+    // window over the profile page) the same words inside an open dialog are the site's answer to
+    // a submit, form or no form
+    return SUCCESS_WORDS_DIALOG.some((w) => successDialog(w));
   }
+  const SUCCESS_WORDS = /thank you for applying|thank you for your application|application (has been|was) (submitted|received)|we('| ha)?ve received your application/;
+  const SUCCESS_WORDS_DIALOG = ["thank you for applying", "thank you for your application", "application has been submitted",
+    "application was submitted", "application has been received", "we have received your application", "we've received your application"];
   function successDialog(words) {
     const want = norm(words);
     if (!want) return false;
@@ -4580,10 +4586,20 @@ function qsaSafe(sel, root) {
       last = t;
     }
   }
+  // The site's modal window over a field (pointer_overlay.js coverOf), or null.
+  function coveredBy(el) {
+    try { const P = window.TailorPointer; return P && P.coverOf ? P.coverOf(visibleBox(el)) : null; } catch (e) { return null; }
+  }
   function walkStart(ref) {
     const el = elByRef(ref);
     if (!el) return { ok: false };
     const box = visibleBox(el);
+    const cov = coveredBy(el);
+    if (cov) {                         // a window over the page: nothing scrolls behind it
+      let t = "";
+      try { t = window.TailorPointer.titleOf(cov) || "the window on the page"; } catch (e) { t = "the window on the page"; }
+      return { ok: true, scrolled: false, covered: t, label: cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40) };
+    }
     let scrolled = false;
     if (!inView(box)) {
       let reduce = false;
@@ -4696,6 +4712,7 @@ function qsaSafe(sel, root) {
       if (!el.isConnected) { r.classList.add("off"); continue; }
       const b = visibleBox(el).getBoundingClientRect();
       if (!b.width && !b.height) { r.classList.add("off"); continue; }
+      if (coveredBy(el)) { r.classList.add("off"); continue; }     // never drawn over a site's window
       r.classList.remove("off");
       r.style.left = (b.left - 5) + "px"; r.style.top = (b.top - 5) + "px";
       r.style.width = (b.width + 10) + "px"; r.style.height = (b.height + 10) + "px";

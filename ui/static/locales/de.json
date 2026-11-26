@@ -2180,5 +2180,8 @@
   "mem.bg": "Angaben zum Hintergrund",
   "mem.bgAsk": "Bei Fragen zum Hintergrund immer mich fragen",
   "mem.bgNone": "Noch keine. Deine Antworten erscheinen hier, sobald du ein Formular absendest, das danach fragt.",
+  "fill.yourTurn": "Jetzt Sie: prüfen und absenden",
+  "fill.readySend": "Bereit zum Senden. Prüfen, dann Senden drücken",
+  "fill.submittedOnly": "Gesendet",
   "fill.submitted": "Abgeschickt. Als beworben markiert"
 }
