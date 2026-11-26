@@ -58,9 +58,23 @@ def test_a_walked_page_fills_nothing_in_its_frames_out_of_sight():
     assert "for (const ctx of liveFrames) await fr.eval(ctx, outline);" in run
     assert 'for (const ctx of liveFrames) await fr.eval(ctx, "window.TailorAutofill.armSubmitGuard()");' in run
     # the person's turn keeps the frames (Enter flow, pointer on Submit), let go on Done
-    assert "holdGuideFrames(wc, fr, held)" in run
+    assert "holdGuideFrames(wc, fr, held, { url, recordId })" in run
     step = _between(main, 'ipcMain.handle("assist:guide-step"', "\n});")
-    assert "releaseGuideFrames()" in step and "c.js(`window.TailorAutofill.needsStep(${d})`" in step
+    assert "c.js(`window.TailorAutofill.needsStep(${d})`" in step
+    assert "guided.bringIntoSight(top, c, r.ref)" in step      # Next / Previous scroll the top page too
+
+
+def test_frames_only_report_signals_to_the_one_sent_detector():
+    """A frame's Submit, its confirmation and its form coming back empty are SIGNALS for
+    shell-electron/sent_detect.js; the frame code never announces a submission itself."""
+    main = MAIN.read_text(encoding="utf-8")
+    held = _between(main, "function holdGuideFrames(", "function releaseGuideFrames()")
+    assert "announceSubmitted" not in held and "/api/autofill/applied" not in held
+    assert "frameSignals.createFrameSignalReader" in held
+    sig = (ROOT / "shell-electron" / "frame_signals.js").read_text(encoding="utf-8")
+    assert 'require("./sent_detect").signal' in sig and "announceSubmitted" not in sig
+    for kind in ('kind: "submit-click"', 'kind: "page", how: "marker"', 'kind: "form-reset"'):
+        assert kind in sig
 
 
 def test_a_frame_never_draws_its_own_pointer_and_never_submits():

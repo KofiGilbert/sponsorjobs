@@ -185,6 +185,20 @@ function walkContexts(cdp, ctxs, cap) {
   }));
 }
 
+// The same frame after its page changed (a reload after the person's Submit, the next page): a new
+// isolated world in it, through the session that reaches it (an out-of-process frame keeps its
+// own target across a reload of the same site). null when the frame is gone.
+async function reopenFrame(cdp, ctx) {
+  try {
+    const r = await cdp.send("Page.createIsolatedWorld", { frameId: ctx.frameId, worldName: WORLD }, ctx.sessionId);
+    if (r && r.executionContextId) return Object.assign({}, ctx, { contextId: r.executionContextId });
+  } catch (e) { /* gone, or moved to another process */ }
+  try {
+    const again = await crossOriginFrames(cdp);
+    return again.find((c) => c.frameId === ctx.frameId) || null;
+  } catch (e) { return null; }
+}
+
 // Electron's webContents.debugger as the adapter above.
 function electronCdp(dbg) {
   const fns = new Set();
@@ -200,4 +214,4 @@ function electronCdp(dbg) {
 }
 
 module.exports = { WORLD, crossOriginFrames, evalIn, injectEngine, injectAgentView, uploadInFrame, routeOps,
-                   prefixFor, electronCdp, originOf, tagOwner, injectPointerRelay, walkContexts };
+                   prefixFor, electronCdp, originOf, tagOwner, injectPointerRelay, walkContexts, reopenFrame };

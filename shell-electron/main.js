@@ -1146,35 +1146,75 @@ async function prepareWalkFrames(fr) {
 // line goes to the bar. Let go on Done, a new fill, the site's confirmation, the pane closing, the
 // frames going away, or after 30 minutes.
 let _guideFrames = null;
-function holdGuideFrames(wc, fr, ctxs) {
+const frameSignals = require("./frame_signals");
+function holdGuideFrames(wc, fr, ctxs, info) {
   releaseGuideFrames();
-  const st = { wc, fr, ctxs, seq: new Map(), needsSeq: new Map(), misses: 0, started: Date.now(), timer: null };
+  const st = { wc, fr, ctxs: ctxs.slice(), seq: new Map(), needsSeq: new Map(), last: new Map(), misses: 0,
+               started: Date.now(), timer: null, busy: false, reread: new Set(), url: (info && info.url) || "", recordId: info ? info.recordId : null };
+  // (2026-11-26) what a frame shows after the person's Submit inside it, as signals for the app's
+  // one sent detector (sent_detect.js via frame_signals.js); nothing here decides it was sent
+  st.watch = frameSignals.createFrameSignalReader({});
+  for (const c of st.ctxs) c.js("window.TailorAutofill && window.TailorAutofill.armFrameSubmitWatch(true)", 2000);
+  const top = (e, ms) => fillKeys.capped(wc.executeJavaScript(e, true).catch(() => null), ms || 2000);
+  const place = (c, p) => {
+    const expr = p.hide ? "window.TailorPointer && window.TailorPointer.hide()"
+      : `window.TailorAutofill && window.TailorAutofill.pointFrom(${JSON.stringify(c.prefix)}, ${JSON.stringify(p.rect || null)}, ${JSON.stringify(String(p.label || ""))}, ${JSON.stringify(Object.assign({}, p.opts || {}, { now: true }))})`;
+    wc.executeJavaScript(expr, true).catch(() => null);
+  };
   const poll = async () => {
-    if (_guideFrames !== st) return;
+    if (_guideFrames !== st || st.busy) return;
     if (wc.isDestroyed() || Date.now() - st.started > 30 * 60 * 1000) { releaseGuideFrames(); return; }
-    let answered = 0;
-    for (const c of ctxs) {
-      const got = await c.js(`window.TailorAutofill && window.TailorAutofill.relayTake(${st.seq.get(c.prefix) || 0})`, 1500);
-      if (!got || got === fillKeys.TIMED_OUT) continue;
-      answered++;
-      const p = got.point;
-      if (p && p.seq) {
-        st.seq.set(c.prefix, p.seq);
-        const expr = p.hide ? "window.TailorPointer && window.TailorPointer.hide()"
-          : `window.TailorAutofill && window.TailorAutofill.pointFrom(${JSON.stringify(c.prefix)}, ${JSON.stringify(p.rect || null)}, ${JSON.stringify(String(p.label || ""))}, ${JSON.stringify(p.opts || {})})`;
-        wc.executeJavaScript(expr, true).catch(() => null);
+    st.busy = true;
+    try {
+      let answered = 0;
+      for (const c of st.ctxs.slice()) {
+        if (_guideFrames !== st) return;
+        await guided.syncSight(top, c);                 // what of the frame the person sees now
+        const got = await c.js(`window.TailorAutofill && window.TailorAutofill.relayTake(${st.seq.get(c.prefix) || 0})`, 1500);
+        if (!got || got === fillKeys.TIMED_OUT) {
+          // its page changed (a Submit's reload, a next page): read the new one, once per change
+          if (!st.reread.has(c.prefix)) { st.reread.add(c.prefix); await rereadFrame(st, c); }
+          continue;
+        }
+        st.reread.delete(c.prefix);
+        answered++;
+        st.watch.seen(c, got);
+        const p = got.point;
+        if (p && p.seq) { st.seq.set(c.prefix, p.seq); st.last.set(c.prefix, p); place(c, p); }
+        else {
+          // a resting pointer follows its field when the top page scrolls (the frame cannot see that)
+          const l = st.last.get(c.prefix);
+          if (l && !l.hide && l.opts && l.opts.stay) place(c, l);
+        }
+        const n = got.needs;
+        if (n && n.seq && n.seq !== st.needsSeq.get(c.prefix)) {
+          st.needsSeq.set(c.prefix, n.seq);
+          if (win && !win.isDestroyed()) win.webContents.send("assist:needs", n.d || {});
+        }
       }
-      const n = got.needs;
-      if (n && n.seq && n.seq !== st.needsSeq.get(c.prefix)) {
-        st.needsSeq.set(c.prefix, n.seq);
-        if (win && !win.isDestroyed()) win.webContents.send("assist:needs", n.d || {});
-      }
-    }
-    st.misses = answered ? 0 : st.misses + 1;
-    if (st.misses >= 8) releaseGuideFrames();            // the frames are gone (a new page)
+      st.misses = answered ? 0 : st.misses + 1;
+      if (st.misses >= 8) releaseGuideFrames();          // the frames are gone (a new page)
+    } finally { st.busy = false; }
   };
   st.timer = setInterval(() => { poll().catch(() => null); }, 500);
   _guideFrames = st;
+}
+// A walked frame stopped answering after the person's Submit: its page changed. Read the new page
+// once (a fresh engine in it, a frame-reloaded signal) and carry on watching it.
+async function rereadFrame(st, c) {
+  const found = await frames.reopenFrame(st.fr.cdp, c.raw);
+  if (!found) return;
+  try {
+    await frames.injectEngine(st.fr.cdp, found, autofillCore());
+    const got = await frames.evalIn(st.fr.cdp, found, "(() => { const T = window.TailorAutofill, r = T.relayTake(0); "
+      + "return Object.assign(r, { form: r.form || T.formFill(), success: r.success || !!T.detectSuccess() }); })()");
+    st.watch.seen(c, got);
+    const [w] = await prepareWalkFrames({ cdp: st.fr.cdp, ctxs: [found], eval: (x, e) => frames.evalIn(st.fr.cdp, x, e).catch(() => null) });
+    if (w) {
+      st.ctxs = st.ctxs.map((x) => (x === c ? w : x));
+      w.js("window.TailorAutofill.armFrameSubmitWatch()", 2000);
+    }
+  } catch (e) { /* the frame went away again */ }
 }
 function releaseGuideFrames() {
   const st = _guideFrames;
@@ -1525,7 +1565,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     if (fr) {
       // a walk that went into frames keeps them for the person's turn (the Enter flow, the pointer)
       const held = walked && walkFrames.length ? walkFrames.filter((c) => liveFrames.includes(c.raw)) : [];
-      if (held.length) holdGuideFrames(wc, fr, held); else fr.close();
+      if (held.length) holdGuideFrames(wc, fr, held, { url, recordId }); else fr.close();
       fr = null;
     }
     const sig = await mainSignature(wc);
@@ -1718,12 +1758,20 @@ async function guideEnd(r) {
   let g = null;
   if (gf && !(await top(NEEDS_N_JS, 3000))) {
     for (const c of gf.ctxs) {
-      if (await c.js(NEEDS_N_JS, 3000)) { g = await c.js(GUIDE_END_JS, 8000); if (ok(g)) break; g = null; }
+      if (!(await c.js(NEEDS_N_JS, 3000))) continue;
+      await guided.syncSight(top, c);
+      g = await c.js(GUIDE_END_JS, 8000);
+      if (ok(g)) { await guided.bringIntoSight(top, c, g.ref); break; }
+      g = null;
     }
   }
   if (!ok(g)) g = await top(GUIDE_END_JS);
   if (gf && ok(g) && g.where === "none") {
-    for (const c of gf.ctxs) { const g2 = await c.js(GUIDE_END_JS, 8000); if (ok(g2) && g2.where !== "none") { g = g2; break; } }
+    for (const c of gf.ctxs) {
+      await guided.syncSight(top, c);
+      const g2 = await c.js(GUIDE_END_JS, 8000);
+      if (ok(g2) && g2.where !== "none") { g = g2; break; }
+    }
   }
   if (!ok(g)) return r;
   return Object.assign({}, r || {}, { guide: { where: g.where, needs: g.n || 0, label: g.label || "" } });
@@ -1737,12 +1785,20 @@ ipcMain.handle("assist:guide-step", async (_e, dir) => {
   const gf = guideFramesFor(wc);
   try {
     if (d === "done") {
-      if (gf) { for (const c of gf.ctxs) await c.js("window.TailorAutofill && window.TailorAutofill.clearNeeds()", 3000); releaseGuideFrames(); }
+      // the outlines go; the frames stay watched for the person's Submit (the site taking it)
+      if (gf) for (const c of gf.ctxs) await c.js("window.TailorAutofill && window.TailorAutofill.clearNeeds()", 3000);
       return await wc.executeJavaScript("(window.TailorAutofill && window.TailorAutofill.clearNeeds(), { n: 0, done: true })", true);
     }
     // the place that holds the person's fields: the top page (with its same-origin frames), else a frame
     if (gf && !(await wc.executeJavaScript(NEEDS_N_JS, true))) {
-      for (const c of gf.ctxs) if (await c.js(NEEDS_N_JS, 3000)) return (await c.js(`window.TailorAutofill.needsStep(${d})`, 8000)) || { n: 0 };
+      const top = (e, ms) => fillKeys.capped(wc.executeJavaScript(e, true).catch(() => null), ms || 2000);
+      for (const c of gf.ctxs) {
+        if (!(await c.js(NEEDS_N_JS, 3000))) continue;
+        await guided.syncSight(top, c);                  // the frame scrolls the top page to it too
+        const r = (await c.js(`window.TailorAutofill.needsStep(${d})`, 8000)) || { n: 0 };
+        await guided.bringIntoSight(top, c, r.ref);
+        return r;
+      }
     }
     return await wc.executeJavaScript(`window.TailorAutofill ? window.TailorAutofill.needsStep(${d}) : { n: 0 }`, true);
   } catch (e) { return { n: 0 }; }

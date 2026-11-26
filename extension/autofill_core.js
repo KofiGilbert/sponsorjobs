@@ -4605,7 +4605,19 @@ function qsaSafe(sel, root) {
     }
     return el;
   }
+  // (2026-11-26) In a frame another origin serves, the shell tells the engine which part of the
+  // frame the person can see on the top page (setSight, in the frame's own view): a field the
+  // frame shows but the top page has scrolled away from is not "in view", and is scrolled to.
+  let _sight = null;
+  function setSight(sg) {
+    _sight = sg && Number.isFinite(Number(sg.top)) && Number.isFinite(Number(sg.bottom)) ? { top: Number(sg.top), bottom: Number(sg.bottom) } : null;
+    return !!_sight;
+  }
   function inView(el) {
+    if (_sight) {
+      const o = el.getBoundingClientRect(), pad = Math.min(60, Math.max(0, (_sight.bottom - _sight.top - o.height) / 4));
+      return o.top >= _sight.top + pad && o.bottom <= _sight.bottom - pad;
+    }
     const r = topRect(el), vh = window.innerHeight || 800;
     if (!(r.top >= 60 && r.bottom <= vh - 60)) return false;
     const w = ownWin(el);
@@ -4844,8 +4856,8 @@ function qsaSafe(sel, root) {
     const P = window.TailorPointer;
     if (P && el) P.at(visibleBox(el), needsSay(el, sug), { now: true, stay: true });
     const name = shortName(el);
-    tellNeeds({ n: list.length, i: _needsAt, label: name, suggest: sug });
-    return { n: list.length, i: _needsAt, label: name };
+    tellNeeds({ n: list.length, i: _needsAt, label: name, suggest: sug, ref });
+    return { n: list.length, i: _needsAt, label: name, ref };
   }
   // The item's name in plain words, the same on the bar and beside the pointer: a long notice is
   // "the privacy notice" (or "the terms"), anything else its own question, cut at a word.
@@ -5042,7 +5054,7 @@ function qsaSafe(sel, root) {
    * site's Submit (outlined, never pressed) with "Your turn: check and submit". */
   async function guideEnd() {
     const list = needsList();
-    if (list.length) { _needsAt = -1; const r = await needsStep(1); return { where: "needs", n: list.length, label: r.label }; }
+    if (list.length) { _needsAt = -1; const r = await needsStep(1); return { where: "needs", n: list.length, label: r.label, ref: r.ref }; }
     if (await restOnSubmit("Your turn: check and submit")) return { where: "submit", n: 0 };
     return { where: "none", n: 0 };
   }
@@ -5175,10 +5187,54 @@ function qsaSafe(sel, root) {
     P.__at0 = at0;
     return true;
   }
-  /** The pointer move a frame kept since ``seq`` (relayPointer), and its latest needs line. */
+  /** The pointer move a frame kept since ``seq`` (relayPointer), its latest needs line, and (2026-11-26)
+   * what its form says after the person pressed its Submit: when they did (``submitAt``), how many
+   * boxes held an answer then, how many hold one now, and whether the site confirms it. */
   function relayTake(seq) {
     const p = window.__sjPoint, n = window.__sjNeedsLast;
-    return { point: p && p.seq > (Number(seq) || 0) ? p : null, needs: n || null };
+    const stamp = submitStamp();
+    const out = { point: p && p.seq > (Number(seq) || 0) ? p : null, needs: n || null, submitAt: stamp.at };
+    if (out.submitAt) {
+      out.filledAtSubmit = stamp.filled;
+      try { out.form = formFill(); } catch (e) { out.form = null; }
+      try { out.success = !!detectSuccess(); } catch (e) { out.success = false; }
+    }
+    return out;
+  }
+  /** {total, filled}: the form's answerable boxes, and how many hold an answer (text, a pick). */
+  function formFill() {
+    const all = extractForm({}), empty = extractForm({ onlyEmpty: true });
+    return { total: all.length, filled: Math.max(0, all.length - empty.length) };
+  }
+  // (2026-11-26) The person pressed the form's Submit inside a frame (a real click or the form's own
+  // submit): stamped for the shell, which then watches the frame for the site taking it (its
+  // confirmation, or the same frame back to an empty form: Instacart's Greenhouse embed).
+  // The stamp is also kept in the frame's own session storage, so a frame that loads its page again
+  // right after the Submit still says it was pressed (``fresh``: a new run starts without one).
+  const SUBMIT_KEY = "__sjFrameSubmit";
+  function submitStamp() {
+    let at = Number(window.__sjSubmitAt || 0), filled = Number(window.__sjFilledAtSubmit || 0);
+    try {
+      const k = JSON.parse(sessionStorage.getItem(SUBMIT_KEY) || "null");
+      if (k && Number(k.at) > at) { at = Number(k.at); filled = Number(k.filled) || 0; }
+    } catch (e) { /* storage off */ }
+    return { at, filled };
+  }
+  function armFrameSubmitWatch(fresh) {
+    if (fresh) {
+      window.__sjSubmitAt = 0; window.__sjFilledAtSubmit = 0;
+      try { sessionStorage.removeItem(SUBMIT_KEY); } catch (e) { /* storage off */ }
+    }
+    if (window.__sjFrameSubmitArmed) return false;
+    window.__sjFrameSubmitArmed = true;
+    const stamp = () => {
+      try { window.__sjFilledAtSubmit = formFill().filled; } catch (e) { window.__sjFilledAtSubmit = 0; }
+      window.__sjSubmitAt = Date.now();
+      try { sessionStorage.setItem(SUBMIT_KEY, JSON.stringify({ at: window.__sjSubmitAt, filled: window.__sjFilledAtSubmit })); } catch (e) { /* storage off */ }
+    };
+    document.addEventListener("submit", (e) => { if (e.isTrusted) stamp(); }, true);
+    document.addEventListener("click", (e) => { try { if (e.isTrusted && submitLike(e.target)) stamp(); } catch (err) { /* fine */ } }, true);
+    return true;
   }
   /** A ref's box in this document's own view (for the shell's in-sight check from the top page). */
   function refRect(ref) {
@@ -5277,7 +5333,7 @@ function qsaSafe(sel, root) {
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
-    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, topRect, refPlaces, frameBox, pointFrom, relayPointer, relayTake, refRect, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
+    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, topRect, setSight, armFrameSubmitWatch, formFill, refPlaces, frameBox, pointFrom, relayPointer, relayTake, refRect, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
     siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike, needsNext, needsKind,
     // (2026-11-26) the apply agent's guided ask: what a field holds, the pointer on it, then Submit
     fieldValue, pointNeeds, allDone,

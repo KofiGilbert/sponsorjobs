@@ -117,6 +117,7 @@ async function walk(deps) {
       const t0 = Date.now();
       const c = ctxOf(ref);
       const cjs = c.js;
+      if (!c.top) await syncSight(js, c);               // what of the frame the person sees now
       let w = await cjs(`window.TailorAutofill.walkTo(${q(ref)})`, 3000);
       if (!w || !w.ok) { done.add(ref); continue; }
       if (w.covered) return stopFor(w.covered);
@@ -216,6 +217,29 @@ async function frameSight(js, c, ref) {
   const top = b.top + r.top, bottom = b.top + r.bottom;
   return top >= 60 && bottom <= b.vh - 60 && r.top >= 0 && r.bottom <= b.height;
 }
+// Tell a frame which part of it the person sees on the top page (in the frame's own view), so its
+// own "in view" (the walk, the needs-you Enter flow, Next / Previous) scrolls to a field the top
+// page has scrolled away from. false when the frame cannot be placed on the top page.
+async function syncSight(js, c) {
+  const b = await js(`window.TailorAutofill.frameBox(${q(c.prefix)})`, 2000);
+  if (!b) { await c.js("window.TailorAutofill.setSight(null)", 1500); return false; }
+  const sight = { top: Math.max(0, -b.top), bottom: Math.max(0, Math.min(b.height, b.vh - b.top)) };
+  await c.js(`window.TailorAutofill.setSight(${q(sight)})`, 1500);
+  return true;
+}
+// A frame's field the person must see now (Next / Previous, the end of a run): when the top page
+// has it out of sight, the top page scrolls so the field sits in the middle of the window.
+async function bringIntoSight(js, c, ref) {
+  if (!ref) return false;
+  if ((await frameSight(js, c, ref)) !== false) return false;
+  const b = await js(`window.TailorAutofill.frameBox(${q(c.prefix)})`, 2000);
+  const r = await c.js(`window.TailorAutofill.refRect(${q(ref)})`, 2000);
+  if (!b || !r) return false;
+  const dy = Math.round(b.top + (r.top + r.bottom) / 2 - b.vh / 2);
+  await js(`(window.scrollBy({ top: ${dy}, behavior: "instant" }), true)`, 2000);
+  await syncSight(js, c);
+  return true;
+}
 // Wait until the top page stops moving under a frame (a smooth scroll), 1.5 s at most.
 async function settledFrame(js, c) {
   let last = null;
@@ -228,4 +252,4 @@ async function settledFrame(js, c) {
   }
 }
 
-module.exports = { walk, TIMING, orderAll };
+module.exports = { walk, TIMING, orderAll, syncSight, bringIntoSight, frameSight };

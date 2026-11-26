@@ -17,6 +17,7 @@ const CORE = fs.readFileSync(path.join(ROOT, "extension", "autofill_core.js"), "
 const POINTER = fs.readFileSync(path.join(ROOT, "extension", "pointer_overlay.js"), "utf8");
 const guided = require(path.join(ROOT, "shell-electron", "guided.js"));
 const frames = require(path.join(ROOT, "shell-electron", "frames.js"));
+const frameSignals = require(path.join(ROOT, "shell-electron", "frame_signals.js"));   // its signals: sent_detect.js
 const FORMS = path.join(ROOT, "tests", "fixtures", "forms");
 const assert = (c, m) => { if (!c) throw new Error(m); };
 // What the frame's form holds, read from the page itself (any script world can run it).
@@ -79,9 +80,10 @@ function planFor(fields) {
   return { ok: true, ops, left, cost: 0 };
 }
 
-async function run(kind, A, B, port, browser) {
-  const inner = kind === "oopif" ? `http://localhost:${B}/frame_walk_inner.html`
-              : kind === "cross" ? `http://127.0.0.1:${B}/frame_walk_inner.html` : "frame_walk_inner.html";
+async function open(kind, A, B, port, browser, after) {
+  const q = after ? "?after=" + after : "";
+  const inner = kind === "oopif" ? `http://localhost:${B}/frame_walk_inner.html${q}`
+              : kind === "cross" ? `http://127.0.0.1:${B}/frame_walk_inner.html${q}` : "frame_walk_inner.html" + q;
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
   if (process.env.SJ_DEBUG) page.on("pageerror", (e) => console.error("pageerror", e.message));
   await page.goto(`${A}/frame_walk_outer.html?inner=${encodeURIComponent(inner)}`);
@@ -117,10 +119,33 @@ async function run(kind, A, B, port, browser) {
     }
     wctx = frames.walkContexts(cdp, ctxs);
   }
-  const out = await guided.walk({ js, frames: wctx, plan: async (f) => planFor(f), upload: async () => ({ n: 0, seen: [] }),
-    wait: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 40))), timing: { min: 0, move: 0, scroll: 0, needs: 0, perChar: 10 } });
-  await page.waitForTimeout(300);
   const frame = page.frames().find((f) => f !== page.mainFrame() && f.url().includes("frame_walk_inner"));
+  const inFrame = (e) => (wctx.length ? wctx[0].js(e) : frame.evaluate(e));
+  const walk = () => guided.walk({ js, frames: wctx, plan: async (f) => planFor(f), upload: async () => ({ n: 0, seen: [] }),
+    wait: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 40))), timing: { min: 0, move: 0, scroll: 0, needs: 0, perChar: 10 } });
+  // a real click at a frame box's place on the top page
+  const clickIn = async (id) => {
+    await inFrame(`(document.getElementById(${JSON.stringify(id)}).scrollIntoView({ block: "center" }), 0)`);
+    await page.waitForTimeout(150);
+    const er = await inFrame(`(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
+    const fb = await page.evaluate(() => { const f = document.getElementById("icims_content_iframe"), r = f.getBoundingClientRect(), g = getComputedStyle(f);
+      return { x: r.left + f.clientLeft + parseFloat(g.paddingLeft), y: r.top + f.clientTop + parseFloat(g.paddingTop) }; });
+    await page.mouse.click(fb.x + er.x, fb.y + er.y);
+  };
+  // the shell's poll (main.js holdGuideFrames), once: the frame's sight, its kept pointer move drawn on the top page
+  const pollOnce = async (seq) => {
+    await guided.syncSight(js, wctx[0]);
+    const took = await wctx[0].js(`window.TailorAutofill.relayTake(${seq || 0})`);
+    if (took && took.point && !took.point.hide) await js(`window.TailorAutofill.pointFrom(${JSON.stringify(wctx[0].prefix)}, ${JSON.stringify(took.point.rect)}, ${JSON.stringify(took.point.label)}, ${JSON.stringify(Object.assign({}, took.point.opts, { now: true }))})`);
+    return took;
+  };
+  return { page, js, cdp, wctx, frame, inFrame, walk, clickIn, pollOnce };
+}
+
+async function run(kind, A, B, port, browser) {
+  const { page, js, cdp, wctx, frame, inFrame, walk, clickIn, pollOnce } = await open(kind, A, B, port, browser);
+  const out = await walk();
+  await page.waitForTimeout(300);
   const read = () => (wctx.length ? wctx[0].js(READ) : frame.evaluate(READ));
   const v = await read();
   // a same-origin frame's ring is drawn by the top page's engine on the top page, over the field
@@ -137,30 +162,50 @@ async function run(kind, A, B, port, browser) {
   const moves = await page.evaluate("window.__moves");
   const box = await page.evaluate(() => { const r = document.getElementById("icims_content_iframe").getBoundingClientRect(); return { left: r.left, right: r.right }; });
 
-  // the end of the run: the pointer rests on the question that needs the person (guideEnd, in the
-  // context that holds it), placed on the top page through the relay the shell polls
-  const ctxEnd = wctx.length ? wctx[0] : { js };
+  // the end of the run, with the top page scrolled away from the frame's question: the end (and
+  // Next / Previous) bring it into the person's sight on the top page AND in the frame, and the
+  // pointer rests on it, placed on the top page through the relay the shell polls
+  await js("(window.scrollTo(0, 0), 0)");
+  await page.waitForTimeout(100);
   await page.evaluate("window.__moves = []");
-  const end = await ctxEnd.js("window.TailorAutofill.guideEnd()");
+  let end, sight = true;
   if (wctx.length) {
-    const took = await wctx[0].js("window.TailorAutofill.relayTake(0)");
+    await guided.syncSight(js, wctx[0]);
+    end = await wctx[0].js("window.TailorAutofill.guideEnd()");
+    await guided.bringIntoSight(js, wctx[0], end && end.ref);
+    await page.waitForTimeout(400);
+    const took = await pollOnce(0);
     assert(took && took.point && took.point.rect, kind + ": the frame kept the pointer's move " + JSON.stringify(took));
-    await js(`window.TailorAutofill.pointFrom(${JSON.stringify(wctx[0].prefix)}, ${JSON.stringify(took.point.rect)}, ${JSON.stringify(took.point.label)}, ${JSON.stringify(took.point.opts)})`);
     assert(took.needs && took.needs.d && took.needs.d.n === 1, kind + ": the needs line is kept for the bar " + JSON.stringify(took.needs));
+    sight = await guided.frameSight(js, wctx[0], end.ref);
+    // Previous / Next on the bar or the Orb: the same, from anywhere on the page
+    await js("(window.scrollTo(0, 0), 0)");
+    await guided.syncSight(js, wctx[0]);
+    const st = await wctx[0].js("window.TailorAutofill.needsStep(1)");
+    await guided.bringIntoSight(js, wctx[0], st && st.ref);
+    await page.waitForTimeout(400);
+    const s2 = await guided.frameSight(js, wctx[0], st.ref);
+    assert(st && st.n === 1 && s2 === true, kind + ": Next takes the person to the frame's question " + JSON.stringify({ st, s2 }));
+  } else {
+    end = await js("window.TailorAutofill.guideEnd()");
+    await page.waitForTimeout(400);
   }
   const rest = await page.evaluate("window.__moves");
   const restState = await page.evaluate("window.TailorPointer.state()");
 
+  // the needs-you Enter flow inside the frame: the person types the answer and presses Enter; the
+  // pointer moves on to the frame's Submit ("All done"), never pressing it
+  await clickIn("why");
+  await page.keyboard.type("Because the work fits");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(700);
+  let allDone = "";
+  if (wctx.length) { const t = await pollOnce(0); allDone = t && t.point ? t.point.label : ""; }
+  else { const st2 = await page.evaluate("window.TailorPointer.state()"); allDone = st2 ? st2.label : ""; }
+
   // the person's Enter in a frame's box never sends the form; a script's click on Submit is stopped
   if (wctx.length) await wctx[0].js("window.TailorAutofill.clearNeeds()"); else await js("window.TailorAutofill.clearNeeds()");
-  // a real click on the frame's Email box (at its place on the top page), then a real Enter
-  const inFrame = (e) => (wctx.length ? wctx[0].js(e) : frame.evaluate(e));
-  await inFrame("(document.getElementById('email').scrollIntoView({ block: 'center' }), 0)");
-  await page.waitForTimeout(150);
-  const er = await inFrame("(() => { const r = document.getElementById('email').getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()");
-  const fb = await page.evaluate(() => { const f = document.getElementById("icims_content_iframe"), r = f.getBoundingClientRect(), g = getComputedStyle(f);
-    return { x: r.left + f.clientLeft + parseFloat(g.paddingLeft), y: r.top + f.clientTop + parseFloat(g.paddingTop) }; });
-  await page.mouse.click(fb.x + er.x, fb.y + er.y);
+  await clickIn("email");
   const focused = await inFrame("document.activeElement && document.activeElement.id");
   assert(focused === "email", kind + ": the click reached the frame's Email box, got " + focused);
   await page.keyboard.press("Enter");
@@ -169,7 +214,38 @@ async function run(kind, A, B, port, browser) {
   const after = await read();
   if (cdp) cdp.close();
   await page.close();
-  return { out, v, moves, box, end, rest, restState, after };
+  return { out, v, moves, box, end, rest, restState, after, sight, allDone };
+}
+
+// The person sends the application from inside the frame (a real click on Submit). The shell's poll
+// (main.js holdGuideFrames) feeds the frame's answers to the signal reader (frame_signals.js); a
+// frame whose page changed is read once more with a fresh engine, as the shell does (rereadFrame).
+// The signals are what the app's one sent detector hears; this test only checks what they say.
+async function runSubmit(kind, after, A, B, port, browser) {
+  const { page, cdp, wctx, walk, clickIn } = await open(kind, A, B, port, browser, after);
+  await walk();
+  await wctx[0].js("window.TailorAutofill.armFrameSubmitWatch(true)");
+  await clickIn("why");
+  await page.keyboard.type("Because the work fits");
+  await clickIn("submit");                                              // the PERSON's Submit
+  const sigs = [];
+  const reader = frameSignals.createFrameSignalReader({ signal: (x) => sigs.push(x) });
+  let ctx = wctx[0];
+  for (let i = 0; i < 16; i++) {
+    await page.waitForTimeout(150);
+    const got = await ctx.js("window.TailorAutofill && window.TailorAutofill.relayTake(0)");
+    if (got) { reader.seen(ctx, got); continue; }
+    await page.waitForTimeout(300);                                     // the new page loads
+    const found = await frames.reopenFrame(cdp, ctx.raw);
+    if (!found) continue;
+    await frames.injectEngine(cdp, found, CORE);
+    reader.seen(ctx, await frames.evalIn(cdp, found, "(() => { const T = window.TailorAutofill, r = T.relayTake(0); "
+      + "return Object.assign(r, { form: r.form || T.formFill(), success: r.success || !!T.detectSuccess() }); })()"));
+    ctx = Object.assign(frames.walkContexts(cdp, [found])[0], { prefix: ctx.prefix });
+  }
+  cdp.close();
+  await page.close();
+  return sigs;
 }
 
 (async () => {
@@ -202,6 +278,25 @@ async function run(kind, A, B, port, browser) {
       assert(r.rest.some((m) => m.inView && /Fill this, then press Enter/.test(m.label)), tag + "the pointer says what to do there " + JSON.stringify(r.rest));
       assert(r.restState && r.restState.label, tag + "the pointer is showing at the end");
       assert(kind === "same" ? r.out.frames === 0 : r.out.frames === 1, tag + "frames walked " + r.out.frames);
+      assert(r.sight === true, tag + "the end brings the question into the person's sight");
+      assert(/All done/.test(r.allDone), tag + "Enter on the answered question moves on to Submit " + JSON.stringify(r.allDone));
+    }
+    // what the frame says after the person's Submit (signals for the app's sent detector)
+    for (const kind of ["oopif", "cross"]) {
+      for (const after of ["reset", "reload", "thanks", "error"]) {
+        const sigs = await runSubmit(kind, after, A, B, port, browser);
+        const kinds = sigs.map((x) => x.kind);
+        const tag = `${kind} ${after}: `;
+        if (process.env.SJ_DEBUG) console.error(tag, JSON.stringify(sigs));
+        assert(kinds[0] === "submit-click" && sigs[0].filled >= 4 && /frame_walk_inner/.test(sigs[0].frameUrl),
+               tag + "the person's Submit is a signal " + JSON.stringify(sigs));
+        assert(kinds.filter((k) => k === "submit-click").length === 1, tag + "said once " + JSON.stringify(kinds));
+        const reset = sigs.find((x) => x.kind === "form-reset");
+        if (after === "reset" || after === "reload") assert(reset && reset.filledBefore >= 4 && reset.filledAfter === 0, tag + "the form came back empty " + JSON.stringify(sigs));
+        if (after === "thanks") assert(sigs.some((x) => x.kind === "page" && x.how === "marker" && x.frame === true), tag + JSON.stringify(sigs));
+        if (after !== "thanks") assert(!kinds.includes("page"), tag + "no confirmation where there is none " + JSON.stringify(kinds));
+        if (after === "error") assert(kinds.length === 1, tag + "an error keeps the answers: nothing more is said " + JSON.stringify(kinds));
+      }
     }
   } finally {
     await browser.close();
