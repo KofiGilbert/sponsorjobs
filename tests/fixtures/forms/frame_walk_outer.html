@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Careers (a form inside a frame)</title>
+<link rel="stylesheet" href="style.css"><style>.gap{height:700px} iframe{border:2px solid #999;padding:6px;display:block;margin-left:40px}</style></head>
+<body>
+<!-- An employer's careers page whose application form lives in an iframe (iCIMS-style), placed
+     below the fold, taller than the window, with no scroll of its own: the TOP page scrolls. Made-up
+     job, no person's values. ?inner=<url> picks the frame: another site (its own process), another
+     port (cross-origin, same process), or a relative path (same origin). -->
+<h1>Data Analyst at Example Co</h1>
+<p>Apply below.</p>
+<div class="gap"></div>
+<iframe id="icims_content_iframe" title="Job application" width="720" height="1900" scrolling="no"></iframe>
+<p id="foot">Equal opportunity employer.</p>
+<script>
+  const p = new URLSearchParams(location.search);
+  document.getElementById("icims_content_iframe").src = p.get("inner") || "frame_walk_inner.html";
+</script>
+</body></html>

@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Application (inside the frame)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script><style>.gap{height:600px}</style></head>
+<body>
+<!-- The application inside the frame: text boxes at the top, a list far below, a question only the
+     person can answer, and Submit at the bottom. Submitting (by Enter or a click) is recorded. -->
+<form id="iCIMS_ApplicantProfile" action="javascript:void(0)">
+  <div class="field"><label for="first">First Name *</label><input type="text" id="first" aria-required="true"></div>
+  <div class="field"><label for="last">Last Name *</label><input type="text" id="last" aria-required="true"></div>
+  <div class="field"><label for="email">Email *</label><input type="email" id="email" aria-required="true"></div>
+  <div class="gap"></div>
+  <div id="w1"></div>
+  <div class="gap"></div>
+  <div class="field"><label for="why">Why do you want to work here? *</label><input type="text" id="why" aria-required="true"></div>
+  <button type="submit" id="submit">Submit Application</button>
+</form>
+<script>
+  // kept on the page itself (not a script variable), so any script world can read it
+  document.getElementById("iCIMS_ApplicantProfile").addEventListener("submit", (e) => {
+    e.preventDefault(); document.body.dataset.submitted = String(Number(document.body.dataset.submitted || 0) + 1); });
+  window.fx = { auth: window.FixtureWidgets.ReactSelect(document.getElementById("w1"),
+    { id: "auth-q", label: "Are you legally authorized to work in the United States? *", required: true, options: ["Yes", "No"] }) };
+  // the test reads the same from the page's words (tests/js/test_frame_walk.js READ)
+</script>
+</body></html>

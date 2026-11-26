@@ -329,6 +329,7 @@ const PANE_REAP_MS = 60 * 1000;
 let paneReap = null;
 
 function closePane() {
+  releaseGuideFrames();
   paneOpen = false;
   layoutPane();
   pushPaneState();
@@ -1085,10 +1086,11 @@ function fillPhase() { return _fillPhase; }
 // the first stopped and never fills a box twice.
 const _walkDone = new Map();
 const _walkAsked = new Map();          // the boxes the walk left for the person, per page
-async function guidedWalk(wc, recordId, url, page, say, retryAsked) {
+async function guidedWalk(wc, recordId, url, page, say, retryAsked, walkFrames, fr) {
   const pkey = finishRules.planKey(recordId, url);
   return guided.walk({
     js: (e, ms) => fillKeys.capped(wc.executeJavaScript(e, true), ms || 15000),
+    frames: walkFrames || [],
     alive: () => !wc.isDestroyed(),
     done: (() => { let d = _walkDone.get(pkey); if (!d) { d = new Set(); _walkDone.set(pkey, d); while (_walkDone.size > 40) _walkDone.delete(_walkDone.keys().next().value); } return d; })(),
     asked: (() => { let d = _walkAsked.get(pkey); if (!d || retryAsked) { d = new Set(); _walkAsked.set(pkey, d); while (_walkAsked.size > 40) _walkAsked.delete(_walkAsked.keys().next().value); } return d; })(),
@@ -1101,10 +1103,88 @@ async function guidedWalk(wc, recordId, url, page, say, retryAsked) {
         return resp.ok ? await resp.json() : null;
       } catch (e) { return null; }
     },
-    upload: async (refs, pathOf) => { const seen = []; const n = await cdpUploadFiles(wc, refs, pathOf, seen); return { n, seen }; },
+    upload: async (refs, pathOf, fctx) => {
+      const seen = [];
+      if (fctx && fr) {                                  // a file box inside a frame: CDP in that frame
+        let n = 0;
+        for (const ref of refs || []) {
+          const p = pathOf(ref);
+          if (!p) continue;
+          const k = await frames.uploadInFrame(fr.cdp, fctx.raw, [ref], p);
+          n += k;
+          if (k) seen.push({ ref, path: p, how: "attached" });
+        }
+        return { n, seen };
+      }
+      const n = await cdpUploadFiles(wc, refs, pathOf, seen); return { n, seen };
+    },
     say,
   });
 }
+
+// ---- (2026-11-26) The walk inside frames another origin serves (iCIMS and similar) -------------
+// Before the walk, each such frame the engine may fill gets the pointer's overlay with its moves
+// relayed (never drawn inside the frame) and its <iframe> element tagged on the top page, so the
+// ONE pointer is drawn on the top page where the person sees the field. A frame with a sign-in in
+// it is the person's and is left alone.
+async function prepareWalkFrames(fr) {
+  const list = [];
+  for (const ctx of (fr ? fr.ctxs : [])) {
+    try {
+      const b = await fr.eval(ctx, "window.TailorAutofill.pageBlocker()");
+      if (b === "auth") continue;
+      await frames.injectPointerRelay(fr.cdp, ctx, pointerSource());
+      await frames.tagOwner(fr.cdp, ctx);
+      list.push(ctx);
+    } catch (e) { /* the frame went away */ }
+  }
+  return frames.walkContexts(fr ? fr.cdp : null, list, fillKeys.capped);
+}
+// After a walk that went into frames, the frames stay reachable while the person works through
+// what needs them (the Enter flow, Next / Previous, the pointer on Submit): their CDP session is
+// held, and twice a second the pointer moves a frame kept are drawn on the top page and its needs
+// line goes to the bar. Let go on Done, a new fill, the site's confirmation, the pane closing, the
+// frames going away, or after 30 minutes.
+let _guideFrames = null;
+function holdGuideFrames(wc, fr, ctxs) {
+  releaseGuideFrames();
+  const st = { wc, fr, ctxs, seq: new Map(), needsSeq: new Map(), misses: 0, started: Date.now(), timer: null };
+  const poll = async () => {
+    if (_guideFrames !== st) return;
+    if (wc.isDestroyed() || Date.now() - st.started > 30 * 60 * 1000) { releaseGuideFrames(); return; }
+    let answered = 0;
+    for (const c of ctxs) {
+      const got = await c.js(`window.TailorAutofill && window.TailorAutofill.relayTake(${st.seq.get(c.prefix) || 0})`, 1500);
+      if (!got || got === fillKeys.TIMED_OUT) continue;
+      answered++;
+      const p = got.point;
+      if (p && p.seq) {
+        st.seq.set(c.prefix, p.seq);
+        const expr = p.hide ? "window.TailorPointer && window.TailorPointer.hide()"
+          : `window.TailorAutofill && window.TailorAutofill.pointFrom(${JSON.stringify(c.prefix)}, ${JSON.stringify(p.rect || null)}, ${JSON.stringify(String(p.label || ""))}, ${JSON.stringify(p.opts || {})})`;
+        wc.executeJavaScript(expr, true).catch(() => null);
+      }
+      const n = got.needs;
+      if (n && n.seq && n.seq !== st.needsSeq.get(c.prefix)) {
+        st.needsSeq.set(c.prefix, n.seq);
+        if (win && !win.isDestroyed()) win.webContents.send("assist:needs", n.d || {});
+      }
+    }
+    st.misses = answered ? 0 : st.misses + 1;
+    if (st.misses >= 8) releaseGuideFrames();            // the frames are gone (a new page)
+  };
+  st.timer = setInterval(() => { poll().catch(() => null); }, 500);
+  _guideFrames = st;
+}
+function releaseGuideFrames() {
+  const st = _guideFrames;
+  if (!st) return;
+  _guideFrames = null;
+  clearInterval(st.timer);
+  try { st.fr.close(); } catch (e) { /* gone */ }
+}
+function guideFramesFor(wc) { return _guideFrames && _guideFrames.wc === wc ? _guideFrames : null; }
+appliedWatch.onSubmitted(() => releaseGuideFrames());
 const guided = require("./guided");
 
 // (2026-11-26) Background answers, saved at submit time: the page's snapshot of its choice
@@ -1146,6 +1226,7 @@ async function runAutoApplyOnPane(recordId, opts) {
   } catch (e) { return { ok: false, reason: "no-page" }; }
 
   let fr = null;
+  releaseGuideFrames();                                    // a new fill: the last walk's frames go
   try {
     // never fill a page with no size (a parked pane measured 0 x 0, and sites drew their
     // small-screen forms): size it first; if it still has none, say so instead of filling
@@ -1218,11 +1299,14 @@ async function runAutoApplyOnPane(recordId, opts) {
     // after field, with the drawn pointer. Nothing on the page is filled out of sight (the owner,
     // after Lam): when the walk ran, the engine's own fast pass and the second plan do not touch
     // the page; a site window over the form stops the walk and is handed back (``modal``).
-    let walked = null;
+    let walked = null, walkFrames = [];
     watchSnapshots(wc);
     if (opts.guided && pointer && havePayload) {
       _fillPhase = "walking the form";
-      walked = await guidedWalk(wc, recordId, url, page, (t) => sendProgress(Object.assign({ record_id: recordId || null, page }, t)), !!opts.retryAsked);
+      // (2026-11-26) frames another origin serves are walked in the same pass, in sight
+      fr = await openFrameSession(wc);
+      if (fr) walkFrames = await prepareWalkFrames(fr);
+      walked = await guidedWalk(wc, recordId, url, page, (t) => sendProgress(Object.assign({ record_id: recordId || null, page }, t)), !!opts.retryAsked, walkFrames, fr);
       lap("walk", "filling the page");
     }
     const fillExpr = (budgetMs) => (havePayload
@@ -1269,13 +1353,14 @@ async function runAutoApplyOnPane(recordId, opts) {
       if (Array.isArray(more)) for (const line of more) debugLine("engine: " + line);
     }
     lap("engine", "reading the form");
-    fr = await openFrameSession(wc);
+    if (!fr) fr = await openFrameSession(wc);
     const liveFrames = [];
     for (const ctx of (fr ? fr.ctxs : [])) {
       const b = await fr.eval(ctx, "window.TailorAutofill.pageBlocker()");
       if (b === "auth") continue;                          // a sign-in inside the frame: theirs
       liveFrames.push(ctx);
-      if (havePayload) {
+      // (2026-11-26) a walked page's frames were walked too: nothing is filled out of sight
+      if (havePayload && !walked) {
         const p = await run("filling the page", "engine", (b) => fr.eval(ctx, fillExpr(b)), beatIn(ctx));
         pres.push(p); tally(p);
       }
@@ -1309,7 +1394,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     };
     // the page itself was walked: its boxes are done or the person's (frames are read as before)
     let fields = walked ? [] : await readForm((expr) => wc.executeJavaScript(expr, true), beatMain);
-    for (const ctx of liveFrames) fields = fields.concat(await readForm((expr) => fr.eval(ctx, expr), beatIn(ctx)));
+    if (!walked) for (const ctx of liveFrames) fields = fields.concat(await readForm((expr) => fr.eval(ctx, expr), beatIn(ctx)));
     lap("extract", fields.length ? "the AI planned " + fields.length + " fields" : "checking what is left");
 
     let applied = { filled: 0, uploaded: 0, pending_upload: 0, skipped: 0 };
@@ -1403,8 +1488,10 @@ async function runAutoApplyOnPane(recordId, opts) {
     left = [...new Set(left.concat(searchTrouble))].slice(0, 60);
     if (walked && !walked.modal) {
       // the required boxes still empty are outlined, in page order, for Next / Previous and the end
-      await wc.executeJavaScript(`(() => { const T = window.TailorAutofill; let n = 0;
-        for (const f of T.extractForm({ onlyEmpty: true })) if (f.required && T.markNeeds(f.ref)) n++; T.tidyMenus(); return n; })()`, true).catch(() => 0);
+      const outline = `(() => { const T = window.TailorAutofill; let n = 0;
+        for (const f of T.extractForm({ onlyEmpty: true })) if (f.required && T.markNeeds(f.ref)) n++; T.tidyMenus(); return n; })()`;
+      await wc.executeJavaScript(outline, true).catch(() => 0);
+      for (const ctx of liveFrames) await fr.eval(ctx, outline);
     }
     if (walked) {
       applied.filled += walked.filled; applied.uploaded += walked.uploaded;
@@ -1431,9 +1518,16 @@ async function runAutoApplyOnPane(recordId, opts) {
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
     watchSnapshots(wc);
     wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitSnapshot && window.TailorAutofill.armSubmitSnapshot()", true).catch(() => null);
-    // Enter in a filled form never sends it; a script never clicks its Submit (Meriton, 2026-11-26)
+    // Enter in a filled form never sends it; a script never clicks its Submit (Meriton, 2026-11-26),
+    // in the top page, its same-origin frames and (2026-11-26) every frame another origin serves
     wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitGuard && window.TailorAutofill.armSubmitGuard()", true).catch(() => null);
-    if (fr) { fr.close(); fr = null; }
+    for (const ctx of liveFrames) await fr.eval(ctx, "window.TailorAutofill.armSubmitGuard()");
+    if (fr) {
+      // a walk that went into frames keeps them for the person's turn (the Enter flow, the pointer)
+      const held = walked && walkFrames.length ? walkFrames.filter((c) => liveFrames.includes(c.raw)) : [];
+      if (held.length) holdGuideFrames(wc, fr, held); else fr.close();
+      fr = null;
+    }
     const sig = await mainSignature(wc);
     if (!opts.fromWatch) armPageWatch(wc, recordId, page, sig);
     if (walked && walked.modal) {
@@ -1610,15 +1704,28 @@ ipcMain.handle("assist:finish", async (_e, opts, report) => {
 // (2026-11-26) The end of every Autofill: the pointer rests on the first field that needs the
 // person (outlined, with Next / Previous on the status line), else on the site's Submit, outlined,
 // with "Your turn: check and submit". Never pressed.
+const GUIDE_END_JS = `(async () => { const T = window.TailorAutofill; if (!T || !T.guideEnd) return null;
+      await T.tidyMenus(); return T.guideEnd(); })()`;
+const NEEDS_N_JS = "window.TailorAutofill && window.TailorAutofill.needsList ? window.TailorAutofill.needsList().length : 0";
 async function guideEnd(r) {
   const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
   if (!wc) return r;
+  const top = (e, ms) => fillKeys.capped(wc.executeJavaScript(e, true).catch(() => null), ms || 8000);
+  const ok = (g) => g && g !== fillKeys.TIMED_OUT;
+  // (2026-11-26) a walk that went into frames: the first place that needs the person may be in a
+  // frame (its own pointer relayed to the top page), and an iCIMS Submit sits in its frame
+  const gf = guideFramesFor(wc);
   let g = null;
-  try {
-    g = await fillKeys.capped(wc.executeJavaScript(`(async () => { const T = window.TailorAutofill; if (!T || !T.guideEnd) return null;
-      await T.tidyMenus(); return T.guideEnd(); })()`, true), 8000);
-  } catch (e) { g = null; }
-  if (!g || g === fillKeys.TIMED_OUT) return r;
+  if (gf && !(await top(NEEDS_N_JS, 3000))) {
+    for (const c of gf.ctxs) {
+      if (await c.js(NEEDS_N_JS, 3000)) { g = await c.js(GUIDE_END_JS, 8000); if (ok(g)) break; g = null; }
+    }
+  }
+  if (!ok(g)) g = await top(GUIDE_END_JS);
+  if (gf && ok(g) && g.where === "none") {
+    for (const c of gf.ctxs) { const g2 = await c.js(GUIDE_END_JS, 8000); if (ok(g2) && g2.where !== "none") { g = g2; break; } }
+  }
+  if (!ok(g)) return r;
   return Object.assign({}, r || {}, { guide: { where: g.where, needs: g.n || 0, label: g.label || "" } });
 }
 // Next / Previous / Done on the status line: the pointer and the page go to each field that needs
@@ -1627,9 +1734,17 @@ ipcMain.handle("assist:guide-step", async (_e, dir) => {
   const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
   if (!wc) return { n: 0 };
   const d = dir === "done" ? "done" : Number(dir) || 0;
+  const gf = guideFramesFor(wc);
   try {
-    return await wc.executeJavaScript(d === "done" ? "(window.TailorAutofill && window.TailorAutofill.clearNeeds(), { n: 0, done: true })"
-      : `window.TailorAutofill ? window.TailorAutofill.needsStep(${d}) : { n: 0 }`, true);
+    if (d === "done") {
+      if (gf) { for (const c of gf.ctxs) await c.js("window.TailorAutofill && window.TailorAutofill.clearNeeds()", 3000); releaseGuideFrames(); }
+      return await wc.executeJavaScript("(window.TailorAutofill && window.TailorAutofill.clearNeeds(), { n: 0, done: true })", true);
+    }
+    // the place that holds the person's fields: the top page (with its same-origin frames), else a frame
+    if (gf && !(await wc.executeJavaScript(NEEDS_N_JS, true))) {
+      for (const c of gf.ctxs) if (await c.js(NEEDS_N_JS, 3000)) return (await c.js(`window.TailorAutofill.needsStep(${d})`, 8000)) || { n: 0 };
+    }
+    return await wc.executeJavaScript(`window.TailorAutofill ? window.TailorAutofill.needsStep(${d}) : { n: 0 }`, true);
   } catch (e) { return { n: 0 }; }
 });
 

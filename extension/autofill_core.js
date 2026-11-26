@@ -4556,9 +4556,34 @@ function qsaSafe(sel, root) {
   // ---- (2026-11-26) Guided fill: the shell walks the form top to bottom with the drawn pointer,
   // one field after another (shell-electron/main.js guidedWalk). The decisions are made first (the
   // plan); these only place, type and tidy, so a person watching can follow it with their eyes.
+  // (2026-11-26) A box inside a same-origin frame (iCIMS draws its form in one): its place in the
+  // TOP window, through each frame's own place on the page (content box), so the walk's order, its
+  // "in view", the glow ring and the pointer all measure where the person sees it.
+  function topRect(el) {
+    let r = el.getBoundingClientRect();
+    let dx = 0, dy = 0;
+    let w = null;
+    try { w = el.ownerDocument && el.ownerDocument.defaultView; } catch (e) { w = null; }
+    for (let i = 0; w && w !== window && i < 6; i++) {
+      let f = null;
+      try { f = w.frameElement; } catch (e) { f = null; }
+      if (!f) break;
+      const fb = f.getBoundingClientRect();
+      let pl = 0, pt = 0;
+      try { const g = f.ownerDocument.defaultView.getComputedStyle(f); pl = parseFloat(g.paddingLeft) || 0; pt = parseFloat(g.paddingTop) || 0; } catch (e) { /* fine */ }
+      dx += fb.left + (f.clientLeft || 0) + pl; dy += fb.top + (f.clientTop || 0) + pt;
+      try { w = f.ownerDocument && f.ownerDocument.defaultView; } catch (e) { w = null; }
+    }
+    if (!dx && !dy) return r;
+    return { left: r.left + dx, right: r.right + dx, top: r.top + dy, bottom: r.bottom + dy, width: r.width, height: r.height, x: r.left + dx, y: r.top + dy };
+  }
+  // the element's own window (a same-origin frame's), for its own viewport's size
+  function ownWin(el) {
+    try { return (el.ownerDocument && el.ownerDocument.defaultView) || window; } catch (e) { return window; }
+  }
   function docOrder(a, b) {
     if (a === b) return 0;
-    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const ra = topRect(a), rb = topRect(b);
     const ya = ra.top + (window.scrollY || 0), yb = rb.top + (window.scrollY || 0);
     if (Math.abs(ya - yb) > 4) return ya - yb;                    // top to bottom
     const pos = a.compareDocumentPosition(b);
@@ -4581,13 +4606,17 @@ function qsaSafe(sel, root) {
     return el;
   }
   function inView(el) {
-    const r = el.getBoundingClientRect(), vh = window.innerHeight || 800;
-    return r.top >= 60 && r.bottom <= vh - 60;
+    const r = topRect(el), vh = window.innerHeight || 800;
+    if (!(r.top >= 60 && r.bottom <= vh - 60)) return false;
+    const w = ownWin(el);
+    if (w === window) return true;
+    const own = el.getBoundingClientRect(), fh = w.innerHeight || vh;       // and inside its own frame
+    return own.top >= 0 && own.bottom <= fh;
   }
   /** Bring the field into view (smoothly unless reduced motion) and wait until the page stops
    * moving, so the pointer lands where the field IS; {scrolled, label}. */
-  async function walkTo(ref) {
-    const r = walkStart(ref);
+  async function walkTo(ref, o) {
+    const r = walkStart(ref, o);
     if (!r.ok || !r.scrolled) return r;
     await settled(visibleBox(elByRef(ref)));
     return r;
@@ -4597,7 +4626,7 @@ function qsaSafe(sel, root) {
     let last = null;
     for (let i = 0; i < 30; i++) {
       await plainSleep(50);
-      const t = Math.round(el.getBoundingClientRect().top);
+      const t = Math.round(topRect(el).top);
       if (last !== null && t === last) return;
       last = t;
     }
@@ -4606,7 +4635,7 @@ function qsaSafe(sel, root) {
   function coveredBy(el) {
     try { const P = window.TailorPointer; return P && P.coverOf ? P.coverOf(visibleBox(el)) : null; } catch (e) { return null; }
   }
-  function walkStart(ref) {
+  function walkStart(ref, o) {
     const el = elByRef(ref);
     if (!el) return { ok: false };
     const box = visibleBox(el);
@@ -4617,7 +4646,9 @@ function qsaSafe(sel, root) {
       return { ok: true, scrolled: false, covered: t, label: cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40) };
     }
     let scrolled = false;
-    if (!inView(box)) {
+    // ``force``: the shell saw the box out of the person's sight (a frame's field below the top
+    // page's fold, which the frame alone cannot tell)
+    if ((o && o.force) || !inView(box)) {
       let reduce = false;
       try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { reduce = false; }
       try { box.scrollIntoView({ block: "center", behavior: reduce ? "instant" : "smooth" }); } catch (e) { box.scrollIntoView(); }
@@ -4738,13 +4769,13 @@ function qsaSafe(sel, root) {
   function placeGlows() {
     if (_chip && _chip.isConnected && !_chip.hidden) {
       const c = needsCurEl();
-      const b = c ? visibleBox(c).getBoundingClientRect() : null;
+      const b = c ? topRect(visibleBox(c)) : null;
       if (b && (b.width || b.height) && !coveredBy(c)) { _chip.style.left = Math.max(4, b.right - 60) + "px"; _chip.style.top = (b.bottom + 8) + "px"; _chip.style.display = ""; }
       else _chip.style.display = "none";
     }
     for (const [el, r] of _glowEls) {
       if (!el.isConnected) { r.classList.add("off"); continue; }
-      const b = visibleBox(el).getBoundingClientRect();
+      const b = topRect(visibleBox(el));
       if (!b.width && !b.height) { r.classList.add("off"); continue; }
       if (coveredBy(el)) { r.classList.add("off"); continue; }     // never drawn over a site's window
       r.classList.remove("off");
@@ -4828,7 +4859,10 @@ function qsaSafe(sel, root) {
   }
   // The shell hears which item is current (a console line only it reads): the app's bar names the
   // same item the pointer does.
+  let _needsSeq = 0;
   function tellNeeds(d) {
+    // the last one is also kept for the shell to read (a frame's line may not reach its console)
+    try { window.__sjNeedsLast = { seq: ++_needsSeq, d }; } catch (e) { /* fine */ }
     try { console.debug("__sj_needs__" + JSON.stringify(d)); } catch (e) { /* fine */ }
   }
   // (2026-11-26, the owner) The fields that need the person, one after another: the caret in the
@@ -5036,9 +5070,17 @@ function qsaSafe(sel, root) {
     return qsaSafe("button, input[type='submit']", f).some((b) => b.type === "submit" || submitLike(b));
   }
   function armSubmitGuard() {
-    if (window.__sjSubmitGuard) return false;
-    window.__sjSubmitGuard = true;
-    document.addEventListener("keydown", (e) => {
+    // (2026-11-26) every document of the form: the top page and each same-origin frame (iCIMS's
+    // form lives in one); a frame another origin serves runs its own engine and its own guard
+    let n = 0;
+    for (const r of searchRoots()) if (r && r.nodeType === 9 && guardDoc(r)) n++;
+    if (!window.__sjSubmitGuard) window.__sjSubmitGuard = true;
+    return n > 0;
+  }
+  function guardDoc(doc) {
+    if (doc.__sjSubmitGuard) return false;
+    doc.__sjSubmitGuard = true;
+    doc.addEventListener("keydown", (e) => {
       try {
         const cur = e.key === "Enter" && !e.isComposing ? needsCurEl() : null;
         if (cur && (e.target === cur || cur.contains(e.target))) {
@@ -5055,13 +5097,95 @@ function qsaSafe(sel, root) {
         if (P && sub) P.at(sub, "Press Submit yourself when you are ready", { now: true, stay: true, on: true });
       } catch (err) { /* never in the page's way */ }
     }, true);
-    document.addEventListener("click", (e) => {
+    doc.addEventListener("click", (e) => {
       try {
         if (e.isTrusted) return;                            // the person's own click (or a real one)
         if (submitLike(e.target)) { e.preventDefault(); e.stopImmediatePropagation(); window.__sjClickStopped = (window.__sjClickStopped || 0) + 1; }
       } catch (err) { /* fine */ }
     }, true);
     return true;
+  }
+
+  // ---- (2026-11-26) Frames another origin serves (cross-origin iCIMS and friends) --------------
+  // The shell runs this engine in such a frame too (shell-electron/frames.js) and walks its fields
+  // in the same top-to-bottom order as the top page's. The person sees ONE pointer, drawn in the top
+  // page: inside the frame, the pointer's moves are kept (relayPointer) and the shell places them
+  // on the top page through the frame's own place there (frameBox, pointFrom).
+  /** Each ref's place: in this document (``top``, ``left``: from the document's top) and in view. */
+  function refPlaces(refs) {
+    const out = [];
+    for (const ref of refs || []) {
+      const el = elByRef(ref);
+      if (!el || !el.isConnected) continue;
+      const r = topRect(visibleBox(el));
+      out.push({ ref, top: r.top + (window.scrollY || 0), left: r.left, vtop: r.top, vbottom: r.bottom,
+                 vleft: r.left, vright: r.right, width: r.width, height: r.height });
+    }
+    return out;
+  }
+  /** The place on THIS page of the frame the shell tagged ``prefix`` (its content box), or null. */
+  function frameBox(prefix) {
+    const f = qsaDeep(`iframe[data-sj-frame="${CSS.escape(String(prefix || ""))}"], frame[data-sj-frame="${CSS.escape(String(prefix || ""))}"]`)[0];
+    if (!f) return null;
+    const r = topRect(f);
+    let pl = 0, pt = 0;
+    try { const g = getComputedStyle(f); pl = parseFloat(g.paddingLeft) || 0; pt = parseFloat(g.paddingTop) || 0; } catch (e) { /* fine */ }
+    const left = r.left + (f.clientLeft || 0) + pl, top = r.top + (f.clientTop || 0) + pt;
+    return { left, top, width: f.clientWidth, height: f.clientHeight, abs: top + (window.scrollY || 0),
+             vh: window.innerHeight || 800, vw: window.innerWidth || 1200 };
+  }
+  /** Draw the pointer on this page for a box a frame measured in its own view. */
+  function pointFrom(prefix, rect, label, opts) {
+    const P = window.TailorPointer;
+    if (!P) return false;
+    if (opts && opts.hide) { P.hide(); return true; }
+    const b = frameBox(prefix);
+    if (!b || !rect) return false;
+    // only the part of the box the frame shows: a box scrolled out of the frame is not pointed at
+    if (rect.bottom < 0 || rect.top > b.height || rect.right < 0 || rect.left > b.width) return false;
+    const r = { left: rect.left + b.left, right: rect.right + b.left, top: rect.top + b.top, bottom: rect.bottom + b.top,
+                width: rect.width, height: rect.height };
+    return !!P.point(r, label, opts || {});
+  }
+  /** In a frame: the pointer's moves are kept for the shell (it draws them on the top page), never
+   * drawn inside the frame, where the frame's edges would cut it off. The site-window checks
+   * (coverOf, openModal) stay the overlay's own. */
+  function relayPointer() {
+    const P = window.TailorPointer;
+    if (!P || P.__relay) return !!P;
+    let seq = 0;
+    const keep = (m) => { try { window.__sjPoint = Object.assign({ seq: ++seq }, m); } catch (e) { /* fine */ } return true; };
+    const boxOf = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height });
+    const at0 = P.at;
+    P.at = (el, label, opts) => {
+      try {
+        if (!el || !el.getBoundingClientRect) return false;
+        const cov = P.coverOf ? P.coverOf(el) : null;
+        if (cov) {
+          const h = (P.headOf && P.headOf(cov)) || cov, t = P.titleOf ? P.titleOf(cov) : "";
+          return keep({ rect: boxOf(h.getBoundingClientRect()), label: t ? "Reading: " + t : "Reading the window on the page", opts: opts || {} });
+        }
+        return keep({ rect: boxOf(el.getBoundingClientRect()), label, opts: opts || {} });
+      } catch (e) { return false; }
+    };
+    P.point = (rect, label, opts) => keep({ rect: boxOf(rect), label, opts: opts || {} });
+    P.hide = () => keep({ hide: true });
+    P.state = () => null;
+    P.__relay = true;
+    P.__at0 = at0;
+    return true;
+  }
+  /** The pointer move a frame kept since ``seq`` (relayPointer), and its latest needs line. */
+  function relayTake(seq) {
+    const p = window.__sjPoint, n = window.__sjNeedsLast;
+    return { point: p && p.seq > (Number(seq) || 0) ? p : null, needs: n || null };
+  }
+  /** A ref's box in this document's own view (for the shell's in-sight check from the top page). */
+  function refRect(ref) {
+    const el = elByRef(ref);
+    if (!el) return null;
+    const r = visibleBox(el).getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
   }
 
   // (2026-11-26) What the form's choice questions hold the moment the person presses the site's
@@ -5153,7 +5277,7 @@ function qsaSafe(sel, root) {
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
-    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
+    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, topRect, refPlaces, frameBox, pointFrom, relayPointer, relayTake, refRect, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
     siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike, needsNext, needsKind,
     // (2026-11-26) the apply agent's guided ask: what a field holds, the pointer on it, then Submit
     fieldValue, pointNeeds, allDone,
