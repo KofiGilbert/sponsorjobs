@@ -7077,7 +7077,8 @@
     // were renamed) is left out.
     const plain = (s) => String(s || "").trim().toLowerCase();
     const timeline = (j.activity || []).map(a => {
-      const what = a.to_stage ? trkStageName(a.to_stage) : trkT("tracker.removed", "Taken off the board");
+      // Rejected and Archived both read "Closed" now; the note says why.
+      const what = a.to_stage ? (trkColOf(a.to_stage) === "closed" ? trkColName("closed") : trkStageName(a.to_stage)) : trkT("tracker.removed", "Taken off the board");
       const note = a.note && ![plain(what), "ready to apply"].includes(plain(a.note)) ? ` <span class="prof-dim">${esc(a.note)}</span>` : "";
       return `<div class="trk-tl-row"><span class="trk-tl-dot" aria-hidden="true"></span>
         <span class="trk-tl-what">${esc(what)}${note}</span><span class="trk-tl-when">${esc(trkDay(a.at))}</span></div>`;
