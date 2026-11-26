@@ -487,3 +487,37 @@ def check_many(items, *, fetch=None, workers: int = WORKERS) -> dict:
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(items)))) as ex:
         futs = {k: ex.submit(check, u, s, fetch=fetch) for k, u, s in items}
         return {k: f.result() for k, f in futs.items()}
+
+
+# --------------------------------------------------------------------------- the job's own title
+_OG_TITLE_RE = re.compile(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', re.I)
+_TITLE_TAG_RE = re.compile(r"<title[^>]*>([^<]+)</title>", re.I)
+
+
+def posting_title(url: str, *, fetch=None) -> str:
+    """The posting's own job title (never the applicant's): Lever's and Greenhouse's public JSON
+    first, else the page's og:title / <title>. "" when it cannot be read. Plain HTTP, no AI."""
+    fetch = fetch or http_get
+    try:
+        p = urllib.parse.urlparse(str(url or "").strip())
+    except ValueError:
+        return ""
+    host = (p.hostname or "").lower()
+    segs = _segs(p)
+    m = re.match(r"^jobs(\.eu)?\.lever\.co$", host)
+    if m and len(segs) >= 2:
+        r = fetch(f"https://api{'.eu' if m.group(1) else ''}.lever.co/v0/postings/{segs[0]}/{segs[1]}?mode=json",
+                  "application/json", True)
+        d = r.json()
+        return " ".join(str(d.get("text") or "").split())[:200] if r.status == 200 and isinstance(d, dict) else ""
+    if re.match(r"^(job-)?boards(\.eu)?\.greenhouse\.io$", host) and len(segs) >= 3 and segs[1] == "jobs":
+        r = fetch(f"https://boards-api.greenhouse.io/v1/boards/{segs[0]}/jobs/{segs[2]}", "application/json", True)
+        d = r.json()
+        return " ".join(str(d.get("title") or "").split())[:200] if r.status == 200 and isinstance(d, dict) else ""
+    if not p.scheme.startswith("http"):
+        return ""
+    r = fetch(url, "text/html", True)
+    if r.status != 200:
+        return ""
+    m2 = _OG_TITLE_RE.search(r.body or "") or _TITLE_TAG_RE.search(r.body or "")
+    return " ".join(_html.unescape(m2.group(1)).split())[:200] if m2 else ""

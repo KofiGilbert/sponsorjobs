@@ -396,10 +396,13 @@ def test_sqlite_columns_exist_on_a_fresh_db():
     assert {"close_reason", "accepted_at", "kept_at", "untracked_at", "live_status", "live_at"} <= cols
 
 
-def test_a_card_never_shows_blank(A):
-    """A resume chat started from a pasted description before its role was known left a board
-    row with no title or company; the card takes the resume's role and the board's employer."""
-    rid = _add_record(A, "Senior Analyst", "pasted:blank1", url="https://jobs.lever.co/acme-consulting/abc-123")
+def test_a_card_never_shows_blank_and_never_the_persons_title(A, monkeypatch):
+    """A resume chat started from a pasted link before its role was known left a board row with
+    no title or company. The card never takes the person's own headline (the record's role): it
+    shows the employer from the job board's link until the posting's own title is read."""
+    from sourcing import liveness
+    url = "https://jobs.lever.co/acme-consulting/abc-123"
+    _add_record(A, "Senior Director Of Everything", "pasted:blank1", url=url)
     w = A._watchlist()
     try:
         w.upsert_jobs([{"source_id": "pasted:blank1", "source": "pasted", "company": "", "title": "", "location": "",
@@ -409,10 +412,42 @@ def test_a_card_never_shows_blank(A):
         w.close()
     recs = CVRecords(A.DB_PATH)
     try:
-        recs._conn.execute("UPDATE cv_record SET company='' WHERE id=?", (rid,))
+        recs._conn.execute("UPDATE cv_record SET company='' WHERE company='Larkspur Labs'")
         recs._conn.commit()
     finally:
         recs.close()
-    card = _card(A.app.test_client(), "pasted:blank1")
-    assert (card["title"], card["company"], card["has_link"]) == ("Senior Analyst", "Acme Consulting", True)
+    seen = []
+
+    def fetch(u, accept="application/json", follow=True):
+        seen.append(u)
+        return liveness.Resp(200, '{"id": "abc-123", "text": "Data Analyst"}', u)
+    monkeypatch.setattr(liveness, "http_get", fetch)
+    c = A.app.test_client()
+    card = _card(c, "pasted:blank1")
+    assert card["company"] == "Acme Consulting" and card["has_link"] is True
+    assert card["title"] != "Senior Director Of Everything"     # never the person's own title
+    assert A._fill_job_titles([{"source_id": "pasted:blank1", "url": ""}]) == 1
+    assert set(seen) == {"https://api.lever.co/v0/postings/acme-consulting/abc-123?mode=json"}  # the board read may have asked too
+    assert _card(c, "pasted:blank1")["title"] == "Data Analyst"   # the posting's own title
     assert A._company_from_link("https://www.example.com/careers/123") == ""
+
+
+def test_company_names_read_as_the_posting_writes_them(A):
+    ashby = "https://jobs.ashbyhq.com/Applied%20Compute/0979?utm_source=x"
+    assert A._display_company("applied compute", ashby) == "Applied Compute"
+    assert A._display_company("applied compute", "") == "Applied Compute"
+    assert A._display_company("", "https://jobs.lever.co/crosscountry-consulting/b0") == "Crosscountry Consulting"
+    assert A._display_company("Acme Robotics, Inc.", ashby) == "Acme Robotics, Inc."   # a real name is left alone
+    assert A._display_company("eBay", "") == "eBay"
+
+
+def test_posting_title_reads_the_jobs_own_title():
+    from sourcing import liveness
+    ok = lambda body: (lambda u, accept="", follow=True: liveness.Resp(200, body, u))  # noqa: E731
+    assert liveness.posting_title("https://boards.greenhouse.io/acme/jobs/123",
+                                  fetch=ok('{"id": 123, "title": "Platform Engineer"}')) == "Platform Engineer"
+    assert liveness.posting_title("https://careers.example.com/j/9",
+                                  fetch=ok('<html><head><meta property="og:title" content="Analyst &amp; Planner"></head>')) == "Analyst & Planner"
+    gone = lambda u, accept="", follow=True: liveness.Resp(404, "", u)  # noqa: E731
+    assert liveness.posting_title("https://jobs.lever.co/acme/x", fetch=gone) == ""
+    assert liveness.posting_title("not a link") == ""

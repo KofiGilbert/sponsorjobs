@@ -19130,6 +19130,59 @@ def _todo_liveness_kick(jobs: list[dict] | None = None) -> bool:
     return True
 
 
+# A board row with no job title (a resume chat started from a pasted link, before its role was
+# known) gets the posting's own title, read once from the posting (sourcing.liveness.posting_title:
+# Lever's or Greenhouse's public JSON, else the page's title). Never the person's own headline.
+_TITLE_TRIED: set = set()
+
+
+def _fill_job_titles(jobs: list[dict]) -> int:
+    from sourcing.liveness import posting_title
+    n = 0
+    for j in jobs:
+        sid, url = j["source_id"], str(j.get("url") or "")
+        if not _usable_link(url):
+            recs = _records()
+            try:
+                for r in recs.list(limit=10000):
+                    if _board_key(r)[0] == sid:
+                        u = ((_record_data(r).get("source_job") or {}).get("url") or "")
+                        if _usable_link(u):
+                            url = u
+                            break
+            finally:
+                recs.close()
+        title = posting_title(url) if _usable_link(url) else ""
+        if not title:
+            continue
+        w = _watchlist()
+        try:
+            w._conn.execute("UPDATE sourced_job SET title=? WHERE source_id=? AND (title IS NULL OR title='')",
+                            (title, sid))
+            w._conn.commit()
+        finally:
+            w.close()
+        n += 1
+    return n
+
+
+def _fill_job_titles_kick(jobs: list[dict]) -> bool:
+    """Start the title fill in the background for board rows that have none; True when started."""
+    todo = [j for j in jobs if not str(j.get("title") or "").strip() and j["source_id"] not in _TITLE_TRIED]
+    if not todo:
+        return False
+    _TITLE_TRIED.update(j["source_id"] for j in todo)
+
+    def work():
+        try:
+            _fill_job_titles(todo)
+        except Exception:   # noqa: BLE001 - the card keeps showing the company
+            traceback.print_exc()
+
+    threading.Thread(target=work, name="job-titles", daemon=True).start()
+    return True
+
+
 @app.get("/api/tracker/liveness")
 @_guard
 def tracker_liveness():
@@ -21723,13 +21776,11 @@ def _board_card(j: dict, records: list[dict], today, sessions: dict | None = Non
         r2, c2 = _record_label(latest, _record_data(latest))
         if c2 and title.strip().lower() == c2.lower():
             company, title = c2, r2
-    if latest and not title.strip():
-        # A resume chat started before its role was known (a pasted description): the card takes
-        # the tailored resume's role, and the employer from its application link when the board
-        # names it (jobs.lever.co/<employer>/...), never a blank card.
-        r3, c3 = _record_label(latest, _record_data(latest))
-        title = r3 or title
-        company = company or c3 or _company_from_link(_card_link(j, records))
+    # The employer as the posting names it: a blank one from the job board's link
+    # (jobs.lever.co/<employer>/...), an all lowercase one ("applied compute") from the link when
+    # it names the same employer properly, else title-cased. The title is always the JOB's (the
+    # row's, filled from the posting by _fill_job_titles), never the person's own headline.
+    company = _display_company(company, _card_link(j, records))
     return {
         "source_id": j["source_id"], "company": company, "title": title,
         "display_name": j.get("display_name") or "",
@@ -21760,6 +21811,20 @@ _BOARD_SLUG_HOSTS = ("jobs.lever.co", "boards.greenhouse.io", "job-boards.greenh
                      "apply.workable.com")
 
 
+def _display_company(company: str, link: str) -> str:
+    """A company name fit to show: the link's when there is none, the link's properly written
+    name when the stored one is all lowercase and the same words, else title-cased."""
+    company = " ".join(str(company or "").split())
+    named = _company_from_link(link)
+    if not company:
+        return named
+    if company == company.lower() and any(ch.isalpha() for ch in company):
+        if named and named.lower().replace("-", " ") == company.lower():
+            return named
+        return " ".join(w[:1].upper() + w[1:] for w in company.split(" "))
+    return company
+
+
 def _company_from_link(url: str) -> str:
     """The employer a job board's own link names: jobs.lever.co/acme-consulting/... -> "Acme
     Consulting". "" for any other link (a company's own site says nothing reliable here)."""
@@ -21770,10 +21835,13 @@ def _company_from_link(url: str) -> str:
         return ""
     if (u.hostname or "").lower() not in _BOARD_SLUG_HOSTS:
         return ""
-    slug = next((p for p in u.path.split("/") if p), "")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,60}", slug) or slug.lower() in ("embed", "v1", "jobs"):
+    from urllib.parse import unquote
+    slug = unquote(next((p for p in u.path.split("/") if p), "")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 &._-]{1,60}", slug) or slug.lower() in ("embed", "v1", "jobs"):
         return ""
-    return " ".join(w.capitalize() for w in re.split(r"[-_]+", slug) if w)
+    if " " in slug and slug != slug.lower():
+        return slug                                  # Ashby writes the name itself: "Applied Compute"
+    return " ".join(w[:1].upper() + w[1:] for w in re.split(r"[-_ ]+", slug) if w)
 
 
 def _usable_link(url) -> bool:
@@ -21896,6 +21964,7 @@ def tracker_board():
     # Is each To apply posting still open? A free check in the background (no AI, no login);
     # a closed one moves to Closed with "Job closed". ``rechecking`` lets the page look again.
     rechecking = _todo_liveness_kick(jobs)
+    rechecking = _fill_job_titles_kick(jobs) or rechecking
     with _LIVENESS_LOCK:
         live_gen = int(_TODO_LIVE_RUN.get("gen") or 0)
     return _nostore(jsonify({"stages": list(STAGES), "columns": columns, "due_count": due,
