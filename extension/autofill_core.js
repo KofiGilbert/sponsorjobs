@@ -745,19 +745,29 @@ function qsaSafe(sel, root) {
         else out.email_wrong++;
       }
     }
-    const digits = String(f.phone || "").replace(/\D/g, "");
+    // The phone keeps the person's own saved form ("555-100-2000") wherever the page takes it. It
+    // is rewritten only where it is wrong: another number than the profile's (the resume's), or
+    // the same number carrying its own "+1" next to the page's own country code control, or a box
+    // the page marks invalid (Workday's "Enter a valid format": then plain digits, which every ATS
+    // takes). A box holding only a country code ("+31", put there by the site) is never touched.
+    const raw = String(f.phone || "").trim();
+    const digits = raw.replace(/\D/g, "");
     if (digits.length >= 7) {
       const coded = phoneCodeOnPage();
       for (const el of boxes) {
         const have = String(el.value || "").trim();
-        if (!have || have === digits) continue;
+        if (!have || have === raw) continue;
         const sig = signature(el);
         if (categorize(el, sig) !== "phone" || !labelFits(el, "phone")) continue;
         const hd = have.replace(/\D/g, "");
-        // the same number as plain digits with no code control is fine as it is ("(630) 205-1184")
-        if (hd === digits && !coded) continue;
-        setBox(el, digits);
-        if (String(el.value || "").replace(/\D/g, "") === digits) { out.phone++; markFilled(el, "profile"); out.labels.push(label(el) || "Phone"); }
+        if (hd.length < 7) continue;                                    // a country code alone: the site's
+        const invalid = String(el.getAttribute("aria-invalid") || "") === "true";
+        const same = hd === digits || hd.endsWith(digits);
+        if (same && !invalid && !(coded && /^\s*\+/.test(have))) continue;   // the same number, as it stands
+        const want = same || coded ? digits : raw;
+        if (have === want) continue;
+        setBox(el, want);
+        if (String(el.value || "").replace(/\D/g, "") === want.replace(/\D/g, "")) { out.phone++; markFilled(el, "profile"); out.labels.push(label(el) || "Phone"); }
       }
     }
     const nv = (v) => norm(String(v || "")).replace(/[^\p{L}\p{N} ]+/gu, "");
