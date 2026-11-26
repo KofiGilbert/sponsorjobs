@@ -1103,7 +1103,6 @@ async function guidedWalk(wc, recordId, url, page, say, retryAsked) {
   });
 }
 const guided = require("./guided");
-const appliedWatch = require("./applied_watch");
 
 // (2026-11-26) Background answers, saved at submit time: the page's snapshot of its choice
 // questions, taken as the person presses Submit (autofill_core armSubmitSnapshot, a console line
@@ -1775,7 +1774,6 @@ const agent = createAgent({
   isNewPage, attachResume, attachViaChooser, newUploadRun, setQuiet: setPaneQuiet, ensureViewport: ensureQuietViewport,
   fixPhone, checkPrefill,
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
-  announceSubmitted: (info) => appliedWatch.announceSubmitted(info),
   version: app.getVersion(),
   pointerSource,
   stopSuccessWatch: () => disarmSuccessWatch(),          // the agent's own watch recorded the send

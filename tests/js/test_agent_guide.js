@@ -257,16 +257,12 @@ const hl = (s) => s.P.log.filter((l) => /^(hl|unhl) /.test(l));
   // page turns into the confirmation, so the ask ends, the record is Applied and the bar says so
   {
     const s = setup({ mode: "assisted", fields: [22] });
-    const announced = [];
     s.P.onLight = async () => { setTimeout(() => { s.P.sent = true; }, 10); };
     const deps0 = s.agent;
-    // the shared submit signal (applied_watch.js) is told once
-    s.agent = createAgent(Object.assign({}, s.deps, { announceSubmitted: (x) => announced.push(x) }));
     const r = await s.agent.run(7, { url: s.P.url });
     assert(deps0 && r && r.ok === true && r.submitted === true, "the run ends Submitted " + JSON.stringify(r) + "\n" + s.P.log.join("\n"));
     assert(s.E.closed === true && s.P.lit === 0, "the ask is closed and the outline is gone");
     assert(s.posts.some(([p, b]) => p === "/api/autofill/applied" && b.record_id === 7), "marked Applied " + JSON.stringify(s.posts.map((x) => x[0])));
-    assert(announced.length === 1 && announced[0].recordId === 7 && announced[0].matched === true, "announced once " + JSON.stringify(announced));
     assert(s.progress.some((x) => x.state === "submitted"), "the bar says Submitted " + JSON.stringify(s.progress.map((x) => x.state)));
   }
   console.log("ok");

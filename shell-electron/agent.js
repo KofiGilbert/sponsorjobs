@@ -1916,7 +1916,7 @@ function createAgent(deps) {
         let pageUrl = url || "";
         try { pageUrl = wc.getURL() || pageUrl; } catch (e) { /* the pane went away */ }
         await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: pageUrl, record_id: recordId }).catch(() => null);
-        if (deps.announceSubmitted) deps.announceSubmitted({ recordId, url: applyUrl, pageUrl, how: "marker", matched: true });
+        // the shared signal (applied_watch.js) is announced once, by the shell's success watch
         feed.close();
         feed.push("sent", "Sent", "by you, and the site confirmed it", { state: "done" });
         progress(recordId, "submitted", "Submitted. Marked as applied.", { steps: history.length });
