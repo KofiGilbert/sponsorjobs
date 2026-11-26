@@ -147,7 +147,8 @@ def test_apply_runs_the_applications_autofill_from_the_panel():
     assert "const it = item || aaFind(id);" in _fn("aaSilentApprove")
     panel = _fn("openTrackerPanel")
     assert 'if (act === "apply") trkApply(sid, e.currentTarget);' in panel
-    assert 'else if (act === "continue") trkContinue(sid);' in panel and "else trkTailor(sid);" in panel
+    assert 'else if (act === "continue") trkContinue(sid);' in panel and 'else if (act === "tailor") trkTailor(sid);' in panel
+    assert "else trkTailor(sid);" not in panel        # "Add job link" never starts a new resume
     assert "await tailorJob(sid);" in _fn("trkTailor")          # the Jobs page's own tailoring flow
     assert "openJobWorkspace(sid)" in _fn("trkContinue")        # the job's resume chat
 

@@ -7128,7 +7128,8 @@
       const act = b.dataset.trkAct;
       if (act === "apply") trkApply(sid, e.currentTarget);
       else if (act === "continue") trkContinue(sid);
-      else trkTailor(sid);
+      else if (act === "tailor") trkTailor(sid);
+      // "link" opens the Add job link field (trkBindLifecycle), nothing else
     }));
     panel.querySelector("[data-trk-yes]")?.addEventListener("click", (e) => trkSubmittedYes(sid, e.currentTarget));
     panel.querySelector("[data-trk-notyet]")?.addEventListener("click", () => trkSubmittedNotYet(sid));
