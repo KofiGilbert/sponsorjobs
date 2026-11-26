@@ -76,5 +76,17 @@ assert(/innerText/.test(W.PAGE_PROBE_JS) && /submit/.test(W.PAGE_PROBE_JS), "the
   await w4.tick();
   eq(w4asked.length, 1, "it is read once it has loaded");
 
+  // the one shared event: every listener hears a confirmed submission, and can stop listening
+  const heard = [];
+  W.onSubmitted(() => { throw new Error("a bad listener"); });
+  const off = W.onSubmitted((e) => heard.push(e));
+  const ev = W.announceSubmitted({ recordId: 7, url: "https://jobs.example.com/job/1", pageUrl: "https://jobs.example.com/done", how: "model", matched: true });
+  eq(W.SUBMITTED, "application:submitted", "the event's name");
+  eq([heard.length, heard[0].recordId, heard[0].how, heard[0].matched], [1, 7, "model", true], "a listener hears it with the record id");
+  assert(ev.at > 0, "with when");
+  off();
+  W.announceSubmitted({ recordId: 8 });
+  eq(heard.length, 1, "a listener that stopped hears nothing more");
+
   console.log("ok applied watch");
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

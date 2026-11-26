@@ -18,7 +18,31 @@
 // Pure (no Electron): tests/js/test_applied_watch.js runs it under node.
 "use strict";
 
+const { EventEmitter } = require("events");
+
 const MAX_ASKS = 12;
+
+// THE one place that says "the site took this application" in the shell (2026-11-26). Every
+// detector that confirms a submission (the recipe's markers or the model reading the page, both
+// in main.js armSuccessWatch) calls announceSubmitted; anything that needs to know (the Tracker's
+// auto Applied through the engine, a guided run that ends and saves its answers at submit time)
+// listens with onSubmitted. One event, "application:submitted", with
+// {recordId, url (the application's start page), pageUrl (the confirmation page), how
+// ("marker" | "model"), matched (the engine found the record), at (ms)}.
+const SUBMITTED = "application:submitted";
+const bus = new EventEmitter();
+bus.setMaxListeners(20);
+function announceSubmitted(info) {
+  const ev = Object.assign({ recordId: null, url: "", pageUrl: "", how: "", matched: false }, info || {}, { at: Date.now() });
+  for (const l of bus.listeners(SUBMITTED)) {
+    try { l(ev); } catch (e) { /* one listener's error never stops the others */ }
+  }
+  return ev;
+}
+function onSubmitted(cb) {
+  bus.on(SUBMITTED, cb);
+  return () => bus.removeListener(SUBMITTED, cb);
+}
 const SUBMIT_WINDOW_MS = 90 * 1000;       // a page change this soon after a submit is worth a look
 
 // What the page shows, read in the page: its address, title, visible text, how many visible
@@ -121,4 +145,4 @@ function createModelWatch(o) {
   };
 }
 
-module.exports = { PAGE_PROBE_JS, createModelWatch, siteOf, MAX_ASKS };
+module.exports = { PAGE_PROBE_JS, createModelWatch, siteOf, MAX_ASKS, SUBMITTED, announceSubmitted, onSubmitted };

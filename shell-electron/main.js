@@ -573,13 +573,14 @@ function armSuccessWatch(wc, startUrl, recordId) {
       hit = await wc.executeJavaScript("window.TailorAutofill.detectSuccess()", true);
       if (!hit) hit = await frameSuccess(wc);              // iCIMS confirms inside its iframe
     } catch (e) { hit = false; }
-    let res = null;
+    let res = null, how = "marker";
     if (!hit) {
       const v = await model.tick();
       if (done) return;
       if (v && v.stop) { disarmSuccessWatch(); return; }
       if (!v || !v.applied) return;
       res = v.applied;                                     // the engine marked it applied already
+      how = "model";
     }
     done = true;
     disarmSuccessWatch();
@@ -594,6 +595,8 @@ function armSuccessWatch(wc, startUrl, recordId) {
     // A job the agent left ready or paused on this page: it leaves that state and the bar says
     // Sent (Home Depot, 2026-11-19: the bar kept "Paused, not sent" over Workday's confirmation).
     const rid = (res && res.matched && res.record_id != null) ? res.record_id : recordId;
+    // The one shared "the site took it" event (applied_watch.js onSubmitted).
+    appliedWatch.announceSubmitted({ recordId: rid == null ? null : rid, url: startUrl, pageUrl, how, matched: !!(res && res.matched) });
     if (rid != null) agent.sentSeen(rid, { url: startUrl, pageUrl }).catch(() => {});
   };
   const timer = setInterval(check, 2500);

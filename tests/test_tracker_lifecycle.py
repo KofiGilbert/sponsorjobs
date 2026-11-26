@@ -349,6 +349,7 @@ def test_the_watch_is_wired_into_the_success_watch():
     assert "appliedWatch.createModelWatch(" in arm and '"/api/autofill/confirm-check"' in arm
     assert arm.index("detectSuccess()") < arm.index("model.tick()")   # the recipe's markers first
     assert "model.navigated()" in arm
+    assert "appliedWatch.announceSubmitted(" in arm          # the one shared submitted event
     assert "30 * 60 * 1000" in arm
 
 
