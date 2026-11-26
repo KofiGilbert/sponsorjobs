@@ -40,7 +40,9 @@ function createFrameSignalReader(o) {
       s = { at: now(), filled: Number(got.filledAtSubmit) || 0, frameAt: got.submitAt, said: new Set() };
       st.set(c.prefix, s);
       s.url = got.submitUrl || c.url || "";
-      say(s, "submit-click", { kind: "submit-click", frameUrl: s.url, filled: s.filled });
+      // ``at``: when the frame noted the click (its own clock, this machine), so a post the site
+      // answered before this poll is still counted as coming after the click (sent_detect.js)
+      say(s, "submit-click", { kind: "submit-click", frameUrl: s.url, filled: s.filled, at: Number(got.submitAt) || undefined });
     }
     return s;
   };

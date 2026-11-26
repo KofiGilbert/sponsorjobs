@@ -42,6 +42,9 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // The fill engine saw the site's "application received" page after the person submitted;
   // the shell already told the app to mark the job applied, this is the UI's cue.
   onApplied: (cb) => ipcRenderer.on("assist:applied", (_e, info) => cb(info)),
+  // (2026-11-26) The person left a filled application with no sign it was sent (left the site,
+  // closed the Browser, started another job): {recordId, url, reason, clicked}. Asked ONCE.
+  onAskSent: (cb) => ipcRenderer.on("assist:ask-sent", (_e, info) => cb(info)),
   onNeeds: (cb) => ipcRenderer.on("assist:needs", (_e, info) => cb(info)),
   // The ONE apply path (Fill application, Review "Apply", Auto-apply "Open application"): open
   // the application in the pane and run the best fill (recipe, AI plan, resume upload).

@@ -1,0 +1,20 @@
+{
+  "_about": "What the confirmation page of each application said after the person pressed Submit (2026-11-26 runs). Text only, as the page showed it; the applicant's name is replaced with Alex. Rebuilt from the run notes in the ATS's own standard wording, not saved page captures: the app never stores a page's text.",
+  "pages": [
+    {"name": "greenhouse_stripe", "url": "https://job-boards.greenhouse.io/stripe/jobs/7000001/confirmation",
+     "text": "Thank you for applying. Your application has been received. If your application seems like a good fit, we will be in touch. Track your application Create a MyGreenhouse account to see the status of your applications. Get started"},
+    {"name": "greenhouse_vestmark", "url": "https://job-boards.greenhouse.io/vestmark/jobs/7000002/confirmation",
+     "text": "Thank you for applying to Vestmark! Your application has been received. We will review your application and reach out if there is a fit."},
+    {"name": "greenhouse_axon", "url": "https://job-boards.greenhouse.io/axon/jobs/7000003/confirmation",
+     "text": "Thank you for applying. Your application has been received. Track your application"},
+    {"name": "greenhouse_meriton", "url": "https://job-boards.greenhouse.io/meriton/jobs/7000004/confirmation",
+     "text": "Thank you for applying. Your application has been received. If your application seems like a good fit, we will be in touch."},
+    {"name": "ashby_applied_compute", "url": "https://jobs.ashbyhq.com/applied-compute/00000000-0000-4000-8000-000000000005/application",
+     "text": "Applied Compute Application Thank you for applying! Your application was successfully submitted. We'll be in touch."},
+    {"name": "lever_crosscountry", "url": "https://jobs.lever.co/crosscountry/00000000-0000-4000-8000-000000000006/thanks",
+     "text": "Application submitted! Thank you for your application to CrossCountry. We have received your application and will be in touch if your skills and experience match our needs."},
+    {"name": "phenom_lam_modal", "url": "https://careers.lamresearch.com/us/en/apply?jobSeqNo=LARCUS000000",
+     "dialog": "Thank you for your application, Alex! We have received your application. You can check its status on your profile.",
+     "text": "My profile Personal information Experience Education Thank you for your application, Alex! We have received your application."}
+  ]
+}

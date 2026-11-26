@@ -62,14 +62,14 @@ def build_suggestions(messages: list[dict], jobs: list[dict], llm=None,
     whether or not it becomes a suggestion, so the caller can remember it (thread matching, and
     never labelling the same message twice)."""
     from .replies import STAGE_FOR_LABEL, classify_reply, own_text, rules_reply
-    from .matching import COMPANY, SURE_LANES, match_application
+    from .matching import COMPANY, SURE_LANES, match_detail
     from .matching import _FREE_MAIL  # noqa: PLC2701 - one list of personal mail domains
 
     out: list[dict] = []
     for msg in messages or []:
         if detect.classify(msg) == "verification":
             continue            # an application's own verification link is handled on its own
-        job, lane = match_application(msg, jobs, threads)
+        job, lane, ambiguous = match_detail(msg, jobs, threads)
         if job is None:
             continue
         rules = rules_reply(msg)
@@ -113,7 +113,10 @@ def build_suggestions(messages: list[dict], jobs: list[dict], llm=None,
             "message_id": str(msg.get("id") or suggestion_id(msg))[:200],
             "thread_id": str(msg.get("thread_id") or "")[:200],
             "rfc_id": str(msg.get("rfc_id") or "")[:300],
-            "auto": bool(move and v.get("plain_ack") and lane in SURE_LANES),
+            # (2026-11-26) a guess among several applications, or a nameless mail from the
+            # hiring system only, asks: it never moves a card by itself
+            "ambiguous": bool(ambiguous),
+            "auto": bool(move and v.get("plain_ack") and lane in SURE_LANES and not ambiguous),
             "status": "pending",
             "created_at": _now(),
         })

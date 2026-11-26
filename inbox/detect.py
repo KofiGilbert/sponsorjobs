@@ -137,9 +137,12 @@ _INTERVIEW_RE = re.compile(
     r"|calendar invitation|book a time|pick a time|phone screen|technical screen|next steps?"
     r"|move forward with (your|an) (application|interview)|\binterview\b", re.I)
 _RECEIVED_RE = re.compile(
-    r"application (has been |was )?(received|submitted)|thank you for applying|thanks for applying"
+    r"application (has been |was |is )?(successfully )?(received|submitted|complete)\b|thank you for applying|thanks for applying"
     r"|we('ve| have) received your application|received your application|application confirmation"
-    r"|successfully (submitted|applied)|your application to .{1,80} (has been|was) received", re.I)
+    r"|successfully (submitted|applied)|your application to .{1,80} (has been|was) received"
+    # (2026-11-26) the ATS no-reply wordings (Greenhouse, Lever, Ashby, Workday, SmartRecruiters)
+    r"|(thank you|thanks) for (your application|submitting your application|your interest in (joining|applying))"
+    r"|we('ve| have) (got|received) your (application|resume|submission)|confirmation of your application", re.I)
 
 
 def _first_phrase(text: str, pattern: re.Pattern) -> str:

@@ -2543,15 +2543,19 @@ def record_status(rid):
         # "ready" clears it) -- one code path shared with the funnel's /stage endpoint.
         cur = _record_data(rec)
         patch = stage_patch(cur, "applied" if status == "applied" else "saved", _now_iso())
+        said = status == "applied" and (request.json or {}).get("evidence") == "said-yes"
         if status == "applied" and cur.get("status") != "applied":
             from submit.stages import submitted_by
             patch.update(submitted_by("you", (cur.get("submission") or {}).get("tier") or ""))
+            if said:            # "Did you send it?" Yes: the Tracker's timeline says so
+                patch["sent_evidence"] = _sent_evidence([{"kind": "said-yes"}])
         elif status == "ready":
-            patch.update({"submission": None, "queued": False})   # back to review, clean slate
+            patch.update({"submission": None, "queued": False, "sent_evidence": None})   # back to review, clean slate
         data = recs.merge_data(rid, patch)
     finally:
         recs.close()
-    _board_follow_record(rec, "applied" if status == "applied" else "saved")
+    _board_follow_record(rec, "applied" if status == "applied" else "saved",
+                         note=_applied_note(data) if status == "applied" and said else "")
     return jsonify({"ok": True, "status": data.get("status"), "applied_at": data.get("applied_at"),
                     "stage": data.get("stage"), "follow_up_due": data.get("follow_up_due")})
 
@@ -7033,6 +7037,64 @@ def _url_key(url: str) -> str:
     return (host + u.path.rstrip("/")).lower() if host else ""
 
 
+# ---- what showed the application was sent (2026-11-26) -----------------------------------------
+# Every Applied move the app makes by itself records WHICH evidence decided it, and the Tracker's
+# timeline says it: "Application submitted: thank-you page". The shell's detector
+# (shell-electron/sent_detect.js) sends the kinds it combined; the words are the engine's own, from
+# a fixed list, so nothing the page or a request carried is ever stored.
+_SENT_KINDS = {
+    "page-marker": "thank-you page", "page-model": "thank-you page",
+    "network-ats": "sent to {ats}", "network": "sent to the site",
+    "form-reset": "form cleared after Submit", "popup": "the site opened a window",
+    "email": "confirmation email", "said-yes": "you said yes",
+}
+_SENT_ATS = {"Greenhouse", "Lever", "Ashby", "Workday", "iCIMS", "SmartRecruiters", "SuccessFactors", "Taleo",
+             "Workable", "Recruitee", "Jobvite", "BambooHR"}
+
+
+def _sent_evidence(items) -> dict | None:
+    """{kinds, label, at} from the detector's evidence list ([{kind, ats?, gone?}], strongest
+    first), or None when none of it is a known kind. ``label`` joins the first two: "sent to
+    Greenhouse, form cleared after Submit"."""
+    kinds, labels = [], []
+    for e in (items if isinstance(items, list) else [])[:6]:
+        kind = str((e or {}).get("kind") or "") if isinstance(e, dict) else str(e or "")
+        if kind not in _SENT_KINDS or kind in kinds:
+            continue
+        ats = str((e or {}).get("ats") or "") if isinstance(e, dict) else ""
+        words = _SENT_KINDS[kind].replace("{ats}", ats if ats in _SENT_ATS else "the hiring system")
+        if kind == "form-reset" and isinstance(e, dict) and e.get("gone"):
+            words = "form closed after Submit"
+        kinds.append(kind)
+        if words not in labels:
+            labels.append(words)
+    if not kinds:
+        return None
+    return {"kinds": kinds, "label": ", ".join(labels[:2]), "at": _now_iso()}
+
+
+def _records_sent_evidence(records: list[dict], items) -> None:
+    """Keep the evidence on a job's records that have none yet (an inbox move)."""
+    ev = _sent_evidence(items)
+    if not ev or not records:
+        return
+    recs = _records()
+    try:
+        for r in records:
+            fresh = recs.get(r["id"])
+            if fresh and not _record_data(fresh).get("sent_evidence"):
+                recs.merge_data(r["id"], {"sent_evidence": ev})
+    finally:
+        recs.close()
+
+
+def _applied_note(data: dict | None) -> str:
+    """The timeline line for an Applied move: "Application submitted", plus what showed it."""
+    ev = (data or {}).get("sent_evidence")
+    label = str(ev.get("label") or "") if isinstance(ev, dict) else ""
+    return f"Application submitted: {label}" if label else "Application submitted"
+
+
 def _mark_applied_from_page(body: dict) -> dict:
     """The fill engine saw the site's 'application received' marker AFTER THE PERSON submitted.
     Find the application record this page belongs to (by record id, else by the job URL the
@@ -7073,6 +7135,9 @@ def _mark_applied_from_page(body: dict) -> dict:
             from submit.stages import submitted_by
             patch.update(submitted_by("auto", "auto") if by_auto
                          else submitted_by("you", (cur.get("submission") or {}).get("tier") or ""))
+        ev = _sent_evidence(body.get("evidence"))
+        if ev and (fresh or not cur.get("sent_evidence")):
+            patch["sent_evidence"] = ev         # what showed it was sent, for the Tracker's timeline
         data = recs.merge_data(rec["id"], patch)
     finally:
         recs.close()
@@ -7176,7 +7241,8 @@ def autofill_confirm_check():
     out = {"ok": True, "verdict": verdict}
     if verdict == "yes":
         out.update(_mark_applied_from_page({"url": b.get("url"), "page_url": b.get("page_url"),
-                                            "record_id": b.get("record_id")}))
+                                            "record_id": b.get("record_id"),
+                                            "evidence": b.get("evidence") or [{"kind": "page-model"}]}))
         out["verdict"] = "yes"
     return _nostore(jsonify(out))
 
@@ -14599,6 +14665,8 @@ def _store_inbox_suggestions(messages: list[dict], llm=None) -> list[dict]:
                     note = f'From your inbox: "{(sg.get("subject") or "").strip()[:120]}"'
                     w.move_stage(sg["source_id"], sg["stage"], note=note, ref=sg["id"])
                     _board_patch_records(by_job.get(sg["source_id"], []), sg["stage"])
+                    if sg["stage"] == "applied":
+                        _records_sent_evidence(by_job.get(sg["source_id"], []), [{"kind": "email"}])
                     store.set_status(sg["id"], "auto")
         finally:
             w.close()
@@ -14639,6 +14707,8 @@ def inbox_suggestion_accept(sid):
         note = f'From your inbox: "{(s.get("subject") or "").strip()[:120]}"'
         row = w.move_stage(job_id, s["stage"], note=note, ref=sid)
         _board_patch_records(by_job.get(job_id, []), s["stage"])
+        if s["stage"] == "applied":
+            _records_sent_evidence(by_job.get(job_id, []), [{"kind": "email"}])
         job = _sponsors().tag_jobs([row])[0]
         due = len(w.due_followups(date.today()))
     finally:
@@ -21737,22 +21807,37 @@ def _record_label(rec: dict, data: dict) -> tuple[str, str]:
 # that window does the row ask "Did you submit it?", so the person is never asked while they are
 # still on the form.
 ASK_SUBMITTED_AFTER_S = 30 * 60
+# (2026-11-26) The daily sweep: a card filled more than a day ago with no evidence it was sent is
+# asked ONCE more, even after an earlier No (people send it later, from the same tab or elsewhere).
+ASK_AGAIN_AFTER_S = 24 * 3600
+
+
+def _filled_age(data: dict, now: float | None = None) -> float | None:
+    from datetime import datetime
+    at = str(data.get("filled_at") or "")
+    if not at:
+        return None
+    try:
+        t = datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+    return (time.time() if now is None else now) - t
 
 
 def _ask_submitted(data: dict, stage: str, now: float | None = None) -> bool:
     """True when a fill ran for this record more than ASK_SUBMITTED_AFTER_S ago, it is still not
-    sent or skipped, and the page watch could not tell whether it was sent. Asked ONCE per
-    application (2026-11-26): after a No it is not asked again, even after another Autofill (the
-    page watch still marks it applied when the site confirms; the person can drag the card)."""
-    from datetime import datetime
-    at = str(data.get("filled_at") or "")
-    if not at or stage in ("submitted", "skipped") or data.get("submit_q_hidden"):
+    sent or skipped, and nothing showed it was sent (no thank-you page, form post or confirmation
+    email). Asked once after the fill; after a No it is asked ONE more time once the fill is a
+    day old (the daily sweep), then never again (the page watch and the inbox still mark it
+    applied when they see it; the person can drag the card)."""
+    if stage in ("submitted", "skipped") or data.get("sent_evidence") or data.get("confirmation"):
         return False
-    try:
-        t = datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
-    except ValueError:
+    age = _filled_age(data, now)
+    if age is None:
         return False
-    return (time.time() if now is None else now) - t >= ASK_SUBMITTED_AFTER_S
+    if not data.get("submit_q_hidden"):
+        return age >= ASK_SUBMITTED_AFTER_S
+    return age >= ASK_AGAIN_AFTER_S and not data.get("submit_q_late")
 
 
 def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
@@ -22005,8 +22090,68 @@ def autoapply_not_yet():
     if not rec:
         return jsonify({"error": "That application was not found."}), 404
     data = _record_data(rec)
-    _records().merge_data(rid, {"submit_q_hidden": data.get("filled_at") or ""})
+    patch = {"submit_q_hidden": data.get("filled_at") or "1"}
+    age = _filled_age(data)
+    if data.get("submit_q_hidden") or (age is not None and age >= ASK_AGAIN_AFTER_S):
+        patch["submit_q_late"] = data.get("filled_at") or "1"      # the day-later ask is answered too
+    _records().merge_data(rid, patch)
     return jsonify({"ok": True})
+
+
+@app.get("/api/autofill/sent-state")
+@_guard
+def autofill_sent_state():
+    """Before an Autofill: was this application already sent? (?record_id=). {applied, applied_at,
+    label}: applied when the record or its Tracker card is at Applied or further, or when evidence
+    says it was sent (a confirmation email) though nothing moved it yet. The app then asks
+    "You applied to this job on Nov 26. Fill it again?" before it fills anything."""
+    try:
+        rid = int(request.args.get("record_id") or "")
+    except (TypeError, ValueError):
+        return jsonify({"error": "record_id is required."}), 400
+    rec = _get_record(rid)
+    if not rec:
+        return jsonify({"error": "That application was not found."}), 404
+    return _nostore(jsonify({"ok": True, **_sent_state(rec)}))
+
+
+def _sent_state(rec: dict) -> dict:
+    from submit.stages import app_stage
+    data = _record_data(rec)
+    applied_at = str(data.get("applied_at") or "")
+    ev = data.get("sent_evidence") if isinstance(data.get("sent_evidence"), dict) else {}
+    conf = data.get("confirmation") if isinstance(data.get("confirmation"), dict) else {}
+    applied = app_stage(data)["stage"] == "submitted" or data.get("status") == "applied" or bool(conf)
+    role, company = _record_label(rec, data)
+    repost = False
+    if not applied:
+        try:                                # the card may be further on than this record
+            sid, _snap = _board_key(rec)
+            sent_stages = ("applied", "interviewing", "offer", "rejected")
+            w = _watchlist()
+            try:
+                job = w.board_job(sid) if w.stage_of(sid) else None
+                # the same role at the same company, sent under another card (a reposted job)
+                same = None
+                if not (job and job.get("stage") in sent_stages) and company and role:
+                    key = (company.strip().lower(), role.strip().lower())
+                    same = next((j for j in w.board_jobs() if j.get("source_id") != sid
+                                 and j.get("stage") in sent_stages
+                                 and (str(j.get("company") or "").strip().lower(),
+                                      str(j.get("title") or "").strip().lower()) == key), None)
+            finally:
+                w.close()
+            if job and job.get("stage") in sent_stages:
+                applied = True
+                applied_at = applied_at or str(job.get("applied_at") or "")
+            elif same:
+                applied, repost = True, True
+                applied_at = str(same.get("applied_at") or "")
+        except Exception:                   # noqa: BLE001 - no board: the record decides
+            pass
+    label = str(ev.get("label") or "") or ("confirmation email" if conf else "")
+    return {"applied": bool(applied), "applied_at": applied_at if applied else "", "label": label if applied else "",
+            "company": company or "", "role": role or "", "repost": repost}
 
 
 def _pdf_pages(path) -> int | None:
@@ -22443,7 +22588,8 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
             if w.stage_of(sid) == "archived":
                 w.mark_posting_closed(sid, CLOSED_POSTING)
             continue
-        note = {"applied": "Application submitted", "approved": "Resume ready"}.get(rstage, "Tailored a resume")
+        note = ({"applied": _applied_note(_record_data(rr)), "approved": "Resume ready"}
+                .get(rstage, "Tailored a resume"))
         if cur is None:
             existing = w.get_job(sid)
             w.track_job(sid, rstage, note=note,
@@ -22454,7 +22600,7 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
     return by_job
 
 
-def _board_follow_record(rec: dict, stage: str) -> None:
+def _board_follow_record(rec: dict, stage: str, note: str = "") -> None:
     """A stage set on one tailored record from the review queue (its stage picker, or Mark as
     applied) moves that record's board job too, in EITHER direction: the person chose, so the
     board follows. Best-effort: the record is already saved, and the board catches up on its
@@ -22464,13 +22610,14 @@ def _board_follow_record(rec: dict, stage: str) -> None:
         if stage not in STAGES:
             return
         sid, snap = _board_key(rec)
+        note = note or "From the review queue"
         w = _watchlist()
         try:
             if w.stage_of(sid) is None:
-                w.track_job(sid, stage, note="From the review queue",
+                w.track_job(sid, stage, note=note,
                             job=None if w.get_job(sid) else snap)
             else:
-                w.move_stage(sid, stage, note="From the review queue")
+                w.move_stage(sid, stage, note=note)
         finally:
             w.close()
     except Exception:
@@ -22499,7 +22646,7 @@ def _board_patch_records(records: list[dict], stage: str) -> None:
                     _board_reopen(r)
                 elif data.get("status") == "applied":
                     recs.merge_data(r["id"], {**stage_patch(data, "saved", _now_iso()),
-                                              **approved_patch()})
+                                              **approved_patch(), "sent_evidence": None})
         finally:
             recs.close()
         return
@@ -22517,7 +22664,7 @@ def _board_patch_records(records: list[dict], stage: str) -> None:
                 continue
             patch = stage_patch(data, stage, _now_iso())
             if stage == "saved":
-                patch.update({"submission": None, "queued": False})   # back before review
+                patch.update({"submission": None, "queued": False, "sent_evidence": None})   # back before review
             recs.merge_data(r["id"], patch)
     finally:
         recs.close()

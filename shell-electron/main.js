@@ -192,7 +192,7 @@ function setPaneQuiet(on) {
     paneQuiet = false;
     // The hidden page is closed (and reaped a minute later, like any closed pane). A job left at
     // Ready to send keeps its place on the record: Send fills it again and submits (agent.send).
-    if (pane) { disarmSuccessWatch(); disarmPageWatch(); closePane(); return; }
+    if (pane) { disarmSuccessWatch("agent"); disarmPageWatch(); closePane(); return; }
   }
   layoutPane();
   pushPaneState();
@@ -241,6 +241,7 @@ function ensurePane() {
   // Popups inside the pane stay inside the pane. Only http(s) is followed; nothing opens a window.
   wc.setWindowOpenHandler(({ url }) => {
     if (!originGuard.originOf(url)) return { action: "deny" };
+    sentDetect.signal({ kind: "popup", url });            // a window the site opens after Submit
     if (opensInOwnBrowser(url)) shell.openExternal(url);
     else wc.loadURL(url);
     return { action: "deny" };
@@ -553,61 +554,138 @@ function postApp(path, body) {
   }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 }
 
-// After a fill, watch the pane for the site's "application received" marker. The PERSON
-// submits in their own time; when the recipe's success marker appears (or the generic wording
-// does), the app marks the matching package applied and the UI is told. One watch at a time,
-// re-armed by every fill, dropped after 30 minutes or when the pane closes.
+// After a fill, watch the pane for evidence that the PERSON sent the application (they submit in
+// their own time). Every kind of evidence goes to ONE detector (sent_detect.js), which combines
+// them and announces the send once per record: the recipe's success marker or the model reading
+// the changed page (top page or any frame), the site's own form post seen on the network after the
+// person's own Submit click, the filled form going blank after that click, a window the site
+// opens. One watch at a time, re-armed by every fill, dropped after 30 minutes or when the pane
+// closes; leaving with no evidence asks the person once, "Did you send it?".
 let _successWatch = null;
 function armSuccessWatch(wc, startUrl, recordId) {
   disarmSuccessWatch();
   const started = Date.now();
-  let done = false;
+  sentDetect.shared().arm({ recordId: recordId || null, startUrl, fillUrl: wc.getURL() || "" });
   // When the markers say nothing, the model reads the changed page (applied_watch.js).
   const model = appliedWatch.createModelWatch({
     startUrl, fillUrl: wc.getURL() || "", recordId: recordId || null,
     read: () => wc.executeJavaScript(appliedWatch.PAGE_PROBE_JS, true),
-    ask: (body) => postApp("/api/autofill/confirm-check", body),
+    ask: (body) => postApp("/api/autofill/confirm-check", Object.assign({ evidence: [{ kind: "page-model" }] }, body)),
   });
   const check = async () => {
-    if (done || !pane || pane.webContents !== wc || wc.isDestroyed()) return;
-    if (Date.now() - started > 30 * 60 * 1000) { disarmSuccessWatch(); return; }
+    const st = _successWatch;
+    if (!st || st.wc !== wc || !pane || pane.webContents !== wc || wc.isDestroyed()) return;
+    if (Date.now() - started > 30 * 60 * 1000) { disarmSuccessWatch("timeout"); return; }
+    if (!sentDetect.shared().armed()) { disarmSuccessWatch(); return; }
+    // the person's own Submit click, and whether the filled form went blank after it
+    try {
+      const p = await wc.executeJavaScript(sentDetect.CLICK_PROBE_JS, true);
+      if (p) sentDetect.signal(Object.assign({ kind: "probe" }, p));
+    } catch (e) { /* the page is changing */ }
     let hit = false;
     try {
       const has = await wc.executeJavaScript("!!window.TailorAutofill", true);
       if (!has) await wc.executeJavaScript(autofillCore(), true);
       hit = await wc.executeJavaScript("window.TailorAutofill.detectSuccess()", true);
-      if (!hit) hit = await frameSuccess(wc);              // iCIMS confirms inside its iframe
     } catch (e) { hit = false; }
-    let res = null, how = "marker";
-    if (!hit) {
-      const v = await model.tick();
-      if (done) return;
-      if (v && v.stop) { disarmSuccessWatch(); return; }
-      if (!v || !v.applied) return;
-      res = v.applied;                                     // the engine marked it applied already
-      how = "model";
+    if (_successWatch !== st) return;
+    // every cross-origin frame (iCIMS, a Greenhouse form inside a careers site): its thank-you
+    // marker, and the same click and blank-form probe as the top page
+    const fr = hit ? { hit: false, url: "" } : await frameSuccess(wc);
+    if (_successWatch !== st) return;
+    if (hit || fr.hit) {
+      sentDetect.signal({ kind: "page", how: "marker", frame: !hit, pageUrl: hit ? (wc.getURL() || "") : fr.url });
+      return;
     }
-    done = true;
-    disarmSuccessWatch();
-    const pageUrl = wc.getURL() || "";
-    if (!res) {
-      res = await postApp("/api/autofill/applied",
-                          { url: startUrl, page_url: pageUrl, record_id: recordId || null });
-    }
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("assist:applied", Object.assign({ url: startUrl, page_url: pageUrl }, res || { ok: false }));
-    }
-    // A job the agent left ready or paused on this page: it leaves that state and the bar says
-    // Sent (Home Depot, 2026-11-19: the bar kept "Paused, not sent" over Workday's confirmation).
-    const rid = (res && res.matched && res.record_id != null) ? res.record_id : recordId;
-    // The one shared "the site took it" event (applied_watch.js onSubmitted).
-    appliedWatch.announceSubmitted({ recordId: rid == null ? null : rid, url: startUrl, pageUrl, how, matched: !!(res && res.matched) });
-    if (rid != null) agent.sentSeen(rid, { url: startUrl, pageUrl }).catch(() => {});
+    const v = await model.tick();
+    if (_successWatch !== st) return;
+    if (v && v.stop) { disarmSuccessWatch("left-site"); return; }
+    if (v && v.applied) sentDetect.signal({ kind: "page", how: "model", pageUrl: wc.getURL() || "", res: v.applied });
   };
   const timer = setInterval(check, 2500);
   const onNav = () => { model.navigated(); setTimeout(check, 1500); };
   for (const ev of ["did-navigate", "did-navigate-in-page", "did-finish-load"]) wc.on(ev, onNav);
-  _successWatch = { wc, timer, onNav };
+  _successWatch = { wc, timer, onNav, startUrl, recordId: recordId || null, net: armNetWatch(wc) };
+  setTimeout(check, 300);                  // arms the click probe in the page and its frames at once
+}
+
+// The site's own form post, read from the pane's network (the Chrome DevTools Protocol, the top
+// page and every out-of-process frame). Only the method, address and status are handed on, and
+// the detector keeps only the host and a path shape: request bodies are never asked for
+// (maxPostDataSize 0), responses are not buffered, and nothing is logged.
+const NET_OPTS = { maxTotalBufferSize: 10000, maxResourceBufferSize: 1000, maxPostDataSize: 0 };
+function armNetWatch(wc) {
+  const release = acquireDebugger(wc);
+  if (!release) return null;                              // DevTools holds the page: no network evidence
+  const dbg = wc.debugger;
+  const pending = new Map();
+  const sessions = new Set();
+  const enable = (sid) => (sid ? dbg.sendCommand("Network.enable", NET_OPTS, sid) : dbg.sendCommand("Network.enable", NET_OPTS)).catch(() => {});
+  const report = (p, status) => sentDetect.signal({ kind: "network", method: p.method, url: p.url, type: p.type, status });
+  const onMsg = (_e, method, params, sessionId) => {
+    try {
+      if (method === "Target.attachedToTarget" && params && params.targetInfo && params.targetInfo.type === "iframe") {
+        if (!sessions.has(params.sessionId)) { sessions.add(params.sessionId); enable(params.sessionId); }
+        return;
+      }
+      if (method === "Target.detachedFromTarget" && params) { sessions.delete(params.sessionId); return; }
+      const key = (sessionId || "") + "|" + (params && params.requestId);
+      if (method === "Network.requestWillBeSent") {
+        const prev = pending.get(key);
+        // a redirect answers the earlier request (a classic form post: 302 or 303 to "thank you")
+        if (prev && params.redirectResponse) { pending.delete(key); report(prev, params.redirectResponse.status); }
+        const r = params.request || {};
+        if (/^(POST|PUT|PATCH)$/i.test(r.method || "")) pending.set(key, { method: r.method, url: r.url, type: params.type || "" });
+        if (pending.size > 200) pending.clear();
+      } else if (method === "Network.responseReceived") {
+        const p = pending.get(key);
+        if (p) { pending.delete(key); report(p, params.response && params.response.status); }
+      } else if (method === "Network.loadingFailed") {
+        pending.delete(key);
+      }
+    } catch (e) { /* never in the page's way */ }
+  };
+  dbg.on("message", onMsg);
+  enable(null);
+  dbg.sendCommand("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {});
+  const renav = () => enable(null);              // a navigation may hand the page to a new process
+  wc.on("did-navigate", renav);
+  return () => {
+    try { dbg.removeListener("message", onMsg); } catch (e) { /* gone */ }
+    try { wc.removeListener("did-navigate", renav); } catch (e) { /* gone */ }
+    pending.clear();
+    if (!wc.isDestroyed() && dbg.isAttached()) {
+      dbg.sendCommand("Network.disable").catch(() => {});
+      for (const sid of sessions) dbg.sendCommand("Network.disable", {}, sid).catch(() => {});
+    }
+    release();
+  };
+}
+
+// The detector decided: the site took it. Marked applied in the engine with the evidence (the
+// model's yes already marked it), the app told, the one shared event announced.
+async function sentFired(r) {
+  const st = _successWatch;
+  const wc = st && st.wc && !st.wc.isDestroyed() ? st.wc : null;
+  disarmSuccessWatch();
+  const startUrl = r.url || (st && st.startUrl) || "";
+  const pageUrl = r.pageUrl || (wc && wc.getURL()) || "";
+  const evidence = (r.evidence || []).map((e) => ({ kind: e.kind, ats: e.ats || "", gone: !!e.gone }));
+  let res = r.res || null;
+  if (!res) {
+    res = await postApp("/api/autofill/applied", { url: startUrl, page_url: pageUrl, record_id: r.recordId, evidence });
+  }
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("assist:applied", Object.assign({ url: startUrl, page_url: pageUrl, evidence: r.label || "" }, res || { ok: false }));
+  }
+  // A job the agent left ready or paused on this page: it leaves that state and the bar says
+  // Sent (Home Depot, 2026-11-19: the bar kept "Paused, not sent" over Workday's confirmation).
+  const rid = (res && res.matched && res.record_id != null) ? res.record_id : r.recordId;
+  // The one shared "the site took it" event (applied_watch.js onSubmitted).
+  appliedWatch.announceSubmitted({ recordId: rid == null ? null : rid, url: startUrl, pageUrl, how: r.how,
+                                   matched: !!(res && res.matched),
+                                   evidence: (r.evidence || []).map((e) => ({ kind: e.kind, label: e.label, confidence: e.confidence })) });
+  if (rid != null) agent.sentSeen(rid, { url: startUrl, pageUrl }).catch(() => {});
 }
 // One CDP attachment shared by everything that needs it (file uploads, the frame fill, the frame
 // success check): attached on first use, detached when the last user is done, and never torn
@@ -622,6 +700,12 @@ function armSuccessWatch(wc, startUrl, recordId) {
 // is not detached under it. SJ_AGENT_DEBUG=1 says once what the page reports afterwards.
 const focusEmulation = require("./focus_emulation");
 const appliedWatch = require("./applied_watch");
+const sentDetect = require("./sent_detect");
+sentDetect.configure({
+  onFire: (r) => { sentFired(r).catch(() => {}); },
+  // leaving with no evidence: the Browser bar (and the Orb's bubble over it) asks once
+  onAsk: (a) => { if (!paneQuiet && win && !win.isDestroyed()) win.webContents.send("assist:ask-sent", a); },
+});
 const emulationLog = process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null;
 const isQuietPane = (wc) => !!(paneQuiet && pane && pane.webContents === wc);
 let _quietHold = null;                // {wc, release}: the quiet run's own hold on the debugger
@@ -673,38 +757,47 @@ function acquireDebugger(wc) {
   };
 }
 
-// The "application received" marker inside a cross-origin frame (read only, nothing is filled).
+// Inside every cross-origin frame (read only, nothing is filled): the "application received"
+// marker, and the same click and blank-form probe as the top page, handed to the detector.
+// {hit, url}.
 async function frameSuccess(wc) {
   let count = 0;
-  try { count = await wc.executeJavaScript("window.TailorAutofill.crossOriginFrames()", true); } catch (e) { count = 0; }
-  if (!count) return false;
+  try { count = await wc.executeJavaScript("window.TailorAutofill ? window.TailorAutofill.crossOriginFrames() : 0", true); } catch (e) { count = 0; }
+  if (!count) return { hit: false, url: "" };
   const release = acquireDebugger(wc);
-  if (!release) return false;
+  if (!release) return { hit: false, url: "" };
   const cdp = frames.electronCdp(wc.debugger);
   try {
     for (const ctx of await frames.crossOriginFrames(cdp)) {
       try {
+        const p = await frames.evalIn(cdp, ctx, sentDetect.CLICK_PROBE_JS);
+        if (p) sentDetect.signal(Object.assign({ kind: "probe", frame: true, frameUrl: ctx.url }, p));
         await frames.injectEngine(cdp, ctx, autofillCore());
-        if (await frames.evalIn(cdp, ctx, "window.TailorAutofill.detectSuccess()")) return true;
+        if (await frames.evalIn(cdp, ctx, "window.TailorAutofill.detectSuccess()")) return { hit: true, url: ctx.url };
       } catch (e) { /* frame gone */ }
     }
-    return false;
+    return { hit: false, url: "" };
   } catch (e) {
-    return false;
+    return { hit: false, url: "" };
   } finally {
     cdp.dispose();
     release();
   }
 }
-function disarmSuccessWatch() {
+// ``reason`` says why the watch ends: "left-site" / "closed" (the person moved on: with no
+// evidence the detector asks once, "Did you send it?"), "timeout" / "agent" (it lets go; the
+// Tracker's own ask covers a quiet ending). No reason: only this watch stops (a new fill re-arms
+// the same detector).
+function disarmSuccessWatch(reason) {
+  if (reason) sentDetect.shared().leave(reason);
   if (!_successWatch) return;
-  clearInterval(_successWatch.timer);
-  try {
-    for (const ev of ["did-navigate", "did-navigate-in-page", "did-finish-load"]) {
-      _successWatch.wc.removeListener(ev, _successWatch.onNav);
-    }
-  } catch (e) { /* pane gone */ }
+  const st = _successWatch;
   _successWatch = null;
+  clearInterval(st.timer);
+  try {
+    for (const ev of ["did-navigate", "did-navigate-in-page", "did-finish-load"]) st.wc.removeListener(ev, st.onNav);
+  } catch (e) { /* pane gone */ }
+  if (st.net) { try { st.net(); } catch (e) { /* gone */ } }
 }
 
 // Learn from corrections: the engine remembers what it filled; whatever the person changed
@@ -1991,6 +2084,8 @@ ipcMain.handle("assist:apply", async (_e, opts) => {
   if (!pane) return { ok: false, reason: "no-page" };
   const wc = pane.webContents;
 
+  // "Fill again" on an application already sent: a new send of it counts again
+  if (opts && opts.again && recordId != null) sentDetect.shared().forget(recordId);
   const report = await runAutoApplyOnPane(recordId, { pointer: true, guided: true });
   const filledOk = !!(report && report.ok !== false);
   if (report && report.reason === "blocked") return report;   // never fight an auth wall
@@ -2050,7 +2145,7 @@ const agent = createAgent({
   sign: (req) => postApp("/api/autoapply/agent/sign", req),
   version: app.getVersion(),
   pointerSource,
-  stopSuccessWatch: () => disarmSuccessWatch(),          // the agent's own watch recorded the send
+  stopSuccessWatch: () => disarmSuccessWatch("agent"),          // the agent's own watch recorded the send
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
   const o = opts || {};
@@ -2115,7 +2210,7 @@ function takePaneBack() {
   paneQuiet = false;
 }
 ipcMain.on("pane:open", (_e, url) => openInPane(url));
-ipcMain.on("pane:close", () => { disarmSuccessWatch(); disarmPageWatch(); closePane(); });
+ipcMain.on("pane:close", () => { disarmSuccessWatch("closed"); disarmPageWatch(); closePane(); });
 ipcMain.on("pane:back", () => pane && pane.webContents.navigationHistory.goBack());
 ipcMain.on("pane:forward", () => pane && pane.webContents.navigationHistory.goForward());
 ipcMain.on("pane:reload", () => pane && pane.webContents.reload());

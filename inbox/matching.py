@@ -148,19 +148,35 @@ def match_application(msg: dict, jobs: list[dict], threads: dict[str, str] | Non
 
     ``threads`` is the board's {thread key: source_id} (Watchlist.thread_index). Only jobs on
     the board are candidates."""
-    by_id = {j.get("source_id"): j for j in jobs or [] if j.get("source_id")}
+    job, lane, _ambiguous = match_detail(msg, jobs, threads)
+    return job, lane
+
+
+def match_detail(msg: dict, jobs: list[dict], threads: dict[str, str] | None = None):
+    """(job, lane, ambiguous): match_application, plus whether the pick was a guess among
+    several applications, or rested on nothing that names the employer (2026-11-26, strict: a
+    confirmation must never move a different company's card). ``ambiguous`` is True when
+      * two or more tracked applications fit and the message names none of their roles, or
+      * the only tie is that the sender is the hiring system the one open job is posted on (a
+        nameless "Thank you for applying" from Greenhouse can be for a job applied to outside
+        the app, which the board does not know about).
+    An ambiguous match still becomes a suggestion; it is never applied without the person's tap."""
+    jobs = jobs or []
+    by_id = {j.get("source_id"): j for j in jobs if j.get("source_id")}
     for key in thread_keys(msg):
         sid = (threads or {}).get(key)
         if sid and sid in by_id:
-            return by_id[sid], THREAD
+            return by_id[sid], THREAD, False
 
     sender = detect.sender_domain(msg)
+    lone = None
     if sender:
         reg = detect.registrable_domain(sender)
         if reg and reg not in _FREE_MAIL and reg not in _BOARDS:
             own = [j for j in jobs if employer_domain(j) == reg]
             if own:
-                return _pick(own, msg), DOMAIN
+                job, guess = _pick_detail(own, msg)
+                return job, DOMAIN, guess
             local = str(msg.get("from") or "").lower()
             on_ats = []
             for j in jobs:
@@ -169,12 +185,19 @@ def match_application(msg: dict, jobs: list[dict], threads: dict[str, str] | Non
                     on_ats.append((j, slug))
             slugged = [j for j, slug in on_ats if len(slug) >= 3 and slug in local]
             if slugged:
-                return _pick(slugged, msg), DOMAIN
+                job, guess = _pick_detail(slugged, msg)
+                return job, DOMAIN, guess
             open_on_ats = [j for j, _ in on_ats if _open(j)]
             if len(open_on_ats) == 1:
-                return open_on_ats[0], DOMAIN
+                lone = open_on_ats[0]
 
-    return _match_by_name(msg, jobs or [], sender)
+    job, lane, guess = _match_by_name_detail(msg, jobs, sender)
+    if job is not None:
+        # the name (and the role) places it; the lone job on that system only if it is the same one
+        return job, lane, guess
+    if lone is not None:
+        return lone, DOMAIN, True
+    return None, "", False
 
 
 # ---------------------------------------------------------------------- the employer's name
@@ -241,9 +264,15 @@ def _names_role(job: dict, hay: list[str]) -> bool:
 def _pick(jobs: list[dict], msg: dict) -> dict:
     """Several tracked applications at one employer: the one whose role is in the message, else
     the one still in play (most recent first)."""
+    return _pick_detail(jobs, msg)[0]
+
+
+def _pick_detail(jobs: list[dict], msg: dict) -> tuple[dict, bool]:
+    """(_pick, ambiguous): a guess when more than one application is left after the role."""
     hay = _words(msg.get("subject") or "") + ["|"] + _words(str(msg.get("body") or "")[:4000])
     with_role = [j for j in jobs if _names_role(j, hay)]
-    return _prefer_open(with_role or jobs)
+    left = with_role or jobs
+    return _prefer_open(left), len(left) > 1
 
 
 def _body_head(body: str) -> str:
@@ -255,6 +284,12 @@ def _match_by_name(msg: dict, jobs: list[dict], sender: str = ""):
     """(job, ROLE | COMPANY) for the tracked application whose employer this message names,
     else (None, ""). Several applications at one employer: the one whose role is in the
     message, else the one still in play (most recent first, as the board lists them)."""
+    job, lane, _guess = _match_by_name_detail(msg, jobs, sender)
+    return job, lane
+
+
+def _match_by_name_detail(msg: dict, jobs: list[dict], sender: str = ""):
+    """(job, lane, ambiguous) for _match_by_name."""
     display = detect.sender_name(msg) if "<" in str(msg.get("from") or "") else ""
     subject = str(msg.get("subject") or "")
     body = str(msg.get("body") or "")
@@ -280,10 +315,10 @@ def _match_by_name(msg: dict, jobs: list[dict], sender: str = ""):
         elif _strong_name(name):
             named.append(j)
     if with_role:
-        return _prefer_open(with_role), ROLE
+        return _prefer_open(with_role), ROLE, len(with_role) > 1
     if named:
-        return _prefer_open(named), COMPANY
-    return None, ""
+        return _prefer_open(named), COMPANY, len(named) > 1
+    return None, "", False
 
 
 def _prefer_open(jobs: list[dict]) -> dict:
