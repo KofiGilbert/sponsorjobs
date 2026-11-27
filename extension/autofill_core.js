@@ -4556,9 +4556,34 @@ function qsaSafe(sel, root) {
   // ---- (2026-11-26) Guided fill: the shell walks the form top to bottom with the drawn pointer,
   // one field after another (shell-electron/main.js guidedWalk). The decisions are made first (the
   // plan); these only place, type and tidy, so a person watching can follow it with their eyes.
+  // (2026-11-26) A box inside a same-origin frame (iCIMS draws its form in one): its place in the
+  // TOP window, through each frame's own place on the page (content box), so the walk's order, its
+  // "in view", the glow ring and the pointer all measure where the person sees it.
+  function topRect(el) {
+    let r = el.getBoundingClientRect();
+    let dx = 0, dy = 0;
+    let w = null;
+    try { w = el.ownerDocument && el.ownerDocument.defaultView; } catch (e) { w = null; }
+    for (let i = 0; w && w !== window && i < 6; i++) {
+      let f = null;
+      try { f = w.frameElement; } catch (e) { f = null; }
+      if (!f) break;
+      const fb = f.getBoundingClientRect();
+      let pl = 0, pt = 0;
+      try { const g = f.ownerDocument.defaultView.getComputedStyle(f); pl = parseFloat(g.paddingLeft) || 0; pt = parseFloat(g.paddingTop) || 0; } catch (e) { /* fine */ }
+      dx += fb.left + (f.clientLeft || 0) + pl; dy += fb.top + (f.clientTop || 0) + pt;
+      try { w = f.ownerDocument && f.ownerDocument.defaultView; } catch (e) { w = null; }
+    }
+    if (!dx && !dy) return r;
+    return { left: r.left + dx, right: r.right + dx, top: r.top + dy, bottom: r.bottom + dy, width: r.width, height: r.height, x: r.left + dx, y: r.top + dy };
+  }
+  // the element's own window (a same-origin frame's), for its own viewport's size
+  function ownWin(el) {
+    try { return (el.ownerDocument && el.ownerDocument.defaultView) || window; } catch (e) { return window; }
+  }
   function docOrder(a, b) {
     if (a === b) return 0;
-    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const ra = topRect(a), rb = topRect(b);
     const ya = ra.top + (window.scrollY || 0), yb = rb.top + (window.scrollY || 0);
     if (Math.abs(ya - yb) > 4) return ya - yb;                    // top to bottom
     const pos = a.compareDocumentPosition(b);
@@ -4580,14 +4605,30 @@ function qsaSafe(sel, root) {
     }
     return el;
   }
+  // (2026-11-26) In a frame another origin serves, the shell tells the engine which part of the
+  // frame the person can see on the top page (setSight, in the frame's own view): a field the
+  // frame shows but the top page has scrolled away from is not "in view", and is scrolled to.
+  let _sight = null;
+  function setSight(sg) {
+    _sight = sg && Number.isFinite(Number(sg.top)) && Number.isFinite(Number(sg.bottom)) ? { top: Number(sg.top), bottom: Number(sg.bottom) } : null;
+    return !!_sight;
+  }
   function inView(el) {
-    const r = el.getBoundingClientRect(), vh = window.innerHeight || 800;
-    return r.top >= 60 && r.bottom <= vh - 60;
+    if (_sight) {
+      const o = el.getBoundingClientRect(), pad = Math.min(60, Math.max(0, (_sight.bottom - _sight.top - o.height) / 4));
+      return o.top >= _sight.top + pad && o.bottom <= _sight.bottom - pad;
+    }
+    const r = topRect(el), vh = window.innerHeight || 800;
+    if (!(r.top >= 60 && r.bottom <= vh - 60)) return false;
+    const w = ownWin(el);
+    if (w === window) return true;
+    const own = el.getBoundingClientRect(), fh = w.innerHeight || vh;       // and inside its own frame
+    return own.top >= 0 && own.bottom <= fh;
   }
   /** Bring the field into view (smoothly unless reduced motion) and wait until the page stops
    * moving, so the pointer lands where the field IS; {scrolled, label}. */
-  async function walkTo(ref) {
-    const r = walkStart(ref);
+  async function walkTo(ref, o) {
+    const r = walkStart(ref, o);
     if (!r.ok || !r.scrolled) return r;
     await settled(visibleBox(elByRef(ref)));
     return r;
@@ -4597,7 +4638,7 @@ function qsaSafe(sel, root) {
     let last = null;
     for (let i = 0; i < 30; i++) {
       await plainSleep(50);
-      const t = Math.round(el.getBoundingClientRect().top);
+      const t = Math.round(topRect(el).top);
       if (last !== null && t === last) return;
       last = t;
     }
@@ -4606,7 +4647,7 @@ function qsaSafe(sel, root) {
   function coveredBy(el) {
     try { const P = window.TailorPointer; return P && P.coverOf ? P.coverOf(visibleBox(el)) : null; } catch (e) { return null; }
   }
-  function walkStart(ref) {
+  function walkStart(ref, o) {
     const el = elByRef(ref);
     if (!el) return { ok: false };
     const box = visibleBox(el);
@@ -4617,7 +4658,9 @@ function qsaSafe(sel, root) {
       return { ok: true, scrolled: false, covered: t, label: cleanLabel(rawLabel(el) || widgetLabel(el) || el.getAttribute("aria-label") || "").replace(/\s*\*\s*$/, "").slice(0, 40) };
     }
     let scrolled = false;
-    if (!inView(box)) {
+    // ``force``: the shell saw the box out of the person's sight (a frame's field below the top
+    // page's fold, which the frame alone cannot tell)
+    if ((o && o.force) || !inView(box)) {
       let reduce = false;
       try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { reduce = false; }
       try { box.scrollIntoView({ block: "center", behavior: reduce ? "instant" : "smooth" }); } catch (e) { box.scrollIntoView(); }
@@ -4738,13 +4781,13 @@ function qsaSafe(sel, root) {
   function placeGlows() {
     if (_chip && _chip.isConnected && !_chip.hidden) {
       const c = needsCurEl();
-      const b = c ? visibleBox(c).getBoundingClientRect() : null;
+      const b = c ? topRect(visibleBox(c)) : null;
       if (b && (b.width || b.height) && !coveredBy(c)) { _chip.style.left = Math.max(4, b.right - 60) + "px"; _chip.style.top = (b.bottom + 8) + "px"; _chip.style.display = ""; }
       else _chip.style.display = "none";
     }
     for (const [el, r] of _glowEls) {
       if (!el.isConnected) { r.classList.add("off"); continue; }
-      const b = visibleBox(el).getBoundingClientRect();
+      const b = topRect(visibleBox(el));
       if (!b.width && !b.height) { r.classList.add("off"); continue; }
       if (coveredBy(el)) { r.classList.add("off"); continue; }     // never drawn over a site's window
       r.classList.remove("off");
@@ -4754,7 +4797,7 @@ function qsaSafe(sel, root) {
   }
   // a field that now holds an answer loses its ring (and leaves the list)
   function dropAnswered() {
-    for (const el of [..._glowEls.keys()]) if (!el.isConnected || (filledNow(el) && !el.__sjFlash)) unglow(el);
+    for (const el of [..._glowEls.keys()]) if (!el.isConnected || (!stillNeeds(el) && !el.__sjFlash && !el.__sjGate)) unglow(el);
   }
   let _chip = null;
   function chipFor(el) {
@@ -4782,8 +4825,15 @@ function qsaSafe(sel, root) {
     if (!_needs.includes(ref)) _needs.push(ref);
     return true;
   }
+  // a field still needs the person: empty, or (the final check) still marked wrong / holding two files
+  function stillNeeds(el) {
+    if (!el) return false;
+    if (el.__sjGate === "invalid") { if (errorTied(el)) return true; el.__sjGate = ""; }
+    if (el.__sjGate === "dup") { if (deleteButtons(uploadArea(el) || el.parentElement || el).length > 1) return true; el.__sjGate = ""; }
+    return !filledNow(el);
+  }
   function needsList() {
-    _needs = orderRefs(_needs.filter((r) => { const el = elByRef(r); return el && !filledNow(el); }));
+    _needs = orderRefs(_needs.filter((r) => stillNeeds(elByRef(r))));
     return _needs.slice();
   }
   function filledNow(el) {
@@ -4813,8 +4863,8 @@ function qsaSafe(sel, root) {
     const P = window.TailorPointer;
     if (P && el) P.at(visibleBox(el), needsSay(el, sug), { now: true, stay: true });
     const name = shortName(el);
-    tellNeeds({ n: list.length, i: _needsAt, label: name, suggest: sug });
-    return { n: list.length, i: _needsAt, label: name };
+    tellNeeds({ n: list.length, i: _needsAt, label: name, suggest: sug, ref });
+    return { n: list.length, i: _needsAt, label: name, ref };
   }
   // The item's name in plain words, the same on the bar and beside the pointer: a long notice is
   // "the privacy notice" (or "the terms"), anything else its own question, cut at a word.
@@ -4828,7 +4878,10 @@ function qsaSafe(sel, root) {
   }
   // The shell hears which item is current (a console line only it reads): the app's bar names the
   // same item the pointer does.
+  let _needsSeq = 0;
   function tellNeeds(d) {
+    // the last one is also kept for the shell to read (a frame's line may not reach its console)
+    try { window.__sjNeedsLast = { seq: ++_needsSeq, d }; } catch (e) { /* fine */ }
     try { console.debug("__sj_needs__" + JSON.stringify(d)); } catch (e) { /* fine */ }
   }
   // (2026-11-26, the owner) The fields that need the person, one after another: the caret in the
@@ -5008,7 +5061,7 @@ function qsaSafe(sel, root) {
    * site's Submit (outlined, never pressed) with "Your turn: check and submit". */
   async function guideEnd() {
     const list = needsList();
-    if (list.length) { _needsAt = -1; const r = await needsStep(1); return { where: "needs", n: list.length, label: r.label }; }
+    if (list.length) { _needsAt = -1; const r = await needsStep(1); return { where: "needs", n: list.length, label: r.label, ref: r.ref }; }
     if (await restOnSubmit("Your turn: check and submit")) return { where: "submit", n: 0 };
     return { where: "none", n: 0 };
   }
@@ -5036,9 +5089,17 @@ function qsaSafe(sel, root) {
     return qsaSafe("button, input[type='submit']", f).some((b) => b.type === "submit" || submitLike(b));
   }
   function armSubmitGuard() {
-    if (window.__sjSubmitGuard) return false;
-    window.__sjSubmitGuard = true;
-    document.addEventListener("keydown", (e) => {
+    // (2026-11-26) every document of the form: the top page and each same-origin frame (iCIMS's
+    // form lives in one); a frame another origin serves runs its own engine and its own guard
+    let n = 0;
+    for (const r of searchRoots()) if (r && r.nodeType === 9 && guardDoc(r)) n++;
+    if (!window.__sjSubmitGuard) window.__sjSubmitGuard = true;
+    return n > 0;
+  }
+  function guardDoc(doc) {
+    if (doc.__sjSubmitGuard) return false;
+    doc.__sjSubmitGuard = true;
+    doc.addEventListener("keydown", (e) => {
       try {
         const cur = e.key === "Enter" && !e.isComposing ? needsCurEl() : null;
         if (cur && (e.target === cur || cur.contains(e.target))) {
@@ -5055,13 +5116,149 @@ function qsaSafe(sel, root) {
         if (P && sub) P.at(sub, "Press Submit yourself when you are ready", { now: true, stay: true, on: true });
       } catch (err) { /* never in the page's way */ }
     }, true);
-    document.addEventListener("click", (e) => {
+    doc.addEventListener("click", (e) => {
       try {
         if (e.isTrusted) return;                            // the person's own click (or a real one)
         if (submitLike(e.target)) { e.preventDefault(); e.stopImmediatePropagation(); window.__sjClickStopped = (window.__sjClickStopped || 0) + 1; }
       } catch (err) { /* fine */ }
     }, true);
     return true;
+  }
+
+  // ---- (2026-11-26) Frames another origin serves (cross-origin iCIMS and friends) --------------
+  // The shell runs this engine in such a frame too (shell-electron/frames.js) and walks its fields
+  // in the same top-to-bottom order as the top page's. The person sees ONE pointer, drawn in the top
+  // page: inside the frame, the pointer's moves are kept (relayPointer) and the shell places them
+  // on the top page through the frame's own place there (frameBox, pointFrom).
+  /** Each ref's place: in this document (``top``, ``left``: from the document's top) and in view. */
+  function refPlaces(refs) {
+    const out = [];
+    for (const ref of refs || []) {
+      const el = elByRef(ref);
+      if (!el || !el.isConnected) continue;
+      const r = topRect(visibleBox(el));
+      out.push({ ref, top: r.top + (window.scrollY || 0), left: r.left, vtop: r.top, vbottom: r.bottom,
+                 vleft: r.left, vright: r.right, width: r.width, height: r.height });
+    }
+    return out;
+  }
+  /** The place on THIS page of the frame the shell tagged ``prefix`` (its content box), or null. */
+  function frameBox(prefix) {
+    const f = qsaDeep(`iframe[data-sj-frame="${CSS.escape(String(prefix || ""))}"], frame[data-sj-frame="${CSS.escape(String(prefix || ""))}"]`)[0];
+    if (!f) return null;
+    const r = topRect(f);
+    let pl = 0, pt = 0;
+    try { const g = getComputedStyle(f); pl = parseFloat(g.paddingLeft) || 0; pt = parseFloat(g.paddingTop) || 0; } catch (e) { /* fine */ }
+    const left = r.left + (f.clientLeft || 0) + pl, top = r.top + (f.clientTop || 0) + pt;
+    return { left, top, width: f.clientWidth, height: f.clientHeight, abs: top + (window.scrollY || 0),
+             vh: window.innerHeight || 800, vw: window.innerWidth || 1200 };
+  }
+  /** Draw the pointer on this page for a box a frame measured in its own view. */
+  function pointFrom(prefix, rect, label, opts) {
+    const P = window.TailorPointer;
+    if (!P) return false;
+    if (opts && opts.hide) { P.hide(); return true; }
+    const b = frameBox(prefix);
+    if (!b || !rect) return false;
+    // only the part of the box the frame shows: a box scrolled out of the frame is not pointed at
+    if (rect.bottom < 0 || rect.top > b.height || rect.right < 0 || rect.left > b.width) return false;
+    const r = { left: rect.left + b.left, right: rect.right + b.left, top: rect.top + b.top, bottom: rect.bottom + b.top,
+                width: rect.width, height: rect.height };
+    return !!P.point(r, label, opts || {});
+  }
+  /** In a frame: the pointer's moves are kept for the shell (it draws them on the top page), never
+   * drawn inside the frame, where the frame's edges would cut it off. The site-window checks
+   * (coverOf, openModal) stay the overlay's own. */
+  function relayPointer() {
+    const P = window.TailorPointer;
+    if (!P || P.__relay) return !!P;
+    let seq = 0;
+    const keep = (m) => { try { window.__sjPoint = Object.assign({ seq: ++seq }, m); } catch (e) { /* fine */ } return true; };
+    const boxOf = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height });
+    const at0 = P.at;
+    P.at = (el, label, opts) => {
+      try {
+        if (!el || !el.getBoundingClientRect) return false;
+        const cov = P.coverOf ? P.coverOf(el) : null;
+        if (cov) {
+          const h = (P.headOf && P.headOf(cov)) || cov, t = P.titleOf ? P.titleOf(cov) : "";
+          return keep({ rect: boxOf(h.getBoundingClientRect()), label: t ? "Reading: " + t : "Reading the window on the page", opts: opts || {} });
+        }
+        return keep({ rect: boxOf(el.getBoundingClientRect()), label, opts: opts || {} });
+      } catch (e) { return false; }
+    };
+    P.point = (rect, label, opts) => keep({ rect: boxOf(rect), label, opts: opts || {} });
+    P.hide = () => keep({ hide: true });
+    P.state = () => null;
+    P.__relay = true;
+    P.__at0 = at0;
+    return true;
+  }
+  /** The pointer move a frame kept since ``seq`` (relayPointer), its latest needs line, and (2026-11-26)
+   * what its form says after the person pressed its Submit: when they did (``submitAt``), how many
+   * boxes held an answer then, how many hold one now, and whether the site confirms it. */
+  function relayTake(seq) {
+    const p = window.__sjPoint, n = window.__sjNeedsLast;
+    const stamp = submitStamp();
+    const out = { point: p && p.seq > (Number(seq) || 0) ? p : null, needs: n || null, submitAt: stamp.at };
+    if (out.submitAt) {
+      out.filledAtSubmit = stamp.filled;
+      out.submitUrl = String(window.__sjSubmitUrl || "");
+      out.submitInFrame = !!window.__sjSubmitInFrame;
+      try { out.form = formFill(); } catch (e) { out.form = null; }
+      try { out.success = !!detectSuccess(); } catch (e) { out.success = false; }
+    }
+    return out;
+  }
+  /** {total, filled}: the form's answerable boxes, and how many hold an answer (text, a pick). */
+  function formFill() {
+    const all = extractForm({}), empty = extractForm({ onlyEmpty: true });
+    return { total: all.length, filled: Math.max(0, all.length - empty.length) };
+  }
+  // (2026-11-26) The person pressed the form's Submit inside a frame (a real click or the form's own
+  // submit): stamped for the shell, which then watches the frame for the site taking it (its
+  // confirmation, or the same frame back to an empty form: Instacart's Greenhouse embed).
+  // The stamp is also kept in the frame's own session storage, so a frame that loads its page again
+  // right after the Submit still says it was pressed (``fresh``: a new run starts without one).
+  const SUBMIT_KEY = "__sjFrameSubmit";
+  function submitStamp() {
+    let at = Number(window.__sjSubmitAt || 0), filled = Number(window.__sjFilledAtSubmit || 0);
+    try {
+      const k = JSON.parse(sessionStorage.getItem(SUBMIT_KEY) || "null");
+      if (k && Number(k.at) > at) { at = Number(k.at); filled = Number(k.filled) || 0; }
+    } catch (e) { /* storage off */ }
+    return { at, filled };
+  }
+  function armFrameSubmitWatch(fresh) {
+    if (fresh) {
+      window.__sjSubmitAt = 0; window.__sjFilledAtSubmit = 0; window.__sjSubmitUrl = ""; window.__sjSubmitInFrame = false;
+      try { sessionStorage.removeItem(SUBMIT_KEY); } catch (e) { /* storage off */ }
+    }
+    // (2026-11-26) every document of the form: this one and each same-origin frame (iCIMS's form
+    // lives in one, reached by the top page's engine); ``submitInFrame`` says the Submit was in a frame
+    let n = 0;
+    for (const doc of searchRoots().filter((r) => r && r.nodeType === 9)) {
+      if (doc.__sjFrameSubmitArmed) continue;
+      doc.__sjFrameSubmitArmed = true;
+      n++;
+      const stamp = () => {
+        try { window.__sjFilledAtSubmit = formFill().filled; } catch (e) { window.__sjFilledAtSubmit = 0; }
+        window.__sjSubmitAt = Date.now();
+        window.__sjSubmitInFrame = doc !== document;
+        try { window.__sjSubmitUrl = String(doc.URL || ""); } catch (e) { window.__sjSubmitUrl = ""; }
+        try { sessionStorage.setItem(SUBMIT_KEY, JSON.stringify({ at: window.__sjSubmitAt, filled: window.__sjFilledAtSubmit })); } catch (e) { /* storage off */ }
+      };
+      doc.addEventListener("submit", (e) => { if (e.isTrusted) stamp(); }, true);
+      doc.addEventListener("click", (e) => { try { if (e.isTrusted && submitLike(e.target)) stamp(); } catch (err) { /* fine */ } }, true);
+    }
+    return n > 0;
+  }
+  /** A ref's box in this document's own view (for the shell's in-sight check from the top page). */
+  function refRect(ref) {
+    const el = elByRef(ref);
+    if (!el) return null;
+    const r = visibleBox(el).getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
   }
 
   // (2026-11-26) What the form's choice questions hold the moment the person presses the site's
@@ -5093,6 +5290,101 @@ function qsaSafe(sel, root) {
       } catch (e2) { /* fine */ }
     }, true);
     return true;
+  }
+
+  // ---- (2026-11-26, the owner) The final check before "Check it, then submit" -----------------
+  // Read every answerable field of this document (and its same-origin frames) fresh from the page:
+  // required by the form (required, aria-required, an asterisk label, or the shell's reading of
+  // Chrome's accessibility tree: data-sj-ax-required), what it holds (text, a pick, a tick in its
+  // group, a file), and whether the site marks it wrong (aria-invalid, the browser's own check, an
+  // error line tied to it). A required field that is empty or wrong becomes a needs-you item; a file
+  // box with more than one file and a one-answer group with more than one tick are flagged too. The
+  // end message is made from this alone: "Filled N" counts the fields that hold an answer NOW.
+  function requiredNow(el, f) {
+    if (f && f.required) return true;
+    try {
+      if (el.required || el.getAttribute("aria-required") === "true" || el.getAttribute("data-sj-ax-required") === "1") return true;
+      const g = el.closest && el.closest("[role='radiogroup'], [role='group'], fieldset");
+      if (g && (g.getAttribute("aria-required") === "true" || g.getAttribute("data-sj-ax-required") === "1")) return true;
+      return /\*\s*$/.test(String(rawLabel(el) || widgetLabel(el) || "").trim());
+    } catch (e) { return false; }
+  }
+  function holdsAnswer(el, f) {
+    const t = tagOf(el), type = String(el.type || "").toLowerCase();
+    if (t === "INPUT" && type === "file") return !!(el.files && el.files.length) || (deleteButtons(uploadArea(el) || el.parentElement || el).length > 0);
+    if (t === "INPUT" && type === "radio") {
+      const root = rootOf(el);
+      return el.name ? qsaSafe(`input[type="radio"][name="${CSS.escape(el.name)}"]`, root).some((r) => r.checked) : el.checked;
+    }
+    if (t === "INPUT" && type === "checkbox") return el.checked || checkboxGroup(el).some((c) => c.checked);
+    if (el.getAttribute && el.getAttribute("role") === "checkbox") return el.getAttribute("aria-checked") === "true";
+    if (el.getAttribute && el.getAttribute("role") === "radiogroup") return !!qsaSafe("[role='radio'][aria-checked='true']", el).length;
+    if (t === "SELECT") {
+      const o = el.options[el.selectedIndex];
+      return !!(o && String(o.value || "").trim() && !/^(select|choose|--|please)/i.test(String(o.text || "").trim()));
+    }
+    if (isWidgetInput(el) || (el.getAttribute && el.getAttribute("role") === "combobox")) return !!(comboValue(el) || chosenPills(el).length);
+    return !!String(el.value || "").trim();
+  }
+  function errorTied(el) {
+    try {
+      if (el.getAttribute("aria-invalid") === "true") return true;
+      const ids = [el.getAttribute("aria-errormessage"), el.getAttribute("aria-describedby")].filter(Boolean).join(" ").split(/\s+/);
+      for (const id of ids) {
+        const n = id && byId(el, id);
+        if (n && shown(n) && /error|invalid|required|must|please/i.test((n.className || "") + " " + (n.getAttribute("role") || "") + " " + (n.textContent || ""))) return true;
+      }
+    } catch (e) { /* fine */ }
+    return false;
+  }
+  function verifyForm() {
+    return withRoots(() => {
+      const out = { needs: [], invalid: [], dup_uploads: [], multi_ticked: [], filled: 0, total: 0 };
+      const seen = new Set();
+      for (const f of extractForm({})) {
+        const el = elByRef(f.ref);
+        if (!el || seen.has(el)) continue;
+        seen.add(el);
+        if (!shown(visibleBox(el)) && !(tagOf(el) === "INPUT" && /^file$/i.test(el.type || ""))) continue;
+        const has = holdsAnswer(el, f);
+        out.total++;
+        if (has) out.filled++;
+        const label = shortName(el) || cleanLabel(f.label || "");
+        if (requiredNow(el, f) && !has) { out.needs.push({ ref: f.ref, label }); continue; }
+        let bad = false;
+        try { bad = errorTied(el) || (has && typeof el.checkValidity === "function" && !el.checkValidity()); } catch (e) { bad = false; }
+        if (bad) out.invalid.push({ ref: f.ref, label });
+        if (tagOf(el) === "INPUT" && /^file$/i.test(el.type || "") && !el.multiple) {
+          const n = deleteButtons(uploadArea(el) || el.parentElement || el).length;
+          if (n > 1) out.dup_uploads.push({ ref: f.ref, label, files: n });
+        }
+      }
+      for (const r of searchRoots()) {
+        for (const g of qsaSafe("[role='radiogroup']", r)) {
+          const on = qsaSafe("[role='radio'][aria-checked='true']", g);
+          if (on.length > 1) out.multi_ticked.push({ label: cleanText(g.getAttribute("aria-label") || g.textContent || "").slice(0, 70) });
+        }
+      }
+      return out;
+    });
+  }
+  /** The check, and every required field it found empty or wrong outlined as needs-you (ring),
+   * in page order. {needs: n, filled, total, items: [labels], invalid, dup_uploads, multi_ticked}. */
+  function verifyAndMark() {
+    const v = verifyForm();
+    for (const x of v.needs) markNeeds(x.ref);
+    for (const [list, kind] of [[v.invalid, "invalid"], [v.dup_uploads, "dup"]]) {
+      for (const x of list) {
+        const el = elByRef(x.ref);
+        if (!el) continue;
+        el.__sjGate = kind;
+        try { glow(el, false); } catch (e) { /* fine */ }
+        if (!_needs.includes(x.ref)) _needs.push(x.ref);
+      }
+    }
+    const items = v.needs.concat(v.invalid, v.dup_uploads).map((x) => x.label).concat(v.multi_ticked.map((x) => x.label));
+    return { needs: items.length, filled: v.filled, total: v.total, items: items.slice(0, 20),
+             invalid: v.invalid.length, dup_uploads: v.dup_uploads.length, multi_ticked: v.multi_ticked.length };
   }
 
   function leftover() {
@@ -5153,7 +5445,7 @@ function qsaSafe(sel, root) {
     // (2026-11-26) what the site's own parse or draft filled, checked against the profile
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
-    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
+    orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, topRect, setSight, verifyForm, verifyAndMark, armFrameSubmitWatch, formFill, refPlaces, frameBox, pointFrom, relayPointer, relayTake, refRect, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
     siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike, needsNext, needsKind,
     // (2026-11-26) the apply agent's guided ask: what a field holds, the pointer on it, then Submit
     fieldValue, pointNeeds, allDone,

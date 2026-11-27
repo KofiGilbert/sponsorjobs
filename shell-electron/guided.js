@@ -39,23 +39,40 @@ const q = (v) => JSON.stringify(v);
 //     ("Filling: <field>"), once;
 //   * a window that opens while walking (Lam's notice comes up when the resume goes in) stops the
 //     walk at once, the same way.
+//
+// (2026-11-26) Forms inside frames another origin serves (iCIMS and similar): ``deps.frames`` is
+// one context per such frame, { prefix, js(expr, ms) } (shell-electron/frames.js walkContexts),
+// the engine already loaded in it and its refs carrying the frame's prefix. Their fields join the
+// same walk: read and planned with the top page's, walked in ONE top-to-bottom order (a frame's
+// fields sit where the frame sits on the page), each filled in its own frame with the same steps,
+// glow and needs-you outline; the ONE pointer is drawn on the top page, placed through the frame's
+// own place there (TailorAutofill.frameBox / pointFrom). A frame's field below the top page's fold
+// is scrolled into the person's sight first. Same-origin frames are reached by the top page's own
+// engine (its searchRoots). Nothing is ever submitted or filled out of sight.
 async function walk(deps) {
   const t = Object.assign({}, TIMING, deps.timing || {});
   const wait = deps.wait || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const js = deps.js;
+  const top = { prefix: "", js, top: true };
+  const frames = (deps.frames || []).filter((f) => f && f.prefix && typeof f.js === "function");
+  const ctxs = [top, ...frames];
+  const ctxOf = (ref) => frames.find((f) => String(ref || "").startsWith(f.prefix)) || top;
   const done = deps.done || new Set();
   // the boxes left for the person: not walked again on this page, unless the caller asks for them
   // again (a rule may answer one now: the agent, before it stops on a notice, 2026-11-26)
   const asked = deps.asked || new Set();
   const out = { filled: 0, uploaded: 0, needs: [], cost: 0, files: [], walked: 0, order: [], modal: "" };
-  const modalNow = async () => { const m = await js("window.TailorAutofill.siteModal()", 3000); return (m && m.title) || ""; };
+  const modalNow = async () => {
+    for (const c of ctxs) { const m = await c.js("window.TailorAutofill.siteModal()", 3000); if (m && m.title) return m.title; }
+    return "";
+  };
   const stopFor = async (title) => { out.modal = title; return out; };
   { const m = await modalNow(); if (m) return stopFor(m); }
-  await js("window.TailorAutofill.armSubmitGuard()", 2000);      // no key or script ever sends the form
-  const upload = async (op, uploadPath) => {
-    const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
+  for (const c of ctxs) await c.js("window.TailorAutofill.armSubmitGuard()", 2000);   // no key or script ever sends the form
+  const upload = async (op, uploadPath, c) => {
+    const rep = await c.js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
     if (rep && (rep.uploads || []).length && deps.upload) {
-      const u = await deps.upload(rep.uploads, (r) => uploadPath.get(r) || "");
+      const u = await deps.upload(rep.uploads, (r) => uploadPath.get(r) || "", c.top ? null : c);
       out.uploaded += (u && u.n) || 0;
       for (const x of (u && u.seen) || []) out.files.push({ kind: op.from === "letter" ? "cover_letter" : "resume", path: x.path, how: x.how, earlier: !!x.earlier });
     }
@@ -65,8 +82,12 @@ async function walk(deps) {
   // opens on an answer), at most twice more.
   for (let round = 0; round < 3; round++) {
     if (deps.alive && !deps.alive()) break;
-    const got = await js(`window.TailorAutofill.extractFormAsync(${q({ onlyEmpty: round > 0, budgetMs: 15000 })})`, 20000);
-    const fields = (Array.isArray(got) ? got : []).filter((f) => f && f.ref && !done.has(f.ref) && !asked.has(f.ref));
+    let got = [];
+    for (const c of ctxs) {
+      const g = await c.js(`window.TailorAutofill.extractFormAsync(${q({ onlyEmpty: round > 0, budgetMs: 15000 })})`, 20000);
+      if (Array.isArray(g)) got = got.concat(g);
+    }
+    const fields = got.filter((f) => f && f.ref && !done.has(f.ref) && !asked.has(f.ref));
     if (!fields.length) break;
     const plan = await deps.plan(fields);
     if (deps.notePlanned) deps.notePlanned(fields);
@@ -80,26 +101,49 @@ async function walk(deps) {
     const uploadPath = new Map(ops.filter((o) => o.op === "upload" && o.path).map((o) => [o.ref, o.path]));
     const byRef = new Map();
     for (const o of ops) if (!byRef.has(o.ref) && !done.has(o.ref)) byRef.set(o.ref, o);
-    const order = await js(`window.TailorAutofill.orderRefs(${q([...byRef.keys(), ...left.filter((r) => !byRef.has(r) && !done.has(r))])})`);
-    const refs = Array.isArray(order) ? order : [];
+    const refs = await orderAll(js, ctxs, ctxOf, [...byRef.keys(), ...left.filter((r) => !byRef.has(r) && !done.has(r))]);
     if (!refs.length) break;
     // what the site already put in the boxes we fill goes in one quick reset: the form looks empty,
     // then each box is filled once, in order (never a visible delete then type)
-    if (round === 0) await js(`window.TailorAutofill.resetBoxes(${q([...byRef.keys()].filter((r) => byRef.get(r).op !== "upload"))})`, 4000);
+    if (round === 0) {
+      for (const c of ctxs) {
+        const mine = [...byRef.keys()].filter((r) => byRef.get(r).op !== "upload" && ctxOf(r) === c);
+        if (mine.length) await c.js(`window.TailorAutofill.resetBoxes(${q(mine)})`, 4000);
+      }
+    }
     for (const ref of refs) {
       if (deps.alive && !deps.alive()) break;
       { const m = await modalNow(); if (m) return stopFor(m); }
       const t0 = Date.now();
-      const w = await js(`window.TailorAutofill.walkTo(${q(ref)})`, 3000);
+      const c = ctxOf(ref);
+      const cjs = c.js;
+      if (!c.top) await syncSight(js, c);               // what of the frame the person sees now
+      let w = await cjs(`window.TailorAutofill.walkTo(${q(ref)})`, 3000);
       if (!w || !w.ok) { done.add(ref); continue; }
       if (w.covered) return stopFor(w.covered);
+      if (!c.top) {
+        // a frame cannot tell whether its field is in the person's sight (the top page may be
+        // scrolled away from the frame): measured from the top page, scrolled there when it is not
+        // the frame's own scroll moved the top page smoothly: the pointer waits until it is still
+        if (w.scrolled) await settledFrame(js, c);
+        const sight = await frameSight(js, c, ref);
+        if (sight === false) {
+          const w2 = await cjs(`window.TailorAutofill.walkTo(${q(ref)}, { force: true })`, 3000);
+          if (w2 && w2.ok) w = Object.assign({}, w, { scrolled: true });
+          await settledFrame(js, c);
+        }
+      }
       const name = w.label || "this field";
-      const pt = (label) => js(`window.TailorAutofill.pointAt(${q(ref)}, ${q(label)})`, 3000);
+      const pt = c.top ? (label) => js(`window.TailorAutofill.pointAt(${q(ref)}, ${q(label)})`, 3000)
+                       : async (label) => {
+                         const r = await cjs(`window.TailorAutofill.refRect(${q(ref)})`, 2000);
+                         return js(`window.TailorAutofill.pointFrom(${q(c.prefix)}, ${q(r)}, ${q(label)}, { now: true })`, 3000);
+                       };
       const op = byRef.get(ref);
       if (!op) {
         // the person's: only when it is still empty (a box the site filled is left as it is)
         asked.add(ref);
-        if (!(await js(`window.TailorAutofill.markNeeds(${q(ref)}, ${q(suggest.get(ref) || "")})`, 3000))) continue;
+        if (!(await cjs(`window.TailorAutofill.markNeeds(${q(ref)}, ${q(suggest.get(ref) || "")})`, 3000))) continue;
         if (w.scrolled) { await pt("Scrolling"); await wait(t.scroll); }
         await pt("Needs you: " + name);
         out.needs.push(name);
@@ -111,26 +155,26 @@ async function walk(deps) {
       out.order.push(ref);
       i++;
       if (deps.say) deps.say({ guide: { i, n: i + Math.max(0, refs.length - refs.indexOf(ref) - 1) }, message: "Filling " + i });
-      await js(`window.TailorAutofill.flash(${q(ref)}, true)`, 2000);
+      await cjs(`window.TailorAutofill.flash(${q(ref)}, true)`, 2000);
       if (op.op === "upload") {
         await pt(op.from === "letter" ? "Uploading cover letter" : "Uploading resume");
-        await upload(op, uploadPath);
+        await upload(op, uploadPath, c);
       } else {
         await pt("Clicking: " + name);
         await wait(t.move);
         await pt("Filling: " + name);
         let typed = false;
         if (op.op === "fill" && op.text) {
-          typed = (await js(`window.TailorAutofill.typeVisibly(${q(ref)}, ${q(String(op.text))}, ${q({ perChar: t.perChar, burst: t.burst })})`, 8000)) === true;
+          typed = (await cjs(`window.TailorAutofill.typeVisibly(${q(ref)}, ${q(String(op.text))}, ${q({ perChar: t.perChar, burst: t.burst })})`, 8000)) === true;
         }
         if (typed) out.filled++;
         else {
-          const rep = await js(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
+          const rep = await cjs(`window.TailorAutofill.applyOpsAsync(${q([op])}, { budgetMs: 8000 })`, 10000);
           out.filled += (rep && rep.filled) || 0;
         }
-        await js("window.TailorAutofill.tidyMenus()", 4000);    // its list closed before the next field
+        await cjs("window.TailorAutofill.tidyMenus()", 4000);    // its list closed before the next field
       }
-      await js(`window.TailorAutofill.flash(${q(ref)}, false)`, 2000);
+      await cjs(`window.TailorAutofill.flash(${q(ref)}, false)`, 2000);
       done.add(ref);
       out.walked++;
       const spent = Date.now() - t0;
@@ -142,7 +186,72 @@ async function walk(deps) {
   // the walk is over: the pointer goes (a pointer left behind sits over the wrong field once the
   // page moves); the run's end puts it where the person acts (guideEnd)
   await js("window.TailorPointer && window.TailorPointer.hide()", 2000);
+  out.frames = frames.length;
   return out;
 }
 
-module.exports = { walk, TIMING };
+// ONE top-to-bottom order over the top page and its frames: a top-page field by its place on the
+// page, a frame's field by the frame's place on the page plus the field's place in the frame. A
+// frame the top page cannot place (not tagged) comes after the page, in its own order.
+async function orderAll(js, ctxs, ctxOf, refs) {
+  const keyed = [];
+  for (const c of ctxs) {
+    const mine = refs.filter((r) => ctxOf(r) === c);
+    if (!mine.length) continue;
+    const places = await c.js(`window.TailorAutofill.refPlaces(${q(mine)})`, 4000);
+    let base = 0;
+    if (!c.top) {
+      const b = await js(`window.TailorAutofill.frameBox(${q(c.prefix)})`, 2000);
+      base = b && Number.isFinite(b.abs) ? b.abs : 1e7;
+    }
+    for (const p of Array.isArray(places) ? places : []) keyed.push({ ref: p.ref, y: base + p.top, x: p.left || 0 });
+  }
+  keyed.sort((a, b) => (Math.abs(a.y - b.y) > 4 ? a.y - b.y : a.x - b.x));
+  return keyed.map((k) => k.ref);
+}
+
+// Is a frame's field in the person's sight on the top page? true / false, or null when it cannot
+// be told (the frame is not placed on the top page).
+async function frameSight(js, c, ref) {
+  const b = await js(`window.TailorAutofill.frameBox(${q(c.prefix)})`, 2000);
+  const r = await c.js(`window.TailorAutofill.refRect(${q(ref)})`, 2000);
+  if (!b || !r) return null;
+  const top = b.top + r.top, bottom = b.top + r.bottom;
+  return top >= 60 && bottom <= b.vh - 60 && r.top >= 0 && r.bottom <= b.height;
+}
+// Tell a frame which part of it the person sees on the top page (in the frame's own view), so its
+// own "in view" (the walk, the needs-you Enter flow, Next / Previous) scrolls to a field the top
+// page has scrolled away from. false when the frame cannot be placed on the top page.
+async function syncSight(js, c) {
+  const b = await js(`window.TailorAutofill.frameBox(${q(c.prefix)})`, 2000);
+  if (!b) { await c.js("window.TailorAutofill.setSight(null)", 1500); return false; }
+  const sight = { top: Math.max(0, -b.top), bottom: Math.max(0, Math.min(b.height, b.vh - b.top)) };
+  await c.js(`window.TailorAutofill.setSight(${q(sight)})`, 1500);
+  return true;
+}
+// A frame's field the person must see now (Next / Previous, the end of a run): when the top page
+// has it out of sight, the top page scrolls so the field sits in the middle of the window.
+async function bringIntoSight(js, c, ref) {
+  if (!ref) return false;
+  if ((await frameSight(js, c, ref)) !== false) return false;
+  const b = await js(`window.TailorAutofill.frameBox(${q(c.prefix)})`, 2000);
+  const r = await c.js(`window.TailorAutofill.refRect(${q(ref)})`, 2000);
+  if (!b || !r) return false;
+  const dy = Math.round(b.top + (r.top + r.bottom) / 2 - b.vh / 2);
+  await js(`(window.scrollBy({ top: ${dy}, behavior: "instant" }), true)`, 2000);
+  await syncSight(js, c);
+  return true;
+}
+// Wait until the top page stops moving under a frame (a smooth scroll), 1.5 s at most.
+async function settledFrame(js, c) {
+  let last = null;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    const b = await js(`window.TailorAutofill.frameBox(${q(c.prefix)})`, 2000);
+    const tp = b ? Math.round(b.top) : null;
+    if (last !== null && tp === last) return;
+    last = tp;
+  }
+}
+
+module.exports = { walk, TIMING, orderAll, syncSight, bringIntoSight, frameSight };

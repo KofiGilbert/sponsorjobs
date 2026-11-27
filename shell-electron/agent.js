@@ -2695,7 +2695,7 @@ function createAgent(deps) {
             dlog("step " + step + " cover letter:", cl);
             if (cl && Number(cl.cost) > 0) { spent += Number(cl.cost); feed.cost = spent; }
             if (cl && cl.ok) {
-              const again = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true }), FILL_MS, "fill")
+              const again = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true, answers: true, pointer: !quiet, guided: !quiet }), FILL_MS, "fill")
                 .catch((e) => { if (e && e.stopped) throw e; return null; });
               noteFill(again);
               if (again && again.ok) rep = Object.assign({}, again, { filled: ((rep && rep.ok && rep.filled) || 0) + (again.filled || 0),

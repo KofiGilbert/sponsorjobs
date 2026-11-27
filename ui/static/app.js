@@ -1235,12 +1235,30 @@
     if (!window.tailorShell || !window.tailorShell.assistApply) return null;
     // (2026-11-26, the owner) a job in a country the saved work authorization does not cover is
     // said plainly BEFORE anything is filled, and the person decides
-    if (opts && opts.recordId != null && !opts.here && !(await countryGo(opts.recordId))) return { ok: false, reason: "declined" };
-    try { return await window.tailorShell.assistApply(opts); } catch { return null; }
+    // (2026-11-26) Autofill on the page already open (the Browser bar, the Orb) asks too, once per
+    // application and page, reading where the job is from that page when the record does not say
+    if (opts && opts.recordId != null && !(await countryGo(opts.recordId, !!opts.here))) return { ok: false, reason: "declined" };
+    let r = null;
+    try { r = await window.tailorShell.assistApply(opts); } catch { r = null; }
+    // the job this application was just filled on (its page in the Browser), see jobKey
+    try { if (opts && opts.recordId != null && String(FILL_CTX.id) === String(opts.recordId)) FILL_CTX.job = jobKey(($("#bbUrl") || {}).value || ""); } catch { /* fine */ }
+    return r;
   }
-  async function countryGo(recordId) {
+  const COUNTRY_ASKED = new Set();
+  async function countryGo(recordId, here) {
+    let page = null;
+    if (here && window.tailorShell.readPage) { try { page = await window.tailorShell.readPage(); } catch { page = null; } }
+    const key = recordId + "|" + (page && page.url ? String(page.url).split("#")[0] : "");
+    if (here && COUNTRY_ASKED.has(key)) return true;           // the next page of the same application
+    COUNTRY_ASKED.add(key);
     let note = "";
-    try { note = ((await (await fetch("/api/autoapply/country-note?id=" + encodeURIComponent(recordId))).json()) || {}).note || ""; } catch { note = ""; }
+    try {
+      const r = page && page.html && !page.linkedin
+        ? await fetch("/api/autoapply/country-note", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                       body: JSON.stringify({ id: recordId, url: page.url, html: page.html }) })
+        : await fetch("/api/autoapply/country-note?id=" + encodeURIComponent(recordId));
+      note = ((await r.json()) || {}).note || "";
+    } catch { note = ""; }
     if (!note) return true;
     if (window.Panel) window.Panel.open("browser");          // where the line (or the Orb's bubble) shows
     return new Promise((resolve) => {
@@ -1350,7 +1368,8 @@
   // pointer and the page go there), Done; the long text only under Details.
   function guideLine(r) {
     const g = (r && r.guide) || null;
-    const filled = Number((r && r.filled) || 0) + (r && r.resume_attached ? 1 : 0);
+    // (2026-11-26) the final check's count when there is one: fields that hold an answer NOW
+    const filled = g && g.verified != null ? Number(g.verified) : Number((r && r.filled) || 0) + (r && r.resume_attached ? 1 : 0);
     const needs = g ? Number(g.needs || 0) : ((r && r.left) || []).length;
     // (2026-11-26, the owner) the bar names the same item the pointer is on
     if (needs && g && g.label) return needsLine(needs, g.label);
@@ -1441,9 +1460,28 @@
   // (2026-11-24) Assisted apply: the application being filled (its record and resume), so Fill
   // this page on the Browser bar fills the next page of the same application after the person
   // signs in or clicks Next on the site. Only while the apply agent is off; it runs its own bar.
-  const FILL_CTX = { id: null, cv: "" };
+  const FILL_CTX = { id: null, cv: "", job: "" };
+  // (2026-11-26, Instacart) The application being filled belongs to ONE job: when the Browser goes to
+  // another job (another site, or the same site's page for another posting: its gh_jid, jobId...),
+  // it is let go, so Autofill there never fills (and marks) the last job's application. The next
+  // page of the same application keeps it.
+  const JOB_PARAMS = ["gh_jid", "jobid", "job_id", "jid", "jobreqid", "requisitionid", "token"];
+  function jobKey(url) {
+    try {
+      const u = new URL(url);
+      const q = [...u.searchParams].filter(([k]) => JOB_PARAMS.includes(k.toLowerCase())).map(([k, v]) => k.toLowerCase() + "=" + v).sort().join("&");
+      return u.hostname.replace(/^www\./, "") + "|" + q;
+    } catch { return ""; }
+  }
+  document.addEventListener("sj:pane-url", (e) => {
+    const k = jobKey((e.detail && e.detail.url) || "");
+    if (!k) return;
+    const [h1, q1] = String(FILL_CTX.job || "").split("|"), [h2, q2] = k.split("|");
+    const other = !!FILL_CTX.job && (h1 !== h2 || (q1 && q2 && q1 !== q2));      // another site, or another posting's id
+    if (FILL_CTX.id != null && other) { FILL_CTX.id = null; FILL_CTX.cv = ""; FILL_CTX.job = ""; }
+  });
   function fillCtx(id, cv) {
-    FILL_CTX.id = id == null ? null : id; FILL_CTX.cv = cv || "";
+    FILL_CTX.id = id == null ? null : id; FILL_CTX.cv = cv || ""; FILL_CTX.job = "";
     const b = $("#bbFillHere");
     if (b && !APPLY_AGENT && window.tailorShell && window.tailorShell.assistApply) b.hidden = false;
   }
@@ -17316,6 +17354,7 @@
       if (act === "open") open("browser");
       else if (act === "close") close();
       if (document.activeElement !== urlBox) urlBox.value = st.url || "";
+      document.dispatchEvent(new CustomEvent("sj:pane-url", { detail: { url: st.url || "" } }));
       back.disabled = !st.canGoBack;
       fwd.disabled = !st.canGoForward;
     });

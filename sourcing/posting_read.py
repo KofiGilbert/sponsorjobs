@@ -328,8 +328,21 @@ def _posting_text(posting: dict) -> tuple[str, str, str]:
         a = (loc or {}).get("address") if isinstance(loc, dict) else None
         if isinstance(a, dict):
             where.append(", ".join(str(a.get(k)) for k in ("addressLocality", "addressRegion") if a.get(k)))
+    # (2026-11-26) the country, spelled out: a remote job says it only in applicantLocationRequirements
+    # ({"@type": "Country", "name": "CA"}: Canada, never California)
+    from .careersite import _country
+    for loc in locs:
+        a = (loc or {}).get("address") if isinstance(loc, dict) else None
+        cc = _country(a.get("addressCountry")) if isinstance(a, dict) else ""
+        if cc and where and cc not in where[0]:
+            where[0] = f"{where[0]}, {cc}" if where[0] else cc
+    req = posting.get("applicantLocationRequirements")
+    req = req if isinstance(req, list) else [req] if req else []
+    countries = [c for c in (_country(r.get("name") if isinstance(r, dict) else r) for r in req) if c]
     if not where and str(posting.get("jobLocationType") or "").upper() == "TELECOMMUTE":
-        where = ["Remote"]
+        where = ["Remote" + (f" ({', '.join(countries)})" if countries else "")]
+    elif not where and countries:
+        where = [", ".join(countries)]
     return str(company or ""), "; ".join(w for w in where if w), html_to_text(str(posting.get("description") or ""))
 
 

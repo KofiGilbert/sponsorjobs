@@ -1,0 +1,38 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Application (inside the frame)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script><style>.gap{height:600px}</style></head>
+<body>
+<!-- The application inside the frame: text boxes at the top, a list far below, a question only the
+     person can answer, and Submit at the bottom. Submitting (by Enter or a click) is recorded. -->
+<form id="application_form" action="javascript:void(0)">
+  <div class="field"><label for="first">First Name *</label><input type="text" id="first" aria-required="true"></div>
+  <div class="field"><label for="last">Last Name *</label><input type="text" id="last" aria-required="true"></div>
+  <div class="field"><label for="email">Email *</label><input type="email" id="email" aria-required="true"></div>
+  <div class="gap"></div>
+  <div id="w1"></div>
+  <div class="gap"></div>
+  <div class="field"><label for="why">Why do you want to work here? *</label><input type="text" id="why" aria-required="true"></div>
+  <button type="submit" id="submit">Submit Application</button>
+</form>
+<script>
+  // kept on the page itself (not a script variable), so any script world can read it
+  // ?after= what the site does once the application is sent: "reset" draws the empty form again in
+  // place (a single-page app), "reload" loads the same page again (Instacart's Greenhouse embed came
+  // back to a blank form), "thanks" shows a confirmation, "error" keeps the answers and says one is
+  // wrong (not sent). Nothing here is a real site.
+  const AFTER = new URLSearchParams(location.search).get("after") || "";
+  const AUTH = { id: "auth-q", label: "Are you legally authorized to work in the United States? *", required: true, options: ["Yes", "No"] };
+  const form = document.getElementById("application_form");
+  form.addEventListener("submit", (e) => {
+    e.preventDefault(); document.body.dataset.submitted = String(Number(document.body.dataset.submitted || 0) + 1);
+    setTimeout(() => {
+      if (AFTER === "reset") { form.reset(); document.getElementById("w1").innerHTML = ""; window.fx.auth = window.FixtureWidgets.ReactSelect(document.getElementById("w1"), AUTH); }
+      else if (AFTER === "reload") location.reload();
+      else if (AFTER === "thanks") document.body.innerHTML = "<h2>Thank you " + "for applying!</h2><p>Your application has " + "been submitted.</p>";   // split: a script's own words are page text
+      else if (AFTER === "error") { const p = document.createElement("p"); p.className = "error"; p.textContent = "Please enter a valid email address."; form.prepend(p); }
+    }, 100);
+  });
+  window.fx = { auth: window.FixtureWidgets.ReactSelect(document.getElementById("w1"), AUTH) };
+  // the test reads the same from the page's words (tests/js/test_frame_walk.js READ)
+</script>
+</body></html>

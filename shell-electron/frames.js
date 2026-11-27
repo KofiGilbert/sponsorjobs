@@ -141,6 +141,87 @@ function routeOps(ops, ctxs) {
   return { main, byFrame };
 }
 
+// ---- (2026-11-26) The guided walk inside frames ----------------------------------------------
+// The walk (guided.js) fills a frame's fields in sight like the top page's, with ONE pointer drawn
+// on the top page. For that the top page must know where each frame sits: the frame's <iframe>
+// element is tagged data-sj-frame="<prefix>" (DOM.getFrameOwner, asked of the top page's target,
+// which holds the element even when the frame runs in its own process), and the frame's own
+// pointer moves are kept for the shell (TailorAutofill.relayPointer), never drawn in the frame.
+async function tagOwner(cdp, ctx) {
+  const tryTag = async (sessionId) => {
+    const o = await cdp.send("DOM.getFrameOwner", { frameId: ctx.frameId }, sessionId);
+    if (!o || !o.backendNodeId) return false;
+    const n = await cdp.send("DOM.resolveNode", { backendNodeId: o.backendNodeId }, sessionId);
+    const objectId = n && n.object && n.object.objectId;
+    if (!objectId) return false;
+    await cdp.send("Runtime.callFunctionOn", {
+      objectId, functionDeclaration: "function (p) { this.setAttribute('data-sj-frame', p); return true; }",
+      arguments: [{ value: ctx.prefix }], returnByValue: true,
+    }, sessionId);
+    return true;
+  };
+  // the owner lives in the parent: the top page for a frame in the top page's process or its own
+  try { if (await tryTag(undefined)) return true; } catch (e) { /* not the top page's child */ }
+  if (ctx.sessionId) {
+    try { if (await tryTag(ctx.sessionId)) return true; } catch (e) { /* a nested frame: no place on the top page */ }
+  }
+  return false;
+}
+
+// The pointer's overlay in the frame (for its site-window checks), its moves relayed to the shell.
+async function injectPointerRelay(cdp, ctx, pointerSource) {
+  const has = await evalIn(cdp, ctx, "typeof window.TailorPointer === 'object' && !!window.TailorPointer");
+  if (!has) await evalIn(cdp, ctx, String(pointerSource || "") + "\n;0");
+  return !!(await evalIn(cdp, ctx, "window.TailorAutofill.relayPointer()"));
+}
+
+// One walk context per frame, as guided.walk takes them: { prefix, frameId, url, js(expr, ms) }.
+// ``cap(promise, ms)`` bounds each call (fill_keys.capped); a failed call answers null.
+function walkContexts(cdp, ctxs, cap) {
+  const bound = cap || ((p) => p);
+  return (ctxs || []).map((ctx) => ({
+    prefix: ctx.prefix, frameId: ctx.frameId, url: ctx.url, raw: ctx,
+    js: (expr, ms) => bound(evalIn(cdp, ctx, expr).catch(() => null), ms || 15000),
+  }));
+}
+
+// The same frame after its page changed (a reload after the person's Submit, the next page): a new
+// isolated world in it, through the session that reaches it (an out-of-process frame keeps its
+// own target across a reload of the same site). null when the frame is gone.
+async function reopenFrame(cdp, ctx) {
+  try {
+    const r = await cdp.send("Page.createIsolatedWorld", { frameId: ctx.frameId, worldName: WORLD }, ctx.sessionId);
+    if (r && r.executionContextId) return Object.assign({}, ctx, { contextId: r.executionContextId });
+  } catch (e) { /* gone, or moved to another process */ }
+  try {
+    const again = await crossOriginFrames(cdp);
+    return again.find((c) => c.frameId === ctx.frameId) || null;
+  } catch (e) { return null; }
+}
+
+// (2026-11-26, the owner) Chrome's own reading of the page (its accessibility tree) says which
+// fields are required even where the markup does not say it on the field (a custom list whose
+// wrapper carries aria-required): each is tagged data-sj-ax-required for the final check
+// (TailorAutofill.verifyForm). Read only, best effort; returns how many were tagged.
+async function axTagRequired(cdp, sessionId) {
+  let n = 0;
+  try {
+    const t = await cdp.send("Accessibility.getFullAXTree", {}, sessionId);
+    for (const node of (t && t.nodes) || []) {
+      const req = (node.properties || []).some((p) => p && p.name === "required" && p.value && p.value.value === true);
+      if (!req || !node.backendDOMNodeId) continue;
+      try {
+        const r = await cdp.send("DOM.resolveNode", { backendNodeId: node.backendDOMNodeId }, sessionId);
+        const objectId = r && r.object && r.object.objectId;
+        if (!objectId) continue;
+        await cdp.send("Runtime.callFunctionOn", { objectId, functionDeclaration: "function () { if (this.setAttribute) this.setAttribute('data-sj-ax-required', '1'); }" }, sessionId);
+        n++;
+      } catch (e) { /* the node went away */ }
+    }
+  } catch (e) { /* no accessibility domain here */ }
+  return n;
+}
+
 // Electron's webContents.debugger as the adapter above.
 function electronCdp(dbg) {
   const fns = new Set();
@@ -156,4 +237,4 @@ function electronCdp(dbg) {
 }
 
 module.exports = { WORLD, crossOriginFrames, evalIn, injectEngine, injectAgentView, uploadInFrame, routeOps,
-                   prefixFor, electronCdp, originOf };
+                   prefixFor, electronCdp, originOf, tagOwner, injectPointerRelay, walkContexts, reopenFrame, axTagRequired };
