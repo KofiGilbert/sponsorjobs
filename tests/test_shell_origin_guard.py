@@ -30,7 +30,22 @@ def test_main_js_never_compares_the_app_address_by_prefix():
 
 
 def test_main_js_never_allows_a_child_window():
-    assert 'action: "allow"' not in MAIN and "action: 'allow'" not in MAIN
+    """No child windows, with ONE scoped exception (2026-11-27, audit case 9): a job site's own window
+    over an application the person is filling (Dropbox, Google Drive) opens from the PANE (which has
+    no preload) as a sandboxed window with no node, so the form is not replaced. Never from the app
+    window, never while the app drives the page, and it never loads the app's own address."""
+    assert "action: 'allow'" not in MAIN
+    assert MAIN.count('action: "allow"') == 1
+    pane = MAIN[MAIN.index("function ensurePane()"):]
+    pane = pane[:pane.index("\n}\n")]
+    assert 'action: "allow", overrideBrowserWindowOptions: popupPolicy.childOptions(win)' in pane
+    assert 'if (act === "child")' in pane and "appDriving: appDriving()" in pane
+    assert "originGuard.sameOrigin(url, SERVER)" in pane and '"will-redirect"' in pane
+    app_win = MAIN[MAIN.index("win.webContents.setWindowOpenHandler("):]
+    assert 'action: "allow"' not in app_win[:app_win.index("});")]
+    pol = (ROOT / "shell-electron" / "popup_policy.js").read_text(encoding="utf-8")
+    assert "sandbox: true" in pol and "nodeIntegration: false" in pol and "contextIsolation: true" in pol
+    assert "preload" not in pol.split("function childOptions", 1)[1]
 
 
 def test_main_js_guards_ipc_before_any_handler():

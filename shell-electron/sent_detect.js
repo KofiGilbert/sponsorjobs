@@ -97,10 +97,16 @@ const NOISE_PATH = /(^|\/)(log|logs|logging|track|tracking|analytics|events?|col
 // an application being sent, else null. ``sites``: the application's own sites (its pages and
 // frames); a generic post counts only to one of them.
 function classifyRequest(req, sites) {
+  const status = Number(req && req.status) || 0;
+  if (!(status >= 200 && status < 400)) return null;
+  return classifyAny(req, sites);
+}
+// The same reading whatever the server answered: is this request the application being sent?
+// (A 4xx or 5xx answer to it after the person's Submit means the site did not take it.)
+function classifyAny(req, sites) {
   const method = String((req && req.method) || "").toUpperCase();
   if (!/^(POST|PUT|PATCH)$/.test(method)) return null;
   const status = Number(req.status) || 0;
-  if (!(status >= 200 && status < 400)) return null;
   let u = null;
   try { u = new URL(req.url); } catch (e) { return null; }
   if (!/^https?:$/.test(u.protocol)) return null;
@@ -195,9 +201,13 @@ const CLICK_PROBE_JS = `(() => {
 
 // ---------------------------------------------------------------------------- the detector
 
-// o: {now() -> ms, onFire(result), onAsk(ask)}.
-//   result: {recordId, url, pageUrl, how, label, confidence, evidence: [{kind, label, confidence, ...}], res}
-//   ask:    {recordId, url, reason, clicked}
+// o: {now() -> ms, onFire(result), onAsk(ask), onProblem(problem)}.
+//   result:  {recordId, url, pageUrl, how, label, confidence, evidence: [{kind, label, confidence, ...}], res}
+//   ask:     {recordId, url, reason, clicked}
+//   problem: {recordId, url, kind: "rejected" | "server", status, ats}: the application's own send
+//            after the person's Submit was answered 4xx (the site refused it: a field it wants, an
+//            expired session) or 5xx (the site's own trouble). Said once per click; never a send.
+//            (2026-11-26, audit case 12: the bar said nothing and kept its old line.)
 function createDetector(o) {
   o = o || {};
   const now = o.now || (() => Date.now());
@@ -210,7 +220,7 @@ function createDetector(o) {
     const evidence = [...st.evidence.values()].sort((a, b) => b.confidence - a.confidence);
     return { recordId: st.recordId, url: st.startUrl, pageUrl: st.pageUrl || st.fillUrl || st.startUrl,
              evidence, confidence: combine(evidence), label: evidence.length ? evidence[0].label : "",
-             clicked: !!st.clickAt };
+             clicked: !!st.clickAt, clickAt: st.clickAt || 0, fired: !!st.fired };
   }
   function howOf(ev) {
     if (!ev.length) return "";
@@ -259,6 +269,7 @@ function createDetector(o) {
     st.clickAt = at;
     st.clickFilled = Number(filled) || 0;
     st.clickWhere = where || "";
+    st.problemSaid = false;
     clickBoundReset(st);
     const early = st.early.filter((x) => x.at >= at && x.at - at <= CLICK_WINDOW_MS);
     st.early = [];
@@ -270,6 +281,15 @@ function createDetector(o) {
     if (s.kind === "network") {
       const r = classifyRequest(s, st.sites);
       if (r) add(st, Object.assign({}, r, { kind: r.kind }));
+      else if (Number(s.status) >= 400 && !st.problemSaid && !st.fired) {
+        const p = classifyAny(s, st.sites);
+        if (p) {
+          st.problemSaid = true;
+          const problem = { recordId: st.recordId, url: st.startUrl, kind: Number(s.status) >= 500 ? "server" : "rejected",
+                            status: Number(s.status), ats: p.ats || "" };
+          if (o.onProblem) { try { o.onProblem(problem); } catch (e) { /* the shell's own error */ } }
+        }
+      }
     } else if (s.kind === "popup") {
       add(st, { kind: "popup", where: siteOf(s.url || "") });
     }
@@ -380,7 +400,8 @@ let _default = null;
 let _hooks = {};
 function shared() {
   if (!_default) _default = createDetector({ onFire: (r) => _hooks.onFire && _hooks.onFire(r),
-                                             onAsk: (a) => _hooks.onAsk && _hooks.onAsk(a) });
+                                             onAsk: (a) => _hooks.onAsk && _hooks.onAsk(a),
+                                             onProblem: (p) => _hooks.onProblem && _hooks.onProblem(p) });
   return _default;
 }
 function configure(hooks) { _hooks = Object.assign({}, _hooks, hooks || {}); return shared(); }
@@ -394,6 +415,6 @@ function onSignal(cb) { _watchers.add(cb); return () => _watchers.delete(cb); }
 
 module.exports = {
   WEIGHT, FIRE_AT, CLICK_WINDOW_MS, MIN_FILLED, CLICK_PROBE_JS,
-  siteOf, pathShape, classifyRequest, labelOf, combine, createDetector,
+  siteOf, pathShape, classifyRequest, classifyAny, labelOf, combine, createDetector,
   configure, signal, onSignal, shared,
 };

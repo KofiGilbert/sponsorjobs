@@ -30,6 +30,7 @@ const CORE = fs.readFileSync(path.join(ROOT, "extension", "autofill_core.js"), "
 const POINTER = fs.readFileSync(path.join(ROOT, "extension", "pointer_overlay.js"), "utf8");
 const guided = require(path.join(ROOT, "shell-electron", "guided.js"));
 const sent = require(path.join(ROOT, "shell-electron", "sent_detect.js"));
+const dropUpload = require(path.join(ROOT, "shell-electron", "drop_upload.js"));
 const FORMS = path.join(ROOT, "tests", "fixtures", "forms");
 // a one-page blank PDF, written fresh (the repository keeps no PDFs)
 const RESUME = path.join(require("os").tmpdir(), "sj-replay-" + process.pid, "Avery_Example_Resume.pdf");
@@ -143,7 +144,10 @@ const SCENARIOS = [
   { name: "lever_crosscountry", page: "lever_apply.html" },
   { name: "phenom_lam_privacy", page: "phenom_lam.html", ackModal: "#confirmUploadResume" },
   { name: "workday_uline", page: "workday_experience.html" },
-  { name: "icims_email_step", page: "replay/icims_email.html", signin: true },
+  { name: "icims_email_step", page: "replay/icims_email.html", signin: true, emailStep: true },
+  // (2026-11-26, audit case 9) a resume box with no file input that reads a dropped file, next to
+  // a decoy box that takes no drop: found by the drag-and-drop contract, dropped in sight
+  { name: "drop_only_upload", page: "replay/dropzone.html", drop: true },
   Object.assign({ name: "greenhouse_confirmation" }, GH("stripe", { confirm: true, page: "replay/greenhouse.html?q=stripe&confirm=1" })),
   // The checks themselves, proved on a planted bug: the Instacart Canada miss (a required box left
   // empty while the bubble said "check and submit") must be caught, never pass quietly.
@@ -172,6 +176,8 @@ async function runOne(browser, A, B, sc) {
     await page.waitForTimeout(200);
     await frame.evaluate(CORE); await frame.evaluate(POINTER);
     if (sc.sabotage) await frame.evaluate(sc.sabotage);
+    // the email-first step is read from the page's shape before the walk (main.js emailStepTurn)
+    const emailStep = await frame.evaluate("window.TailorAutofill.emailStep ? window.TailorAutofill.emailStep() : null");
     await frame.evaluate(() => {
       window.__moves = [];
       const at = window.TailorPointer.at;
@@ -206,11 +212,28 @@ async function runOne(browser, A, B, sc) {
       return e ? (e.id || e.name || e.getAttribute("aria-label") || e.tagName) : r; })`);
     const res = { name: sc.name, out: { filled: out.filled, needs: out.needs.length, modal }, end, truth,
                   needsOn, outOfSight: moves.filter((m) => /^Filling/.test(m.label) && !m.inView).map((m) => m.label) };
+    res.emailStep = emailStep;
+    if (sc.drop) res.drop = await dropRun(page, frame);
     if (sc.embedConfirm || sc.confirm) res.detector = await confirmRun(page, frame, A, sc, js, net);
     return res;
   } finally {
     await page.close();
   }
+}
+
+// The shell's drop for a box that takes only a dropped file (main.js dropResume): the zones, the
+// pointer on the box in view, the drag through CDP with the file's path, the read-back.
+async function dropRun(page, frame) {
+  const zones = await frame.evaluate("window.TailorAutofill.dropZones()");
+  if (!zones.length) return { zones: 0 };
+  const pt = await frame.evaluate(dropUpload.POINT_JS(zones[0].ref));
+  const cdp = await page.context().newCDPSession(page);
+  const r = await dropUpload.dropFile((m, p) => cdp.send(m, p), pt, RESUME);
+  await page.waitForTimeout(500);
+  const took = await frame.evaluate(`window.TailorAutofill.dropTook(${JSON.stringify(zones[0].ref)}, ${JSON.stringify(path.basename(RESUME))})`);
+  const id = await frame.evaluate(`document.querySelector('[data-tailor-ref="${zones[0].ref}"]').id`);
+  return { zones: zones.length, id, ok: r.ok, inView: !!(pt && pt.inView), took, dropped: await frame.evaluate("window.fxDropped"),
+           pointer: (await frame.evaluate("window.__moves")).some((m) => m.label === "Uploading resume" && m.inView) };
 }
 
 // The person answers what was left and presses Submit (a real, trusted click); the detector is fed
@@ -291,6 +314,16 @@ function check(r, bad) {
     // the bar's "N need you" counts questions, one per question (never one per checkbox)
     if (r.end && r.end.where === "needs" && !r.out.modal && r.end.n !== reqs.filter((q) => !q.filled && q.outlined).length + reqs.filter((q) => q.filled && q.outlined).length)
       bad(`the end says ${r.end.n} need you for ${reqs.filter((q) => q.outlined).length} outlined question(s)`);
+    const sc = SCENARIOS.find((x) => x.name === r.name) || {};
+    if (sc.emailStep && !(r.emailStep && r.emailStep.ref && r.emailStep.tick)) bad("the email-first step was not seen: " + JSON.stringify(r.emailStep));
+    if (!sc.emailStep && r.emailStep) bad("a whole form was read as an email-first step");
+    if (sc.drop) {
+      const d = r.drop || {};
+      if (d.zones !== 1 || d.id !== "resumeDrop") bad("the drop-only resume box was not found alone: " + JSON.stringify(d));
+      else if (!d.ok || !d.inView || !d.pointer) bad("the drop was not made in sight: " + JSON.stringify(d));
+      else if (!d.took || (d.dropped || []).length !== 1 || d.dropped[0].name !== path.basename(RESUME) || !d.dropped[0].trusted)
+        bad("the box did not take the resume: " + JSON.stringify(d));
+    }
     if (r.detector) {
       if (r.detector.fired !== 1) bad("the sent detector fired " + r.detector.fired + " times: " + JSON.stringify(r.detector));
     }

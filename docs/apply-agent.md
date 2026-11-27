@@ -2207,3 +2207,24 @@ and a redesign:
 - Tests: tests/test_legal_background.py, tests/js/test_agent_guide.js (case 5),
   tests/js/test_guided_walk.js (the ring, the window over the form, the confirmation window),
   tests/test_guided_fill.py (the short line).
+
+## 40. The audit's top gaps (2026-11-27)
+
+Closed on `feat/autofill-gaps`; each case's detail is in docs/apply-failure-modes.md.
+
+- **One job per application** (`job_identity.js`, `main.js paneNavigated`): another job in the
+  Browser lets the application go; coming back gives it back (case 35).
+- **Site windows** (`popup_policy.js`): over a filled form a site's window opens as its own small
+  window; a window the app's click opened is never followed (case 9).
+- **Drop-only upload boxes** (`autofill_core dropZones`, `drop_upload.js`): found by the
+  drag-and-drop contract, the resume dragged in through CDP, in sight (case 9).
+- **The site did not take it, the job closed** (`sent_detect.js onProblem`, the confirm check's
+  error and closed verdicts): one plain line on the bar and the Orb (cases 12, 26).
+- **Where the job is** (`autoapply/jobplace.py`): read by meaning, never the US by default; a
+  record with no location opens the job first (case 32).
+- **Other languages** (`inbox/replies.py rules_can_read`, the confirm prompt): case 14.
+- **The email-first step** (`autofill_core emailStep`, `main.js emailStepTurn`): asked once per
+  site, the email typed in sight, never Next, never the check box, a password or a code (case 7).
+- Tests: tests/test_audit_gaps.py, tests/js/test_job_identity.js, tests/js/test_popup_policy.js,
+  tests/js/test_sent_detect.js, tests/js/test_applied_watch.js, the replay's drop_only_upload and
+  icims_email_step scenarios.

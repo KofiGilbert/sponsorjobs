@@ -94,8 +94,12 @@ function pageKey(p) {
 
 // o: {startUrl (the application's link), fillUrl (the page the fill ran on), recordId,
 //     read() -> probe answer, ask(body) -> engine reply, now() -> ms}.
-// tick({navigated}) -> null (nothing to do), {stop: true} (left the site, or too many asks), or
-// {applied: engineReply} when the model said the page confirms the application.
+// tick({navigated}) -> null (nothing to do), {stop: true} (left the site, or too many asks),
+// {applied: engineReply} when the model said the page confirms the application, or
+// {problem: "error" | "closed", res} (2026-11-26, audit cases 12 and 26): right after the
+// person's own Submit the page says the site did not take it (an error, a required field, a
+// server error page), or the page says the job is closed (any time). The bar says so plainly
+// instead of keeping its old line; nothing is marked sent.
 function createModelWatch(o) {
   const now = o.now || (() => Date.now());
   const sites = new Set([siteOf(o.startUrl), siteOf(o.fillUrl)].filter(Boolean));
@@ -137,6 +141,8 @@ function createModelWatch(o) {
                               title: p.title || "", text: p.text, fields: Number(p.fields) || 0 });
         } catch (e) { res = null; }
         if (res && res.verdict === "yes") return { applied: res };
+        if (res && res.verdict === "closed") return { problem: "closed", res };
+        if (res && res.verdict === "error" && recent) return { problem: "error", res };
         return null;
       } finally {
         busy = false;

@@ -46,6 +46,16 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // closed the Browser, started another job): {recordId, url, reason, clicked}. Asked ONCE.
   onAskSent: (cb) => ipcRenderer.on("assist:ask-sent", (_e, info) => cb(info)),
   onNeeds: (cb) => ipcRenderer.on("assist:needs", (_e, info) => cb(info)),
+  // (2026-11-26) what the site did that the bar must say: the person left the application's job
+  // ("left") or came back to it ("back"), the site opened its own window ("popup"), did not take
+  // the Submit ("rejected", "server", "error") or the job closed ("closed")
+  onSiteSaid: (cb) => ipcRenderer.on("assist:site-said", (_e, info) => cb(info)),
+  // is the page open still the job a resume was tailored for? (job_identity.js)
+  sameJob: (a, b) => ipcRenderer.invoke("pane:same-job", a, b),
+  // open a job and wait for it to load, without filling (the country check reads it first)
+  openAndWait: (url) => ipcRenderer.invoke("pane:open-wait", url),
+  // the email-first step: "yes" (type the email) or "self"
+  emailStep: (choice, recordId) => ipcRenderer.invoke("assist:email-step", choice, recordId),
   // The ONE apply path (Fill application, Review "Apply", Auto-apply "Open application"): open
   // the application in the pane and run the best fill (recipe, AI plan, resume upload).
   // opts = { url, recordId, resumePath, submit, here }. The site's submit is clicked ONLY when

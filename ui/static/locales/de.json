@@ -2247,5 +2247,21 @@
   "aa.ask.messages": "Nachrichten vom Recruiter?",
   "fill.countryGo": "Trotzdem ausfüllen",
   "fill.countryStop": "Diese nicht",
-  "fill.countryNo": "Nicht ausgefüllt. Du hast dich gegen diese Bewerbung entschieden."
+  "fill.countryNo": "Nicht ausgefüllt. Du hast dich gegen diese Bewerbung entschieden.",
+  "bb.savedOther": "Gespeichert. Im Browser ist jetzt eine andere Stelle offen, daher habe ich nichts ausgefüllt",
+  "bb.backToForm": "Zurück zum Formular",
+  "bb.leftFormCo": "Du hast das Formular von {c} verlassen. Mit Zurück kommst du hin",
+  "bb.leftForm": "Du hast das Formular verlassen. Mit Zurück kommst du hin",
+  "bb.backOnForm": "Zurück im Formular. Drücke Autofill für alles, was die Seite geleert hat",
+  "bb.sitePopup": "Die Seite hat ein eigenes Fenster geöffnet. Dein Formular bleibt hier",
+  "bb.jobClosedMoved": "Diese Stelle ist geschlossen. Ich habe sie nach Geschlossen verschoben",
+  "bb.jobClosed": "Diese Stelle ist geschlossen",
+  "bb.siteServer": "Die Seite hatte ein Problem und hat es nicht angenommen. Drücke in einer Minute noch einmal auf Senden",
+  "bb.siteRefused": "Die Seite hat es noch nicht angenommen. Sieh auf der Seite nach, was sie verlangt",
+  "fill.emailSelf": "Gib deine E-Mail ein und drücke Weiter. Danach fülle ich das Formular aus.",
+  "fill.emailYes": "Ja",
+  "fill.emailSelfBtn": "Mache ich selbst",
+  "mem.emailSteps": "Seiten, die zuerst deine E-Mail wollen",
+  "mem.emailYes": "Für mich ausfüllen",
+  "mem.emailSelf": "Mache ich selbst"
 }

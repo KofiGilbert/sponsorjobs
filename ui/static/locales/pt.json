@@ -2247,5 +2247,21 @@
   "aa.ask.messages": "mensagens do recrutador?",
   "fill.countryGo": "Preencher mesmo assim",
   "fill.countryStop": "Esta não",
-  "fill.countryNo": "Não preenchido. Você escolheu não se candidatar a esta."
+  "fill.countryNo": "Não preenchido. Você escolheu não se candidatar a esta.",
+  "bb.savedOther": "Salvo. O navegador mostra outra vaga, então não a preenchi",
+  "bb.backToForm": "Voltar ao formulário",
+  "bb.leftFormCo": "Você saiu do formulário da {c}. Toque em Voltar para retornar",
+  "bb.leftForm": "Você saiu do formulário. Toque em Voltar para retornar",
+  "bb.backOnForm": "De volta ao formulário. Toque em Autofill para preencher o que o site apagou",
+  "bb.sitePopup": "O site abriu uma janela própria. Seu formulário continua aqui",
+  "bb.jobClosedMoved": "Esta vaga está encerrada. Eu a movi para Encerradas",
+  "bb.jobClosed": "Esta vaga está encerrada",
+  "bb.siteServer": "O site teve um problema e não recebeu. Toque em enviar de novo em um minuto",
+  "bb.siteRefused": "O site ainda não recebeu. Veja o que a página pede",
+  "fill.emailSelf": "Digite seu e-mail e toque em Próximo. Depois eu preencho o formulário.",
+  "fill.emailYes": "Sim",
+  "fill.emailSelfBtn": "Eu faço",
+  "mem.emailSteps": "Sites que pedem seu e-mail primeiro",
+  "mem.emailYes": "Preencher para mim",
+  "mem.emailSelf": "Eu faço"
 }

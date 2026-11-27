@@ -2247,5 +2247,21 @@
   "aa.ask.messages": "¿mensajes del reclutador?",
   "fill.countryGo": "Rellenar de todos modos",
   "fill.countryStop": "Este no",
-  "fill.countryNo": "Sin rellenar. Elegiste no postularte a este."
+  "fill.countryNo": "Sin rellenar. Elegiste no postularte a este.",
+  "bb.savedOther": "Guardado. El navegador muestra otra oferta, así que no la rellené",
+  "bb.backToForm": "Volver al formulario",
+  "bb.leftFormCo": "Saliste del formulario de {c}. Pulsa Volver para regresar",
+  "bb.leftForm": "Saliste del formulario. Pulsa Volver para regresar",
+  "bb.backOnForm": "De vuelta en tu formulario. Pulsa Autofill para rellenar lo que el sitio borró",
+  "bb.sitePopup": "El sitio abrió su propia ventana. Tu formulario sigue aquí",
+  "bb.jobClosedMoved": "Esta oferta está cerrada. La moví a Cerradas",
+  "bb.jobClosed": "Esta oferta está cerrada",
+  "bb.siteServer": "El sitio tuvo un problema y no lo recibió. Pulsa su botón de enviar de nuevo en un minuto",
+  "bb.siteRefused": "El sitio aún no lo recibió. Revisa lo que pide la página",
+  "fill.emailSelf": "Escribe tu correo y pulsa Siguiente. Después relleno el formulario.",
+  "fill.emailYes": "Sí",
+  "fill.emailSelfBtn": "Lo hago yo",
+  "mem.emailSteps": "Sitios que piden primero tu correo",
+  "mem.emailYes": "Rellenarlo por mí",
+  "mem.emailSelf": "Lo hago yo"
 }

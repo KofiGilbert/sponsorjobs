@@ -2247,5 +2247,21 @@
   "aa.ask.messages": "messages from the recruiter?",
   "fill.countryGo": "Fill it anyway",
   "fill.countryStop": "Not this one",
-  "fill.countryNo": "Not filled. You chose not to apply to this one."
+  "fill.countryNo": "Not filled. You chose not to apply to this one.",
+  "bb.savedOther": "Saved. The Browser shows another job now, so I did not fill it",
+  "bb.backToForm": "Back to the form",
+  "bb.leftFormCo": "You left the {c} form. Press Back to return to it",
+  "bb.leftForm": "You left the form. Press Back to return to it",
+  "bb.backOnForm": "Back on your form. Press Autofill to fill anything the site cleared",
+  "bb.sitePopup": "The site opened its own window. Your form stays here",
+  "bb.jobClosedMoved": "This job is closed. I moved it to Closed",
+  "bb.jobClosed": "This job is closed",
+  "bb.siteServer": "The site had a problem and did not take it. Press its Submit again in a minute",
+  "bb.siteRefused": "The site did not take it yet. Check the page for what it asks",
+  "fill.emailSelf": "Fill in your email and press Next. I'll fill the form after.",
+  "fill.emailYes": "Yes",
+  "fill.emailSelfBtn": "I'll do it",
+  "mem.emailSteps": "Sites that ask for your email first",
+  "mem.emailYes": "Fill it in for me",
+  "mem.emailSelf": "I'll do it"
 }

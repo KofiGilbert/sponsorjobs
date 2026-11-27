@@ -1233,6 +1233,12 @@
   // into view and outlined for the person.
   async function applyInPane(opts) {
     if (!window.tailorShell || !window.tailorShell.assistApply) return null;
+    // the whole Autofill is the app's own: its navigations (opening the job, the country read)
+    // never let the application go
+    FILL_BUSY++;
+    try { return await applyInPaneRun(opts); } finally { FILL_BUSY--; }
+  }
+  async function applyInPaneRun(opts) {
     // (2026-11-26) The duplicate guard: an application already sent (or with evidence it was, a
     // confirmation email) is never filled again without the person saying so on the bar.
     if (opts && opts.recordId != null && !opts.again) {
@@ -1247,11 +1253,15 @@
     // said plainly BEFORE anything is filled, and the person decides
     // (2026-11-26) Autofill on the page already open (the Browser bar, the Orb) asks too, once per
     // application and page, reading where the job is from that page when the record does not say
-    if (opts && opts.recordId != null && !(await countryGo(opts.recordId, !!opts.here))) return { ok: false, reason: "declined" };
+    if (opts && opts.recordId != null) {
+      const go = await countryGo(opts.recordId, !!opts.here, opts.here ? "" : opts.url);
+      if (!go) return { ok: false, reason: "declined" };
+      if (go === "loaded") opts = Object.assign({}, opts, { loaded: true });   // the job is open already
+    }
     let r = null;
     try { r = await window.tailorShell.assistApply(opts); } catch { r = null; }
-    // the job this application was just filled on (its page in the Browser), see jobKey
-    try { if (opts && opts.recordId != null && String(FILL_CTX.id) === String(opts.recordId)) FILL_CTX.job = jobKey(($("#bbUrl") || {}).value || ""); } catch { /* fine */ }
+    // the job this application was just filled on (its page in the Browser), see the sj:pane-url check
+    try { if (opts && opts.recordId != null && String(FILL_CTX.id) === String(opts.recordId)) FILL_CTX.job = (window.tailorShell.getState ? ((await window.tailorShell.getState()) || {}).url : "") || ($("#bbUrl") || {}).value || ""; } catch { /* fine */ }
     return r;
   }
   // {applied, applied_at} from the engine; true = go ahead, "again" = the person chose to fill an
@@ -1278,24 +1288,37 @@
     try { return d.toLocaleDateString((I18N.getLang && I18N.getLang()) || undefined, { month: "short", day: "numeric" }); } catch { return d.toDateString().slice(4, 10); }
   }
   const COUNTRY_ASKED = new Set();
-  async function countryGo(recordId, here) {
-    let page = null;
+  // (2026-11-26, audit case 32) a record that does not say where the job is: the job is opened
+  // first and read from its own page (its JobPosting, else its words, read by the model) before
+  // anything is filled. Returns true, false (the person chose not to) or "loaded".
+  async function countryGo(recordId, here, url) {
+    let page = null, loaded = false;
+    if (!here && /^https?:\/\//i.test(url || "") && window.tailorShell.openAndWait) {
+      let st = null;
+      try { st = await (await fetch("/api/autoapply/country-note?id=" + encodeURIComponent(recordId))).json(); } catch { st = null; }
+      if (st && st.unknown) {
+        let o = null;
+        try { o = await window.tailorShell.openAndWait(url); } catch { o = null; }
+        if (o && o.ok) { here = true; loaded = true; }
+      } else if (st && !st.note) return true;
+    }
     if (here && window.tailorShell.readPage) { try { page = await window.tailorShell.readPage(); } catch { page = null; } }
     const key = recordId + "|" + (page && page.url ? String(page.url).split("#")[0] : "");
-    if (here && COUNTRY_ASKED.has(key)) return true;           // the next page of the same application
+    const ok = loaded ? "loaded" : true;
+    if (here && COUNTRY_ASKED.has(key)) return ok;           // the next page of the same application
     COUNTRY_ASKED.add(key);
     let note = "";
     try {
       const r = page && page.html && !page.linkedin
         ? await fetch("/api/autoapply/country-note", { method: "POST", headers: { "Content-Type": "application/json" },
-                                                       body: JSON.stringify({ id: recordId, url: page.url, html: page.html }) })
+                                                       body: JSON.stringify({ id: recordId, url: page.url, html: page.html, text: String(page.text || "").slice(0, 6000) }) })
         : await fetch("/api/autoapply/country-note?id=" + encodeURIComponent(recordId));
       note = ((await r.json()) || {}).note || "";
     } catch { note = ""; }
-    if (!note) return true;
+    if (!note) return ok;
     if (window.Panel) window.Panel.open("browser");          // where the line (or the Orb's bubble) shows
     return new Promise((resolve) => {
-      const end = (go) => { say(null); resolve(go); };
+      const end = (go) => { say(null); resolve(go ? ok : false); };
       say({ line: note, actions: [{ label: T("fill.countryGo", "Fill it anyway"), fn: () => end(true), primary: true },
                                   { label: T("fill.countryStop", "Not this one"), fn: () => end(false) }] });
     });
@@ -1320,6 +1343,7 @@
           : I18N.t("fill.againSignin", "This site wants you to sign in first. Sign in in the Browser tab, then press Autofill this page again.");
       }
       if (why === "no-page") return "Nothing is open in the Browser tab yet.";
+      if (why === "email-step") return (r.email_step && r.email_step.message) || "";
       if (why === "declined") return T("fill.countryNo", "Not filled. You chose not to apply to this one.");
       if (why === "already-applied") return T("fill.skippedApplied", "Not filled: you already applied to this job");
       if (why === "not-a-form") {
@@ -1447,7 +1471,7 @@
     });
   }
   function guideSay(r) {
-    if (!r) return;
+    if (!r || r.reason === "email-step") return;      // the email-first step said its own line
     if (r.ok === false && !r.guide) { say({ line: applyMessage(r), tone: "wall" }); return; }
     const needs = r.guide ? Number(r.guide.needs || 0) : 0;
     // one short line (the counts); what the agent said when it stopped is under Details
@@ -1483,7 +1507,7 @@
     const btn = here ? $("#pkgFillHereBtn") : $("#pkgFillBtn");
     btn.disabled = true;
     note.textContent = "Filling…";
-    fillCtx(PKG_ID, PKG_CV_PATH);
+    fillCtx(PKG_ID, PKG_CV_PATH, PKG_COMPANY || "", !!here);
     const r = await applyInPane({ url, recordId: PKG_ID, resumePath: PKG_CV_PATH, submit: false, here, finish: true,
                                   company: PKG_COMPANY || "" });
     btn.disabled = false;
@@ -1495,27 +1519,37 @@
   // this page on the Browser bar fills the next page of the same application after the person
   // signs in or clicks Next on the site. Only while the apply agent is off; it runs its own bar.
   const FILL_CTX = { id: null, cv: "", job: "" };
-  // (2026-11-26, Instacart) The application being filled belongs to ONE job: when the Browser goes to
-  // another job (another site, or the same site's page for another posting: its gh_jid, jobId...),
-  // it is let go, so Autofill there never fills (and marks) the last job's application. The next
-  // page of the same application keeps it.
-  const JOB_PARAMS = ["gh_jid", "jobid", "job_id", "jid", "jobreqid", "requisitionid", "token"];
-  function jobKey(url) {
-    try {
-      const u = new URL(url);
-      const q = [...u.searchParams].filter(([k]) => JOB_PARAMS.includes(k.toLowerCase())).map(([k, v]) => k.toLowerCase() + "=" + v).sort().join("&");
-      return u.hostname.replace(/^www\./, "") + "|" + q;
-    } catch { return ""; }
+  // (2026-11-26, Instacart; audit case 35) The application being filled belongs to ONE job: when
+  // the Browser reaches another job (another site, another path, another posting's id), it is let
+  // go, so Autofill there goes through the "any job opened in the Browser" path and never fills
+  // (and marks) the last job's application. The shell decides (job_identity.js) and says so
+  // ("assist:site-said" left / back); this check covers a context the shell never filled with
+  // (the person declined the country note). The next page of the same application keeps it.
+  let LAST_CTX = null;
+  let FILL_BUSY = 0;
+  function dropCtx() {
+    if (FILL_CTX.id == null) return;
+    LAST_CTX = { id: FILL_CTX.id, cv: FILL_CTX.cv, job: FILL_CTX.job, company: FILL_CTX.company || "" };
+    FILL_CTX.id = null; FILL_CTX.cv = ""; FILL_CTX.job = "";
   }
-  document.addEventListener("sj:pane-url", (e) => {
-    const k = jobKey((e.detail && e.detail.url) || "");
-    if (!k) return;
-    const [h1, q1] = String(FILL_CTX.job || "").split("|"), [h2, q2] = k.split("|");
-    const other = !!FILL_CTX.job && (h1 !== h2 || (q1 && q2 && q1 !== q2));      // another site, or another posting's id
-    if (FILL_CTX.id != null && other) { FILL_CTX.id = null; FILL_CTX.cv = ""; FILL_CTX.job = ""; }
+  document.addEventListener("sj:pane-url", async (e) => {
+    const url = (e.detail && e.detail.url) || "";
+    if (FILL_BUSY || FILL_CTX.id == null || !FILL_CTX.job || !/^https?:/i.test(url) || !window.tailorShell.sameJob) return;
+    const id = FILL_CTX.id, job = FILL_CTX.job;
+    let same = true;
+    try { same = await window.tailorShell.sameJob(job, url); } catch { same = true; }
+    if (!same && FILL_CTX.id === id && FILL_CTX.job === job && !FILL_BUSY) dropCtx();
   });
-  function fillCtx(id, cv) {
-    FILL_CTX.id = id == null ? null : id; FILL_CTX.cv = cv || ""; FILL_CTX.job = "";
+  // ``here``: the application is for the page open in the Browser now, so that page is its job from
+  // the start (live check 2026-11-27: a Browser job the person declined at the country note kept
+  // its application with no page, and the next job opened in the Browser filled with it)
+  function fillCtx(id, cv, company, here) {
+    FILL_CTX.id = id == null ? null : id; FILL_CTX.cv = cv || ""; FILL_CTX.job = ""; FILL_CTX.company = company || "";
+    LAST_CTX = null;
+    if (here && window.tailorShell && window.tailorShell.getState) {
+      const want = FILL_CTX.id;
+      window.tailorShell.getState().then((st) => { if (FILL_CTX.id === want && !FILL_CTX.job && st && st.url) FILL_CTX.job = st.url; }).catch(() => {});
+    }
     const b = $("#bbFillHere");
     if (b && !APPLY_AGENT && window.tailorShell && window.tailorShell.assistApply) b.hidden = false;
   }
@@ -1566,7 +1600,7 @@
     }
     b.disabled = false; b.textContent = label;
     if (!page || !page.url) { say({ line: T("fill.noPage", "Nothing is open in the Browser tab yet."), tone: "wall" }); return; }
-    if (r && r.known) { fillCtx(r.record_id, r.cv_path || ""); await bbFillHere(); return; }
+    if (r && r.known) { fillCtx(r.record_id, r.cv_path || "", "", true); await bbFillHere(); return; }
     if (!r || r.ok === false) {
       const why = (r && r.error) || T("bb.cantRead", "I could not read this job. Paste its description and I will tailor a resume from it.");
       const opts = [{ id: "paste", label: T("bb.pasteJd", "Paste the description"), primary: true,
@@ -1578,11 +1612,13 @@
     }
     const options = [{ id: "tailor", primary: true, label: T("bb.tailorJob", "Tailor a resume for this job (about 1 min)"),
                        fn: () => bbTailorThenFill(r.source_id) }];
-    if (r.latest) options.push({ id: "latest", label: T("bb.useLatest", "Use my latest resume"), fn: () => bbUseLatest(r.source_id) });
+    if (r.latest) options.push({ id: "latest", label: T("bb.useLatest", "Use my latest resume"), fn: () => bbUseLatest(r.source_id, r.company || "") });
     sayChoice({ line: r.line, options });
   }
   async function bbTailorThenFill(sid) {
-    BROWSER_JOB = { source_id: sid, built: false, filling: false };
+    let at = "";
+    try { at = ((await window.tailorShell.getState()) || {}).url || ""; } catch { at = ""; }
+    BROWSER_JOB = { source_id: sid, built: false, filling: false, url: at };
     say({ line: T("bb.tailoring", "Tailoring a resume for this job. Autofill runs when it is ready") });
     await tailorJob(sid);
   }
@@ -1605,17 +1641,27 @@
     try { r = await api("/api/session/apply", {}); } catch (e) { r = (e && e.data) || null; }
     if (!r || r.ok === false || !r.record_id) { bj.filling = false; return; }   // the builder's own Apply still works
     BROWSER_JOB = null;
-    fillCtx(r.record_id, r.cv_path || "");
+    // (audit case 35) the Browser moved to another job while the resume was built: saved, never
+    // filled into that other job's form
+    let now = "";
+    try { now = ((await window.tailorShell.getState()) || {}).url || ""; } catch { now = ""; }
+    let same = true;
+    if (bj.url && now && window.tailorShell.sameJob) { try { same = await window.tailorShell.sameJob(bj.url, now); } catch { same = true; } }
+    if (!same) {
+      say({ line: T("bb.savedOther", "Saved. The Browser shows another job now, so I did not fill it") });
+      return;
+    }
+    fillCtx(r.record_id, r.cv_path || "", "", true);
     if (window.Panel && Panel.open) { try { Panel.open("browser"); } catch { /* the bar still says it */ } }
     bubble("agent", esc(T("bb.filling", "Saved. Filling the application open in the Browser tab with this resume.")));
     await bbFillHere();
   }
   async function bbFillProfileOnly() { await bbFillHere({ profileOnly: true }); }
-  async function bbUseLatest(sid) {
+  async function bbUseLatest(sid, company) {
     let r = null;
     try { r = await api("/api/browser/job/latest", { source_id: sid }); } catch (e) { r = (e && e.data) || { error: e && e.message }; }
     if (!r || !r.record_id) { say({ line: (r && r.error) || T("bb.latestFail", "Could not use the latest resume. Try tailoring one."), tone: "wall" }); return; }
-    fillCtx(r.record_id, r.cv_path || "");
+    fillCtx(r.record_id, r.cv_path || "", company || "", true);
     await bbFillHere();
   }
   // A new address typed in the Browser bar is a new job: the application being filled is let go.
@@ -1670,6 +1716,7 @@
         }
         return;
       }
+      if (info.email_step) { emailStepSay(info); return; }           // the email-first step
       if (info.guide) { say({ line: info.message }); return; }       // the walk: "Filling 5 of 27"
       // (2026-11-26) a page's fill: one short line, the fields left only under Details
       if (!info.wall && typeof info.filled === "number") {
@@ -1685,6 +1732,57 @@
         note.textContent = info.message;
       }
     });
+  }
+
+  // (2026-11-26) What the site did, said in one plain line on the bar (the Orb's bubble mirrors
+  // it), replacing the old line: the person left the application's job or came back to it, the
+  // site opened its own window over the form, did not take the Submit, or the job closed.
+  if (window.tailorShell && window.tailorShell.onSiteSaid) {
+    window.tailorShell.onSiteSaid((d) => {
+      if (!d || !d.kind) return;
+      const mine = d.recordId != null && FILL_CTX.id != null && String(FILL_CTX.id) === String(d.recordId);
+      const co = (mine && FILL_CTX.company) || (LAST_CTX && String(LAST_CTX.id) === String(d.recordId) && LAST_CTX.company) || "";
+      if (d.kind === "left") {
+        if (mine) dropCtx();
+        if (d.clicked) return;                       // they pressed its Submit: the sent ask says it
+        GUIDE_MSG = null;
+        const back = window.tailorShell.goBack ? [{ label: T("bb.backToForm", "Back to the form"), primary: true, fn: () => { say(null); window.tailorShell.goBack(); } }] : [];
+        say({ line: co ? T("bb.leftFormCo", "You left the {c} form. Press Back to return to it").replace("{c}", co)
+                       : T("bb.leftForm", "You left the form. Press Back to return to it"), actions: back });
+        return;
+      }
+      if (d.kind === "back") {
+        if (FILL_CTX.id == null && LAST_CTX && String(LAST_CTX.id) === String(d.recordId)) {
+          FILL_CTX.id = LAST_CTX.id; FILL_CTX.cv = LAST_CTX.cv; FILL_CTX.job = LAST_CTX.job; FILL_CTX.company = LAST_CTX.company;
+          LAST_CTX = null;
+        }
+        say({ line: T("bb.backOnForm", "Back on your form. Press Autofill to fill anything the site cleared") });
+        return;
+      }
+      GUIDE_MSG = null;                              // the old needs-you line never comes back over this
+      if (d.kind === "popup") { say({ line: T("bb.sitePopup", "The site opened its own window. Your form stays here") }); return; }
+      if (d.kind === "closed") {
+        say({ line: d.moved ? T("bb.jobClosedMoved", "This job is closed. I moved it to Closed") : T("bb.jobClosed", "This job is closed"), tone: "wall" });
+        if ($("#view-tracker")?.classList.contains("is-active")) loadTracker();
+        return;
+      }
+      if (d.kind === "server") { say({ line: T("bb.siteServer", "The site had a problem and did not take it. Press its Submit again in a minute"), tone: "wall" }); return; }
+      say({ line: T("bb.siteRefused", "The site did not take it yet. Check the page for what it asks"), tone: "wall" });
+    });
+  }
+  // (2026-11-26, owner decision) a page that only asks for an email first: asked once per site
+  function emailStepSay(info) {
+    const es = info.email_step || {};
+    GUIDE_MSG = null;
+    if (es.state !== "ask") { say({ line: info.message }); return; }
+    const answer = async (choice) => {
+      say(null);
+      let r = null;
+      try { r = await window.tailorShell.emailStep(choice, info.record_id); } catch { r = null; }
+      say({ line: (r && r.message) || T("fill.emailSelf", "Fill in your email and press Next. I'll fill the form after.") });
+    };
+    say({ line: info.message, actions: [{ label: T("fill.emailYes", "Yes"), primary: true, fn: () => answer("yes") },
+                                         { label: T("fill.emailSelfBtn", "I'll do it"), fn: () => answer("self") }] });
   }
 
   // (2026-11-26) The person left a filled application (left the site, closed the Browser, started
@@ -5599,7 +5697,7 @@
     $("#profImport").hidden = !empty;
     $("#memAddResume").hidden = empty;
     $("#memJump").innerHTML = MEM_JUMP.map(([k, key, f]) => `<button type="button" class="mem-jump-b" data-jump-to="${k}">${esc(MT(key, f))}</button>`).join("");
-    memPaintNoted(); memPaintNeeds(); memPaintAbout(); memPaintWork(); memPaintAnswers(); memPaintEeo(); memPaintBg(); memPaintCareer(); memPaintHistory();
+    memPaintNoted(); memPaintNeeds(); memPaintAbout(); memPaintWork(); memPaintAnswers(); memPaintEeo(); memPaintBg(); memPaintEmailSteps(); memPaintCareer(); memPaintHistory();
   }
   function memPaintNoted() {
     const list = MEM.data.noted || [];
@@ -5662,6 +5760,18 @@
     $("#memBgRows").innerHTML = rows.map(r => memRow(r, { editor: x => memEditor(x, "text", x.raw || x.value) })).join("");
     $("#memBgRows").hidden = !rows.length;
     $("#memBgNone").hidden = !!rows.length;
+  }
+  // (2026-11-26) Sites that ask for an email before the form: Fill it in for me / I'll do it, Forget.
+  function memPaintEmailSteps() {
+    const rows = (MEM.data && MEM.data.email_steps) || [];
+    const box = $("#memEmailRows");
+    if (!box) return;
+    $("#memEmailSteps").hidden = !rows.length;
+    box.innerHTML = rows.map(r => `<div class="ans-row mem-row" data-host="${esc(r.host)}">
+      <div class="ans-row-main"><div class="ans-q">${esc(r.host)}</div>
+        <div class="ans-seg" role="group" aria-label="${esc(r.host)}">${[["yes", "mem.emailYes", "Fill it in for me"], ["self", "mem.emailSelf", "I'll do it"]].map(([v, k, f]) =>
+          `<button type="button" class="ans-seg-b${r.choice === v ? " is-on" : ""}" data-email-choice="${v}" aria-pressed="${r.choice === v}">${esc(MT(k, f))}</button>`).join("")}</div></div>
+      <div class="ans-row-acts"><button type="button" class="btn btn-ghost btn-sm ans-del" data-email-forget>${esc(MT("mem.forget", "Forget"))}</button></div></div>`).join("");
   }
   function memPaintEeo() {
     const d = MEM.data, rows = d.eeo || [];
@@ -6381,6 +6491,16 @@
     if (MEM.show) { MEM.show = false; MEM.eeo = null; memPaintEeo(); return; }
     try { await memReveal(); MEM.show = true; } catch (err) { toast(err.message); }
     memPaintEeo();
+  });
+  $("#memEmailRows")?.addEventListener("click", async e => {
+    const row = e.target.closest("[data-host]");
+    const b = e.target.closest("[data-email-choice], [data-email-forget]");
+    if (!row || !b) return;
+    b.disabled = true;
+    const choice = b.hasAttribute("data-email-forget") ? "" : b.getAttribute("data-email-choice");
+    try { await memPost("/api/autofill/email-step", { host: row.getAttribute("data-host"), choice, memory: true }); }
+    catch (err) { toast(err.message); }
+    b.disabled = false;
   });
   $("#memBgAsk")?.addEventListener("change", async e => {
     const box = e.target, want = box.checked;

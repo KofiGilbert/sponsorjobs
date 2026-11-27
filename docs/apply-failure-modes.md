@@ -9,6 +9,11 @@ scenario we know that can break that journey, with its status:
 * **fixed**: fixed in the sent-detection change (branch `feat/sent-detection`), with its test;
 * **gap**: not handled yet, with the plan.
 
+(2026-11-27) The top gaps were closed on branch `feat/autofill-gaps` ("Autofill: close the top
+audit gaps"): each case below says **closed (gaps)** with where and its test. The tests are
+`tests/test_audit_gaps.py` (it runs `tests/js/test_job_identity.js` and `test_popup_policy.js`),
+`tests/js/test_sent_detect.js`, `tests/js/test_applied_watch.js` and two new replay scenarios.
+
 The sent detector itself is `shell-electron/sent_detect.js` (header comment); the engine side is
 `_sent_evidence` / `_sent_state` / `_ask_submitted` in `ui/app.py` and `inbox/matching.py`.
 
@@ -58,28 +63,44 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
    (Next / Continue / Save never do), so a page change is not mistaken for a send.
 6. **Login or account wall.** Covered: `pageBlocker() === "auth"` stops the fill, the bar says to
    sign in, and the page watch fills the next page after it. The app never signs in.
-7. **Email-step account creation (iCIMS: email first, then a code or a link).** Gap. The replay
-   shows the email-only first page is NOT seen as a wall (no password box): Autofill types the
-   person's email, outlines the privacy box, presses nothing, and says "1 needs you". That is
-   harmless (Next stays the person's), but the bar does not say it is a sign-in step. The
-   password page after it is a wall and stops. The inbox's verification reader
-   (`inbox/detect.py kind_of`, `about_site`) exists for the agent but is not offered in assisted
-   mode. Plan: when the wall is an email step, the bar offers "Check my inbox for the code" which
-   reads only mail from that site (`about_site`) and shows the code for the person to type.
+7. **Email-step account creation (iCIMS: email first, then a code or a link).** Closed (gaps), the
+   owner's decision of 2026-11-26. The page is read from its shape (`autofill_core emailStep`: one
+   visible email box, no password box, nothing else to fill; after the job-page check), never its
+   words. The Orb and the bar ask once per site: "This site creates a profile with your email.
+   Fill it in for you?" [Yes] [I'll do it]. Yes: the pointer types the application's email in
+   sight into that box and stops; the bubble says "Tick the check box and press Next. I'll fill the
+   form after." It never presses Next, never touches the check box or a captcha, never types a
+   password, never creates an account with one, never reads a code (`main.js emailStepTurn`,
+   `typeEmailStep`; the agent never takes this page, `finish.js`). The answer is kept per site
+   (`/api/autofill/email-step`, prefs `email_step_sites`) and can be changed or forgotten on
+   Memory ("Sites that ask for your email first"). The page watch fills the form once the person
+   has pressed Next. Tests: `test_audit_gaps.py` (the email step), the replay's iCIMS scenario
+   (seen) and every other form (never read as one). Still the person's: the code or link the
+   site emails (reading it is a later decision).
 8. **Captcha.** Covered: never solved; `WALL_JS` and `pageBlocker` say "solve it, then press
    Autofill again". A captcha that appears only after Submit leaves no thank-you page: the
    detector does not fire and the person is asked when they move on.
 9. **File uploads.**
    * Hidden `<input type=file>` behind a styled button: covered, CDP `DOM.setFileInputFiles`
      (`cdpUploadFiles`, `uploadInFrame`).
-   * Drag-and-drop only zones (no input at all): gap. Plan: dispatch a synthetic `drop` with a
-     `DataTransfer` built in the isolated world from the file the shell reads; until then the bar
-     lists "Resume" under "Left for you".
-   * Dropbox / Google Drive / "Attach from LinkedIn" buttons: gap, and a risk. A site's popup
-     is loaded INTO the pane (`setWindowOpenHandler`, "nothing opens a window"), so pressing
-     such a button replaces the half-filled form with the chooser. Plan: open popups from a page
-     with a filled form in a small child window over the pane (closed when it reports back), or
-     at least warn on the bar before the pane leaves a filled form.
+   * Drag-and-drop only zones (no input at all): closed (gaps). `autofill_core dropZones` finds a
+     box that takes a dropped file by the drag-and-drop contract (it cancels `dragover` for a file),
+     never by its words; a page that cancels it everywhere tells nothing, so nothing is found
+     there. When no file input took the resume, `main.js dropResume` scrolls to the box, the
+     pointer says "Uploading resume", and the file is dragged in through CDP
+     (`Input.dispatchDragEvent` with the file's path, `drop_upload.js`), then read back
+     (`dropTook`). The replay's `drop_only_upload` (a decoy box beside the real one) proves a
+     trusted drop with the real file. Not covered: a drop box inside a cross-origin frame.
+   * Dropbox / Google Drive / "Attach from LinkedIn" buttons: closed (gaps). A site window over
+     an application the person is filling opens as a small window of its own above the app, so
+     the form stays in the pane and the site's chooser can still hand the file back
+     (`popup_policy.js`, `setWindowOpenHandler`); the bar says "The site opened its own window.
+     Your form stays here". A window the app's own click opened is never followed, and the brain
+     is told never to click a control that brings a file or profile in from another service
+     (`brain.py` rule 15). A page the site REPLACES (an "Apply with" that navigates away) is case
+     35's: the bar says "You left the <company> form. Press Back to return to it", and on coming
+     back "Back on your form. Press Autofill to fill anything the site cleared". Not restored by
+     itself: what the site cleared is filled again on the person's Autofill.
    * A listed earlier resume with the same name: covered (`uploads.js`).
 10. **The site's own "autofill from resume" overwrites the boxes (Ashby, Workday parse).**
     Covered: `guardContact` for 15 s after the upload, the Workday parse checks (PR #356).
@@ -101,7 +122,16 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
     Instacart Canada frame: "2 need you" during the fill, then after the agent was stopped the bar
     said "Filled 19. Check it, then submit on the site" with those 2 still empty. #364 (merged)
     marks needs inside frames; plan: the replay drives the shell's own end over frames too.
-32. **The country warning did not show (Instacart Canada).** The warning ("This job is in Canada;
+32. **The country warning did not show (Instacart Canada).** Closed (gaps):
+    `autoapply/jobplace.py` reads where the job is: a country named in full (the whole country
+    list and its other names), Canada's 13 provinces and territories by name or by code after a
+    comma ("Vancouver, BC"; none collides with a US state code), a sure US place; else the model
+    reads the location in any wording or language, or, with no location at all, the job page's
+    own words (cached on this computer). A place it cannot tell is "", never the US; a job in a
+    country the profile has no entry for (India) gets the note too. A record with no location:
+    the app opens the job first and reads the page (JobPosting, then its words) before anything
+    is filled (`countryGo`, `pane:open-wait`). Tests: `test_audit_gaps.py`,
+    `test_country_note_page.py`. "Remote - CA" goes to the model. Before: The warning ("This job is in Canada;
     your saved work authorization is for the US") reads the job's location from its record. A job
     whose record has no location (opened from the Browser, a pasted link, some feeds) counts as the
     US, so no warning (seen again live: the Instacart Canada job opened in the Browser filled
@@ -123,16 +153,29 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
     and a confirmation on one could have marked the other. Fixed: the key keeps the parameters
     that name the job (gh_jid, token, jobId, req, ...), tracking parameters still dropped
     (`_url_key`, `test_two_jobs_on_one_careers_path_are_two_pages`); re-checked live.
-35. **The Browser keeps the last application after another job opens (live check).** A page
-    opened without typing its address (a link, a card's link inside the pane) keeps the previous
-    application as the Browser's context, so Autofill fills the new page for the old record, and
-    a send there would be counted on the old card. Gap. Plan: the Browser lets the application
-    go when the pane reaches another job (another site, or the same site with another job key)
-    and asks which job this is.
+35. **The Browser keeps the last application after another job opens (live check).** Closed
+    (gaps). `shell-electron/job_identity.js` reads a page's job from its address: its job ids
+    (gh_jid, jobId, req, token, a number or UUID or "Title_R12345" in the path, reduced so the
+    careers page and its Greenhouse frame match), its path up to the first application step, a
+    sign-in host, the hand-off from a job page Autofill found no form on. `main.js paneNavigated`
+    checks every page the pane reaches against the pages the application was filled on (never
+    while the app fills or the agent runs, never right after the person's own Submit): another
+    job stops the page watch (it would fill the new job for the old record) and the sent watch
+    (asking about the old one only when its Submit was pressed), and tells the app, which lets the
+    application go, so Autofill there takes the "any job opened in the Browser" path (#363). A
+    resume tailored for a Browser job is never filled into another job's form. Coming back to the
+    same job gives the application back. Tests: `tests/js/test_job_identity.js` (26 cases: two jobs
+    on one careers path, Greenhouse, Lever, Ashby, Workday, iCIMS, SmartRecruiters, slugs, SSO,
+    hand-offs), `test_audit_gaps.py`. Not clicked through in the dev window yet.
 
 ### After the Submit click
 
-12. **The site shows an error after Submit (a required field, a server error).** Fixed: the
+12. **The site shows an error after Submit (a required field, a server error).** The bar: closed
+    (gaps). The detector reports a 4xx or 5xx answer to the application's own send after the
+    person's Submit (once per click, never a send, `onProblem`), and the model check has an
+    "error" verdict, used only right after their Submit. The bar and the Orb say "The site did not
+    take it yet. Check the page for what it asks" or "The site had a problem and did not take it.
+    Press its Submit again in a minute", replacing the old line. Fixed before: the
     network watch only counts a 2xx/3xx answer, a submit request alone never marks it sent, and
     the model answers "no" for an error page (`_CONFIRM_SYSTEM`). Before, only the page decided,
     so this was already safe; now the stronger network signal cannot override it either
@@ -143,10 +186,15 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
 13. **An ATS that shows nothing and emails nothing.** Fixed as far as it can be: the submit
     request plus the form clearing fires; with neither, the person is asked once when they move
     on, the Tracker asks after 30 minutes, and once more a day later (the daily sweep).
-14. **Confirmation page in another language.** Covered for the page: the model reads any
-    language. The recipe markers and the email rules are English only: gap. Plan: the email
-    rules gain the French, German, Spanish and Portuguese wordings of "we received your
-    application" (the app's five languages), checked with real mails.
+14. **Confirmation page in another language.** Closed (gaps), by meaning, not word lists. The
+    page: the model's prompt says the page may be in any language and is data. The email: the
+    model's acknowledgement moves a card by itself when the rules cannot read the mail (it is not
+    in English, measured by English function words), found nothing contrary, it asks nothing, it
+    came through a sure lane, and the model's deciding phrase stands in the mail as written; an
+    English mail still needs the rules to agree (`inbox/replies.py rules_can_read`). Tests: French,
+    German, Spanish and Portuguese confirmations, an English one, a made-up phrase and a question
+    (`test_audit_gaps.py`). Not checked with real mails yet. The recipe markers stay English; the
+    model covers the rest.
 15. **The confirmation lands on another site (a job board hands off to the company).**
     Covered: the model watch still reads the first page on another site
     (`applied_watch.js`), and the network watch follows the pane.
@@ -189,10 +237,10 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
 
 ### The world
 
-26. **The job closes mid-fill.** Covered in part: the posting check moves closed postings off To
-    apply; a form that answers "no longer accepting applications" gets a model "no" and nothing
-    moves. Gap: the bar does not say the job closed. Plan: the same model call returns "closed"
-    as a fourth verdict and the card moves to Closed with "Job closed".
+26. **The job closes mid-fill.** Closed (gaps): the model check's "closed" verdict (any language)
+    moves an application not sent yet to Closed with "Job closed" (`_mark_record_closed`), and the
+    bar says "This job is closed. I moved it to Closed". The posting check still moves closed
+    postings off To apply.
 27. **Offline.** Covered: the engine is local; the model check answers "unsure" (never a guess),
     the network evidence and the form reset still work without a model, and the ask covers the
     rest.
@@ -224,19 +272,51 @@ to `SCENARIOS`.
 
 ## The top gaps, in order
 
-1. Site popups replace a half-filled form (Dropbox / Drive / "Apply with" buttons): the person
-   loses their work. Child window for popups from a filled page.
-2. Email-step account creation in assisted mode (iCIMS and others): offer to read the code from
-   the person's own inbox, from that site only.
-3. Drag-and-drop-only upload zones.
-4. The bar saying "the site did not take it" and "this job closed" after Submit.
-5. Non-English confirmation emails and markers.
-6. The country warning for a job with no saved location, and short province codes (31, 32).
-7. The daily sweep reaches the person on the Tracker card and as one Orb nudge ("Did you send
+1. Site popups replace a half-filled form: closed (gaps), case 9.
+2. Email-step account creation: closed (gaps) as the owner decided, case 7 (the app types the
+   email when the person says so, per site); reading the emailed code stays open (a later decision).
+3. Drag-and-drop-only upload zones: closed (gaps), case 9.
+4. The bar saying "the site did not take it" and "this job closed": closed (gaps), cases 12, 26.
+5. Non-English confirmation emails and markers: closed (gaps) by the model, case 14.
+6. The country warning for a job with no saved location, and short province codes: closed
+   (gaps), case 32.
+7. A page opened from a link keeps the last application: closed (gaps), case 35.
+8. The daily sweep reaches the person on the Tracker card and as one Orb nudge ("Did you send
    your <company> application?", kind `sent`), inside the Orb's daily limits; no OS notification
    of its own.
 
+### Still open after the gaps branch
+
+* The emailed code or link of an email-first site (case 7): the person's, by decision.
+* Case 31's frame part: the replay checks the engine inside a frame, not the shell's own end.
+* A drop-only upload box inside a cross-origin frame; a page that cancels drops everywhere.
+* A form a site replaces without navigating (a single-page app swapping the form for a chooser):
+  the child window covers windows, not in-page swaps.
+* What a site cleared when the person left and came back is filled again on their Autofill, not
+  by itself.
+* None of the gaps branch was clicked through on a live site yet (see below).
+
 ## What is not verified on a real site
+
+The gaps branch, live check in the owner's dev window (2026-11-27, never submitted):
+* case 35: a Luminis Health Greenhouse form filled; the app's link to another Luminis posting (same
+  site, another id) let it go ("You left the form"), Autofill there took the any-job path, and back
+  on the first form the application came back and Autofill filled it again. Found and fixed live:
+  the walk remembered the old document's boxes (nothing refilled); a page watch armed on an
+  email-first step had no anchor and filled the next site's form; a Browser job declined at the
+  country note kept its application with no page and the next job filled with it.
+* case 9: a site link that opens a window over the filled form (Luminis' logo) opened as its own
+  window and the form stayed. Dropbox and Google Drive choosers were not tried.
+* case 9, drops: on a test page served locally in the Electron pane, the drag through CDP delivered
+  a trusted drop with the file. No real site with a drop-only box was found.
+* case 32: a Vancouver posting got the Canada note before anything was filled, and "Not this one"
+  filled nothing. The model path was not run live: the company AI reported its monthly limit and the
+  owner's own key has no credit.
+* case 7: on Cotiviti's iCIMS page (job 20540) the Orb asked once, Yes typed the email in sight and
+  stopped; Next and the captcha untouched. Found and fixed live: the careers site's header search box
+  made the page read as two boxes, so the step was not seen.
+* Not checked live: the 4xx / 5xx and "closed" lines after a real Submit (nothing is submitted in a
+  check), and confirmation emails in other languages.
 
 The network patterns for Workday, iCIMS, SmartRecruiters, SuccessFactors, Taleo and Workable are
 the shapes their submit addresses are known to take, not recorded captures (their fixture says

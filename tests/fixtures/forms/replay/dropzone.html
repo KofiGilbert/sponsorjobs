@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply | Example Careers (drop-only upload replay)</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  .drop { border: 2px dashed #889; border-radius: 8px; padding: 24px; width: 420px; text-align: center; color: #445; }
+  .drop.over { background: #eef; }
+  .page-catch { position: fixed; inset: auto 0 0 auto; }
+</style></head>
+<body>
+<!-- An application form whose resume box has NO file input: it reads the file from a drop, the
+     way some careers sites' upload widgets do. The page also has a decoy box (drag and drop in
+     its words) that takes no drop, so words alone could never find the right one. -->
+<form id="app" onsubmit="window.fxSubmits++; return false">
+  <div class="field"><label for="first_name">First Name *</label><input id="first_name" name="first_name" required></div>
+  <div class="field"><label for="last_name">Last Name *</label><input id="last_name" name="last_name" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field">
+    <div class="label">Resume / CV</div>
+    <div class="drop" id="resumeDrop" tabindex="0">Drop your resume here</div>
+    <div id="resumeName"></div>
+  </div>
+  <div class="field">
+    <div class="label">Portfolio pictures</div>
+    <div class="drop" id="decoy">Drag and drop images (coming soon)</div>
+  </div>
+  <button type="submit" id="submit">Submit application</button>
+</form>
+<script>
+  window.fxSubmits = 0;
+  window.fxDropped = [];
+  const z = document.getElementById("resumeDrop");
+  z.addEventListener("dragenter", (e) => { e.preventDefault(); z.classList.add("over"); });
+  z.addEventListener("dragover", (e) => { e.preventDefault(); });
+  z.addEventListener("dragleave", () => z.classList.remove("over"));
+  z.addEventListener("drop", (e) => {
+    e.preventDefault(); z.classList.remove("over");
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    window.fxDropped.push({ name: f.name, size: f.size, trusted: e.isTrusted });
+    document.getElementById("resumeName").textContent = f.name;
+  });
+</script>
+</body></html>

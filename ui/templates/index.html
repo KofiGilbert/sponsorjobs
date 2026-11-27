@@ -678,6 +678,15 @@
             <p class="mem-dim" id="memBgNone" data-i18n="mem.bgNone">None yet. Your answers are kept here once you submit a form that asks.</p>
           </section>
 
+          <!-- (2026-11-26, owner decision) Sites that ask for an email before the form (iCIMS and
+               others): the person's answer per site. Change it or forget it here. -->
+          <section class="ans-card mem-card" id="memEmailSteps" data-jump="email-steps" aria-labelledby="memEmailStepsH" hidden>
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="memEmailStepsH" data-i18n="mem.emailSteps">Sites that ask for your email first</h2>
+            </div>
+            <div class="ans-list mem-rows" id="memEmailRows"></div>
+          </section>
+
           <section class="ans-card mem-card" id="memCareer" data-jump="career" aria-labelledby="memCareerH">
             <div class="ans-card-h">
               <h2 class="ans-h" id="memCareerH" data-i18n="mem.career">Career</h2>

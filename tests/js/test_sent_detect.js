@@ -172,6 +172,40 @@ eq(d.leave("closed"), null, "a sent application is never asked about");
 d.arm({ recordId: 14, startUrl: GH, fillUrl: GH });
 eq(d.leave("agent"), null, "the agent recorded the send itself: no ask");
 
+
+// ------------------------------------------------ the site did not take it (audit case 12)
+// After the person's Submit, the application's own send answered 4xx (a field it wants, an
+// expired session) or 5xx (the site's trouble): said once, plainly, and never a send.
+{
+  const probs = [];
+  const dp = D.createDetector({ now: () => clock, onFire: (r) => fired.push(r), onProblem: (p) => probs.push(p) });
+  const nf = fired.length;
+  dp.arm({ recordId: 21, startUrl: GH, fillUrl: GH });
+  dp.signal({ kind: "network", method: "POST", url: GH, status: 422 });
+  eq(probs.length, 0, "a refused post before any click of the person's is not about their Submit");
+  clock += 1000;
+  dp.signal({ kind: "submit-click", at: clock, filled: 9 });
+  eq(probs.length, 0, "and the click does not take it up later");
+  dp.signal({ kind: "network", method: "POST", url: "https://www.google-analytics.com/collect", status: 500 });
+  eq(probs.length, 0, "a tracker's error is not the application's");
+  dp.signal({ kind: "network", method: "POST", url: GH, status: 422 });
+  eq([probs.length, probs[0] && probs[0].kind, probs[0] && probs[0].recordId, probs[0] && probs[0].ats], [1, "rejected", 21, "Greenhouse"], "a 422 to Greenhouse's submit: the site did not take it");
+  dp.signal({ kind: "network", method: "POST", url: GH, status: 422 });
+  eq(probs.length, 1, "said once per click");
+  eq(fired.length, nf, "a refused send never marks it applied");
+  clock += 5000;
+  dp.signal({ kind: "submit-click", at: clock, filled: 9 });
+  dp.signal({ kind: "network", method: "POST", url: GH, status: 503 });
+  eq([probs.length, probs[1] && probs[1].kind], [2, "server"], "the next Submit answered 503: the site's own trouble");
+  clock += 5000;
+  dp.signal({ kind: "submit-click", at: clock, filled: 9 });
+  dp.signal({ kind: "network", method: "POST", url: GH, status: 200 });
+  dp.signal({ kind: "form-reset", filledBefore: 9, filledAfter: 0 });
+  eq(fired.length, nf + 1, "a later Submit that goes through still fires");
+  assert(D.classifyAny({ method: "POST", url: GH, status: 500 }, new Set()).kind === "network-ats", "classifyAny reads the send whatever the answer");
+  assert(dp.state() === null || dp.state().fired, "the state says it fired");
+}
+
 // ------------------------------------------------------------------- the page probe
 assert(/isTrusted/.test(D.CLICK_PROBE_JS), "only the person's own click counts");
 assert(!/\.value\s*\)\s*;?\s*return|JSON\.stringify\(\{[^}]*value/.test(D.CLICK_PROBE_JS), "the probe keeps counts, never a value");
