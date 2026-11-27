@@ -328,8 +328,13 @@ def test_did_you_submit_is_asked_once(A, monkeypatch):
         recs.merge_data(rid, {"filled_at": "2030-01-01T00:00:00+00:00"})  # another Autofill later
     finally:
         recs.close()
+    monkeypatch.setattr(A.time, "time", lambda: 1_893_456_000.0 + 3600)  # an hour after that fill
+    assert _card(c, "gh:lark3")["ask_submitted"] is False                # not asked again that day
+    # (2026-11-26) the daily sweep: a day after the fill, with no evidence, it is asked ONE more time
     monkeypatch.setattr(A.time, "time", lambda: 1_900_000_000.0)
-    assert _card(c, "gh:lark3")["ask_submitted"] is False                # not asked again
+    assert _card(c, "gh:lark3")["ask_submitted"] is True
+    c.post("/api/autoapply/not-yet", json={"record_id": rid})            # No again
+    assert _card(c, "gh:lark3")["ask_submitted"] is False                # and never after
 
 
 # --------------------------------------------------------------------------- the pane's watch, under node

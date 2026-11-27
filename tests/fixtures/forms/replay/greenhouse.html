@@ -1,0 +1,74 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (Greenhouse replay)</title>
+<link rel="stylesheet" href="../style.css"><script src="../widgets.js"></script>
+<style>.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  body { padding-bottom: 300px; } .field, fieldset { margin: 10px 0; }</style>
+</head>
+<body>
+<!-- One real Greenhouse application form, replayed offline (2026-11-26). ?q=<board> names the
+     question set saved next to this page (gh_<board>.json: the job's own questions, read from
+     Greenhouse's public job board API, labels and options only). The markup is the current
+     board's (job-boards.greenhouse.io) as greenhouse_live.html documents it: "Label*" for a
+     required question, react-select for a choice (widgets.js), the resume's hidden file input,
+     a checkbox group for a multi-select, the location search.
+       ?embed=1    the form sits in an iframe (instacart.careers): Submit posts, then the frame
+                   reloads as a blank form, as Instacart's did
+       ?confirm=1  Submit posts, then goes to the Greenhouse confirmation page
+     window.fxSubmits counts every submit of the form (it must stay 0 after any Autofill). -->
+<h1 id="title">Apply</h1>
+<form id="application-form"></form>
+<script>
+(async () => {
+  const W = window.FixtureWidgets;
+  const qs = new URLSearchParams(location.search);
+  const d = await (await fetch("gh_" + qs.get("q") + ".json")).json();
+  const form = document.getElementById("application-form");
+  form.noValidate = true;                                 // the board checks the form in its own script
+  document.getElementById("title").textContent = d.title;
+  const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const star = (q) => (q.required ? "*" : "");
+  const EEO = ["Decline To Self Identify", "I am not a protected veteran", "Male", "Female", "Hispanic or Latino", "White", "Black or African American", "Asian"];
+  window.fxSelects = {};
+  const all = d.questions.concat(d.location.map((q) => Object.assign({ loc: true }, q)), d.compliance);
+  all.forEach((q, i) => {
+    const f = q.fields[0];
+    const id = (f.name || ("q" + i)).replace(/[^A-Za-z0-9_]/g, "_");
+    const label = q.label.split("\n")[0].trim();
+    if (q.loc) {
+      const host = form.appendChild(el('<div class="fx-q"></div>'));
+      window.fxSelects[id] = W.ReactSelect(host, { id: "candidate-location", label: "Location (City)" + star(q), live: !!q.required, async: true,
+        delayMs: 300, options: ["Toronto, Ontario, Canada", "Chicago, Illinois, United States", "Seattle, Washington, United States"] });
+    } else if (f.type === "input_file") {
+      form.appendChild(el(`<div class="field"><div role="group" aria-labelledby="upload-label-${id}" class="file-upload">
+        <div id="upload-label-${id}" class="label upload-label">${esc(label)}${q.required ? '<span class="required">*</span>' : ""}</div>
+        <div><button type="button" class="btn">Attach</button><label class="visually-hidden" for="${id}">Attach</label>
+          <input id="${id}" class="visually-hidden" type="file" accept=".pdf,.doc,.docx"></div></div></div>`));
+    } else if (f.type === "textarea") {
+      form.appendChild(el(`<div class="field"><label for="${id}">${esc(label)}${star(q)}</label><textarea id="${id}" rows="3"></textarea></div>`));
+    } else if (f.type === "multi_value_multi_select") {
+      const opts = (f.values.length ? f.values : ["Yes"]).map((v, k) => `<div><input type="checkbox" id="${id}_${k}" name="${id}[]" value="${k}"${q.required ? " required" : ""}><label for="${id}_${k}">${esc(v)}</label></div>`).join("");
+      form.appendChild(el(`<fieldset class="checkbox"><legend>${esc(label)}${star(q)}</legend>${opts}</fieldset>`));
+    } else if (f.type === "multi_value_single_select") {
+      const host = form.appendChild(el('<div class="fx-q"></div>'));
+      window.fxSelects[id] = W.ReactSelect(host, { id, label: label + star(q), live: !!q.required, options: f.values.length ? f.values : EEO });
+    } else {
+      const type = id === "phone" ? "tel" : "text";
+      form.appendChild(el(`<div class="field"><label for="${id}">${esc(label)}${star(q)}</label><input type="${type}" id="${id}"></div>`));
+    }
+  });
+  form.appendChild(el('<button type="submit" id="submit">Submit application</button>'));
+  window.fxSubmits = 0;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    window.fxSubmits++;
+    if (!qs.get("embed") && !qs.get("confirm")) return;
+    const r = await fetch("ok.json", { method: "POST", body: "{}" });
+    if (!r.ok) return;
+    if (qs.get("embed")) location.reload();                         // the frame comes back blank
+    else location.href = "../greenhouse_confirmation.html";
+  });
+  window.__fxReady = true;
+})();
+</script>
+</body></html>

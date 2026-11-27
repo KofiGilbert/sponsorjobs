@@ -129,12 +129,37 @@ jobs:
           echo "$files" | wc -l
           python -m pytest -q -n auto --dist loadfile --basetemp=/mnt/pytest/run $files
 
-  # The one check branch protection requires: green when the site tests or every shard passed.
+  # (2026-11-26) The replay suite: the guided Autofill against offline copies of real application
+  # forms in headless Chromium (tests/js/test_replay_forms.js). Its own small job: Playwright and
+  # one browser only (no Electron download), no Python packages.
+  replay:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    name: replay forms (headless Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Playwright and Chromium
+        working-directory: shell-electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Replay the forms
+        run: node tests/js/test_replay_forms.js > replay.json || (cat replay.json; exit 1)
+
+  # The one check branch protection requires: green when the site tests, every shard and the
+  # replay passed.
   pytest:
-    needs: [changes, site, shard]
+    needs: [changes, site, shard, replay]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "site=${{ needs.site.result }} shard=${{ needs.shard.result }}"
-          if [ "${{ needs.changes.outputs.code }}" = "true" ]; then [ "${{ needs.shard.result }}" = "success" ]; else [ "${{ needs.site.result }}" = "success" ]; fi
+          echo "site=${{ needs.site.result }} shard=${{ needs.shard.result }} replay=${{ needs.replay.result }}"
+          if [ "${{ needs.changes.outputs.code }}" = "true" ]; then [ "${{ needs.shard.result }}" = "success" ] && [ "${{ needs.replay.result }}" = "success" ]; else [ "${{ needs.site.result }}" = "success" ]; fi

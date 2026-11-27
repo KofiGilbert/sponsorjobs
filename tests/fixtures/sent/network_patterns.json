@@ -1,0 +1,133 @@
+{
+ "_about": "The submit requests each hiring system makes (method, address shape, status). Greenhouse, Lever, Ashby and Recruitee follow their public docs and form posts; the others are the shapes their submit addresses are known to take, not recorded captures, so a miss there falls back to the page, the form reset and the ask. Ids are made up. No bodies: the detector never reads one.",
+ "sent": [
+  {
+   "ats": "Greenhouse",
+   "method": "POST",
+   "url": "https://job-boards.greenhouse.io/stripe/jobs/7000001",
+   "status": 200
+  },
+  {
+   "ats": "Greenhouse",
+   "method": "POST",
+   "url": "https://boards.greenhouse.io/embed/job_app?for=instacart&token=7000007",
+   "status": 302
+  },
+  {
+   "ats": "Lever",
+   "method": "POST",
+   "url": "https://jobs.lever.co/crosscountry/00000000-0000-4000-8000-000000000006/apply",
+   "status": 302
+  },
+  {
+   "ats": "Ashby",
+   "method": "POST",
+   "url": "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiSubmitSingleApplicationFormAction",
+   "status": 200
+  },
+  {
+   "ats": "Workday",
+   "method": "POST",
+   "url": "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/jobApplication/0000/submit",
+   "status": 200
+  },
+  {
+   "ats": "iCIMS",
+   "method": "POST",
+   "url": "https://careers-acme.icims.com/jobs/1234/analyst/submit",
+   "status": 200
+  },
+  {
+   "ats": "SmartRecruiters",
+   "method": "POST",
+   "url": "https://jobs.smartrecruiters.com/oneclick-ui/api/company/Acme/job/7444/applications",
+   "status": 201
+  },
+  {
+   "ats": "SuccessFactors",
+   "method": "POST",
+   "url": "https://career5.successfactors.eu/career/jobapply/submit?company=acme",
+   "status": 200
+  },
+  {
+   "ats": "Workable",
+   "method": "POST",
+   "url": "https://apply.workable.com/api/v1/accounts/acme/jobs/ABC123/apply",
+   "status": 200
+  },
+  {
+   "ats": "Recruitee",
+   "method": "POST",
+   "url": "https://acme.recruitee.com/api/offers/data-analyst/candidates",
+   "status": 201
+  },
+  {
+   "ats": "Taleo",
+   "method": "POST",
+   "url": "https://acme.taleo.net/careersection/2/jobapply.ftl/submit",
+   "status": 200
+  }
+ ],
+ "not_sent": [
+  {
+   "why": "a GET",
+   "method": "GET",
+   "url": "https://job-boards.greenhouse.io/stripe/jobs/7000001",
+   "status": 200
+  },
+  {
+   "why": "a server error",
+   "method": "POST",
+   "url": "https://job-boards.greenhouse.io/stripe/jobs/7000001",
+   "status": 500
+  },
+  {
+   "why": "a validation error",
+   "method": "POST",
+   "url": "https://jobs.lever.co/crosscountry/x/apply",
+   "status": 422
+  },
+  {
+   "why": "the resume upload",
+   "method": "POST",
+   "url": "https://jobs.example.com/api/upload",
+   "status": 200,
+   "generic": true
+  },
+  {
+   "why": "analytics",
+   "method": "POST",
+   "url": "https://www.google-analytics.com/g/collect?v=2",
+   "status": 204,
+   "generic": true
+  },
+  {
+   "why": "error reports",
+   "method": "POST",
+   "url": "https://o123.ingest.sentry.io/api/4/envelope/",
+   "status": 200,
+   "generic": true
+  },
+  {
+   "why": "the site's own event log",
+   "method": "POST",
+   "url": "https://jobs.example.com/api/events",
+   "status": 200,
+   "generic": true
+  },
+  {
+   "why": "another site",
+   "method": "POST",
+   "url": "https://tracker.other-site.net/apply",
+   "status": 200,
+   "generic": true
+  },
+  {
+   "why": "an Ashby non-submit operation",
+   "method": "POST",
+   "url": "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting",
+   "status": 200,
+   "at_most": "network"
+  }
+ ]
+}

@@ -23,6 +23,8 @@ SNOOZE_FOR = timedelta(days=7)
 # kind -> priority (higher first), repeat window (None: never again for the same key), lifetime
 KINDS: dict[str, dict] = {
     "ready":    {"priority": 80, "repeat": timedelta(days=2), "ttl": timedelta(days=10)},
+    # (2026-11-26) the daily sweep: a fill over a day old with no sign it was sent, asked once
+    "sent":     {"priority": 75, "repeat": None, "ttl": timedelta(days=2)},
     "followup": {"priority": 70, "repeat": timedelta(days=3), "ttl": timedelta(days=14)},
     "facts":    {"priority": 65, "repeat": timedelta(days=7), "ttl": timedelta(days=30)},
     "practice": {"priority": 60, "repeat": timedelta(days=3), "ttl": timedelta(days=14)},

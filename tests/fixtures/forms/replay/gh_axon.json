@@ -1,0 +1,478 @@
+{
+"_about": "The application questions of one public Axon job on Greenhouse (Business Analyst I, Boston, Massachusetts, United States; Scottsdale, Arizona, United States; Seattle, Washington, United States), read 2026-11-26 from the public job board API (boards-api.greenhouse.io/v1/boards/axon/jobs/8043977003?questions=true). Labels, required flags, field types and option labels only.",
+"board": "axon",
+"title": "Business Analyst I",
+"questions": [
+{
+"label": "First Name",
+"required": true,
+"fields": [
+{
+"name": "first_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Last Name",
+"required": true,
+"fields": [
+{
+"name": "last_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Preferred First Name",
+"required": false,
+"fields": [
+{
+"name": "preferred_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Email",
+"required": true,
+"fields": [
+{
+"name": "email",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Phone",
+"required": true,
+"fields": [
+{
+"name": "phone",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Resume/CV",
+"required": true,
+"fields": [
+{
+"name": "resume",
+"type": "input_file",
+"values": []
+},
+{
+"name": "resume_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Cover Letter",
+"required": false,
+"fields": [
+{
+"name": "cover_letter",
+"type": "input_file",
+"values": []
+},
+{
+"name": "cover_letter_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "LinkedIn Profile",
+"required": false,
+"fields": [
+{
+"name": "question_35470369003",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Website",
+"required": false,
+"fields": [
+{
+"name": "question_35470370003",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "What city do you currently reside in?",
+"required": true,
+"fields": [
+{
+"name": "question_35470371003",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Are you able to commute into one of our offices 4-days a week?",
+"required": true,
+"fields": [
+{
+"name": "question_35470372003",
+"type": "multi_value_single_select",
+"values": [
+"Boston, MA",
+"Scottsdale, AZ",
+"Seattle, WA",
+"Other"
+]
+}
+]
+},
+{
+"label": "What interests you about joining Axon, and why are you interested in this Business Analyst opportunity?",
+"required": true,
+"fields": [
+{
+"name": "question_35470373003",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "What do you believe is the most important factor in ensuring a customer implementation is successful, and why?",
+"required": true,
+"fields": [
+{
+"name": "question_35470374003",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Are you at least 18 years of age?",
+"required": true,
+"fields": [
+{
+"name": "question_35470375003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Can you provide verification of both your identity and authorization to work in the United States, to the extent required by law?",
+"required": true,
+"fields": [
+{
+"name": "question_35470376003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you legally authorized to work in the United States for any US employer now and in the future?",
+"required": true,
+"fields": [
+{
+"name": "question_35470377003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Will you now or in the future require sponsorship for employment in the United States?",
+"required": true,
+"fields": [
+{
+"name": "question_35470378003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Do you have any contractual obligations, agreements, relationships, or commitments to another person or entity that would impact, impede or interfere with your ability to join Axon?",
+"required": true,
+"fields": [
+{
+"name": "question_35470379003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No",
+"Maybe / Would like to discuss"
+]
+}
+]
+},
+{
+"label": "Based on the below information, would you meet the requirements for a deemed export license in order to access EAR - controlled technology?",
+"required": true,
+"fields": [
+{
+"name": "question_35470380003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you a fugitive from justice?",
+"required": true,
+"fields": [
+{
+"name": "question_35470381003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "ACKNOWLEDGMENT OF RECEIPT AND REVIEW\n\nI acknowledge that I received a copy of Axon’s Prohibited Possessor Questionnaire (“Questionnaire”) and that I read it, understood it, and answered the questions truthfully and accurately. I understand that Axon has the maximum discretion permitted by law to interpret, administer, change, modify, or delete this Questionnaire at any time with or without notice. I understand that neither this Questionnaire nor any other communication by a recruiter, hiring manager, supervisor, manager, Axon’s People Operations, or any other Axon employee, whether oral or written, is intended in any way to create a contract of employment. I understand that Axon will keep this information secure and confidential and will not use any such information for any unlawful purpose or in any unlawful way. Finally, I again represent that all the information provided herein is truthful and accurate.",
+"required": true,
+"fields": [
+{
+"name": "question_35470382003",
+"type": "multi_value_single_select",
+"values": [
+"Acknowledge"
+]
+}
+]
+},
+{
+"label": "Are you an alien who has been admitted to the United States under a nonimmigrant visa? (i.e. H-1B, TN, F1)",
+"required": true,
+"fields": [
+{
+"name": "question_35470383003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you an alien illegally or unlawfully in the United States?",
+"required": true,
+"fields": [
+{
+"name": "question_35470384003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you an unlawful user of, or addicted to, marijuana or any depressant, stimulant, narcotic drug, or any other controlled substance?",
+"required": true,
+"fields": [
+{
+"name": "question_35470385003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you subject to a court order, including a Military Protection Order issued by a military judge or magistrate, restraining you from harassing, stalking, or threatening your child or an intimate partner or child of such partner?",
+"required": true,
+"fields": [
+{
+"name": "question_35470386003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you under indictment or information in any court for a felony, or any other crime for which the judge could imprison you for more than one year, or are you a current member of the military who has been charged with violation(s) of the Uniform Code of Military Justice and whose charge(s) have been referred to a general court-martial?",
+"required": true,
+"fields": [
+{
+"name": "question_35470387003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Federal Firearms Licensee Employee Accessor Questionnaire",
+"required": true,
+"fields": [
+{
+"name": "question_35470388003[]",
+"type": "multi_value_multi_select",
+"values": [
+"Acknowledge"
+]
+}
+]
+},
+{
+"label": "Have you ever been adjudicated as a mental defective OR have you ever been committed to a mental institution?",
+"required": true,
+"fields": [
+{
+"name": "question_35470389003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Have you ever been convicted in any court of a misdemeanor crime of domestic violence, or are you or have you ever been a member of the military and been convicted of a crime that included, as an element, the use of force against a person as identified in the instructions?",
+"required": true,
+"fields": [
+{
+"name": "question_35470390003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Have you ever been convicted in any court, including a military court, of a felony, or any other crime for which the judge could have imprisoned you for more than one year, even if you received a shorter sentence including probation?",
+"required": true,
+"fields": [
+{
+"name": "question_35470391003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Have you ever been discharged from the Armed Forces under dishonorable conditions?",
+"required": true,
+"fields": [
+{
+"name": "question_35470392003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Have you ever renounced your United States citizenship?",
+"required": true,
+"fields": [
+{
+"name": "question_35470393003",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+}
+],
+"location": [
+{
+"label": "Location",
+"required": true,
+"fields": [
+{
+"name": "location",
+"type": "input_text",
+"values": []
+}
+]
+}
+],
+"compliance": [
+{
+"label": "VeteranStatus",
+"required": true,
+"fields": [
+{
+"name": "eeo_veteranstatus",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+},
+{
+"label": "Race",
+"required": true,
+"fields": [
+{
+"name": "eeo_race",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+},
+{
+"label": "Gender",
+"required": true,
+"fields": [
+{
+"name": "eeo_gender",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+}
+]
+}

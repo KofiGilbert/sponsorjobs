@@ -4832,12 +4832,40 @@ function qsaSafe(sel, root) {
     if (el.__sjGate === "dup") { if (deleteButtons(uploadArea(el) || el.parentElement || el).length > 1) return true; el.__sjGate = ""; }
     return !filledNow(el);
   }
+  // (2026-11-26, the replay suite) one question is one item: the boxes of a checkbox or radio
+  // group count once (Stripe's "countries you anticipate working in" said "38 need you" for 9
+  // questions), and a group with a box ticked is answered.
+  // and the parts of one question (Workday's month and year boxes of "From") count once too
+  const _groupIds = new WeakMap();
+  let _groupSeq = 0;
+  function groupKey(el) {
+    if (!el) return "";
+    if (tagOf(el) === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "") && el.name) return (el.form ? "f" : "d") + ":" + el.type + ":" + el.name;
+    const box = el.closest ? el.closest("fieldset, [data-automation-id^='formField'], [data-automation-id^='dateInput']") : null;
+    if (!box) return "";
+    if (!_groupIds.has(box)) _groupIds.set(box, ++_groupSeq);
+    return "q:" + _groupIds.get(box);
+  }
   function needsList() {
-    _needs = orderRefs(_needs.filter((r) => stillNeeds(elByRef(r))));
+    const seen = new Set();
+    _needs = orderRefs(_needs.filter((r) => {
+      const el = elByRef(r);
+      if (!stillNeeds(el)) return false;
+      const k = groupKey(el);
+      if (!k) return true;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }));
     return _needs.slice();
   }
   function filledNow(el) {
-    if (tagOf(el) === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "")) return false;
+    if (tagOf(el) === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "")) {
+      if (el.checked) return true;
+      if (!el.name) return false;
+      const scope = el.form || el.getRootNode() || document;
+      try { return [...scope.querySelectorAll("input[type='" + el.type + "']")].some((x) => x.name === el.name && x.checked); } catch (e) { return false; }
+    }
     if (isWidgetInput(el) || el.getAttribute("role") === "combobox") return !!(comboValue(el) || chosenPills(el).length);
     return !!String(el.value || "").trim();
   }

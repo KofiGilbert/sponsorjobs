@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Account Manager | Instacart Careers (replay)</title>
+<style>body { font-family: sans-serif; margin: 0; padding: 16px; } iframe { width: 900px; height: 1800px; border: 0; }</style>
+</head>
+<body>
+<!-- instacart.careers' job page (2026-11-26): the company's own page, the Greenhouse application
+     form inside an iframe from another origin (here: the harness's second port, ?b=<port>). -->
+<h1>Account Manager</h1>
+<p>Canada - Remote (ON, AB, BC, or NS Only)</p>
+<div id="grnhse_app"></div>
+<script>
+  const b = new URLSearchParams(location.search).get("b");
+  const f = document.createElement("iframe");
+  f.id = "grnhse_iframe";
+  f.title = "Greenhouse Job Board";
+  f.src = "http://localhost:" + b + "/replay/greenhouse.html?q=instacart&embed=1";
+  document.getElementById("grnhse_app").appendChild(f);
+</script>
+</body></html>

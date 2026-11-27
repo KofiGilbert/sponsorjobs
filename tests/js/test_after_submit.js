@@ -431,7 +431,7 @@ const of = (posts, p_) => posts.filter(([p]) => p === p_).map(([, b]) => b);
     const sb = main.slice(main.indexOf('ipcMain.on("pane:set-bounds"'), main.indexOf('ipcMain.on("pane:set-bounds"') + 700);
     assert(/reopenOnSlot\(/.test(sb) && /pushPaneState\(\)/.test(sb), "pane:set-bounds reopens a closed pane the panel shows, and says so");
     assert(/agent\.sentSeen\(rid, \{ url: startUrl, pageUrl \}\)/.test(main), "main.js's success watch switches the agent's bar too");
-    assert(/stopSuccessWatch: \(\) => disarmSuccessWatch\(\)/.test(main), "and stands down when the agent recorded it");
+    assert(/stopSuccessWatch: \(\) => disarmSuccessWatch\(("agent")?\)/.test(main), "and stands down when the agent recorded it (without asking Did you send it?)");
     const app = fs.readFileSync(path.join(ROOT, "ui", "static", "app.js"), "utf8");
     const td = app.slice(app.indexOf("function teardownCvi()"), app.indexOf("async function endCvi("));
     assert(/if \(CVI_IN_PANE && window\.tailorShell\) window\.tailorShell\.closeBrowser\(\)/.test(td), "the interview teardown closes the pane only when the interview used it");

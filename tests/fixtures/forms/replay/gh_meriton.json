@@ -1,0 +1,275 @@
+{
+"_about": "The application questions of one public Meriton job on Greenhouse (Business Analyst, IT Finance & Operations, Irving, Texas, United States), read 2026-11-26 from the public job board API (boards-api.greenhouse.io/v1/boards/meriton/jobs/5492900008?questions=true). Labels, required flags, field types and option labels only.",
+"board": "meriton",
+"title": "Business Analyst, IT Finance & Operations",
+"questions": [
+{
+"label": "First Name",
+"required": true,
+"fields": [
+{
+"name": "first_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Last Name",
+"required": true,
+"fields": [
+{
+"name": "last_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Preferred First Name",
+"required": false,
+"fields": [
+{
+"name": "preferred_name",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Email",
+"required": true,
+"fields": [
+{
+"name": "email",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Phone",
+"required": true,
+"fields": [
+{
+"name": "phone",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Resume/CV",
+"required": true,
+"fields": [
+{
+"name": "resume",
+"type": "input_file",
+"values": []
+},
+{
+"name": "resume_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "Cover Letter",
+"required": false,
+"fields": [
+{
+"name": "cover_letter",
+"type": "input_file",
+"values": []
+},
+{
+"name": "cover_letter_text",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "LinkedIn Profile",
+"required": false,
+"fields": [
+{
+"name": "question_19408447008",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Website",
+"required": false,
+"fields": [
+{
+"name": "question_19408448008",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Are you at least 18 years of age or older?",
+"required": true,
+"fields": [
+{
+"name": "question_19408449008",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Are you Legally authorized to work in the United States?",
+"required": true,
+"fields": [
+{
+"name": "question_19408450008",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "Do you now or in the future require any immigration-related support or sponsorship to begin or continue employment in the United States?",
+"required": true,
+"fields": [
+{
+"name": "question_19408451008",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "How did you hear about us?",
+"required": true,
+"fields": [
+{
+"name": "question_19408452008",
+"type": "multi_value_single_select",
+"values": [
+"College Recruiting/Job Fair",
+"Company Website",
+"LinkedIn",
+"Indeed",
+"Military Program/SkillBridge",
+"Referred by a Current Employee (please specify)",
+"Referred by a Non-Employee (please specify)",
+"Other (please specify)"
+]
+}
+]
+},
+{
+"label": "Please specify",
+"required": false,
+"fields": [
+{
+"name": "question_19408453008",
+"type": "input_text",
+"values": []
+}
+]
+},
+{
+"label": "Are you a current or former employee of Meriton or any of its operating companies?",
+"required": true,
+"fields": [
+{
+"name": "question_19408454008",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+},
+{
+"label": "If Yes, provide current or previous dates and location(s) of employment",
+"required": false,
+"fields": [
+{
+"name": "question_19408455008",
+"type": "textarea",
+"values": []
+}
+]
+},
+{
+"label": "SMS Consent: Do you agree to receive mobile messages from us in relation to this job application? Message frequency varies. Message and data rates may apply. Reply STOP to opt-out of future messaging. Reply HELP for help. View our Privacy & SMS Policy: https:https://meriton.com/privacy-policy/\"",
+"required": true,
+"fields": [
+{
+"name": "question_19408456008",
+"type": "multi_value_single_select",
+"values": [
+"Yes",
+"No"
+]
+}
+]
+}
+],
+"location": [],
+"compliance": [
+{
+"label": "DisabilityStatus",
+"required": false,
+"fields": [
+{
+"name": "eeo_disabilitystatus",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+},
+{
+"label": "VeteranStatus",
+"required": false,
+"fields": [
+{
+"name": "eeo_veteranstatus",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+},
+{
+"label": "Race",
+"required": false,
+"fields": [
+{
+"name": "eeo_race",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+},
+{
+"label": "Gender",
+"required": false,
+"fields": [
+{
+"name": "eeo_gender",
+"type": "multi_value_single_select",
+"values": []
+}
+]
+}
+]
+}

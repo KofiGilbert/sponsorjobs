@@ -1233,6 +1233,16 @@
   // into view and outlined for the person.
   async function applyInPane(opts) {
     if (!window.tailorShell || !window.tailorShell.assistApply) return null;
+    // (2026-11-26) The duplicate guard: an application already sent (or with evidence it was, a
+    // confirmation email) is never filled again without the person saying so on the bar.
+    if (opts && opts.recordId != null && !opts.again) {
+      if (FILL_AGAIN.has(String(opts.recordId))) opts = Object.assign({}, opts, { again: true });
+      else {
+        const ok = await fillAgainOk(opts.recordId);
+        if (!ok) return { ok: false, reason: "already-applied" };
+        if (ok === "again") { FILL_AGAIN.add(String(opts.recordId)); opts = Object.assign({}, opts, { again: true }); }
+      }
+    }
     // (2026-11-26, the owner) a job in a country the saved work authorization does not cover is
     // said plainly BEFORE anything is filled, and the person decides
     // (2026-11-26) Autofill on the page already open (the Browser bar, the Orb) asks too, once per
@@ -1243,6 +1253,29 @@
     // the job this application was just filled on (its page in the Browser), see jobKey
     try { if (opts && opts.recordId != null && String(FILL_CTX.id) === String(opts.recordId)) FILL_CTX.job = jobKey(($("#bbUrl") || {}).value || ""); } catch { /* fine */ }
     return r;
+  }
+  // {applied, applied_at} from the engine; true = go ahead, "again" = the person chose to fill an
+  // application already sent (its later pages are not asked about again). A failed check never
+  // blocks a fill.
+  const FILL_AGAIN = new Set();
+  async function fillAgainOk(id) {
+    let st = null;
+    try { st = await api(`/api/autofill/sent-state?record_id=${encodeURIComponent(id)}`); } catch { st = null; }
+    if (!st || !st.applied) return true;
+    const when = sentDay(st.applied_at);
+    const line = when ? T("fill.againApplied", "You applied to this job on {d}. Fill it again?").replace("{d}", when)
+                      : T("fill.againAppliedNoDate", "You already applied to this job. Fill it again?");
+    if (window.Panel && Panel.open) { try { Panel.open("browser"); } catch { /* the bar still asks */ } }
+    return new Promise((done) => {
+      say({ line, details: st.label ? T("fill.sentHow", "How I know: {how}").replace("{how}", st.label) : "",
+            actions: [{ label: T("fill.fillAgain", "Fill again"), fn: () => { say(null); done("again"); } },
+                      { label: T("fill.notNow", "Not now"), primary: true, fn: () => { say(null); done(false); } }] });
+    });
+  }
+  function sentDay(iso) {
+    const d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime())) return "";
+    try { return d.toLocaleDateString((I18N.getLang && I18N.getLang()) || undefined, { month: "short", day: "numeric" }); } catch { return d.toDateString().slice(4, 10); }
   }
   const COUNTRY_ASKED = new Set();
   async function countryGo(recordId, here) {
@@ -1288,6 +1321,7 @@
       }
       if (why === "no-page") return "Nothing is open in the Browser tab yet.";
       if (why === "declined") return T("fill.countryNo", "Not filled. You chose not to apply to this one.");
+      if (why === "already-applied") return T("fill.skippedApplied", "Not filled: you already applied to this job");
       if (why === "not-a-form") {
         // The job page, not the application: nothing was typed (a search box is never filled).
         const btn = r.apply ? `\u201c${r.apply}\u201d` : "Apply";
@@ -1650,6 +1684,38 @@
       if (note && PKG_ID && String(info.record_id) === String(PKG_ID) && (info.page > 1 || info.wall)) {
         note.textContent = info.message;
       }
+    });
+  }
+
+  // (2026-11-26) The person left a filled application (left the site, closed the Browser, started
+  // another job) and nothing showed it was sent: asked ONCE, on the bar (the Orb's bubble mirrors
+  // it), or as a toast when the Browser is closed. Yes marks it applied ("you said yes" on the
+  // Tracker's timeline); Not yet leaves the Tracker's own ask for later.
+  if (window.tailorShell && window.tailorShell.onAskSent) {
+    window.tailorShell.onAskSent(async (a) => {
+      if (!a || a.recordId == null) return;
+      let st = null;
+      try { st = await api(`/api/autofill/sent-state?record_id=${encodeURIComponent(a.recordId)}`); } catch { st = null; }
+      if (!st || st.applied) return;                       // the inbox or the Tracker knows already
+      const line = st.company ? T("fill.askSentJob", "Did you send your {c} application?").replace("{c}", st.company)
+                              : T("fill.askSent", "Did you send the application?");
+      const yes = async () => {
+        say(null);
+        try {
+          await api(`/api/record/${a.recordId}/status`, { status: "applied", evidence: "said-yes" });
+          toast(T("fill.markedSent", "Marked as applied"));
+          if ($("#view-tracker")?.classList.contains("is-active")) loadTracker();
+          if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
+        } catch (err) { toast(err.message || T("aa.fail", "Couldn't do that, try again.")); }
+      };
+      const no = () => { say(null); api("/api/autoapply/not-yet", { record_id: a.recordId }).catch(() => {}); };
+      const bar = $("#bbFill");
+      if (bar && a.reason !== "closed") {
+        say({ line, actions: [{ label: T("fill.yesSent", "Yes, I sent it"), primary: true, fn: yes },
+                              { label: T("fill.notYet", "Not yet"), fn: no }] });
+        if (bar.offsetParent !== null) return;
+      }
+      toast(line, { label: T("fill.yesSent", "Yes, I sent it"), run: yes }, 12000);
     });
   }
 
@@ -7108,7 +7174,7 @@
     if (!c || !c.apply_id) return;
     if (btn) btn.disabled = true;
     try {
-      await api(`/api/record/${c.apply_id}/status`, { status: "applied" });
+      await api(`/api/record/${c.apply_id}/status`, { status: "applied", evidence: "said-yes" });
       toast(trkT("tracker.markedApplied", "Marked as applied."));
       await trkReloadCards();
       TRK_METRICS = await api("/api/tracker/metrics").catch(() => TRK_METRICS);
@@ -15198,7 +15264,7 @@
   async function aaMarkApplied(id, btn) {
     if (btn) btn.disabled = true;
     try {
-      await api(`/api/record/${id}/status`, { status: "applied" });
+      await api(`/api/record/${id}/status`, { status: "applied", evidence: "said-yes" });
       toast(T("aa.markedApplied", "Marked as applied. It is on your Tracker."));
       await loadAutoApply();
     } catch (err) { if (btn) btn.disabled = false; toast(err.message || T("aa.fail", "Couldn't do that, try again.")); }

@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Login | Careers (iCIMS replay)</title>
+<link rel="stylesheet" href="../style.css"></head>
+<body>
+<!-- iCIMS's first step (2026-11-26): before any application form, the portal asks for an email
+     address, then sends a code or asks for a password on the next page. It is a sign-in step,
+     not the application: nothing is filled here and nothing is pressed for the person. -->
+<div class="iCIMS_MainWrapper">
+  <h1>Please Enter Your Email Address</h1>
+  <form id="enterEmailForm" onsubmit="window.fxSubmits++; return false">
+    <div class="iCIMS_TableRow"><label for="email">Email Address*</label>
+      <input type="email" id="email" name="loginName" aria-required="true"></div>
+    <div class="iCIMS_TableRow"><input type="checkbox" id="accept_gdpr" name="accept_gdpr" required>
+      <label for="accept_gdpr">I accept the privacy policy*</label></div>
+    <input type="submit" id="enterEmailSubmitButton" value="Next">
+  </form>
+</div>
+<script>window.fxSubmits = 0;</script>
+</body></html>
