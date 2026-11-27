@@ -31,7 +31,11 @@ const POINTER = fs.readFileSync(path.join(ROOT, "extension", "pointer_overlay.js
 const guided = require(path.join(ROOT, "shell-electron", "guided.js"));
 const sent = require(path.join(ROOT, "shell-electron", "sent_detect.js"));
 const FORMS = path.join(ROOT, "tests", "fixtures", "forms");
-const RESUME = path.join(FORMS, "replay", "Avery_Example_Resume.pdf");
+// a one-page blank PDF, written fresh (the repository keeps no PDFs)
+const RESUME = path.join(require("os").tmpdir(), "sj-replay-" + process.pid, "Avery_Example_Resume.pdf");
+fs.mkdirSync(path.dirname(RESUME), { recursive: true });
+fs.writeFileSync(RESUME, "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj "
+  + "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
 
 // ------------------------------------------------------------------------------ test profile
 // Made up. What a saved profile answers; anything else is the person's (left, outlined if required).
@@ -255,6 +259,7 @@ async function confirmRun(page, frame, A, sc, js, net) {
     }
   } finally {
     await browser.close(); a.close(); b.close();
+    try { fs.rmSync(path.dirname(RESUME), { recursive: true, force: true }); } catch (e) { /* tmp */ }
   }
   // ---- the checks ------------------------------------------------------------------------
   const fails = [];
