@@ -50,7 +50,8 @@ def client(tmp_path, monkeypatch):
 
 def test_the_note_comes_from_the_open_page_when_the_record_does_not_say(client):
     H = {"X-Tailor-Extension": "1"}
-    assert client.get(f"/api/autoapply/country-note?id={client.rid}", headers=H).get_json()["note"] == ""
+    got = client.get(f"/api/autoapply/country-note?id={client.rid}", headers=H).get_json()
+    assert got["note"] == "" and got["unknown"] is True              # open the job first, then ask again
     r = client.post("/api/autoapply/country-note", headers=H,
                     json={"id": client.rid, "url": "https://careers.example-grocer.test/job/?gh_jid=1", "html": PAGE})
     assert r.get_json()["note"] == "This job is in Canada; your saved work authorization is for the US"
@@ -59,17 +60,17 @@ def test_the_note_comes_from_the_open_page_when_the_record_does_not_say(client):
 def test_autofill_on_the_open_page_asks_too_once_per_application_and_page():
     src = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     body = src.split("async function applyInPane(opts) {", 1)[1].split("\n  }\n", 1)[0]
-    assert "countryGo(opts.recordId, !!opts.here)" in body and "!opts.here &&" not in body
-    go = src.split("async function countryGo(recordId, here) {", 1)[1].split("\n  }\n", 1)[0]
+    assert "countryGo(opts.recordId, !!opts.here" in body and "!opts.here &&" not in body
+    go = src.split("async function countryGo(recordId, here, url) {", 1)[1].split("\n  }\n", 1)[0]
     assert "window.tailorShell.readPage" in go and "COUNTRY_ASKED" in go and '"/api/autoapply/country-note"' in go
 
 
 def test_another_jobs_page_lets_the_last_application_go():
     """Instacart: the Canada posting was filled with the application of the US posting the owner had
-    filled before (the same site, another gh_jid). The Browser going to another job (another site,
-    or another posting's id) lets the application go; the next page of the same one keeps it."""
+    filled before (the same site, another gh_jid). The Browser going to another job lets the
+    application go (shell-electron/job_identity.js decides, tests/js/test_job_identity.js); the
+    next page of the same one keeps it."""
     src = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
-    assert '"gh_jid"' in src.split("const JOB_PARAMS", 1)[1].split("\n", 1)[0]
     ev = src.split('document.addEventListener("sj:pane-url"', 1)[1].split("\n  });", 1)[0]
-    assert "h1 !== h2 || (q1 && q2 && q1 !== q2)" in ev and "FILL_CTX.id = null" in ev
+    assert "window.tailorShell.sameJob" in ev and "dropCtx()" in ev and "FILL_BUSY" in ev
     assert 'document.dispatchEvent(new CustomEvent("sj:pane-url"' in src

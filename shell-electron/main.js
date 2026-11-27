@@ -27,6 +27,9 @@ const { createAgent } = require("./agent");
 const uploads = require("./uploads");
 const { isSupportMailto, isSupportGmailCompose } = require("./links");
 const originGuard = require("./origin_guard");
+const jobIdentity = require("./job_identity");
+const popupPolicy = require("./popup_policy");
+const dropUpload = require("./drop_upload");
 
 // TAILOR_PORT / TAILOR_CDP_PORT let the dev app (dev-start.sh) run beside the installed app, which
 // owns 57000. The installed app never sets them.
@@ -238,14 +241,34 @@ function ensurePane() {
   win.contentView.addChildView(pane);
   if (orb) orb.raise();                     // the Orb stays above the pane (orb_view.js)
   const wc = pane.webContents;
-  // Popups inside the pane stay inside the pane. Only http(s) is followed; nothing opens a window.
+  // A window the site opens (popup_policy.js, 2026-11-26): only http(s) is followed. Over an
+  // application the person is filling (Dropbox, Google Drive, "Apply with ..."), it opens as a
+  // small window of its own so the half-filled form stays in the pane; a window the app's own
+  // click opened is never followed; anything else loads in the pane, as before.
   wc.setWindowOpenHandler(({ url }) => {
-    if (!originGuard.originOf(url)) return { action: "deny" };
-    sentDetect.signal({ kind: "popup", url });            // a window the site opens after Submit
-    if (opensInOwnBrowser(url)) shell.openExternal(url);
-    else wc.loadURL(url);
+    const act = popupPolicy.decide({ valid: !!originGuard.originOf(url), ownBrowser: opensInOwnBrowser(url),
+                                     appDriving: appDriving(), formHeld: !!_appCtx && !paneQuiet });
+    if (act !== "deny" || originGuard.originOf(url)) sentDetect.signal({ kind: "popup", url });   // a window the site opens after Submit
+    if (act === "external") { shell.openExternal(url); return { action: "deny" }; }
+    if (act === "deny") return { action: "deny" };
+    if (act === "child") {
+      siteSaid({ kind: "popup", recordId: _appCtx ? _appCtx.recordId : null });
+      return { action: "allow", overrideBrowserWindowOptions: popupPolicy.childOptions(win) };
+    }
+    wc.loadURL(url);
     return { action: "deny" };
   });
+  // the site's own window: it never opens more windows, never leaves the web, never runs our code
+  wc.on("did-create-window", (child) => {
+    try {
+      const cwc = child.webContents;
+      cwc.setWindowOpenHandler(({ url }) => { if (originGuard.originOf(url) && !opensInOwnBrowser(url)) cwc.loadURL(url); return { action: "deny" }; });
+      cwc.on("will-navigate", (e, url) => { if (!originGuard.originOf(url)) e.preventDefault(); });
+    } catch (e) { /* the window closed at once */ }
+  });
+  // (2026-11-26, audit case 35) every page the pane reaches: another job lets the application go
+  wc.on("did-navigate", (_e, url) => paneNavigated(wc, url));
+  wc.on("did-navigate-in-page", (_e, url, isMainFrame) => { if (isMainFrame !== false) paneNavigated(wc, url); });
   for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-finish-load"]) {
     wc.on(ev, pushPaneState);
   }
@@ -561,6 +584,56 @@ function postApp(path, body) {
 // person's own Submit click, the filled form going blank after that click, a window the site
 // opens. One watch at a time, re-armed by every fill, dropped after 30 minutes or when the pane
 // closes; leaving with no evidence asks the person once, "Did you send it?".
+// ------------------------------------------------- the application the Browser holds (case 35)
+// After an Autofill the pane holds ONE application: its record and the pages it was filled on
+// (job_identity.js). Every page the pane reaches is checked against them, never while the app is
+// filling or the agent runs. Another job lets the application go: the multi-page watch stops (it
+// would fill the new job for the old record), the sent watch stops (a send there is not the old
+// card's; the person is asked about the old one only when they had pressed its Submit), and the
+// app is told, so Autofill there goes through the "any job opened in the Browser" path. Coming
+// back to the same job gives the application back.
+let _appCtx = null;                   // {recordId, anchor}
+let _lastCtx = null;                  // the one let go, for a way back
+let _fillBusy = 0;
+function appDriving() { return _fillBusy > 0 || agent.busy(); }
+function siteSaid(info) {
+  if (!paneQuiet && win && !win.isDestroyed()) win.webContents.send("assist:site-said", info || {});
+}
+function noteFilled(recordId, url, form) {
+  const rid = recordId === undefined || recordId === "" ? null : recordId;
+  if (!/^https?:/i.test(url || "")) return;
+  if (!_appCtx || String(_appCtx.recordId) !== String(rid)) _appCtx = { recordId: rid, anchor: jobIdentity.createAnchor() };
+  _appCtx.anchor.add(url, { form: form !== false });
+  _lastCtx = null;
+}
+function paneNavigated(wc, url) {
+  if (paneQuiet || appDriving() || !pane || pane.webContents !== wc) return;
+  const st = sentDetect.shared().state();
+  const afterSubmit = !!(st && st.clickAt && Date.now() - st.clickAt <= sentDetect.CLICK_WINDOW_MS);
+  if (_appCtx) {
+    const c = _appCtx.anchor.check(url, { afterSubmit });
+    if (c.same) return;
+    const gone = _appCtx;
+    _appCtx = null;
+    _lastCtx = gone;
+    disarmPageWatch();
+    const clicked = !!(st && st.clicked && !st.fired);
+    if (clicked) disarmSuccessWatch("left-site");             // they pressed its Submit: asked once
+    else { disarmSuccessWatch(); sentDetect.shared().leave("moved-on"); }
+    if (gone.recordId != null) siteSaid({ kind: "left", recordId: gone.recordId, url, why: c.why, clicked });
+    return;
+  }
+  if (_lastCtx && _lastCtx.recordId != null) {
+    const c = _lastCtx.anchor.check(url, {});
+    if (c.same && /^(same job id|same application)$/.test(c.why)) {
+      _appCtx = _lastCtx;
+      _lastCtx = null;
+      siteSaid({ kind: "back", recordId: _appCtx.recordId, url });
+    }
+  }
+}
+ipcMain.handle("pane:same-job", (_e, a, b) => jobIdentity.sameJob(String(a || ""), String(b || "")));
+
 let _successWatch = null;
 function armSuccessWatch(wc, startUrl, recordId) {
   disarmSuccessWatch();
@@ -600,6 +673,8 @@ function armSuccessWatch(wc, startUrl, recordId) {
     const v = await model.tick();
     if (_successWatch !== st) return;
     if (v && v.stop) { disarmSuccessWatch("left-site"); return; }
+    // (2026-11-26) the page says the site did not take it, or the job closed: said plainly
+    if (v && v.problem) siteSaid({ kind: v.problem, recordId: recordId || null, moved: !!(v.res && v.res.moved) });
     if (v && v.applied) sentDetect.signal({ kind: "page", how: "model", pageUrl: wc.getURL() || "", res: v.applied });
   };
   const timer = setInterval(check, 2500);
@@ -705,6 +780,8 @@ sentDetect.configure({
   onFire: (r) => { sentFired(r).catch(() => {}); },
   // leaving with no evidence: the Browser bar (and the Orb's bubble over it) asks once
   onAsk: (a) => { if (!paneQuiet && win && !win.isDestroyed()) win.webContents.send("assist:ask-sent", a); },
+  // (2026-11-26) the site answered the person's Submit with an error (4xx) or its own trouble (5xx)
+  onProblem: (p) => siteSaid({ kind: p.kind, recordId: p.recordId, status: p.status }),
 });
 const emulationLog = process.env.SJ_AGENT_DEBUG === "1" ? (line) => console.warn(line) : null;
 const isQuietPane = (wc) => !!(paneQuiet && pane && pane.webContents === wc);
@@ -1422,6 +1499,10 @@ async function runAutoApplyOnPane(recordId, opts) {
         return { ok: false, reason: "not-a-form", apply, page };
       }
     }
+    // (2026-11-26, owner decision) a page that only asks for an email first (iCIMS): the
+    // person's choice for this site, never the walk's
+    const es = await wc.executeJavaScript("window.TailorAutofill.emailStep ? window.TailorAutofill.emailStep() : null", true).catch(() => null);
+    if (es && es.ref) return await emailStepTurn(wc, recordId, page, es, opts);
     // Order of play: 1. the site's fill recipe, 2. the label patterns, 3. custom widgets (all
     // inside fillAsync), 4. the model plan for whatever is STILL empty. Deterministic first, the
     // model last, and the model only ever sees field structure, never the person's data.
@@ -1682,6 +1763,7 @@ async function runAutoApplyOnPane(recordId, opts) {
       wc.executeJavaScript(`window.TailorAutofill.guardContact(${JSON.stringify(payload.fields || {})}, 15000)`, true).catch(() => null);
     }
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
+    noteFilled(recordId, wc.getURL() || url, true);
     watchSnapshots(wc);
     wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitSnapshot && window.TailorAutofill.armSubmitSnapshot()", true).catch(() => null);
     // (2026-11-26) a Submit inside a same-origin frame (iCIMS): signals for the sent detector
@@ -1732,6 +1814,84 @@ async function runAutoApplyOnPane(recordId, opts) {
   } finally {
     if (fr) fr.close();
   }
+}
+
+// ------------------------------------------------------------- the email-first step
+// (2026-11-26, owner decision; docs/apply-failure-modes.md case 7.) A page that only asks for an
+// email before the application (autofill_core emailStep: read from its shape). Asked once per
+// site on the bar and the Orb ("This site creates a profile with your email. Fill it in for
+// you?"); the answer is kept per site (/api/autofill/email-step, editable on Memory). Yes: the
+// pointer types the application's email in sight and stops. Never Next, never the check box or
+// the captcha, never a password, never a code. The page watch fills the form once the person
+// has pressed Next.
+function hostOfPage(wc) { try { return new URL(wc.getURL()).hostname.replace(/^www\./, ""); } catch (e) { return ""; } }
+async function emailStepTurn(wc, recordId, page, es, opts) {
+  const host = hostOfPage(wc);
+  const pref = host ? await getApp("/api/autofill/email-step?host=" + encodeURIComponent(host)) : null;
+  const choice = (pref && pref.choice) || "";
+  let state = choice === "yes" ? "typed" : choice === "self" ? "self" : "ask";
+  if (state === "typed" && !(await typeEmailStep(wc, recordId, es))) state = "self";
+  if (!opts.fromWatch) armPageWatch(wc, recordId, page, await mainSignature(wc));
+  const info = { host, state, tick: !!es.tick || !!es.captcha };
+  sendProgress({ record_id: recordId || null, page, filled: 0, left: [], email_step: info, message: emailStepLine(info) });
+  return { ok: false, reason: "email-step", email_step: info, page };
+}
+function emailStepLine(info) {
+  if (info.state === "ask") return "This site creates a profile with your email. Fill it in for you?";
+  if (info.state === "typed") return info.tick ? "Tick the check box and press Next. I'll fill the form after." : "Press Next. I'll fill the form after.";
+  return "Fill in your email and press Next. I'll fill the form after.";
+}
+// the application's email, typed in sight into the page's one email box; nothing else is touched
+async function typeEmailStep(wc, recordId, es) {
+  const p = await fetchAutofillPayload(recordId);
+  const email = String((p && p.fields && p.fields.email) || "").trim();
+  if (!email || !es || !es.ref || wc.isDestroyed()) return false;
+  if (es.filled) return true;
+  await pointerOn(wc);
+  const ref = JSON.stringify(es.ref);
+  return !!(await wc.executeJavaScript(`(async () => { const T = window.TailorAutofill;
+    if (T.walkTo) await T.walkTo(${ref}); if (T.pointAt) T.pointAt(${ref}, "Filling: Email");
+    return T.typeVisibly(${ref}, ${JSON.stringify(email)}); })()`, true).catch(() => false));
+}
+// The person's answer to the ask: kept for this site; Yes types the email now.
+ipcMain.handle("assist:email-step", async (_e, choice, recordId) => {
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  if (!wc) return { ok: false };
+  const host = hostOfPage(wc);
+  const c = choice === "yes" ? "yes" : "self";
+  if (host) await postApp("/api/autofill/email-step", { host, choice: c });
+  let state = "self", es = null;
+  if (c === "yes") {
+    es = await wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.emailStep ? window.TailorAutofill.emailStep() : null", true).catch(() => null);
+    if (es && es.ref && await typeEmailStep(wc, recordId, es)) state = "typed";
+  }
+  const info = { host, state, tick: !!(es && (es.tick || es.captcha)) };
+  return { ok: true, email_step: info, message: emailStepLine(info) };
+});
+
+// ------------------------------------------------------------- an upload box that takes only drops
+// (2026-11-26, audit case 9) No file input took the resume, and the page has a box that accepts a
+// dropped file (autofill_core dropZones): the page scrolls to it, the pointer says "Uploading
+// resume", and the file is dragged in through CDP (drop_upload.js). Read back before it counts.
+async function dropResume(wc, filePath) {
+  if (!filePath || !fs.existsSync(filePath) || !wc || wc.isDestroyed()) return false;
+  let zones = [];
+  try { zones = (await wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.dropZones ? window.TailorAutofill.dropZones() : []", true)) || []; } catch (e) { zones = []; }
+  if (!zones.length) return false;
+  await pointerOn(wc);
+  const pt = await wc.executeJavaScript(dropUpload.POINT_JS(zones[0].ref), true).catch(() => null);
+  if (!pt || !pt.inView) return false;
+  await new Promise((r) => setTimeout(r, 450));       // the person sees where it goes
+  const release = acquireDebugger(wc);
+  if (!release) return false;                         // DevTools holds the page: the resume is theirs
+  let r = null;
+  try { r = await dropUpload.dropFile((m, p) => wc.debugger.sendCommand(m, p), pt, filePath); }
+  finally { release(); }
+  if (!r || !r.ok) return false;
+  await new Promise((res) => setTimeout(res, 1500));
+  const took = await wc.executeJavaScript(`window.TailorAutofill.dropTook(${JSON.stringify(zones[0].ref)}, ${JSON.stringify(path.basename(filePath))})`, true).catch(() => false);
+  if (took) armContactGuard(wc);
+  return !!took;
 }
 
 // ------------------------------------------------------------- multi-page forms
@@ -1865,8 +2025,16 @@ async function applyDecision(url, pageUrl) {
 // plain fill, the drawn pointer goes. The site's Submit is never pressed on this path.
 ipcMain.handle("assist:finish", async (_e, opts, report) => {
   const o = opts || {};
-  const r = o.finish ? await finishAfterAutofill(o, report) : report;
-  return guideEnd(r);
+  _fillBusy++;
+  try {
+    // the email-first step is the person's: no agent, no needs-you end (emailStepTurn said it)
+    if (report && report.reason === "email-step") return report;
+    const r = o.finish ? await finishAfterAutofill(o, report) : report;
+    const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+    // the pages the agent reached are this application's too
+    if (wc && o.recordId != null && r && r.agent) noteFilled(o.recordId, wc.getURL() || "", true);
+    return await guideEnd(r);
+  } finally { _fillBusy--; }
 });
 
 // (2026-11-26) The end of every Autofill: the pointer rests on the first field that needs the
@@ -2052,6 +2220,10 @@ async function finishAfterAutofill(o, r) {
 const _finishMsg = new Map();        // record -> the finish run's last line, for the caller's note
 
 ipcMain.handle("assist:apply", async (_e, opts) => {
+  _fillBusy++;
+  try { return await assistApply(opts); } finally { _fillBusy--; }
+});
+async function assistApply(opts) {
   // an Autofill the agent may finish never clicks the site's Submit, whatever else it says
   if (opts && opts.finish) opts = Object.assign({}, opts, { submit: false });
   const { url, recordId, resumePath, submit, here } = opts || {};
@@ -2075,7 +2247,8 @@ ipcMain.handle("assist:apply", async (_e, opts) => {
   }
   if (!here) newUploadRun();                       // a new application: its own upload log
 
-  if (!here) {
+  // ``loaded``: the caller opened the job first (pane:open-wait) to read where it is before filling
+  if (!here && !(opts && opts.loaded && pane && (pane.webContents.getURL() || "").split("#")[0] === startUrl.split("#")[0])) {
     openInPane(startUrl);
     await new Promise((r) => setTimeout(r, 400));   // navigation kickoff
     await waitPaneLoad();
@@ -2089,8 +2262,13 @@ ipcMain.handle("assist:apply", async (_e, opts) => {
   const report = await runAutoApplyOnPane(recordId, { pointer: true, guided: true });
   const filledOk = !!(report && report.ok !== false);
   if (report && report.reason === "blocked") return report;   // never fight an auth wall
+  if (report && report.reason === "email-step") return report; // the person's step (emailStepTurn)
+  // a job page with no form: the application is this job's, and its Apply hands off (job_identity.js)
+  if (report && report.reason === "not-a-form") noteFilled(recordId, wc.getURL() || startUrl, false);
   let attached = !!(report && report.uploaded);
   if (!attached && resumePath) attached = await attachResume(wc, resumePath);
+  // (2026-11-26) an upload box that only takes a dropped file: dropped in sight (drop_upload.js)
+  if (!attached && resumePath && filledOk) attached = await dropResume(wc, resumePath);
   if (!filledOk && !attached) return report || { ok: false, reason: "inject-failed" };
   await new Promise((r) => setTimeout(r, 500));
 
@@ -2116,6 +2294,16 @@ ipcMain.handle("assist:apply", async (_e, opts) => {
     return /thank you|application (was )?(submitted|received)|we('| ha)?ve received/.test(t);
   })()`, true);
   return { ...base, submitted: true, confirmed: !!confirmed, clicked: res.label };
+}
+// Open a job in the pane and wait for it to load, without filling (the country check reads it first).
+ipcMain.handle("pane:open-wait", async (_e, url) => {
+  if (!/^https?:/i.test(url || "")) return { ok: false };
+  try { if (/(^|\.)linkedin\.com$/i.test(new URL(url).hostname)) return { ok: false, reason: "linkedin" }; } catch (e) { return { ok: false }; }
+  openInPane(url);
+  await new Promise((r) => setTimeout(r, 400));
+  await waitPaneLoad();
+  await new Promise((r) => setTimeout(r, 1200));
+  return { ok: !!pane, url: pane ? pane.webContents.getURL() : "" };
 });
 
 

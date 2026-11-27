@@ -10,7 +10,7 @@
 
 // Never handed to the agent: the person's own step (a sign-in, a captcha), a site we do not fill,
 // or no page at all.
-const HAND_BACK = new Set(["blocked", "linkedin", "fill-by-hand", "bad-url", "no-page", "no-viewport", "inject-failed", "stalled"]);
+const HAND_BACK = new Set(["blocked", "email-step", "linkedin", "fill-by-hand", "bad-url", "no-page", "no-viewport", "inject-failed", "stalled"]);
 
 // report: what runAutoApplyOnPane (or assist:apply) said; extra: { invalid } (fields the page
 // itself marks invalid after the fill). Returns { go, why } with why one of:
