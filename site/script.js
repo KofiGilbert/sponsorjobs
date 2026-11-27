@@ -13,6 +13,7 @@
 //      releases API, with the releases page as the fallback link.
 //   4. GitHub card: live stars and last commit, with a non-numeric fallback.
 //   5. Feature tabs on the home page. Without this script the first tab shows on its own.
+//   6. The Autofill demo in the Apply step: plays the fill when the step comes into view.
 //
 // The ONE place the feed host lives; site/_headers connect-src must list the same host.
 const FEED_BASE = "https://feed.sponsorjobs.ai";
@@ -431,7 +432,7 @@ function wireValues() {
   const names = [...root.querySelectorAll(".vals-tag span")];
   const icons = [...root.querySelectorAll(".vals-tag svg")];
   const thumb = root.querySelector(".vals-thumb");
-  const phone = root.querySelector(".phone");
+  const fillDemo = wireFillDemo();
   const media = root.querySelector(".vals-media");
   let current = -1;
   const show = (i) => {
@@ -450,12 +451,8 @@ function wireValues() {
       if (on) { if (!reducedMotion) { if (v.preload === "none") v.preload = "auto"; v.currentTime = 0; v.play().catch(() => {}); } }
       else { v.pause(); }
     });
-    if (thumb) { thumb.style.height = (100 / blocks.length) + "%"; thumb.style.top = (i * 100 / blocks.length) + "%"; }
-    if (phone) {
-      const on = frames[i] && frames[i].nextElementSibling === phone;
-      phone.classList.remove("is-on");
-      if (on) { void phone.offsetWidth; phone.classList.add("is-on"); }
-    }
+    if (thumb) { thumb.style.height = (100 / blocks.length) + "%"; thumb.style.setProperty("--i", String(i)); }   // moves by transform
+    if (fillDemo) { if (frames[i] && frames[i].contains(fillDemo.root)) fillDemo.play(); else fillDemo.settle(); }
   };
   // The live block, by the same rule jetbrains.com uses (read from its page script): a block is
   // live while its top is above the bottom of the pinned window and its bottom is more than 100px
@@ -480,23 +477,25 @@ function wireValues() {
   if (reducedMotion) frames.forEach((f) => { const v = f.querySelector("video"); if (v) { v.removeAttribute("autoplay"); v.pause(); } });
 
   // Narrow screens: jetbrains.com swaps the pinned layout for one card per block, each with its own
-  // picture. Here each block takes its own clip (and the Apply block its phone), and a clip plays
-  // while its card is mostly on screen.
+  // picture. Here each block takes its own clip (the Apply block its Autofill demo), and a clip
+  // plays while its card is mostly on screen.
   const narrow = window.matchMedia("(max-width: 960px)");
   const framesHome = root.querySelector(".vals-frames");
   let io = null;
   const layout = () => {
     if (narrow.matches) {
-      frames.forEach((f, k) => { const b = blocks[k]; if (b && f.parentElement !== b) { b.append(f); if (phone && k === 2) b.append(phone); } });
+      frames.forEach((f, k) => { const b = blocks[k]; if (b && f.parentElement !== b) b.append(f); });
       frames.forEach((f) => f.classList.add("is-on"));
-      if (phone) phone.classList.add("is-on");
+      if (fillDemo) fillDemo.settle();
       if (!io && "IntersectionObserver" in window) {
-        io = new IntersectionObserver((entries) => entries.forEach((e) => { const v = e.target.querySelector("video"); if (!v) return; if (e.isIntersecting && !reducedMotion) { if (v.preload === "none") v.preload = "auto"; v.play().catch(() => {}); } else v.pause(); }), { threshold: 0.5 });
+        io = new IntersectionObserver((entries) => entries.forEach((e) => {
+          if (fillDemo && e.target.contains(fillDemo.root)) { if (e.isIntersecting) fillDemo.play(); else fillDemo.settle(); return; }
+          const v = e.target.querySelector("video"); if (!v) return; if (e.isIntersecting && !reducedMotion) { if (v.preload === "none") v.preload = "auto"; v.play().catch(() => {}); } else v.pause(); }), { threshold: 0.5 });
         frames.forEach((f) => io.observe(f));
       }
     } else {
       frames.forEach((f) => { if (f.parentElement !== framesHome) framesHome.append(f); });
-      if (phone && phone.parentElement !== framesHome) framesHome.insertBefore(phone, frames[3] || null);
+      if (fillDemo) fillDemo.settle();
       if (io) { io.disconnect(); io = null; }
       current = -1;
       pick();
@@ -507,7 +506,107 @@ function wireValues() {
   if (!narrow.matches) pick();
 }
 
-// ---- 6. the header's scroll edge -------------------------------------------------------------
+// ---- 6. the Autofill demo --------------------------------------------------------------------
+// The Apply step's picture: a made-up form filled the way the app fills one. The violet pointer goes
+// to each field with the app's own label, one box is left for the person (the glow ring and "Fill
+// this, then press Enter"), and the pointer comes to rest on Submit. The person presses Submit; the
+// demo never does. The HTML is the finished state, so with no script, or for people who asked for
+// less motion, the still frame is what shows. play() runs the steps once; settle() stops and shows
+// the finished state.
+function wireFillDemo() {
+  const root = document.querySelector(".fd");
+  if (!root) return null;
+  const pointer = root.querySelector(".fd-pointer");
+  const tag = root.querySelector(".fd-tag");
+  const bubble = root.querySelector(".fd-bubble");
+  const submit = root.querySelector(".fd-submit");
+  const home = pointer && pointer.parentElement;    // at rest the pointer sits on Submit by CSS alone
+  const field = (k) => root.querySelector('.fd-field[data-k="' + k + '"]');
+  const fields = [...root.querySelectorAll(".fd-field")];
+  if (!pointer || !tag || !bubble || !submit || !fields.length) return null;
+  const DONE_TAG = tag.textContent;
+  const DONE_SAY = bubble.textContent;
+  let run = 0;          // bumps on every play or settle, so a stale run stops at its next wait
+  let target = null;    // { el, mode } the pointer is on, re-placed when the window resizes
+
+  const wait = (ms, id) => new Promise((resolve, reject) => setTimeout(() => (id === run ? resolve() : reject(new Error("stale"))), ms));
+  function place(el, mode, still) {
+    target = { el, mode };
+    if (pointer.parentElement !== root) root.append(pointer);    // the script moves it in px from here
+    const base = root.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const em = parseFloat(getComputedStyle(root).fontSize) || 13;
+    let x, y;
+    if (mode === "on") {          // the tip on the button, the label past its right edge
+      x = r.left - base.left + Math.min(18, r.width / 4);
+      y = r.top - base.top + r.height / 2 - 4;
+      tag.style.marginLeft = Math.max(0, r.right - base.left - x + 8 - 1.55 * em) + "px";
+      tag.style.marginTop = (-0.5 * em) + "px";
+    } else if (base.right - r.right > 12 * em) {   // room on the right: beside the field
+      x = r.right - base.left + 0.5 * em;
+      y = r.top - base.top + r.height / 2 - 6;
+      tag.style.marginLeft = "0px"; tag.style.marginTop = (1.2 * em) + "px";
+    } else {                      // a narrow card: the tip on the field's lower edge, the label under it
+      x = r.left - base.left + 10;
+      y = r.bottom - base.top - 8;
+      tag.style.marginLeft = "0px"; tag.style.marginTop = (1.2 * em) + "px";
+    }
+    pointer.classList.toggle("is-still", !!still);
+    pointer.style.transform = "translate(" + Math.round(x) + "px, " + Math.round(y) + "px)";
+  }
+  const say = (text) => { bubble.textContent = text || ""; };
+  function fill(f, text) { const v = f.querySelector(".fd-val"); if (v) v.textContent = text; f.classList.toggle("is-empty", !text); }
+  async function type(f, text, per, id) { for (let n = 1; n <= text.length; n++) { fill(f, text.slice(0, n)); await wait(per, id); } }
+  const valueOf = (f) => { const v = f.querySelector(".fd-val"); return v ? v.dataset.v || "" : ""; };
+
+  function finished() {
+    fields.forEach((f) => { fill(f, valueOf(f)); f.classList.remove("is-need", "is-typing"); });
+    tag.textContent = DONE_TAG;
+    say(DONE_SAY);
+    root.dataset.orb = "";
+    pointer.classList.remove("is-off", "is-still");
+    target = null;
+    if (home && pointer.parentElement !== home) home.append(pointer);
+    pointer.style.transform = ""; tag.style.marginLeft = ""; tag.style.marginTop = "";
+  }
+  function settle() { run++; finished(); }
+  async function play() {
+    if (reducedMotion) { settle(); return; }
+    const id = ++run;
+    try {
+      fields.forEach((f) => { fill(f, ""); f.classList.remove("is-need", "is-typing"); });
+      say(""); root.dataset.orb = "working";
+      pointer.classList.add("is-off");
+      const first = field("first"), email = field("email"), resume = field("resume"), start = field("start");
+      await wait(450, id);
+      tag.textContent = "Filling: First name"; place(first.querySelector(".fd-box"), "right", true);
+      await wait(60, id); pointer.classList.remove("is-off");
+      await wait(380, id); await type(first, valueOf(first), 70, id);
+      await wait(320, id);
+      tag.textContent = "Filling: Email"; place(email.querySelector(".fd-box"), "right");
+      await wait(480, id); await type(email, valueOf(email), 26, id);
+      await wait(320, id);
+      tag.textContent = "Uploading resume"; place(resume.querySelector(".fd-box"), "right");
+      await wait(900, id); fill(resume, valueOf(resume));
+      await wait(520, id);
+      pointer.classList.add("is-off");
+      start.classList.add("is-need"); root.dataset.orb = "needs";
+      say("Filled 3 of 4. 1 needs you");
+      await wait(1700, id);
+      start.classList.add("is-typing"); await type(start, valueOf(start), 110, id);
+      await wait(450, id);
+      start.classList.remove("is-need", "is-typing");
+      await wait(350, id);
+      tag.textContent = DONE_TAG; place(submit, "on");
+      pointer.classList.remove("is-off");
+      say(DONE_SAY); root.dataset.orb = "done";
+    } catch (_stale) { /* a newer play or settle took over */ }
+  }
+  window.addEventListener("resize", () => { if (target) place(target.el, target.mode, true); });
+  return { root, play, settle };
+}
+
+// ---- 7. the header's scroll edge -------------------------------------------------------------
 // The header is a floating layer; its edge shows only once content has scrolled under it.
 function wireHeaderEdge() {
   const head = document.querySelector(".site-head");

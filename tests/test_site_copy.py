@@ -149,13 +149,13 @@ def test_prices_agree_with_the_broker():
 
 # ---- the home page stays short and plain ---------------------------------------------------
 # The features section (five blocks, each a heading of at most eight words and one line of at
-# most twenty) is the bulk of this. The phone's Telegram chat is a picture of the product, not
-# page copy, and is left out of the count.
+# most twenty) is the bulk of this. The Autofill demo in the Apply step is a picture of the
+# product, not page copy, and is left out of the count.
 HOME_WORD_BUDGET = 270
 
 
 class _HomeWords(HTMLParser):
-    """Words a visitor reads inside <main>, minus the employer panel's live data and the phone mock."""
+    """Words a visitor reads inside <main>, minus the employer panel's live data and the Autofill demo."""
 
     VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 
@@ -171,7 +171,7 @@ class _HomeWords(HTMLParser):
             return
         a = dict(attrs)
         skip = (tag in ("script", "style") or a.get("id") == "employer" or tag == "footer"
-                or "phone" in (a.get("class") or "").split())
+                or "fd" in (a.get("class") or "").split())
         self._stack.append(skip)
         if skip:
             self._skip += 1
@@ -230,8 +230,9 @@ def test_no_kicker_labels_or_display_italics():
 
 
 def test_home_features_section_is_whole():
-    """Five blocks of text scroll past five pinned clips; the first of each shows without JS, and
-    every clip ships as webm, mp4 and a poster at double resolution so it stays sharp on retina."""
+    """Five blocks of text scroll past five pinned pictures: four clips and, for Apply, the Autofill
+    demo. The first of each shows without JS, and every clip ships as webm, mp4 and a poster at
+    double resolution so it stays sharp on retina."""
     html = (SITE / "index.html").read_text(encoding="utf-8")
     blocks = re.findall(r'<div class="val( is-on)?">\s*<h3>([^<]+)</h3>\s*<p>([^<]+)</p>', html)
     assert len(blocks) == 5, "five feature blocks"
@@ -240,13 +241,31 @@ def test_home_features_section_is_whole():
         assert len(h3.split()) <= 8, f"heading too long: {h3}"
         assert len(p.split()) <= 20, f"line too long: {p}"
     frames = re.findall(r'<figure class="vals-frame( is-on)?"><video [^>]*poster="img/([a-z]+)-poster\.webp" width="3000" height="2050"', html)
-    assert [n for _, n in frames] == ["find", "tailor", "apply", "projects", "practise"]
+    assert [n for _, n in frames] == ["find", "tailor", "projects", "practise"]
+    order = [html.index('poster="img/tailor-poster.webp"'), html.index('class="vals-frame fd-frame"'), html.index('poster="img/projects-poster.webp"')]
+    assert order == sorted(order), "the Autofill demo is the Apply step's picture, between Tailor and Projects"
     assert frames[0][0] == " is-on" and all(on == "" for on, _ in frames[1:]), "only the first clip shows without JS"
     for _, name in frames:
         for ext in ("webm", "mp4", "-poster.webp"):
             f = SITE / "img" / (name + ("." + ext if not ext.startswith("-") else ext))
             assert f.is_file(), f"missing {f.name}"
-    assert html.count('class="vals-tag"') == 1 and html.count('class="phone"') == 1
+    assert html.count('class="vals-tag"') == 1 and html.count('class="fd"') == 1 and 'class="phone"' not in html
+
+
+def test_autofill_demo_shows_the_real_moment():
+    """The Apply picture is the launch product: assisted Autofill with the violet pointer, the person
+    pressing Submit. Its markup is the finished state, so it reads complete with no script."""
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+    demo = html[html.index('class="vals-frame fd-frame"'):html.index('poster="img/projects-poster.webp"')]
+    for words in ("Fill this, then press Enter", "All done. Press Submit when you&rsquo;re happy", "Submit"):
+        assert words in demo, words
+    for gone in ("Telegram", "Approve", "John Doe", "application(s)"):
+        assert gone not in html, f"index.html still says {gone}"
+    assert "@example.com" in demo, "the demo applicant uses a reserved example address"
+    js = (SITE / "script.js").read_text(encoding="utf-8")
+    for label in ("Filling: First name", "Filling: Email", "Uploading resume"):
+        assert label in js, label
+    assert "reducedMotion" in js[js.index("function wireFillDemo"):], "reduced motion shows the still frame"
 
 
 def test_employer_lookup_is_wired():
