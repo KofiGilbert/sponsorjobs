@@ -78,8 +78,8 @@ def test_a_walked_page_fills_nothing_in_its_frames_out_of_sight():
     assert run.index("walkFrames = await prepareWalkFrames(fr);") < walk_at
     assert "walkFrames, fr)" in run[walk_at:walk_at + 260]
     # after a walk: no engine pass, no form read, no plan in the frames (the out-of-sight pass)
-    assert "if (havePayload && !walked) {" in run
-    assert "if (!walked) for (const ctx of liveFrames) fields = fields.concat(await readForm(" in run
+    assert "if (havePayload && !walked && !noFrameFill) {" in run
+    assert "if (!walked && !noFrameFill) for (const ctx of liveFrames) fields = fields.concat(await readForm(" in run
     # the frames' required empties are outlined and their Submit guarded
     assert "for (const ctx of liveFrames) await fr.eval(ctx, outline);" in run
     assert 'for (const ctx of liveFrames) await fr.eval(ctx, "window.TailorAutofill.armSubmitGuard()");' in run
@@ -103,6 +103,23 @@ def test_frames_only_report_signals_to_the_one_sent_detector():
     assert 'require("./sent_detect").signal' in sig and "announceSubmitted" not in sig
     for kind in ('kind: "submit-click"', 'kind: "page", how: "marker"', 'kind: "form-reset"'):
         assert kind in sig
+
+
+def test_no_fill_of_a_shown_page_runs_out_of_sight():
+    """Every fill the person can see is the visible walk: the agent's retry after writing a cover
+    letter, the next page after the person's Next, and the old direct routes; and a guided fill
+    whose walk could not run fills nothing in frames."""
+    agent = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
+    for call in agent.split("deps.runAutoApplyOnPane(recordId, {")[1:]:
+        assert "guided: !quiet" in call.split("}")[0], call[:160]
+    main = MAIN.read_text(encoding="utf-8")
+    for call in main.split("runAutoApplyOnPane(recordId, ")[1:]:
+        if call.startswith("opts)"):
+            continue
+        assert "guided: true" in call.split("}")[0], call[:120]
+    run = _between(main, "async function runAutoApplyOnPane", "// ------------------------------------------------------------- multi-page forms")
+    assert "const noFrameFill = !!opts.guided && !walked;" in run
+    assert "if (havePayload && !walked && !noFrameFill) {" in run
 
 
 def test_a_frame_never_draws_its_own_pointer_and_never_submits():

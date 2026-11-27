@@ -12,7 +12,9 @@
 //                                                          confirmation words or markers
 //   {kind: "form-reset", frameUrl, filledBefore, filledAfter}  after that, the frame's form is back
 //                                                          to empty (in place, or its page loaded again)
-// Each is said once per Submit. Pure (no Electron): tests/js/test_frame_walk.js.
+// Each is said once per Submit. Frames another origin serves are read through their own engine; a
+// same-origin frame (iCIMS) through the top page's (``{top: true}``), whose own Submit is the
+// detector's to see. Pure (no Electron): tests/js/test_frame_walk.js.
 "use strict";
 
 const WINDOW_MS = 5 * 60 * 1000;        // the frame is watched this long after a Submit
@@ -30,24 +32,29 @@ function createFrameSignalReader(o) {
   const recent = (s) => !!(s && s.at && now() - s.at <= WINDOW_MS);
   // a Submit stamp the frame reports (it survives a reload: the frame's session storage)
   const stamp = (c, got) => {
+    // the top page itself is the sent detector's own: from the top page's engine only a Submit in
+    // one of its same-origin frames (iCIMS) is said
+    if (c.top && !got.submitInFrame) return null;
     let s = st.get(c.prefix);
     if (got.submitAt && (!s || s.frameAt !== got.submitAt)) {
       s = { at: now(), filled: Number(got.filledAtSubmit) || 0, frameAt: got.submitAt, said: new Set() };
       st.set(c.prefix, s);
-      say(s, "submit-click", { kind: "submit-click", frameUrl: c.url || "", filled: s.filled });
+      s.url = got.submitUrl || c.url || "";
+      say(s, "submit-click", { kind: "submit-click", frameUrl: s.url, filled: s.filled });
     }
     return s;
   };
   const after = (c, s, got) => {
-    if (got.success) say(s, "page", { kind: "page", how: "marker", pageUrl: c.url || "", frame: true });
+    if (got.success) say(s, "page", { kind: "page", how: "marker", pageUrl: s.url || c.url || "", frame: true });
     const f = got.form;
     if (f && s.filled > 0 && (f.total === 0 || f.filled === 0)) {
-      say(s, "form-reset", { kind: "form-reset", frameUrl: c.url || "", filledBefore: s.filled, filledAfter: f.filled || 0 });
+      say(s, "form-reset", { kind: "form-reset", frameUrl: s.url || c.url || "", filledBefore: s.filled, filledAfter: f.filled || 0 });
     }
   };
   return {
     // One poll's answer from a frame c = {prefix, url}: relayTake on its page as it stands, or on
     // its NEW page (a fresh engine after the page changed).
+    // c.top: the top page's engine (same-origin frames included).
     seen(c, got) {
       if (!c || !got) return;
       const s = stamp(c, got);

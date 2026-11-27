@@ -5203,6 +5203,8 @@ function qsaSafe(sel, root) {
     const out = { point: p && p.seq > (Number(seq) || 0) ? p : null, needs: n || null, submitAt: stamp.at };
     if (out.submitAt) {
       out.filledAtSubmit = stamp.filled;
+      out.submitUrl = String(window.__sjSubmitUrl || "");
+      out.submitInFrame = !!window.__sjSubmitInFrame;
       try { out.form = formFill(); } catch (e) { out.form = null; }
       try { out.success = !!detectSuccess(); } catch (e) { out.success = false; }
     }
@@ -5229,19 +5231,27 @@ function qsaSafe(sel, root) {
   }
   function armFrameSubmitWatch(fresh) {
     if (fresh) {
-      window.__sjSubmitAt = 0; window.__sjFilledAtSubmit = 0;
+      window.__sjSubmitAt = 0; window.__sjFilledAtSubmit = 0; window.__sjSubmitUrl = ""; window.__sjSubmitInFrame = false;
       try { sessionStorage.removeItem(SUBMIT_KEY); } catch (e) { /* storage off */ }
     }
-    if (window.__sjFrameSubmitArmed) return false;
-    window.__sjFrameSubmitArmed = true;
-    const stamp = () => {
-      try { window.__sjFilledAtSubmit = formFill().filled; } catch (e) { window.__sjFilledAtSubmit = 0; }
-      window.__sjSubmitAt = Date.now();
-      try { sessionStorage.setItem(SUBMIT_KEY, JSON.stringify({ at: window.__sjSubmitAt, filled: window.__sjFilledAtSubmit })); } catch (e) { /* storage off */ }
-    };
-    document.addEventListener("submit", (e) => { if (e.isTrusted) stamp(); }, true);
-    document.addEventListener("click", (e) => { try { if (e.isTrusted && submitLike(e.target)) stamp(); } catch (err) { /* fine */ } }, true);
-    return true;
+    // (2026-11-26) every document of the form: this one and each same-origin frame (iCIMS's form
+    // lives in one, reached by the top page's engine); ``submitInFrame`` says the Submit was in a frame
+    let n = 0;
+    for (const doc of searchRoots().filter((r) => r && r.nodeType === 9)) {
+      if (doc.__sjFrameSubmitArmed) continue;
+      doc.__sjFrameSubmitArmed = true;
+      n++;
+      const stamp = () => {
+        try { window.__sjFilledAtSubmit = formFill().filled; } catch (e) { window.__sjFilledAtSubmit = 0; }
+        window.__sjSubmitAt = Date.now();
+        window.__sjSubmitInFrame = doc !== document;
+        try { window.__sjSubmitUrl = String(doc.URL || ""); } catch (e) { window.__sjSubmitUrl = ""; }
+        try { sessionStorage.setItem(SUBMIT_KEY, JSON.stringify({ at: window.__sjSubmitAt, filled: window.__sjFilledAtSubmit })); } catch (e) { /* storage off */ }
+      };
+      doc.addEventListener("submit", (e) => { if (e.isTrusted) stamp(); }, true);
+      doc.addEventListener("click", (e) => { try { if (e.isTrusted && submitLike(e.target)) stamp(); } catch (err) { /* fine */ } }, true);
+    }
+    return n > 0;
   }
   /** A ref's box in this document's own view (for the shell's in-sight check from the top page). */
   function refRect(ref) {

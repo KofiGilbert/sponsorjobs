@@ -222,9 +222,12 @@ async function run(kind, A, B, port, browser) {
 // frame whose page changed is read once more with a fresh engine, as the shell does (rereadFrame).
 // The signals are what the app's one sent detector hears; this test only checks what they say.
 async function runSubmit(kind, after, A, B, port, browser) {
-  const { page, cdp, wctx, walk, clickIn } = await open(kind, A, B, port, browser, after);
+  const { page, js, cdp, wctx, walk, clickIn } = await open(kind, A, B, port, browser, after);
   await walk();
-  await wctx[0].js("window.TailorAutofill.armFrameSubmitWatch(true)");
+  // a same-origin frame (iCIMS) is watched through the top page's engine (main.js armTopFrameSubmitWatch)
+  const same = kind === "same";
+  if (same) await js("window.TailorAutofill.armFrameSubmitWatch(true)");
+  else await wctx[0].js("window.TailorAutofill.armFrameSubmitWatch(true)");
   await clickIn("why");
   await page.keyboard.type("Because the work fits");
   await clickIn("submit");                                              // the PERSON's Submit
@@ -233,6 +236,11 @@ async function runSubmit(kind, after, A, B, port, browser) {
   let ctx = wctx[0];
   for (let i = 0; i < 16; i++) {
     await page.waitForTimeout(150);
+    if (same) {
+      reader.seen({ prefix: "top", url: page.url(), top: true },
+                  await js("window.TailorAutofill && (window.TailorAutofill.armFrameSubmitWatch(), window.TailorAutofill.relayTake(0))"));
+      continue;
+    }
     const got = await ctx.js("window.TailorAutofill && window.TailorAutofill.relayTake(0)");
     if (got) { reader.seen(ctx, got); continue; }
     await page.waitForTimeout(300);                                     // the new page loads
@@ -243,7 +251,7 @@ async function runSubmit(kind, after, A, B, port, browser) {
       + "return Object.assign(r, { form: r.form || T.formFill(), success: r.success || !!T.detectSuccess() }); })()"));
     ctx = Object.assign(frames.walkContexts(cdp, [found])[0], { prefix: ctx.prefix });
   }
-  cdp.close();
+  if (cdp) cdp.close();
   await page.close();
   return sigs;
 }
@@ -282,7 +290,7 @@ async function runSubmit(kind, after, A, B, port, browser) {
       assert(/All done/.test(r.allDone), tag + "Enter on the answered question moves on to Submit " + JSON.stringify(r.allDone));
     }
     // what the frame says after the person's Submit (signals for the app's sent detector)
-    for (const kind of ["oopif", "cross"]) {
+    for (const kind of ["oopif", "cross", "same"]) {
       for (const after of ["reset", "reload", "thanks", "error"]) {
         const sigs = await runSubmit(kind, after, A, B, port, browser);
         const kinds = sigs.map((x) => x.kind);

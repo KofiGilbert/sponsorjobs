@@ -330,6 +330,7 @@ let paneReap = null;
 
 function closePane() {
   releaseGuideFrames();
+  stopTopFrameSubmitWatch();
   paneOpen = false;
   layoutPane();
   pushPaneState();
@@ -1216,6 +1217,34 @@ async function rereadFrame(st, c) {
     }
   } catch (e) { /* the frame went away again */ }
 }
+// The top page's engine reaches same-origin frames (iCIMS): after a guided fill it watches their
+// Submit and their form coming back empty (frame_signals.js, {top: true}), once a second, for up to
+// 30 minutes, until the next fill, the pane closing, or the site's confirmation.
+let _topSubmitWatch = null;
+function armTopFrameSubmitWatch(wc) {
+  stopTopFrameSubmitWatch();
+  const st = { wc, started: Date.now(), timer: null, busy: false,
+               reader: frameSignals.createFrameSignalReader({}), c: { prefix: "top", url: wc.getURL() || "", top: true } };
+  wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armFrameSubmitWatch(true)", true).catch(() => null);
+  st.timer = setInterval(async () => {
+    if (_topSubmitWatch !== st || st.busy) return;
+    if (wc.isDestroyed() || Date.now() - st.started > 30 * 60 * 1000) { stopTopFrameSubmitWatch(); return; }
+    st.busy = true;
+    try {
+      // a frame that loaded its page again is armed again (the stamp stays on the top page)
+      const got = await fillKeys.capped(wc.executeJavaScript("window.TailorAutofill && (window.TailorAutofill.armFrameSubmitWatch(), window.TailorAutofill.relayTake(0))", true).catch(() => null), 2000);
+      if (got && got !== fillKeys.TIMED_OUT) st.reader.seen(st.c, got);
+    } finally { st.busy = false; }
+  }, 1000);
+  _topSubmitWatch = st;
+}
+function stopTopFrameSubmitWatch() {
+  const st = _topSubmitWatch;
+  if (!st) return;
+  _topSubmitWatch = null;
+  clearInterval(st.timer);
+}
+appliedWatch.onSubmitted(() => stopTopFrameSubmitWatch());
 function releaseGuideFrames() {
   const st = _guideFrames;
   if (!st) return;
@@ -1350,6 +1379,9 @@ async function runAutoApplyOnPane(recordId, opts) {
       walked = await guidedWalk(wc, recordId, url, page, (t) => sendProgress(Object.assign({ record_id: recordId || null, page }, t)), !!opts.retryAsked, walkFrames, fr);
       lap("walk", "filling the page");
     }
+    // (2026-11-26) a guided fill whose walk could not run (no pointer) fills nothing in frames: a
+    // frame's form is never filled out of sight
+    const noFrameFill = !!opts.guided && !walked;
     const fillExpr = (budgetMs) => (havePayload
       ? `(window.TailorAutofill.setTrace(${!!debugLine}), window.TailorAutofill.setPointer(${pointer && !walked}), window.TailorAutofill.fillAsync(${JSON.stringify(payload)}, ${JSON.stringify({ budgetMs })}))` : "null");
     const pres = [];
@@ -1401,7 +1433,7 @@ async function runAutoApplyOnPane(recordId, opts) {
       if (b === "auth") continue;                          // a sign-in inside the frame: theirs
       liveFrames.push(ctx);
       // (2026-11-26) a walked page's frames were walked too: nothing is filled out of sight
-      if (havePayload && !walked) {
+      if (havePayload && !walked && !noFrameFill) {
         const p = await run("filling the page", "engine", (b) => fr.eval(ctx, fillExpr(b)), beatIn(ctx));
         pres.push(p); tally(p);
       }
@@ -1435,7 +1467,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     };
     // the page itself was walked: its boxes are done or the person's (frames are read as before)
     let fields = walked ? [] : await readForm((expr) => wc.executeJavaScript(expr, true), beatMain);
-    if (!walked) for (const ctx of liveFrames) fields = fields.concat(await readForm((expr) => fr.eval(ctx, expr), beatIn(ctx)));
+    if (!walked && !noFrameFill) for (const ctx of liveFrames) fields = fields.concat(await readForm((expr) => fr.eval(ctx, expr), beatIn(ctx)));
     lap("extract", fields.length ? "the AI planned " + fields.length + " fields" : "checking what is left");
 
     let applied = { filled: 0, uploaded: 0, pending_upload: 0, skipped: 0 };
@@ -1559,6 +1591,8 @@ async function runAutoApplyOnPane(recordId, opts) {
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
     watchSnapshots(wc);
     wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitSnapshot && window.TailorAutofill.armSubmitSnapshot()", true).catch(() => null);
+    // (2026-11-26) a Submit inside a same-origin frame (iCIMS): signals for the sent detector
+    if (walked) armTopFrameSubmitWatch(wc);
     // Enter in a filled form never sends it; a script never clicks its Submit (Meriton, 2026-11-26),
     // in the top page, its same-origin frames and (2026-11-26) every frame another origin serves
     wc.executeJavaScript("window.TailorAutofill && window.TailorAutofill.armSubmitGuard && window.TailorAutofill.armSubmitGuard()", true).catch(() => null);
@@ -1675,7 +1709,7 @@ function armPageWatch(wc, recordId, page, sig) {
       }
       if (!framed && !s.empty) { st.labels = new Set(s.labels); return; }   // nothing to fill
       const next = st.page + 1;
-      const res = await runAutoApplyOnPane(recordId, { page: next, fromWatch: true, pointer: true });
+      const res = await runAutoApplyOnPane(recordId, { page: next, fromWatch: true, pointer: true, guided: true });
       const after = await mainSignature(wc);
       if (framed && !(res && res.ok)) return;            // an ad or widget frame reloading
       st.page = next;
@@ -2001,7 +2035,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
   await new Promise((r) => setTimeout(r, 400));   // navigation kickoff
   await waitPaneLoad();
   await new Promise((r) => setTimeout(r, 900));   // let SPA forms hydrate
-  return runAutoApplyOnPane(recordId);
+  return runAutoApplyOnPane(recordId, { pointer: true, guided: true });
 });
 
 // ------------------------------------------------------------- the apply agent
@@ -2053,7 +2087,7 @@ agent.startPolling();
 ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId), answers: agent.readyList(recordId) }));
 
 // AI-fill whatever page is CURRENTLY open in the pane (after the person navigated / signed in).
-ipcMain.handle("autoapply:fill-current", async (_e, recordId) => runAutoApplyOnPane(recordId));
+ipcMain.handle("autoapply:fill-current", async (_e, recordId) => runAutoApplyOnPane(recordId, { pointer: true, guided: true }));
 
 // The page's Browser slot. When the page shows the panel again while the shell holds a closed
 // pane (pane_view.js reopenOnSlot), that pane is opened again: a panel on screen always shows its
