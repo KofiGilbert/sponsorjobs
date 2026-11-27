@@ -191,6 +191,10 @@ def test_the_loader_loads_and_snapshots_and_a_refused_analytics_query_does_not_f
     monkeypatch.delenv("SEARCH_D1_API_URL", raising=False)
     monkeypatch.delenv("SEARCH_CF_USAGE", raising=False)
     monkeypatch.setattr(S.urllib.request, "urlopen", cloudflare(refuse=("graphql", "list")))
+    # the snapshot reads "yesterday" from the clock: pinned, so the test does not break once the real
+    # date moves past the 26th (it failed on every branch from 2026-11-27 UTC)
+    real = S.snapshot
+    monkeypatch.setattr(S, "snapshot", lambda *a, **k: real(*a, **{**k, "now": NOW}))
     feed = _feed(tmp_path / "jobs.json.gz", [_row(i) for i in range(30)])
     assert L.main(["--feed", str(feed), "--state", str(tmp_path / "s.gz"), "--daily-writes", "0"]) == 0
     assert d1.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 30     # the load went through
