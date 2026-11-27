@@ -330,3 +330,14 @@ def test_a_page_the_person_comes_back_to_is_walked_again():
     assert "_walkDone" in fw and "_walkAsked" in fw and 'k.endsWith(where)' in fw
     js = _src("ui/static/app.js")
     assert 'bbUseLatest(r.source_id, r.company || "")' in js        # the "left" line names the company
+
+
+def test_a_page_watch_is_always_anchored_to_its_job():
+    """Live check 2026-11-27: the page watch armed on Cotiviti's email-first step (no fill, so no
+    anchor) filled the next job's form, on another site, after the person opened it. Every watch
+    is now anchored, so another job lets it go."""
+    main = _src("shell-electron/main.js")
+    arm = _between(main, "function armPageWatch(wc, recordId, page, sig) {", "\n  const st = ")
+    assert 'noteFilled(recordId, wc.getURL() || "", true)' in arm
+    turn = _between(main, "async function emailStepTurn(", "\nfunction emailStepLine(")
+    assert "armPageWatch(" in turn

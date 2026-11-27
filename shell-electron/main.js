@@ -1943,6 +1943,10 @@ function pageNumberFor(wc, recordId, sig) {
 
 function armPageWatch(wc, recordId, page, sig) {
   disarmPageWatch();
+  // (live check 2026-11-27) the watch belongs to this page's job: anchored, so another job lets it
+  // go (an email-first step or a sign-in wall arms it without a fill; the watch then filled the
+  // next site's form for that application)
+  noteFilled(recordId, wc.getURL() || "", true);
   const st = { wc, recordId, page, labels: new Set((sig && sig.labels) || []),
                url: wc.getURL() || "", started: Date.now(), busy: false, wallSaid: false,
                timer: null, debounce: null, handlers: [] };
