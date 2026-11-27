@@ -110,7 +110,12 @@ def test_decision_endpoint_matches_the_policy():
 def _apply_handler() -> str:
     start = MAIN_JS.index('ipcMain.handle("assist:apply"')
     end = MAIN_JS.index("\n});", start)
-    return MAIN_JS[start:end]
+    h = MAIN_JS[start:end]
+    # (2026-11-27) the handler counts the fill as the app's own (job_identity.js) and runs assistApply
+    if "assistApply(opts)" in h:
+        b = MAIN_JS.index("async function assistApply(opts) {")
+        h += MAIN_JS[b:MAIN_JS.index("\n}\n", b)]
+    return h
 
 
 def test_main_js_clicks_submit_in_exactly_one_place():
