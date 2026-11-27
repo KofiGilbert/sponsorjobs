@@ -21285,7 +21285,8 @@ def agent_ask():
                             "text": "Sounds off." if cmd == "mute" else "Sounds on."})
         # (2026-11-27, QA) the Orb's own questions: answered from the data here, no AI call, and
         # never counted against the chat's hourly cap
-        question = "" if body.get("change") else _orb_rules().orb_question(text)
+        # (only from the Orb's chat: other callers keep the assistant's own status answers)
+        question = "" if body.get("change") or not body.get("orb") else _orb_rules().orb_question(text)
         if not question:
             mode = orb.chat_mode(now)
             orb.log("chat", mode, now)

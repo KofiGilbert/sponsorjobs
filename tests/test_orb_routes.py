@@ -236,7 +236,7 @@ def test_the_opening_lists_three_concrete_things_one_action_each(orb):
 def test_the_orbs_questions_are_answered_here_short_and_true(orb, monkeypatch, q, first, label, more):
     monkeypatch.setattr(app, "_agent_parse", lambda text: (_ for _ in ()).throw(AssertionError("no AI")))
     orb.state["cands"] = _waiting_data()
-    r = orb.post("/api/agent/ask", json={"text": q}).get_json()
+    r = orb.post("/api/agent/ask", json={"text": q, "orb": True}).get_json()
     assert r["kind"] == "agent" and r["mode"] == "local"
     assert r["orb_items"][0]["text"] == first and r["orb_items"][0]["action"]["label"] == label
     assert r["more"] == more and len(r["orb_items"]) <= 3
@@ -251,10 +251,10 @@ def test_the_orbs_questions_are_answered_here_short_and_true(orb, monkeypatch, q
 
 def test_how_and_the_empty_answers(orb, monkeypatch):
     monkeypatch.setattr(app, "_agent_parse", lambda text: (_ for _ in ()).throw(AssertionError("no AI")))
-    r = orb.post("/api/agent/ask", json={"text": "How do you work?"}).get_json()
+    r = orb.post("/api/agent/ask", json={"text": "How do you work?", "orb": True}).get_json()
     assert r["text"] == rules.HOW_TEXT
     for q in ("What's waiting on me?", "Which jobs should I apply to today?", "Practice for my next interview"):
-        r = orb.post("/api/agent/ask", json={"text": q}).get_json()
+        r = orb.post("/api/agent/ask", json={"text": q, "orb": True}).get_json()
         assert r["text"] and _plain(r["text"]) and len(r.get("orb_items") or []) <= 1
 
 
@@ -381,3 +381,11 @@ def test_the_confetti_layer_never_blocks_a_click_and_fires_once_per_submit():
 def test_the_confetti_page_is_served(orb):
     r = orb.get("/confetti")
     assert r.status_code == 200 and b'id="c"' in r.data and b"<script>" not in r.data
+
+
+def test_without_the_orb_the_assistant_keeps_its_own_status_answer(orb, monkeypatch):
+    calls = []
+    monkeypatch.setattr(app, "_agent_parse", lambda text: calls.append(text) or {"intent": "status"})
+    monkeypatch.setattr(app, "_agent_missing", lambda intent: None)
+    r = orb.post("/api/agent/ask", json={"text": "What's waiting on me?"}).get_json()
+    assert r["mode"] != "local" and calls == ["What's waiting on me?"]

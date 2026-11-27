@@ -5374,7 +5374,7 @@
     let out = null;
     try {
       await withWorking(async () => {
-        out = await api("/api/agent/ask", { text, change });
+        out = await api("/api/agent/ask", { text, change, orb: !!(typeof ORB !== "undefined" && ORB.on) });
         if (out.kind === "agent") agentReply(out);
       }, agentT("agent.thinking", "Thinking..."));
     } finally { AGENT.busy = false; orbPush(); }
