@@ -1649,6 +1649,91 @@ function qsaSafe(sel, root) {
     return "";
   }
 
+  // (2026-11-26, audit case 9) Upload boxes that take ONLY a dropped file (no file input in the
+  // page that could hold the resume). Found by asking each box what a dropped file would do: the
+  // HTML drag-and-drop contract says a drop target cancels "dragover". A page that cancels it
+  // everywhere (to stop the browser opening a stray file) tells nothing, so then nothing is found
+  // and the resume stays the person's. The resume's box (its words say resume or CV, or the only
+  // box that is no cover letter's). [{ref, label}] in page order; the shell drops the file in
+  // sight (shell-electron/drop_upload.js, CDP Input.dispatchDragEvent with the file).
+  function dropZones() {
+    if (qsaDeep('input[type="file"]').some((f) => !f.disabled && !siteParseBox(f) && !isLetterBox(f))) return [];
+    let probe = null;
+    try { probe = new File(["%PDF-1.4\n"], "probe.pdf", { type: "application/pdf" }); } catch (e) { return []; }
+    const accepts = (el) => {
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(probe);
+        const r = el.getBoundingClientRect();
+        const o = { bubbles: true, cancelable: true, composed: true, dataTransfer: dt, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+        el.dispatchEvent(new DragEvent("dragenter", o));
+        const over = new DragEvent("dragover", o);
+        el.dispatchEvent(over);
+        el.dispatchEvent(new DragEvent("dragleave", o));
+        return over.defaultPrevented;
+      } catch (e) { return false; }
+    };
+    if (document.body && accepts(document.body)) return [];        // the whole page takes drops: no telling
+    const cands = [];
+    for (const el of qsaSafe("div, section, label, span, p, li, [role='button'], [tabindex]", document)) {
+      if (cands.length >= 400) break;
+      if (!boxShown(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 100 || r.height < 30 || r.width > 1400 || r.height > 600) continue;
+      if (el.querySelector("input:not([type='hidden']):not([type='file']), select, textarea")) continue;
+      const t = cleanText(el.textContent || "");
+      if (t.length > 300) continue;
+      cands.push(el);
+    }
+    const yes = cands.filter(accepts);
+    // the outermost box that takes the drop (its children take it too, by bubbling)
+    const zones = yes.filter((el) => !yes.some((o) => o !== el && o.contains(el)));
+    const words = (el) => {
+      let box = el, near = "";
+      for (let i = 0; box && i < 4; i++, box = box.parentElement) {
+        near = cleanText(box.textContent || "").slice(0, 400);
+        if (near.length > cleanText(el.textContent || "").length + 10) break;
+      }
+      return near + " " + (el.getAttribute("aria-label") || "") + " " + (el.id || "");
+    };
+    const out = zones.filter((el) => !(LETTER_BOX_RE.test(words(el)) && !RESUME_BOX_RE.test(words(el))));
+    const named = out.filter((el) => RESUME_BOX_RE.test(words(el)));
+    const pick = named.length ? named : out.length === 1 ? out : [];
+    return pick.map((el) => ({ ref: fieldRef(el), label: cleanText(words(el)).slice(0, 80) }));
+  }
+  // Did the box take the dropped file? Its words now name the file, or a file input in the page
+  // holds it.
+  function dropTook(ref, name) {
+    const el = elByRef(ref);
+    const n = String(name || "").toLowerCase();
+    if (!n) return false;
+    if (qsaDeep('input[type="file"]').some((f) => [...(f.files || [])].some((x) => String(x.name).toLowerCase() === n))) return true;
+    let box = el;
+    for (let i = 0; box && i < 4; i++, box = box.parentElement) if (cleanText(box.textContent || "").toLowerCase().includes(n)) return true;
+    return cleanText((document.body && document.body.textContent) || "").toLowerCase().includes(n);
+  }
+
+  // (2026-11-26, owner decision; audit case 7) A page that only asks for an email before the
+  // application (iCIMS and others: "enter your email to continue", then a code or a profile):
+  // read from its shape, never its words: one visible email box (by type, autocomplete or name),
+  // no password box, no other text box, list or file box (tick boxes and buttons may be there).
+  // {ref, captcha} or null. The app types the email only when the person said so for this site,
+  // and never presses Next or touches the check box.
+  function emailStep() {
+    if (/(^|\.)linkedin\.com$/i.test(location.hostname)) return null;
+    const shown = (e) => boxShown(e);
+    if (qsaDeep('input[type="password"]').some(shown)) return null;
+    const boxes = qsaDeep("input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']):not([type='checkbox']):not([type='radio']), select, textarea").filter(shown);
+    if (boxes.length !== 1) return null;
+    const b = boxes[0];
+    const isEmail = (b.type || "").toLowerCase() === "email" || /email/i.test(b.getAttribute("autocomplete") || "")
+      || /e-?mail|login_?name|username/i.test((b.name || "") + " " + (b.id || ""));
+    if (!isEmail || b.tagName === "SELECT" || b.tagName === "TEXTAREA") return null;
+    const tick = qsaDeep("input[type='checkbox']").some((c) => shown(c) && !c.checked && (c.required || c.getAttribute("aria-required") === "true"))
+      || qsaDeep("[role='checkbox']").some((c) => shown(c) && c.getAttribute("aria-checked") !== "true");
+    return { ref: fieldRef(b), filled: !!String(b.value || "").trim(), captcha: pageBlocker() === "captcha", tick };
+  }
+
   // One-call orchestrator for the desktop shell: fill everything the payload supports and report
   // "filled X of Y" so the person knows exactly what to review. Never clicks submit.
   function fill(payload) { return withRoots(() => fillPass(payload)); }
@@ -5474,7 +5559,7 @@ function qsaSafe(sel, root) {
     enforceContact, checkHistory, prefillIssues, phoneCodeOnPage, guardContact, phoneRetype, setPointer,
     // (2026-11-26) guided fill: top to bottom, visible, ends where the person acts
     orderRefs, walkTo, pointAt, typeVisibly, tidyMenus, topRect, setSight, verifyForm, verifyAndMark, armFrameSubmitWatch, formFill, refPlaces, frameBox, pointFrom, relayPointer, relayTake, refRect, markNeeds, needsList, needsStep, clearNeeds, guideEnd, glow, unglow, armSubmitSnapshot,
-    siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, enterWouldSubmit, submitLike, needsNext, needsKind,
+    siteModal, readModal, flash, siteParseBox, resetBoxes, armSubmitGuard, dropZones, dropTook, emailStep, enterWouldSubmit, submitLike, needsNext, needsKind,
     // (2026-11-26) the apply agent's guided ask: what a field holds, the pointer on it, then Submit
     fieldValue, pointNeeds, allDone,
   };
