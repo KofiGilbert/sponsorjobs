@@ -6,7 +6,7 @@
 // itself stays in view. Moves glide (about 0.3 s) unless the person asked for reduced motion,
 // then they jump. Gone with hide(), and by itself after 10 s with nothing new.
 //
-// window.TailorPointer = { at(el, label, opts), point(rect, label, opts), hide(), state(), coverOf(el), titleOf(modal), COLOR }
+// window.TailorPointer = { at(el, label, opts), point(rect, label, opts), hide(), state(), target(), coverOf(el), titleOf(modal), COLOR }
 //
 // (2026-11-26) One signature colour, ONE token (--sj-pointer): the arrow's fill and the label's
 // background. The owner's pick (2026-11-26): violet, one shade deeper than #7C5CFF so the white label
@@ -250,5 +250,9 @@
     return true;
   }
   const state = () => (shown ? Object.assign({ queued: queue.length, reduced: reduced() }, shown) : null);
-  window.TailorPointer = { at, point, hide, state, coverOf, titleOf, openModal, headOf, COLOR, MOVE_MS };
+  // (2026-11-27) the box of the element the pointer names now, so the app's Orb never covers it
+  const target = () => {
+    try { return shown && cur && cur.el && cur.el.isConnected ? cur.el.getBoundingClientRect() : null; } catch (e) { return null; }
+  };
+  window.TailorPointer = { at, point, hide, state, target, coverOf, titleOf, openModal, headOf, COLOR, MOVE_MS };
 })();

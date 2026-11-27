@@ -562,6 +562,18 @@ class BoardMixin:
         q += " ORDER BY stage_at DESC, company COLLATE NOCASE"
         return [self._row(r) for r in self._conn.execute(q, params).fetchall()]
 
+    def board_states(self, source_ids) -> dict[str, dict]:
+        """{source_id: {"stage", "live"}} for the ids on the board, in one read (chunked)."""
+        ids = [str(x) for x in dict.fromkeys(source_ids or []) if x]
+        out: dict[str, dict] = {}
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            for r in self._conn.execute(
+                    f"SELECT source_id, stage, live_status FROM sourced_job WHERE source_id IN ({','.join('?' * len(part))})",
+                    part).fetchall():
+                out[r[0]] = {"stage": r[1], "live": r[2]}
+        return out
+
     def stage_of(self, source_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT stage FROM sourced_job WHERE source_id=?", (source_id,)).fetchone()

@@ -123,3 +123,54 @@ def test_the_orb_page_builds_with_text_only_and_the_shell_guards_its_channels():
         assert f'ipcMain.on("{ch}", (e' in main and "fromOrb(e)" in main
     assert 'ipcMain.on("orb:set", (e, payload) => { if (fromApp(e)' in main
     assert "if (orb) orb.raise();" in main            # above the pane, every time it is made
+
+
+# ---------------------------------------------------------------- (2026-11-27, QA) never cover
+PANE = {"x": 1000, "y": 90, "width": 850, "height": 1000}
+
+
+def _hit(a, b, pad=8):
+    return (a["x"] < b["x"] + b["width"] + pad and a["x"] + a["width"] > b["x"] - pad
+            and a["y"] < b["y"] + b["height"] + pad and a["y"] + a["height"] > b["y"] - pad)
+
+
+@pytest.mark.parametrize("zoom", [0.76, 1.0])
+def test_steps_aside_from_the_sites_submit_to_the_nearest_free_spot(zoom):
+    submit = {"x": 1700, "y": 1030, "width": 120, "height": 40}
+    r = _rect(anchor=PANE, offset=None, content={"w": 72, "h": 72}, win=WIN, zoom=zoom, avoid=[submit])
+    assert r["moved"] and not _hit(r["rect"], submit)
+    assert r["rect"]["y"] + r["rect"]["height"] > 1000          # still along the bottom edge, the nearest
+    assert r["offset"] == pytest.approx({"r": 16 * zoom, "b": 16 * zoom})   # the person's own spot is kept
+
+
+def test_the_bubble_counts_too_and_free_means_it_stays_put():
+    field = {"x": 1500, "y": 900, "width": 300, "height": 36}
+    r = _rect(anchor=PANE, offset=None, content={"w": 360, "h": 150}, win=WIN, zoom=1, avoid=[field])
+    assert r["moved"] and not _hit(r["rect"], field)
+    free = {"x": 1010, "y": 100, "width": 50, "height": 20}
+    r = _rect(anchor=PANE, offset=None, content={"w": 360, "h": 150}, win=WIN, zoom=1, avoid=[free])
+    assert not r["moved"] and r["rect"]["x"] + r["rect"]["width"] == 1850 - 16
+
+
+def test_a_dragged_spot_is_respected_until_it_covers_something():
+    off = {"r": 400, "b": 300}
+    r = _rect(anchor=PANE, offset=off, content={"w": 72, "h": 72}, win=WIN, zoom=1, avoid=[])
+    assert not r["moved"] and r["rect"]["x"] == 1850 - 400 - 72
+    ptr = {"x": r["rect"]["x"] + 10, "y": r["rect"]["y"] + 10, "width": 40, "height": 40}
+    r2 = _rect(anchor=PANE, offset=off, content={"w": 72, "h": 72}, win=WIN, zoom=1, avoid=[ptr])
+    assert r2["moved"] and not _hit(r2["rect"], ptr)
+
+
+def test_nowhere_free_it_stays_where_it_was_put():
+    everything = {"x": 0, "y": 0, "width": WIN["width"], "height": WIN["height"]}
+    r = _rect(anchor=PANE, offset=None, content={"w": 72, "h": 72}, win=WIN, zoom=1, avoid=[everything])
+    assert not r["moved"]
+
+
+def test_the_avoid_probe_is_one_expression_and_the_shell_runs_it_only_on_the_pane():
+    script = ("const o=require(process.argv[1]);new Function('return '+o.ORB_AVOID_JS);"
+              "console.log(JSON.stringify(o.ORB_AVOID_JS.includes('tailor-submit-hint') && o.ORB_AVOID_JS.includes('data-sj-glow')))")
+    assert _node(script, ROOT / "shell-electron" / "orb_view.js") is True
+    main = (ROOT / "shell-electron" / "main.js").read_text()
+    assert "orb.dockedToPane() && pane && !paneQuiet" in main
+    assert "target()" in (ROOT / "extension" / "pointer_overlay.js").read_text()

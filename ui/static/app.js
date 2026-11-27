@@ -1824,6 +1824,7 @@
       try { window.tailorShell.guideStep && window.tailorShell.guideStep("done"); } catch { /* fine */ }
       GUIDE_MSG = null;                  // any submit ends every run state: no needs-you line comes back
       say({ line: info && info.matched ? T("fill.submitted", "Submitted. Marked as applied") : T("fill.submittedOnly", "Submitted") });
+      orbCelebrate();                    // (2026-11-27) the Orb hops once for the site's own confirmation
       setTimeout(() => { const b = $("#bbFill"); if (b && /Submitted/.test(b.textContent || "")) say(null); }, 5000);
       const note = $("#pkgAssistNote");
       if (note) {
@@ -5173,6 +5174,10 @@
   // A reply: the text as a bubble (plain text, escaped), then its buttons underneath.
   function agentReply(r) {
     bubble("agent", chatText(r.text || ""));
+    if (Array.isArray(r.orb_items) && (r.orb_items.length || r.more)) orbItems(r.orb_items, r.more);
+    // the Orb's own answers: the other suggested questions come back under it
+    const orbQ = r.intent && /^orb_/.test(r.intent.intent || "") ? r.intent.intent.slice(4) : "";
+    if (orbQ && ORB.on) orbSuggest(true, orbQ);
     if (r.connect) agentConnectCard(r.connect);
     if (r.next === "go") { agentRun(); return; }      // carrying on by itself: no click, no turn
     const acts = (r.buttons || []).filter(b => b && b.id);
@@ -10155,6 +10160,7 @@
   // page (role, JD, optional resume), pre-filled from the newest tailored resume or Tracker job.
   const T = (k, f) => I18N.t(k, f);
   let PREPS = [], PREP_APP = null, GUIDED = false, PREP_MODE = null, PREP_FILL = null;
+  let PREP_WANT_SID = null;      // (2026-11-27) the Orb's Practice: the setup starts from this job
   const blankPrepApp = () => ({ role: "", jd: "", cv: "", cvName: "", recordId: null, company: "" });
   async function loadPreps() {
     $("#prepLive")?.classList.remove("is-report"); $("#prepScreen")?.classList.remove("is-report");
@@ -10287,7 +10293,8 @@
   }
   // The newest job the person touched (tailored resume or Tracker move), to pre-fill the setup.
   async function prepPrefill() {
-    try { return await api("/api/preps/prefill"); } catch { return null; }
+    const sid = PREP_WANT_SID; PREP_WANT_SID = null;
+    try { return await api("/api/preps/prefill" + (sid ? "?source_id=" + encodeURIComponent(sid) : "")); } catch { return null; }
   }
   // The setup page's side panel: the steps this interview will take, in its own words.
   const SETUP_STEPS = {
@@ -17018,7 +17025,13 @@
     ORB.flashTimer = setTimeout(() => { ORB.flash = ""; orbPush(); }, (ms || 1400) + 20);
     orbPush();
   }
-  function orbCelebrate() { if (ORB.on) orbFlash("celebrating", 1600); }
+  // Once per moment: the site's confirmation and the bar's "Submitted" line both ask for it, a
+  // few milliseconds apart; a second ask within 5 s is the same moment.
+  function orbCelebrate() {
+    if (!ORB.on || Date.now() - (ORB.celebratedAt || 0) < 5000) return;
+    ORB.celebratedAt = Date.now();
+    orbFlash("celebrating", 1600);
+  }
   function orbTyping() { return Date.now() - ORB.typingAt < 20000; }
   document.addEventListener("keydown", (e) => {
     const t = e.target;
@@ -17061,10 +17074,12 @@
     if (mood !== ORB.mood) {
       // a new ask: the soft chime, once (never for a line that only says what it is doing)
       if (mood === "needs" && ORB.mood !== "needs") ORB.chime = Date.now();
+      // (2026-11-27, QA) the same words for the NEXT application ("Submitted. Marked as applied")
+      // celebrate again: what was said is forgotten once the line moves on
       if (mood === "done") {
         const said = (bar && bar.textContent) || "";
         if (said !== ORB.lastDone) { ORB.lastDone = said; setTimeout(orbCelebrate, 0); }
-      }
+      } else ORB.lastDone = "";
       ORB.mood = mood;
     }
     const flash = ORB.flash && Date.now() < ORB.flashUntil ? ORB.flash : "";
@@ -17074,7 +17089,7 @@
       sleeping: !!(ORB.cfg && ORB.cfg.quiet) && !bubble,
     }) : "idle";
     const payload = {
-      visible, anchor, kind, state, bubble, count: ORB.count,
+      visible, anchor, kind, state, bubble, count: ORB.badge || 0,
       theme: document.documentElement.getAttribute("data-theme") || "dark",
       lang: document.documentElement.lang || "en", labels: orbLabels(),
       muted: !!(ORB.cfg && ORB.cfg.muted), chime: ORB.chime,
@@ -17175,11 +17190,62 @@
     clearTimeout(ORB.nudgeTimer);
     ORB.nudgeTimer = setTimeout(() => { orbHideMsg(); orbPush(); }, 45000);
   }
-  function orbGo(act) {
+  // (2026-11-27, QA) one concrete action per line: Draft email opens that job's Tracker panel and
+  // drafts the follow-up (the person sends it), Answer opens the panel with its question, Apply is
+  // the Tracker's own Apply (Autofill; never Submit), Practice opens Interview prep for that job.
+  async function orbGo(act) {
     if (!act) return;
+    if (act.do === "draft" || act.do === "panel") {
+      if (!act.sid) { navTo("tracker"); return; }
+      navTo("tracker");
+      await openTrackerPanel(act.sid);
+      if (act.do !== "draft") return;
+      const type = $("#trkMailType"), go = $("#trkMailGo");
+      if (type && [...type.options].some((o) => o.value === "follow_up")) type.value = "follow_up";
+      $("#trkMail")?.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (go && !go.disabled) go.click();
+      return;
+    }
+    if (act.do === "apply" && act.rid != null) { orbApplyRecord(act.rid); return; }
+    if (act.do === "practice") { PREP_WANT_SID = act.sid || null; navTo("prep"); return; }
     if (act.nav === "profile") { openMemory({}); return; }
     if (act.nav) { navTo(act.nav); return; }
     if (act.chat === "waiting") { orbOpenChat(); agentAsk(OT("orb.q.waiting", "What's waiting on me?")); }
+  }
+  async function orbApplyRecord(id) {
+    let item = null;
+    try { item = await api(`/api/autoapply/item/${id}`); }
+    catch (err) { toast(err.message || T("aa.fail", "Couldn't do that, try again.")); return; }
+    await aaSilentApprove(id, item);
+    await aaFill(id, { item });
+  }
+  // Rows of {text, action}: the line, and its one button. "and N more" opens the Tracker.
+  function orbItems(items, more) {
+    const box = el("div", "orb-items");
+    (items || []).forEach((n, i) => {
+      const row = el("div", "orb-item");
+      const t = el("span", "orb-item-text"); t.textContent = n.text || "";
+      row.appendChild(t);
+      const act = n.action || {};
+      if (act.label) {
+        const b = el("button", "btn btn-sm " + (i === 0 ? "btn-primary" : "btn-ghost"));
+        b.type = "button"; b.textContent = act.label;
+        b.addEventListener("click", () => {
+          if (n.id != null) orbApi(`/api/orb/nudge/${n.id}`, { status: "acted" }).catch(() => {});
+          orbGo(act);
+        });
+        row.appendChild(b);
+      }
+      box.appendChild(row);
+    });
+    if (more > 0) {
+      const m = el("button", "orb-more");
+      m.type = "button";
+      m.textContent = OT("orb.more", "and {n} more on your Tracker").replace("{n}", more);
+      m.addEventListener("click", () => navTo("tracker"));
+      box.appendChild(m);
+    }
+    chat.appendChild(box); chat.scrollTop = chat.scrollHeight;
   }
   function orbNudgeAct(n) {
     orbApi(`/api/orb/nudge/${n.id}`, { status: "acted" }).catch(() => {});
@@ -17196,6 +17262,7 @@
     if (!r) return;
     ORB.waiting = r.waiting || [];
     ORB.count = Number(r.count) || 0;
+    ORB.badge = Number(r.badge != null ? r.badge : Math.min(3, ORB.count)) || 0;
     if (r.nudge) {
       orbShowNudge(r.nudge);
       // out of sight: an OS notification too (the bubble is there when they come back)
@@ -17210,11 +17277,12 @@
   function orbOwnsNudges() { return !!(ORB.on && ORB.cfg && ORB.cfg.nudges); }
 
   // ---- the chat: the existing assistant, with what is waiting first and suggested questions
-  function orbSuggest() {
-    const qs = [["waiting", OT("orb.q.waiting", "What's waiting on me?")],
+  function orbSuggest(listed, skip) {
+    chat.querySelectorAll(".orb-suggest").forEach((x) => x.remove());     // one row of them, the newest
+    const qs = [...(listed ? [] : [["waiting", OT("orb.q.waiting", "What's waiting on me?")]]),
                 ["today", OT("orb.q.today", "Which jobs should I apply to today?")],
                 ["practice", OT("orb.q.practice", "Practice for my next interview")],
-                ["how", OT("orb.q.how", "How do you work?")]];
+                ["how", OT("orb.q.how", "How do you work?")]].filter(([id]) => id !== skip);
     if (orbAutofillBar()) qs.unshift(["why", OT("orb.q.why", "Why did you fill this?")]);
     const wrap = el("div", "agent-acts orb-suggest");
     qs.forEach(([id, label]) => {
@@ -17225,36 +17293,16 @@
     });
     chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
   }
-  const ORB_HOW = "I am your job search assistant. I read only what is in SponsorJobs on this computer: "
-    + "your resumes, your Tracker and your profile. When you press Autofill I fill the form from your "
-    + "profile and point at anything I am not sure of. I never press Submit, never solve a captcha and "
-    + "never fill a field you cannot see. I suggest, you decide. I nudge you at most 3 times a day, only "
-    + "about real things: a follow-up due, a resume ready, an interview coming. Right click me to mute "
-    + "my sounds or turn me off, or change that in Settings.";
+  // The Orb's own questions are answered by the engine from the data here, with no AI call
+  // (orb/rules.py orb_question): the same answer typed or pressed.
   async function orbAsk(id, label) {
-    if (id === "waiting") { agentAsk(label); return; }
+    if (id !== "why") { agentAsk(label); return; }
     bubble("user", esc(label));
-    if (id === "how") { bubble("agent", esc(OT("orb.how", ORB_HOW))); orbSuggestLater(); return; }
-    if (id === "practice") {
-      bubble("agent", esc(OT("orb.practiceGo", "Opening Interview prep. Pick the role and start a practice round.")));
-      setTimeout(() => navTo("prep"), 500);
-      return;
-    }
-    if (id === "why") {
-      const bar = $("#bbFill");
-      const said = (bar && bar.querySelector(".bb-details-box")) ? bar.querySelector(".bb-details-box").textContent : "";
-      bubble("agent", esc(OT("orb.why", "I filled each field from your saved profile and your resume for this job. Where I was not sure, I left it for you and the pointer shows it. Nothing is sent until you press Submit on the site."))
-        + (said ? "<br><br>" + esc(said).replace(/\n/g, "<br>") : ""));
-      return;
-    }
-    if (id === "today") {
-      let r = null;
-      await withWorking(async () => { try { r = await orbApi("/api/orb/today"); } catch { r = null; } }, OT("agent.thinking", "Thinking..."));
-      if (r && r.text) agentReply(r);
-      else bubble("agent", esc(OT("orb.todayFail", "I could not read your Tracker just now. Try again in a moment.")));
-    }
+    const bar = $("#bbFill");
+    const said = (bar && bar.querySelector(".bb-details-box")) ? bar.querySelector(".bb-details-box").textContent : "";
+    bubble("agent", esc(OT("orb.why", "I filled each field from your saved profile and your resume for this job. Where I was not sure, I left it for you and the pointer shows it. Nothing is sent until you press Submit on the site."))
+      + (said ? "<br><br>" + esc(said).replace(/\n/g, "<br>") : ""));
   }
-  function orbSuggestLater() { setTimeout(orbSuggest, 0); }
   async function orbOpenChat() {
     // already open: the chat is where it was, nothing said twice
     if (AGENT.on && $("#view-builder").classList.contains("is-active")) { composerInput.focus(); return; }
@@ -17264,24 +17312,14 @@
     const w = (ORB.waiting || []).filter(Boolean);
     if (ORB.nudge) w.unshift(ORB.nudge);
     const seen = new Set();
-    const list = w.filter((n) => !seen.has(n.id) && seen.add(n.id)).slice(0, 3);
+    const key = (n) => (n.id != null ? "#" + n.id : n.text);
+    const list = w.filter((n) => !seen.has(key(n)) && seen.add(key(n))).slice(0, 3);
     orbHideMsg(); orbPush();
     if (list.length) {
-      bubble("agent", esc(list.length === 1 ? OT("orb.oneWaits", "One thing waits on you:") : OT("orb.fewWait", "Here is what waits on you:"))
-        + "<br>" + list.map((n) => "&bull; " + esc(n.text)).join("<br>"));
-      const wrap = el("div", "agent-acts");
-      const labelSet = new Set();
-      list.forEach((n) => {
-        if (!n.action || !n.action.label || labelSet.has(n.action.label)) return;   // one button per place
-        labelSet.add(n.action.label);
-        const b = el("button", "btn btn-sm " + (labelSet.size === 1 ? "btn-primary" : "btn-ghost"));
-        b.type = "button"; b.textContent = n.action.label;
-        b.addEventListener("click", () => { wrap.remove(); orbNudgeAct(n); });
-        wrap.appendChild(b);
-      });
-      if (wrap.children.length) { chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight; }
+      bubble("agent", esc(list.length === 1 ? OT("orb.oneWaits", "One thing waits on you:") : OT("orb.fewWait", "Here is what waits on you:")));
+      orbItems(list, Math.max(0, (ORB.count || 0) - list.length));
     }
-    orbSuggest();
+    orbSuggest(list.length > 0);
   }
   // "mute" / "unmute" typed in the chat: handled here, no AI call
   function orbMuteCmd(text) {
