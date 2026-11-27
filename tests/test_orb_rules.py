@@ -86,6 +86,8 @@ def test_no_kind_is_a_vague_total():
     ("Which jobs should I apply to today?", "today"), ("what jobs should I apply for", "today"),
     ("Practice for my next interview", "practice"), ("mock interview please", "practice"),
     ("How do you work?", "how"), ("what can you do", "how"),
+    ("Do I have any interviews coming up?", "practice"), ("any follow-ups due?", "waiting"),
+    ("who should I follow up with", "waiting"),
     ("Find me 5 data analyst jobs in Chicago", ""), ("tailor my resume for this job", ""), ("", ""),
 ])
 def test_the_orbs_own_questions_need_no_ai(text, kind):

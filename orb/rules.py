@@ -177,9 +177,10 @@ _Q = (
     ("today", re.compile(r"\b(which|what) (jobs?|roles?|applications?)\b.*\bapply\b|\bapply (to|for) today\b|"
                          r"\bwhere should i apply\b|\bwhat should i apply\b")),
     ("practice", re.compile(r"\bpractic[es]\b.*\binterview|\binterview (practice|prep)\b|\bmock interview\b|"
-                            r"\bprepare for (my|the|an) (next )?interview\b")),
+                            r"\bprepare for (my|the|an) (next )?interview\b|\b(any|my|next|upcoming) interviews?\b")),
     ("waiting", re.compile(r"\bwhat('?s| is| are)? (waiting|left|pending)\b|\bwhat waits\b|\bwaiting (on|for) me\b|"
-                           r"\bwhat (do|should) i (need to )?do (next|today|now)\b|\bmy to ?do\b")),
+                           r"\bwhat (do|should) i (need to )?do (next|today|now)\b|\bmy to ?do\b|"
+                           r"\b(any|my|which) follow.?ups?\b|\bwho should i follow up\b")),
     ("how", re.compile(r"\bhow do(es)? (you|this|the assistant) work\b|\bwhat can you do\b|\bwho are you\b|"
                        r"\bwhat are you\b|\bhow do i use you\b")),
 )
