@@ -102,6 +102,11 @@ def sure(location: str) -> str:
         if "Canada" not in found:
             found.append("Canada")
     codes = {code_of(n) for n in found}
+    # the work-authorization rules' own country words ("UK", "England", "Europe"): sure as before
+    from autoapply.workauth import question_country
+    known = question_country(text, "?")                # "?": it named none
+    if known != "?":
+        codes.add(known)
     if len(codes) == 1:
         return codes.pop()
     if len(codes) > 1:

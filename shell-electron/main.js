@@ -263,7 +263,10 @@ function ensurePane() {
     try {
       const cwc = child.webContents;
       cwc.setWindowOpenHandler(({ url }) => { if (originGuard.originOf(url) && !opensInOwnBrowser(url)) cwc.loadURL(url); return { action: "deny" }; });
-      cwc.on("will-navigate", (e, url) => { if (!originGuard.originOf(url)) e.preventDefault(); });
+      // never the app's own address, never anything but the web
+      const stay = (e, url) => { if (!originGuard.originOf(url) || originGuard.sameOrigin(url, SERVER)) e.preventDefault(); };
+      cwc.on("will-navigate", stay);
+      cwc.on("will-redirect", stay);
     } catch (e) { /* the window closed at once */ }
   });
   // (2026-11-26, audit case 35) every page the pane reaches: another job lets the application go
