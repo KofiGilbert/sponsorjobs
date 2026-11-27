@@ -258,6 +258,14 @@ const guides = (progress) => progress.filter((x) => x.state === "guide").map((x)
         const overlap = r.left < a.right && r.right > a.left && r.top < a.bottom && r.bottom > a.top;
         return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, whole: t.scrollWidth <= t.clientWidth + 1, overlap, vw: innerWidth, vh: innerHeight };
       }, label);
+      // the Orb's probe (shell-electron/orb_view.js) sees where the pointer and its label come to rest
+      const ORB = require(path.join(ROOT, "shell-electron", "orb_view.js"));
+      await page.evaluate(() => window.TailorPointer.at(document.getElementById("s"), "Your turn: check and submit", { now: true, stay: true, on: true }));
+      const seen = await page.evaluate(ORB.ORB_AVOID_JS);
+      const lab = await page.evaluate(async () => { await new Promise((r) => setTimeout(r, 350));
+        const t = document.querySelector("[data-sj-pointer]").shadowRoot.querySelector(".t").getBoundingClientRect(); return { x: t.x, y: t.y, w: t.width, h: t.height }; });
+      check(seen.some((r) => Math.abs(r.x - lab.x) < 3 && Math.abs(r.y - lab.y) < 3 && Math.abs(r.width - lab.w) < 3), "the Orb's probe sees the label's resting place at once", JSON.stringify({ seen, lab }));
+      check(seen.some((r) => r.x <= 640 && r.x + r.width >= 470 && r.y > 380), "and the site's Submit", JSON.stringify(seen));
       for (const label of ["Your turn: check and submit", "All done. Press Submit when you're happy"]) {
         const f = await fits(label);
         check(f.left >= 0 && f.right <= f.vw && f.top >= 0 && f.bottom <= f.vh && f.whole && !f.overlap,

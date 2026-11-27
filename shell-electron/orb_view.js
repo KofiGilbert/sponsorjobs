@@ -115,6 +115,16 @@ const ORB_AVOID_JS = `(() => {
     if (p) { const a = p.querySelector("svg"), t = p.querySelector(".t"); if (a) add(a.getBoundingClientRect()); if (t) add(t.getBoundingClientRect()); }
     const P = window.TailorPointer, el = P && P.target && P.target();
     if (el) add(el);
+    // where the pointer is GOING (it glides there, and a page out of sight never finishes the
+    // glide): the arrow and its label at their resting place
+    const st = P && P.state && P.state();
+    const t2 = p && p.querySelector(".t");
+    if (st && t2) {
+      const ml = parseFloat(t2.style.marginLeft) || 0, mt = t2.style.marginTop ? parseFloat(t2.style.marginTop) : 24;
+      add({ left: st.x, top: st.y, right: st.x + 34, bottom: st.y + 42, width: 34, height: 42 });
+      const lx = st.x + 40 + ml, ly = st.y + mt;
+      add({ left: lx, top: ly, right: lx + t2.offsetWidth, bottom: ly + t2.offsetHeight, width: t2.offsetWidth, height: t2.offsetHeight });
+    }
   } catch (e) { /* not ours */ }
   try {
     const g = document.querySelector("[data-sj-glow]"), sr = g && g.shadowRoot;
