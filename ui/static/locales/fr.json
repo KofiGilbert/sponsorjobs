@@ -2247,5 +2247,21 @@
   "aa.ask.messages": "messages du recruteur ?",
   "fill.countryGo": "Remplir quand même",
   "fill.countryStop": "Pas celle-ci",
-  "fill.countryNo": "Non rempli. Vous avez choisi de ne pas postuler à celle-ci."
+  "fill.countryNo": "Non rempli. Vous avez choisi de ne pas postuler à celle-ci.",
+  "bb.savedOther": "Enregistré. Le navigateur affiche une autre offre, je ne l'ai donc pas remplie",
+  "bb.backToForm": "Retour au formulaire",
+  "bb.leftFormCo": "Vous avez quitté le formulaire {c}. Appuyez sur Retour pour y revenir",
+  "bb.leftForm": "Vous avez quitté le formulaire. Appuyez sur Retour pour y revenir",
+  "bb.backOnForm": "De retour sur votre formulaire. Appuyez sur Autofill pour remplir ce que le site a effacé",
+  "bb.sitePopup": "Le site a ouvert sa propre fenêtre. Votre formulaire reste ici",
+  "bb.jobClosedMoved": "Cette offre est fermée. Je l'ai déplacée dans Fermées",
+  "bb.jobClosed": "Cette offre est fermée",
+  "bb.siteServer": "Le site a eu un problème et ne l'a pas pris. Appuyez à nouveau sur son bouton d'envoi dans une minute",
+  "bb.siteRefused": "Le site ne l'a pas encore pris. Regardez ce que la page demande",
+  "fill.emailSelf": "Saisissez votre e-mail et appuyez sur Suivant. Je remplirai le formulaire ensuite.",
+  "fill.emailYes": "Oui",
+  "fill.emailSelfBtn": "Je m'en charge",
+  "mem.emailSteps": "Sites qui demandent d'abord votre e-mail",
+  "mem.emailYes": "Le remplir pour moi",
+  "mem.emailSelf": "Je m'en charge"
 }

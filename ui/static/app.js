@@ -5685,7 +5685,7 @@
     $("#profImport").hidden = !empty;
     $("#memAddResume").hidden = empty;
     $("#memJump").innerHTML = MEM_JUMP.map(([k, key, f]) => `<button type="button" class="mem-jump-b" data-jump-to="${k}">${esc(MT(key, f))}</button>`).join("");
-    memPaintNoted(); memPaintNeeds(); memPaintAbout(); memPaintWork(); memPaintAnswers(); memPaintEeo(); memPaintBg(); memPaintCareer(); memPaintHistory();
+    memPaintNoted(); memPaintNeeds(); memPaintAbout(); memPaintWork(); memPaintAnswers(); memPaintEeo(); memPaintBg(); memPaintEmailSteps(); memPaintCareer(); memPaintHistory();
   }
   function memPaintNoted() {
     const list = MEM.data.noted || [];
@@ -5748,6 +5748,18 @@
     $("#memBgRows").innerHTML = rows.map(r => memRow(r, { editor: x => memEditor(x, "text", x.raw || x.value) })).join("");
     $("#memBgRows").hidden = !rows.length;
     $("#memBgNone").hidden = !!rows.length;
+  }
+  // (2026-11-26) Sites that ask for an email before the form: Fill it in for me / I'll do it, Forget.
+  function memPaintEmailSteps() {
+    const rows = (MEM.data && MEM.data.email_steps) || [];
+    const box = $("#memEmailRows");
+    if (!box) return;
+    $("#memEmailSteps").hidden = !rows.length;
+    box.innerHTML = rows.map(r => `<div class="ans-row mem-row" data-host="${esc(r.host)}">
+      <div class="ans-row-main"><div class="ans-q">${esc(r.host)}</div>
+        <div class="ans-seg" role="group" aria-label="${esc(r.host)}">${[["yes", "mem.emailYes", "Fill it in for me"], ["self", "mem.emailSelf", "I'll do it"]].map(([v, k, f]) =>
+          `<button type="button" class="ans-seg-b${r.choice === v ? " is-on" : ""}" data-email-choice="${v}" aria-pressed="${r.choice === v}">${esc(MT(k, f))}</button>`).join("")}</div></div>
+      <div class="ans-row-acts"><button type="button" class="btn btn-ghost btn-sm ans-del" data-email-forget>${esc(MT("mem.forget", "Forget"))}</button></div></div>`).join("");
   }
   function memPaintEeo() {
     const d = MEM.data, rows = d.eeo || [];
@@ -6467,6 +6479,16 @@
     if (MEM.show) { MEM.show = false; MEM.eeo = null; memPaintEeo(); return; }
     try { await memReveal(); MEM.show = true; } catch (err) { toast(err.message); }
     memPaintEeo();
+  });
+  $("#memEmailRows")?.addEventListener("click", async e => {
+    const row = e.target.closest("[data-host]");
+    const b = e.target.closest("[data-email-choice], [data-email-forget]");
+    if (!row || !b) return;
+    b.disabled = true;
+    const choice = b.hasAttribute("data-email-forget") ? "" : b.getAttribute("data-email-choice");
+    try { await memPost("/api/autofill/email-step", { host: row.getAttribute("data-host"), choice, memory: true }); }
+    catch (err) { toast(err.message); }
+    b.disabled = false;
   });
   $("#memBgAsk")?.addEventListener("change", async e => {
     const box = e.target, want = box.checked;
