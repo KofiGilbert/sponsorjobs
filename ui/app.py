@@ -21405,12 +21405,13 @@ def _orb_config(orb=None) -> dict:
     try:
         setting = orb.pref("enabled", True) is not False
         muted = bool(orb.pref("muted", False))
+        celebrations = orb.pref("celebrations", True) is not False
     finally:
         if own:
             orb.close()
     on, why = R.enabled(env_on=R.flag("SJ_ORB"), setting_on=setting, remote_on=_orb_remote_on())
     now = _orb_now()
-    return {"ok": True, "enabled": on, "off_reason": why, "setting": setting, "muted": muted,
+    return {"ok": True, "enabled": on, "off_reason": why, "setting": setting, "muted": muted, "celebrations": celebrations,
             "nudges": on and R.flag("SJ_ORB_NUDGES"), "quiet": _orb_quiet(now),
             "env_off": not R.flag("SJ_ORB")}
 
@@ -21420,6 +21421,15 @@ def orb_page():
     """The Orb's own small page: the shell shows it in a transparent view above the app and the
     in-app browser (shell-electron/orb_view.js). It holds no data; the app sends it what to show."""
     resp = make_response(render_template("orb.html"))
+    resp.headers["Content-Security-Policy"] = APP_CSP
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/confetti")
+def confetti_page():
+    """The celebration burst's page (shell-electron/confetti_view.js): one canvas, no data."""
+    resp = make_response(render_template("confetti.html"))
     resp.headers["Content-Security-Policy"] = APP_CSP
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -21441,6 +21451,8 @@ def orb_settings():
         if "enabled" in body:
             orb.set_pref("enabled", bool(body["enabled"]), now)
             orb.log("enabled" if body["enabled"] else "disabled", str(body.get("from") or "")[:20], now)
+        if "celebrations" in body:
+            orb.set_pref("celebrations", bool(body["celebrations"]), now)
         if "muted" in body:
             orb.set_pref("muted", bool(body["muted"]), now)
             orb.log("mute" if body["muted"] else "unmute", str(body.get("from") or "")[:20], now)
@@ -21496,7 +21508,7 @@ def _orb_candidates(now) -> list[dict]:
     its job is still To apply on the Tracker (2026-11-27, QA: 17 of 24 "ready" resumes were for
     jobs the person had closed, so "25 resumes are ready to apply" was not true)."""
     from sourcing.board import TODO_STAGES
-    from submit.stages import app_stage, is_waiting_to_submit
+    from submit.stages import app_stage, is_ready_to_apply
     out: list[dict] = []
     today = now.date()
     recs = _records()
@@ -21539,7 +21551,15 @@ def _orb_candidates(now) -> list[dict]:
         out.append({"type": "practice", "key": f"practice:{j.get('source_id')}",
                     "text": f"Practice for your {_orb_who(j)} interview",
                     "action": {"do": "practice", "sid": j.get("source_id"), "label": "Practice"}})
-    ready = [r for r in rows if str(r["id"]) not in asked and still_todo(r) and is_waiting_to_submit(_record_data(r))]
+    # the Tracker's own rule: a To apply card's newest package still ready to apply (one per job)
+    ready, seen_jobs = [], set()
+    for r in sorted(rows, key=lambda r: -int(r["id"])):
+        sid = board[str(r["id"])]["sid"]
+        if sid in seen_jobs or not still_todo(r) or not is_ready_to_apply(_record_data(r)):
+            continue
+        seen_jobs.add(sid)
+        if str(r["id"]) not in asked:
+            ready.append(r)
     fit = lambda r: _record_data(r).get("fit")                                    # noqa: E731
     ready.sort(key=lambda r: (-(fit(r) if isinstance(fit(r), (int, float)) else -1), -int(r["id"])))
     for r in ready:
@@ -21724,8 +21744,42 @@ def _orb_answer(kind: str) -> dict:
             return {"text": "No interview is on your Tracker yet. You can still practice for any job you applied to.",
                     "orb_items": [{"type": "practice", "text": "Practice for a job",
                                    "action": {"do": "practice", "label": "Practice"}}], "more": 0, "buttons": []}
-        return {"text": "Your next interview:", "orb_items": [_orb_public(nxt)], "more": 0, "buttons": []}
+        return {"text": "This interview is on your Tracker:", "orb_items": [_orb_public(nxt)], "more": 0, "buttons": []}
     return {"text": "", "buttons": []}
+
+
+@app.post("/api/orb/celebrate")
+@_guard
+def orb_celebrate():
+    """{event: submitted | interviewing | offer, reduced_motion}: whether to throw confetti and how
+    much (orb/rules.py celebration). The applied total is the Tracker's own (the first ever and
+    every 10th application are milestones). Logged as an event: kind and size only."""
+    from orb import rules as R
+    body = request.json or {}
+    event = str(body.get("event") or "")
+    orb, now = _orb_store(), _orb_now()
+    try:
+        enabled = orb.pref("celebrations", True) is not False
+        total = 0
+        if enabled and event == "submitted":
+            try:
+                from datetime import date
+
+                from sourcing.board import funnel_metrics
+                w = _watchlist()
+                try:
+                    _board_reconcile(w)
+                    total = int(funnel_metrics(w.funnel_rows(), date.today(), _board_goal()).get("applied_total") or 0)
+                finally:
+                    w.close()
+            except Exception:          # noqa: BLE001 - a light burst, never none, when the count fails
+                traceback.print_exc()
+        size = R.celebration(event, applied_total=total, enabled=enabled, reduced_motion=bool(body.get("reduced_motion")))
+        if size:
+            orb.log("celebrate", f"{event}:{size}", now)
+        return jsonify({"ok": True, "size": size, "applied_total": total})
+    finally:
+        orb.close()
 
 
 @app.get("/api/orb/today")

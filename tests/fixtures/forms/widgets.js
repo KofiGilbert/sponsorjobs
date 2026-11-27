@@ -7,7 +7,10 @@
 //     Real-page options seen on Greenhouse's current boards (cfg.live): the placeholder HIDES
 //     while there is search text, a loading indicator spins in the control while options load
 //     (cfg.delayMs, e.g. a slow location search), and a hidden aria-hidden "required" mirror
-//     input sits beside the control.
+//     input sits beside the control. cfg.gh (Greenhouse's job board, seen live 2026-11-27 on
+//     InStride's form): once a choice is made the search box is hidden at opacity 0 (react-select's
+//     isHidden; the choice shows beside it) until the person types again, and a "Clear
+//     selections" icon button appears among the indicators.
 //   - WorkdayListbox: <button aria-haspopup=listbox data-automation-id=...> "Select One", opens
 //     on CLICK only, menu portalled to <body> as ul[role=listbox] > li[role=option] > div[promptOption].
 //   - WorkdayPrompt: input[data-uxi-widget-type=selectinput] search box; typing shows
@@ -87,6 +90,16 @@
       vc.querySelectorAll(".select__single-value").forEach((x) => x.remove());
       ph.style.display = "none";
       vc.insertBefore(h("div", { class: "select__single-value", text: o }), vc.firstChild);
+      if (cfg.gh) {
+        input.style.opacity = "0";
+        if (!indicators.querySelector("[aria-label='Clear selections']")) {
+          const clr = h("button", { type: "button", "aria-label": "Clear selections", class: "icon-button", text: "x" });
+          clr.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); st.value = null;
+            vc.querySelectorAll(".select__single-value").forEach((x) => x.remove()); ph.style.display = "";
+            input.style.opacity = "1"; clr.remove(); render(); });
+          indicators.insertBefore(clr, indicators.firstChild);
+        }
+      }
       render();
       if (cfg.onChange) cfg.onChange(o);
     }
@@ -96,6 +109,7 @@
     });
     input.addEventListener("input", () => {
       st.q = input.value; st.open = true;
+      if (cfg.gh) input.style.opacity = "1";
       if (st.async) {
         st.loading = true; render();
         clearTimeout(st.timer);

@@ -193,3 +193,20 @@ def test_erase_clears_everything_but_settings(st):
     st.erase()
     assert st.nudges(statuses=None) == [] and st.count_events("chat", T0 - timedelta(days=1)) == 0
     assert st.pref("enabled") is False
+
+
+@pytest.mark.parametrize("event,total,kw,want", [
+    ("submitted", 1, {}, "big"),            # the first application ever
+    ("submitted", 2, {}, "light"),
+    ("submitted", 9, {}, "light"),
+    ("submitted", 10, {}, "big"),           # every 10th
+    ("submitted", 30, {}, "big"),
+    ("submitted", 0, {}, "light"),          # the count failed: a light one, never none
+    ("interviewing", 3, {}, "big"),
+    ("offer", 3, {}, "big"),
+    ("submitted", 1, {"reduced_motion": True}, ""),   # the Orb's face and the bubble say it then
+    ("submitted", 10, {"enabled": False}, ""),        # Celebrations off in Settings
+    ("saved", 1, {}, ""),
+])
+def test_celebrations(event, total, kw, want):
+    assert rules.celebration(event, applied_total=total, **kw) == want

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Celebration</title>
+  <!-- (2026-11-27) The celebration burst: a click-through transparent layer over the whole window
+       (shell-electron/confetti_view.js), drawn on one canvas, gone in about 1.5 s. -->
+  <style>html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; } canvas { display: block; }</style>
+</head>
+<body>
+  <canvas id="c" aria-hidden="true"></canvas>
+  <script src="{{ url_for('static', filename='confetti.js') }}"></script>
+</body>
+</html>

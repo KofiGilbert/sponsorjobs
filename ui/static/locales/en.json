@@ -2220,6 +2220,8 @@
   "orb.offShort": "Off",
   "orb.on": "On",
   "orb.offToast": "Assistant off. Turn it back on in Settings, Appearance.",
+  "orb.celebrate": "Celebrations",
+  "orb.celebrateDesc": "A short burst of confetti when you send an application, land an interview or get an offer.",
   "orb.more": "and {n} more on your Tracker",
   "orb.notNow": "Not now",
   "orb.oneWaits": "One thing waits on you:",

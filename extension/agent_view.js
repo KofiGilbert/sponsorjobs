@@ -294,6 +294,10 @@
     const E = T();
     let v = "";
     if (E && typeof E.comboValue === "function") { try { v = E.comboValue(el) || ""; } catch (e) { v = ""; } }
+    // the choice in the site's own words when the engine can say it ("No", not "no")
+    if (v && E && typeof E.fieldValue === "function") {
+      try { const fv = E.fieldValue(el); if (fv && fv.value && norm(fv.value) === v) v = fv.value; } catch (e) { /* keep v */ }
+    }
     else if (tagOf(el) === "INPUT") v = norm(el.value);
     else {
       const t = norm(el.textContent || attrOf(el, "aria-label"));
@@ -587,7 +591,10 @@
       const kind = kindOf(el);
       if (kind && honeypotField(el)) return;            // a honeypot: never listed, never filled
       if (kind) {
-        if (file || boxShown(el, isToggleInput(el))) { pushEl(el, kind); return; }
+        // (2026-11-27, InStride on Greenhouse) a react-select hides its search box at opacity 0 once
+        // a choice is made (the choice shows beside it): the question stayed in the view only while
+        // it was empty, so the guided ask lost it the moment the person picked, and never moved on
+        if (file || boxShown(el, isToggleInput(el) || kind === "combobox")) { pushEl(el, kind); return; }
         if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
         // An empty-box role element (a wrapper that only sizes its children): walk on.
       }
@@ -1669,6 +1676,10 @@
     const E = T();
     let v = "";
     if (E && typeof E.comboValue === "function") { try { v = E.comboValue(el) || ""; } catch (e) { v = ""; } }
+    // the choice in the site's own words when the engine can say it ("No", not "no")
+    if (v && E && typeof E.fieldValue === "function") {
+      try { const fv = E.fieldValue(el); if (fv && fv.value && norm(fv.value) === v) v = fv.value; } catch (e) { /* keep v */ }
+    }
     if (!v) v = tagOf(el) === "INPUT" ? el.value : (el.textContent || "");
     return norm(v) === want;
   }

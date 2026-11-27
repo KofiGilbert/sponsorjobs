@@ -2220,6 +2220,8 @@
   "orb.offShort": "Aus",
   "orb.on": "An",
   "orb.offToast": "Assistent aus. Schalte ihn unter Einstellungen, Darstellung wieder an.",
+  "orb.celebrate": "Feiern",
+  "orb.celebrateDesc": "Ein kurzer Konfettiregen, wenn du eine Bewerbung sendest, ein Interview bekommst oder ein Angebot erhältst.",
   "orb.more": "und {n} weitere in deinem Tracker",
   "orb.notNow": "Nicht jetzt",
   "orb.oneWaits": "Eine Sache wartet auf dich:",

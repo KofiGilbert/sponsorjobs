@@ -342,3 +342,42 @@ def test_ready_means_still_to_apply_and_names_are_concrete(tmp_path, monkeypatch
     assert texts == ["Follow up with Cambium Learning Group (applied Nov 17)", "Practice for your Barclays Services interview",
                      "Resume ready for Best Fit", "Resume ready for Acme"]
     assert all(_plain(t) for t in texts)
+
+
+def test_celebrate_route_sizes_and_the_off_switch(orb, monkeypatch):
+    import sourcing.board as board
+    total = {"n": 1}
+    monkeypatch.setattr(board, "funnel_metrics", lambda rows, today, goal: {"applied_total": total["n"]})
+    assert orb.post("/api/orb/celebrate", json={"event": "submitted"}).get_json()["size"] == "big"
+    total["n"] = 4
+    assert orb.post("/api/orb/celebrate", json={"event": "submitted"}).get_json()["size"] == "light"
+    assert orb.post("/api/orb/celebrate", json={"event": "submitted", "reduced_motion": True}).get_json()["size"] == ""
+    assert orb.post("/api/orb/celebrate", json={"event": "offer"}).get_json()["size"] == "big"
+    cfg = orb.post("/api/orb/settings", json={"celebrations": False}).get_json()
+    assert cfg["celebrations"] is False
+    assert orb.post("/api/orb/celebrate", json={"event": "offer"}).get_json()["size"] == ""
+    st = OrbStore(app.DB_PATH)
+    try:
+        assert st.count_events("celebrate", app._orb_now().replace(year=2000)) == 3
+    finally:
+        st.close()
+
+
+def test_the_confetti_layer_never_blocks_a_click_and_fires_once_per_submit():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    view = (root / "shell-electron" / "confetti_view.js").read_text()
+    assert "setIgnoreMouseEvents(true)" in view and "focusable: false" in view and "transparent: true" in view
+    assert "showInactive()" in view and "parent: win" in view
+    js = (root / "ui" / "static" / "app.js").read_text()
+    start = js.index("window.tailorShell.onApplied((info) => {")
+    assert js[start:start + 1500].count('orbConfetti("submitted")') == 1
+    assert "Date.now() - (ORB.confettiAt || 0) < 5000" in js
+    assert 'matchMedia("(prefers-reduced-motion: reduce)")' in js
+    page = (root / "ui" / "static" / "confetti.js").read_text()
+    assert "requestAnimationFrame" in page and "#7957FC" in page and "import " not in page
+
+
+def test_the_confetti_page_is_served(orb):
+    r = orb.get("/confetti")
+    assert r.status_code == 200 and b'id="c"' in r.data and b"<script>" not in r.data

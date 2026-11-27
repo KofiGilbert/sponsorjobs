@@ -1825,6 +1825,7 @@
       GUIDE_MSG = null;                  // any submit ends every run state: no needs-you line comes back
       say({ line: info && info.matched ? T("fill.submitted", "Submitted. Marked as applied") : T("fill.submittedOnly", "Submitted") });
       orbCelebrate();                    // (2026-11-27) the Orb hops once for the site's own confirmation
+      orbConfetti("submitted");          // and a short burst over the window (bigger on a milestone)
       setTimeout(() => { const b = $("#bbFill"); if (b && /Submitted/.test(b.textContent || "")) say(null); }, 5000);
       const note = $("#pkgAssistNote");
       if (note) {
@@ -7394,6 +7395,7 @@
       renderTracker();
       if (TRK_OPEN === sid) openTrackerPanel(sid);
       if (stage === "interviewing") orbCelebrate();   // an interview booked
+      if (stage === "interviewing" || stage === "offer") orbConfetti(stage);   // a milestone: the bigger burst
       toast(trkT("tracker.movedTo", "Moved {company} to {stage}").replace("{company}", coName(card)).replace("{stage}", trkColName(trkColOf(stage))),
         { label: trkT("tracker.undo", "Undo"), run: () => trkUndo(sid) });
     } catch {
@@ -17032,6 +17034,19 @@
     ORB.celebratedAt = Date.now();
     orbFlash("celebrating", 1600);
   }
+  // (2026-11-27, the owner's idea) The celebration burst: the engine says whether and how big
+  // (orb/rules.py celebration: Settings, reduced motion, the first and every 10th application);
+  // the shell draws it in its own click-through layer (confetti_view.js). Once per moment.
+  async function orbConfetti(event) {
+    const shell = window.tailorShell;
+    if (!shell || !shell.celebrate || Date.now() - (ORB.confettiAt || 0) < 5000) return;
+    ORB.confettiAt = Date.now();
+    let reduced = false;
+    try { reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { reduced = false; }
+    let r = null;
+    try { r = await orbApi("/api/orb/celebrate", { event, reduced_motion: reduced }); } catch { return; }
+    if (r && r.size) shell.celebrate(r.size);
+  }
   function orbTyping() { return Date.now() - ORB.typingAt < 20000; }
   document.addEventListener("keydown", (e) => {
     const t = e.target;
@@ -17146,6 +17161,9 @@
       b.disabled = cfg.off_reason === "remote";
     });
     document.querySelectorAll("[data-orb-sound]").forEach((b) => b.classList.toggle("is-on", (b.dataset.orbSound === "on") === !cfg.muted));
+    const cel = $("#setCelebrateRow");
+    if (cel) cel.hidden = !(window.tailorShell && window.tailorShell.celebrate) || !ORB.cfg;
+    document.querySelectorAll("[data-celebrate]").forEach((b) => b.classList.toggle("is-on", (b.dataset.celebrate === "on") === (cfg.celebrations !== false)));
     $("#setOrbDesc").textContent = cfg.off_reason === "remote"
       ? OT("orb.setPaused", "Paused by SponsorJobs for now.")
       : OT("orb.setDesc", "The violet helper in the corner. It guides Autofill and tells you what is waiting.");
@@ -17154,6 +17172,8 @@
     orbSettings({ enabled: b.dataset.orbOpt === "on", from: "settings" })));
   document.querySelectorAll("[data-orb-sound]").forEach((b) => b.addEventListener("click", () =>
     orbSettings({ muted: b.dataset.orbSound !== "on", from: "settings" })));
+  document.querySelectorAll("[data-celebrate]").forEach((b) => b.addEventListener("click", () =>
+    orbSettings({ celebrations: b.dataset.celebrate === "on", from: "settings" })));
 
   // ---- nudges: a line, the one button for it, and Not now
   function orbHideMsg() {

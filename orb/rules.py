@@ -196,3 +196,20 @@ HOW_TEXT = ("I am your job search helper. I work from what is in SponsorJobs on 
             "resumes, your Tracker and your profile. When you press Autofill, I fill the form and point "
             "at anything I am not sure of. I never press Submit, you do. I nudge you at most 3 times a "
             "day, and only about real things. Right click me to mute me or turn me off.")
+
+
+# (2026-11-27, owner's idea) A short confetti burst over the window when something good happens:
+# light for a routine submit, bigger for a milestone. Never with reduced motion (the Orb's own
+# celebrate face and the bubble line say it then), never when Celebrations is off in Settings.
+CELEBRATE_EVENTS = ("submitted", "interviewing", "offer")
+
+
+def celebration(event: str, *, applied_total: int = 0, enabled: bool = True, reduced_motion: bool = False) -> str:
+    """"" (none) | "light" | "big". A submit is light, except the first application ever and
+    every 10th, which are big; an interview or an offer is always big."""
+    if not enabled or reduced_motion or event not in CELEBRATE_EVENTS:
+        return ""
+    if event in ("interviewing", "offer"):
+        return "big"
+    n = int(applied_total or 0)
+    return "big" if n == 1 or (n > 0 and n % 10 == 0) else "light"

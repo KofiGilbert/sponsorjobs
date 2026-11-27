@@ -171,6 +171,12 @@
     const r = cur.el.getBoundingClientRect();
     if (!visible(r) || (!cur.modal && coverOf(cur.el))) { wrap.classList.remove("on"); return; }
     const m = spot(r, cur.on);
+    if (cur.fitted !== m.x + "," + m.y) {             // a new place: the label fitted again
+      tag.style.marginLeft = m.shift ? Math.max(0, m.shift) + "px" : "";
+      tag.style.marginTop = m.side === "on" ? (m.shift ? "-6px" : Math.max(24, 24 + (m.drop || 0)) + "px") : "";
+      fit(m);
+      cur.fitted = m.x + "," + m.y;
+    }
     wrap.classList.add("still");                       // follow at once, no glide behind the page
     wrap.style.transform = "translate(" + m.x + "px, " + m.y + "px)";
     wrap.classList.add("on");
@@ -180,6 +186,26 @@
   try { window.addEventListener("scroll", follow, true); window.addEventListener("resize", follow); } catch (e) { /* no window */ }
   // a window the site opens later (no scroll): looked for twice a second while a pointer is out
   try { setInterval(() => { if (cur && shown) follow(); }, 500); } catch (e) { /* no timers */ }
+  // (2026-11-27, the owner: "Your turn: check and submit" read "Your turn: check and" at the
+  // pane's right edge) The label always stays whole inside the page: when it would run past the
+  // right edge it moves left, under the arrow; past the bottom, above it. Worked out from where
+  // the pointer is going (the box is still gliding there), never from where it is now.
+  const ARROW_W = 34, ARROW_H = 42, GAP_X = 6, EDGE = 6;
+  function fit(m) {
+    const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+    tag.style.maxWidth = Math.max(120, Math.min(460, vw - 2 * EDGE)) + "px";
+    const w = tag.offsetWidth || 0, h = tag.offsetHeight || 0;
+    let ml = parseFloat(tag.style.marginLeft) || 0;
+    let mt = tag.style.marginTop ? parseFloat(tag.style.marginTop) : 24;
+    const left = m.x + ARROW_W + GAP_X + ml;
+    if (left + w > vw - EDGE) {
+      ml = Math.max(EDGE - m.x - ARROW_W - GAP_X, vw - EDGE - w - m.x - ARROW_W - GAP_X);
+      mt = Math.max(mt, ARROW_H - 2);                // under the arrow, never over it
+    }
+    if (m.y + mt + h > vh - EDGE) mt = -(h + 4);     // no room below: above the tip
+    tag.style.marginLeft = ml + "px";
+    tag.style.marginTop = mt + "px";
+  }
   function show(m) {
     if (!ensure()) return;
     wrap.classList.toggle("still", reduced());
@@ -187,6 +213,7 @@
     // beside the button it points into (see spot), else the usual place
     tag.style.marginLeft = m.shift ? Math.max(0, m.shift) + "px" : "";
     tag.style.marginTop = m.side === "on" ? (m.shift ? "-6px" : Math.max(24, 24 + (m.drop || 0)) + "px") : "";
+    fit(m);
     wrap.style.transform = "translate(" + m.x + "px, " + m.y + "px)";
     wrap.classList.add("on");
     shown = { x: m.x, y: m.y, label: tag.textContent, side: m.side };

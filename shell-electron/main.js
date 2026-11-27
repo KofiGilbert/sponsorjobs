@@ -2505,6 +2505,14 @@ function ensureOrb() {
 }
 const fromApp = (e) => !!(win && !win.isDestroyed() && e.sender === win.webContents);
 const fromOrb = (e) => !!(orb && orb.isOrb(e.sender));
+// (2026-11-27) the celebration burst: its own click-through layer over the window (confetti_view.js)
+const confettiView = require("./confetti_view");
+let confetti = null;
+ipcMain.on("orb:celebrate", (e, size) => {
+  if (!fromApp(e)) return;
+  if (!confetti) confetti = confettiView.createConfetti({ BrowserWindow, win, server: SERVER });
+  confetti.burst(size === "big" ? "big" : "light");
+});
 ipcMain.on("orb:set", (e, payload) => { if (fromApp(e) && ensureOrb()) { orb.set(payload); orbAvoidWatch(); } });
 // (2026-11-27) While the Orb is docked to the Browser pane, the page is read twice a second for
 // what the Orb must not cover (orb_view.js ORB_AVOID_JS: the pointer and its field, the field that

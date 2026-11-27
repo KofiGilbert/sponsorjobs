@@ -2220,6 +2220,8 @@
   "orb.offShort": "Non",
   "orb.on": "Oui",
   "orb.offToast": "Assistant désactivé. Réactivez-le dans Paramètres, Apparence.",
+  "orb.celebrate": "Célébrations",
+  "orb.celebrateDesc": "Une courte pluie de confettis quand vous envoyez une candidature, décrochez un entretien ou recevez une offre.",
   "orb.more": "et {n} de plus dans votre Tracker",
   "orb.notNow": "Pas maintenant",
   "orb.oneWaits": "Une chose vous attend :",
