@@ -117,6 +117,7 @@ def test_the_model_reads_the_place_and_is_asked_once(tmp_path):
         assert jobplace.country("Bengaluru") == "India"
         assert len(calls) == 1                                     # cached on this computer
         assert jobplace.country("Somewhere") == ""
+        assert jobplace.country("Somewhere") == "" and sum("Somewhere" in c for c in calls) == 2   # "unknown" is not kept
         assert jobplace.country("", "Software engineer. This role is based in our Bengaluru office.") == "India"
     finally:
         jobplace.configure(None, None)

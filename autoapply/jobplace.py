@@ -180,10 +180,11 @@ def ask_model(text: str, kind: str = "location") -> str:
         return ""
     got = parse(raw)
     out = code_of(got) if got else ""
-    with _LOCK:
-        d = _load()
-        d[sig] = out
-        _save(d)
+    if out:                     # only a country is kept: "unknown" or an error reply is asked again later
+        with _LOCK:
+            d = _load()
+            d[sig] = out
+            _save(d)
     return out
 
 
