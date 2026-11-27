@@ -76,6 +76,24 @@ assert(/innerText/.test(W.PAGE_PROBE_JS) && /submit/.test(W.PAGE_PROBE_JS), "the
   await w4.tick();
   eq(w4asked.length, 1, "it is read once it has loaded");
 
+
+  // (audit cases 12 and 26) right after the person's Submit the page shows an error: the bar is
+  // told; a page that says the job closed is said at any time; neither marks anything sent
+  {
+    let p5 = { url: "https://jobs.example.com/f", text: "Bitte korrigieren Sie die markierten Felder", fields: 9, submitAt: 0 };
+    let v5 = "error";
+    const w5 = W.createModelWatch({ startUrl: "https://jobs.example.com/f", fillUrl: "https://jobs.example.com/f",
+      read: async () => p5, ask: async () => ({ verdict: v5 }), now: () => clock });
+    w5.navigated();
+    eq(await w5.tick(), null, "an error read on a page the person did not submit is not a refusal");
+    p5 = { ...p5, text: p5.text + " (2)", submitAt: clock - 1000 };
+    eq(await w5.tick(), { problem: "error", res: { verdict: "error" } }, "after their Submit: the site did not take it");
+    v5 = "closed";
+    p5 = { url: "https://jobs.example.com/f2", text: "Cette offre n'est plus disponible", fields: 0, submitAt: 0 };
+    w5.navigated();
+    eq(await w5.tick(), { problem: "closed", res: { verdict: "closed" } }, "the job closed, in any language");
+  }
+
   // the one shared event: every listener hears a confirmed submission, and can stop listening
   const heard = [];
   W.onSubmitted(() => { throw new Error("a bad listener"); });
