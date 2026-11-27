@@ -97,12 +97,15 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
     empty; a planted copy of the bug proves the check catches it. On the Instacart Canada replay
     (its real question set) the end now names the 3 empty questions. Gap: the frame case in the
     live shell is the frame walk's (#364: marking needs inside frames); the replay checks the
-    engine inside the frame, not the shell's marking. Plan: once #364 lands, the replay drives
-    the shell's own end over frames too.
+    engine inside the frame, not the shell's marking. Seen again in the live check on the
+    Instacart Canada frame: "2 need you" during the fill, then after the agent was stopped the bar
+    said "Filled 19. Check it, then submit on the site" with those 2 still empty. #364 (merged)
+    marks needs inside frames; plan: the replay drives the shell's own end over frames too.
 32. **The country warning did not show (Instacart Canada).** The warning ("This job is in Canada;
     your saved work authorization is for the US") reads the job's location from its record. A job
     whose record has no location (opened from the Browser, a pasted link, some feeds) counts as the
-    US, so no warning. The location reader also misses provinces written short ("Vancouver, BC"
+    US, so no warning (seen again live: the Instacart Canada job opened in the Browser filled
+    with no warning). The location reader also misses provinces written short ("Vancouver, BC"
     reads as the US) and "Remote - CA" is read as the US (it may be California). Gap. Plan: when
     the record has no location, read it from the posting's own location line (the Browser job
     reader already finds it) or the description's first lines; teach the reader the Canadian
@@ -113,6 +116,19 @@ timeline says so ("Application submitted: sent to Greenhouse, form cleared after
     Yes / No checkbox question counted twice; Workday's month and year boxes of one date counted
     twice. Fixed in this change (the replay found it): the needs list counts a checkbox or radio
     group, and the boxes of one question, once; a group with a box ticked counts as answered.
+
+34. **Two jobs on one careers path (live check, 2026-11-26).** Every Instacart job is
+    instacart.careers/job?gh_jid=<id>; the page key kept host and path only, so Autofill on the
+    Account Manager job said "You applied to this job on Nov 26" (that was the BI Manager job),
+    and a confirmation on one could have marked the other. Fixed: the key keeps the parameters
+    that name the job (gh_jid, token, jobId, req, ...), tracking parameters still dropped
+    (`_url_key`, `test_two_jobs_on_one_careers_path_are_two_pages`); re-checked live.
+35. **The Browser keeps the last application after another job opens (live check).** A page
+    opened without typing its address (a link, a card's link inside the pane) keeps the previous
+    application as the Browser's context, so Autofill fills the new page for the old record, and
+    a send there would be counted on the old card. Gap. Plan: the Browser lets the application
+    go when the pane reaches another job (another site, or the same site with another job key)
+    and asks which job this is.
 
 ### After the Submit click
 

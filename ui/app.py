@@ -7025,16 +7025,28 @@ def _learn_from_corrections(body: dict) -> dict:
             "answers": _profile_answers(prefs)}
 
 
+# Query parameters that name WHICH job a page is (2026-11-26, live check: every Instacart job is
+# instacart.careers/job?gh_jid=<id>, so host + path alone made two Instacart jobs one page, and
+# Autofill on one said "You applied to this job" for another).
+_JOB_PARAMS = ("gh_jid", "jid", "job", "jobid", "job_id", "jobreqid", "req", "reqid", "requisitionid",
+               "postingid", "posting_id", "for", "token", "id")
+
+
 def _url_key(url: str) -> str:
-    """host + path, lowercased, without query/fragment: enough to say two URLs are one job page."""
-    from urllib.parse import urlparse
+    """host + path, lowercased, without the fragment or tracking parameters, plus the parameters
+    that name the job (gh_jid, token, jobId, ...): enough to say two URLs are one job page."""
+    from urllib.parse import parse_qsl, urlparse
     try:
         u = urlparse(str(url or "").strip())
     except ValueError:
         return ""
     host = (u.hostname or "").lower()
     host = host[4:] if host.startswith("www.") else host
-    return (host + u.path.rstrip("/")).lower() if host else ""
+    if not host:
+        return ""
+    keep = sorted((k.lower(), v) for k, v in parse_qsl(u.query or "") if k.lower() in _JOB_PARAMS and v)
+    q = ("?" + "&".join(f"{k}={v}" for k, v in keep)) if keep else ""
+    return (host + u.path.rstrip("/")).lower() + q.lower()
 
 
 # ---- what showed the application was sent (2026-11-26) -----------------------------------------
@@ -15958,27 +15970,21 @@ def _record_for_page(keys: set) -> dict | None:
     return None
 
 
-_JOB_QUERY = ("gh_jid", "jobid", "job_id", "jid", "jobreqid", "requisitionid", "token")
+_JOB_QUERY = _JOB_PARAMS                  # one list: the page key keeps these (_url_key)
 
 
 def _page_keys(*urls) -> set:
     """One job page's keys: host + path, and (2026-11-26, Instacart) the posting's id when the link
     carries it in its query (gh_jid=...): two postings on one path (the US and the Canada version of a
-    role) are two jobs."""
-    from urllib.parse import parse_qsl, urlparse
+    role) are two jobs. The id comes with the page key itself (_url_key, _JOB_PARAMS)."""
     from sourcing.posting_read import _FORM_TAIL
     out = set()
     for u in urls:
         k = _url_key(u)
-        if not k:
-            continue
-        try:
-            q = sorted((a.lower(), b) for a, b in parse_qsl(urlparse(str(u)).query) if a.lower() in _JOB_QUERY)
-        except ValueError:
-            q = []
-        tail = ("?" + "&".join(f"{a}={b}" for a, b in q)) if q else ""
-        out.add(k + tail)
-        out.add(_FORM_TAIL.sub("", k) + tail)
+        if k:
+            out.add(k)
+            base, sep, q = k.partition("?")
+            out.add(_FORM_TAIL.sub("", base) + sep + q)
     return out
 
 

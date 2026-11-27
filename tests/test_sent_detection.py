@@ -311,3 +311,19 @@ def test_the_orb_carries_the_daily_sweep(A):
     finally:
         recs.close()
     assert not [c for c in A._orb_candidates(datetime.now()) if c["type"] == "sent"]
+
+
+def test_two_jobs_on_one_careers_path_are_two_pages(A):
+    """Live check 2026-11-26: every Instacart job is instacart.careers/job?gh_jid=<id>; the page key
+    kept host + path only, so Autofill on one job said "You applied" for another, and a
+    confirmation could mark the wrong record."""
+    k = A._url_key
+    assert k("https://www.instacart.careers/job?gh_jid=8407307") != k("https://instacart.careers/job/?gh_jid=8407367")
+    assert k("https://instacart.careers/job/?gh_jid=8407367&utm_source=x") == k("https://www.instacart.careers/job?gh_jid=8407367")
+    assert k("https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=1") != k("https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=2")
+    assert k("https://jobs.lever.co/acme/abc/apply?lever-source=x") == "jobs.lever.co/acme/abc/apply"
+    assert A._page_keys("https://jobs.lever.co/acme/abc/apply") >= {"jobs.lever.co/acme/abc"}
+    rid = _add(A, "Analyst", "gh:ic1", url="https://instacart.careers/job/?gh_jid=8407367")
+    out = A._mark_applied_from_page({"url": "https://www.instacart.careers/job?gh_jid=8407307"})
+    assert out["matched"] is False                     # another Instacart job: never this record
+    assert _data(A, rid).get("status") == "approved"
