@@ -1233,6 +1233,12 @@
   // into view and outlined for the person.
   async function applyInPane(opts) {
     if (!window.tailorShell || !window.tailorShell.assistApply) return null;
+    // the whole Autofill is the app's own: its navigations (opening the job, the country read)
+    // never let the application go
+    FILL_BUSY++;
+    try { return await applyInPaneRun(opts); } finally { FILL_BUSY--; }
+  }
+  async function applyInPaneRun(opts) {
     // (2026-11-26) The duplicate guard: an application already sent (or with evidence it was, a
     // confirmation email) is never filled again without the person saying so on the bar.
     if (opts && opts.recordId != null && !opts.again) {
@@ -1253,8 +1259,7 @@
       if (go === "loaded") opts = Object.assign({}, opts, { loaded: true });   // the job is open already
     }
     let r = null;
-    FILL_BUSY++;
-    try { r = await window.tailorShell.assistApply(opts); } catch { r = null; } finally { FILL_BUSY--; }
+    try { r = await window.tailorShell.assistApply(opts); } catch { r = null; }
     // the job this application was just filled on (its page in the Browser), see the sj:pane-url check
     try { if (opts && opts.recordId != null && String(FILL_CTX.id) === String(opts.recordId)) FILL_CTX.job = (window.tailorShell.getState ? ((await window.tailorShell.getState()) || {}).url : "") || ($("#bbUrl") || {}).value || ""; } catch { /* fine */ }
     return r;
@@ -1502,7 +1507,7 @@
     const btn = here ? $("#pkgFillHereBtn") : $("#pkgFillBtn");
     btn.disabled = true;
     note.textContent = "Filling…";
-    fillCtx(PKG_ID, PKG_CV_PATH, PKG_COMPANY || "");
+    fillCtx(PKG_ID, PKG_CV_PATH, PKG_COMPANY || "", !!here);
     const r = await applyInPane({ url, recordId: PKG_ID, resumePath: PKG_CV_PATH, submit: false, here, finish: true,
                                   company: PKG_COMPANY || "" });
     btn.disabled = false;
@@ -1535,9 +1540,16 @@
     try { same = await window.tailorShell.sameJob(job, url); } catch { same = true; }
     if (!same && FILL_CTX.id === id && FILL_CTX.job === job && !FILL_BUSY) dropCtx();
   });
-  function fillCtx(id, cv, company) {
+  // ``here``: the application is for the page open in the Browser now, so that page is its job from
+  // the start (live check 2026-11-27: a Browser job the person declined at the country note kept
+  // its application with no page, and the next job opened in the Browser filled with it)
+  function fillCtx(id, cv, company, here) {
     FILL_CTX.id = id == null ? null : id; FILL_CTX.cv = cv || ""; FILL_CTX.job = ""; FILL_CTX.company = company || "";
     LAST_CTX = null;
+    if (here && window.tailorShell && window.tailorShell.getState) {
+      const want = FILL_CTX.id;
+      window.tailorShell.getState().then((st) => { if (FILL_CTX.id === want && !FILL_CTX.job && st && st.url) FILL_CTX.job = st.url; }).catch(() => {});
+    }
     const b = $("#bbFillHere");
     if (b && !APPLY_AGENT && window.tailorShell && window.tailorShell.assistApply) b.hidden = false;
   }
@@ -1588,7 +1600,7 @@
     }
     b.disabled = false; b.textContent = label;
     if (!page || !page.url) { say({ line: T("fill.noPage", "Nothing is open in the Browser tab yet."), tone: "wall" }); return; }
-    if (r && r.known) { fillCtx(r.record_id, r.cv_path || ""); await bbFillHere(); return; }
+    if (r && r.known) { fillCtx(r.record_id, r.cv_path || "", "", true); await bbFillHere(); return; }
     if (!r || r.ok === false) {
       const why = (r && r.error) || T("bb.cantRead", "I could not read this job. Paste its description and I will tailor a resume from it.");
       const opts = [{ id: "paste", label: T("bb.pasteJd", "Paste the description"), primary: true,
@@ -1639,7 +1651,7 @@
       say({ line: T("bb.savedOther", "Saved. The Browser shows another job now, so I did not fill it") });
       return;
     }
-    fillCtx(r.record_id, r.cv_path || "");
+    fillCtx(r.record_id, r.cv_path || "", "", true);
     if (window.Panel && Panel.open) { try { Panel.open("browser"); } catch { /* the bar still says it */ } }
     bubble("agent", esc(T("bb.filling", "Saved. Filling the application open in the Browser tab with this resume.")));
     await bbFillHere();
@@ -1649,7 +1661,7 @@
     let r = null;
     try { r = await api("/api/browser/job/latest", { source_id: sid }); } catch (e) { r = (e && e.data) || { error: e && e.message }; }
     if (!r || !r.record_id) { say({ line: (r && r.error) || T("bb.latestFail", "Could not use the latest resume. Try tailoring one."), tone: "wall" }); return; }
-    fillCtx(r.record_id, r.cv_path || "", company || "");
+    fillCtx(r.record_id, r.cv_path || "", company || "", true);
     await bbFillHere();
   }
   // A new address typed in the Browser bar is a new job: the application being filled is let go.

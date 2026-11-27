@@ -179,7 +179,7 @@ def test_the_app_opens_the_job_before_filling_when_the_record_does_not_say():
     go = _between(js, "async function countryGo(recordId, here, url) {", "\n  }\n")
     assert "st.unknown" in go and "window.tailorShell.openAndWait(url)" in go and '"loaded"' in go
     assert "text: String(page.text" in go
-    ap = _between(js, "async function applyInPane(opts) {", "\n  }\n")
+    ap = _between(js, "async function applyInPaneRun(opts) {", "\n  }\n")
     assert 'go === "loaded"' in ap and "loaded: true" in ap
     assert "opts.loaded" in _between(_src("shell-electron/main.js"), "async function assistApply(", "\n}\n")
 
@@ -341,3 +341,15 @@ def test_a_page_watch_is_always_anchored_to_its_job():
     assert 'noteFilled(recordId, wc.getURL() || "", true)' in arm
     turn = _between(main, "async function emailStepTurn(", "\nfunction emailStepLine(")
     assert "armPageWatch(" in turn
+
+
+def test_a_browser_application_is_anchored_to_its_page_from_the_start():
+    """Live check 2026-11-27: declined at the country note, a Browser job's application had no page,
+    so the next job opened in the Browser filled with it. Its page is its job from the start, and
+    the whole Autofill (opening the job, the country read) is the app's own."""
+    js = _src("ui/static/app.js")
+    fc = _between(js, "function fillCtx(id, cv, company, here) {", "\n  }\n")
+    assert "window.tailorShell.getState()" in fc and "FILL_CTX.job = st.url" in fc
+    assert 'fillCtx(r.record_id, r.cv_path || "", "", true); await bbFillHere();' in js
+    ap = _between(js, "async function applyInPane(opts) {", "\n  }\n")
+    assert "FILL_BUSY++" in ap and "FILL_BUSY--" in ap

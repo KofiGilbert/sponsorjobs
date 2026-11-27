@@ -59,7 +59,7 @@ def test_the_note_comes_from_the_open_page_when_the_record_does_not_say(client):
 
 def test_autofill_on_the_open_page_asks_too_once_per_application_and_page():
     src = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
-    body = src.split("async function applyInPane(opts) {", 1)[1].split("\n  }\n", 1)[0]
+    body = src.split("async function applyInPaneRun(opts) {", 1)[1].split("\n  }\n", 1)[0]
     assert "countryGo(opts.recordId, !!opts.here" in body and "!opts.here &&" not in body
     go = src.split("async function countryGo(recordId, here, url) {", 1)[1].split("\n  }\n", 1)[0]
     assert "window.tailorShell.readPage" in go and "COUNTRY_ASKED" in go and '"/api/autoapply/country-note"' in go
