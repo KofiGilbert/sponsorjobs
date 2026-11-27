@@ -21648,7 +21648,11 @@ def _orb_waiting(orb, now) -> tuple[list[dict], int]:
         traceback.print_exc()
     ids = {r["dedup_key"]: r["id"] for r in orb.nudges(statuses=None)}
     rows = R.rank([dict(c, id=ids.get(c["key"])) for c in cands if c.get("type") in R.KINDS])
+    _ORB_ORDER["v"] = {c["key"]: i for i, c in enumerate(cands)}
     return [_orb_public(r) for r in rows[:R.WAITING_TOP]], len(rows)
+
+
+_ORB_ORDER: dict = {}                  # today's list order (dedup key -> place), for the bubble pick
 
 
 @app.get("/api/orb/nudge")
@@ -21674,7 +21678,7 @@ def orb_nudge():
                                  autofill=request.args.get("autofill") == "1", quiet=cfg["quiet"])
             if ok:
                 rows = [r for r in orb.nudges() if r["type"] in R.KINDS]
-                n = R.pick(rows, snoozed=snoozed, shown_kinds=orb.shown_kinds_today(now))
+                n = R.pick(rows, snoozed=snoozed, shown_kinds=orb.shown_kinds_today(now), order=_ORB_ORDER.get("v"))
                 if n:
                     orb.mark(n["id"], "shown", now)
                     nudge = _orb_public(n)

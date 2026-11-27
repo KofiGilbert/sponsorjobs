@@ -137,14 +137,18 @@ def rank(rows: list[dict]) -> list[dict]:
     return out
 
 
-def pick(rows: list[dict], *, snoozed: set[str], shown_kinds: dict | None = None) -> dict | None:
+def pick(rows: list[dict], *, snoozed: set[str], shown_kinds: dict | None = None,
+         order: dict | None = None) -> dict | None:
     """The pending nudge to show: a kind not shown yet today first (so one busy kind never takes
-    all three bubbles), then the highest priority, then the data's own order."""
+    all three bubbles), then the highest priority, then the data's own order (``order``: dedup key
+    -> its place in today's list, the best fit or the oldest follow-up first), then the oldest."""
     live = [r for r in rows if r.get("status") == "pending" and r.get("type") not in snoozed]
     if not live:
         return None
     seen = shown_kinds or {}
+    place = order or {}
     live.sort(key=lambda r: (int(seen.get(r.get("type"), 0)), -int(r.get("priority") or 0),
+                             int(place.get(r.get("dedup_key"), 10 ** 6)),
                              str(r.get("created_at") or ""), int(r.get("id") or 0)))
     return live[0]
 

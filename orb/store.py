@@ -178,7 +178,9 @@ class OrbStore:
                         "action_json) VALUES(?,?,?,?,?,'pending',?,?)",
                         (c["type"], key, rules.KINDS[c["type"]]["priority"], str(c.get("text") or "")[:160],
                          stamp, rules.expires_at(c["type"], now), action))
-                elif old["status"] == "shown" and rules.may_repeat(old["type"], old["shown_at"], now):
+                # shown (or acted on: the follow-up drafted but the data says it is still due) comes
+                # back after its kind's repeat window
+                elif old["status"] in ("shown", "acted") and rules.may_repeat(old["type"], old["shown_at"], now):
                     self._conn.execute("UPDATE orb_nudge SET status='pending', text=?, action_json=?, expires_at=? "
                                        "WHERE id=?", (str(c.get("text") or "")[:160], action,
                                                       rules.expires_at(c["type"], now), old["id"]))

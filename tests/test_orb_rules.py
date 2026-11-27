@@ -210,3 +210,21 @@ def test_erase_clears_everything_but_settings(st):
 ])
 def test_celebrations(event, total, kw, want):
     assert rules.celebration(event, applied_total=total, **kw) == want
+
+
+def test_an_acted_nudge_whose_data_still_holds_comes_back_after_its_window(st):
+    st.sync([_c("practice", "p:1")], T0)
+    n = st.nudges()[0]
+    st.mark(n["id"], "shown", T0)
+    st.mark(n["id"], "acted", T0)
+    st.sync([_c("practice", "p:1")], T0 + timedelta(days=1))
+    assert st.get(n["id"])["status"] == "acted"
+    st.sync([_c("practice", "p:1")], T0 + timedelta(days=3, minutes=1))
+    assert st.get(n["id"])["status"] == "pending"
+
+
+def test_pick_follows_the_datas_order_within_a_kind(st):
+    st.sync([_c("ready", "r:old"), _c("ready", "r:best")], T0)
+    rows = st.nudges()
+    assert rules.pick(rows, snoozed=set())["dedup_key"] == "r:old"
+    assert rules.pick(rows, snoozed=set(), order={"r:best": 0, "r:old": 1})["dedup_key"] == "r:best"
