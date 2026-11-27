@@ -17103,8 +17103,17 @@
       thinking: typeof AGENT !== "undefined" && AGENT.busy, mood, attention: flash === "attention",
       sleeping: !!(ORB.cfg && ORB.cfg.quiet) && !bubble,
     }) : "idle";
+    // (2026-11-27) what the Orb must not cover in the app itself: the chat's input box (a nudge's
+    // bubble made the Orb's clear box sit over its Send button). Page pixels; the shell scales.
+    const avoid = [];
+    for (const sel of ["#composer", ".toast"]) {
+      for (const n of document.querySelectorAll(sel)) {
+        const r = n.getClientRects().length ? n.getBoundingClientRect() : null;
+        if (r && r.width > 0 && r.height > 0) avoid.push({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) });
+      }
+    }
     const payload = {
-      visible, anchor, kind, state, bubble, count: ORB.badge || 0,
+      visible, anchor, kind, state, bubble, count: ORB.badge || 0, avoid,
       theme: document.documentElement.getAttribute("data-theme") || "dark",
       lang: document.documentElement.lang || "en", labels: orbLabels(),
       muted: !!(ORB.cfg && ORB.cfg.muted), chime: ORB.chime,

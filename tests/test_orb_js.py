@@ -174,3 +174,16 @@ def test_the_avoid_probe_is_one_expression_and_the_shell_runs_it_only_on_the_pan
     main = (ROOT / "shell-electron" / "main.js").read_text()
     assert "orb.dockedToPane() && pane && !paneQuiet" in main
     assert "target()" in (ROOT / "extension" / "pointer_overlay.js").read_text()
+
+
+def test_a_bubble_over_the_chat_input_lifts_the_orb_just_above_it():
+    # the work column at 1440 x 806; the chat's input box along its bottom, ending left of the ball
+    main = {"x": 104, "y": 0, "width": 1294, "height": 806}
+    composer = {"x": 346, "y": 735, "width": 800, "height": 71}
+    r = _rect(anchor=main, offset=None, content={"w": 388, "h": 160}, win={"width": 1440, "height": 806}, zoom=1, avoid=[composer])
+    assert r["moved"] and not _hit(r["rect"], composer)
+    assert r["rect"]["y"] + r["rect"]["height"] <= 735 - 8 and r["rect"]["y"] + r["rect"]["height"] >= 735 - 30   # just above
+    assert r["side"] == "right"
+    # no bubble: the ball alone is clear of the box and stays in its corner
+    r = _rect(anchor=main, offset=None, content={"w": 72, "h": 72}, win={"width": 1440, "height": 806}, zoom=1, avoid=[composer])
+    assert not r["moved"]

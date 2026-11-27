@@ -82,6 +82,13 @@ function orbRect(args) {
     { r: m, b: m }, { r: far.r, b: m }, { r: m, b: far.b }, { r: far.r, b: far.b },
     { r: m, b: mid.b }, { r: mid.r, b: m }, { r: far.r, b: mid.b }, { r: mid.r, b: far.b },
   ];
+  // and the smallest step: just above, or just left of, each thing it would cover (the chat's
+  // input box under a nudge: the Orb lifts a little, it does not fly to another corner)
+  for (const v of avoid) {
+    if (!v || !(num(v.width, 0) > 0)) continue;
+    spots.push({ r: base.offset.r, b: a.y + a.height - (num(v.y, 0) - PAD - 1) });
+    spots.push({ r: a.x + a.width - (num(v.x, 0) - PAD - 1), b: base.offset.b });
+  }
   const cx = base.ball.x + s / 2, cy = base.ball.y + s / 2;
   let best = null;
   for (const off of spots) {
@@ -185,7 +192,10 @@ function createOrb(deps) {
     const anchor = state.anchor ? { x: state.anchor.x * z, y: state.anchor.y * z, width: state.anchor.width * z, height: state.anchor.height * z } : null;
     const off = drag ? drag.now : offsetFor(state.kind);
     // while the person drags, it goes where their hand goes; else it steps aside when it must
-    const out = orbRect({ anchor, offset: off, content, win: size, zoom: z, avoid: drag || state.kind !== "pane" ? [] : avoid });
+    // the app's own controls the page reports (the chat's input box), and in the pane what the
+    // page there shows (setAvoid)
+    const own = (state.avoid || []).map((r) => ({ x: num(r.x, 0) * z, y: num(r.y, 0) * z, width: num(r.width, 0) * z, height: num(r.height, 0) * z }));
+    const out = orbRect({ anchor, offset: off, content, win: size, zoom: z, avoid: drag ? [] : own.concat(state.kind === "pane" ? avoid : []) });
     if (drag) drag.clamped = out.offset;
     const spot = Math.round(out.ball.x) + "," + Math.round(out.ball.y);
     // a new spot (stepping aside, or back): a short glide; a bubble growing in place: at once
@@ -215,9 +225,10 @@ function createOrb(deps) {
     // From the app page: { visible, anchor: {x,y,width,height} in page pixels, kind, ...what to show }.
     set(payload) {
       const p = payload || {};
-      state = { visible: !!p.visible, anchor: p.anchor || null, kind: p.kind === "pane" ? "pane" : "window" };
+      state = { visible: !!p.visible, anchor: p.anchor || null, kind: p.kind === "pane" ? "pane" : "window",
+                avoid: Array.isArray(p.avoid) ? p.avoid.slice(0, 8) : [] };
       last = Object.assign({}, p);
-      delete last.anchor;
+      delete last.anchor; delete last.avoid;
       if (state.visible) ensure();
       // the app page (re)loaded and says hello: the Orb's page is already up, say so
       if (p.boot && ready) onReady();
