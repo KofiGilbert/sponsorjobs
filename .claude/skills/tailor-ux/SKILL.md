@@ -826,6 +826,17 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   bubbles a day, one per 30 minutes, never while typing or during Autofill, and the person clicks:
   the Orb never acts on its own. Off three ways: SJ_ORB=0, Settings, Appearance, or the broker's
   ORB_OFF remote switch. Rules: orb/rules.py.
+- 2026-11-27 (Orb QA, owner): what the Orb says is always CONCRETE, one thing a line with one
+  action: "Follow up with Acme (applied Nov 23)" [Draft email], "Practice for your Acme interview"
+  [Practice], "Resume ready for Acme" [Apply], the top three one kind at a time, then "and N more
+  on your Tracker" as a quiet link. Never a total ("40 things wait on you"). The badge counts at
+  most those three. The Orb never covers the pointer, the field it names, the needs-you field, the
+  site's Submit or the app's own chat input: it glides to the nearest free spot (the smallest
+  step first) and back. Pointer labels always stay whole inside the pane (left under the arrow,
+  or above it). Celebrations: the Orb hops once per confirmed submit, plus a short click-through
+  confetti burst over the window (light for a routine submit, bigger for the first application,
+  every 10th, an interview or an offer); none with reduced motion; off in Settings, Appearance,
+  Celebrations.
 - 2026-11-26 (owner, watching the Orb on a real Stripe form): the apply agent's guided ask names
   the item in plain words like the guided Autofill does, "1 needs you: remote or office?" (common
   questions by meaning, else the page's words cut at a word; the full question is the tooltip),
