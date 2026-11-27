@@ -5,6 +5,8 @@
 <!-- iCIMS's first step (2026-11-26): before any application form, the portal asks for an email
      address, then sends a code or asks for a password on the next page. It is a sign-in step,
      not the application: nothing is filled here and nothing is pressed for the person. -->
+<!-- (live check 2026-11-27, Cotiviti) the careers site's own header search sits above the step -->
+<div class="overlay-mobile-menu"><form><input type="text" name="q" placeholder="Search example.com"></form></div>
 <div class="iCIMS_MainWrapper">
   <h1>Please Enter Your Email Address</h1>
   <form id="enterEmailForm" onsubmit="window.fxSubmits++; return false">

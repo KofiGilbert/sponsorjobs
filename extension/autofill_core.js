@@ -1723,7 +1723,11 @@ function qsaSafe(sel, root) {
     if (/(^|\.)linkedin\.com$/i.test(location.hostname)) return null;
     const shown = (e) => boxShown(e);
     if (qsaDeep('input[type="password"]').some(shown)) return null;
-    const boxes = qsaDeep("input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']):not([type='checkbox']):not([type='radio']), select, textarea").filter(shown);
+    // the site's own search box (a careers header's "q") is never part of the step (live check,
+    // Cotiviti on iCIMS 2026-11-27: the email box sits in a frame under a header search)
+    const boxes = qsaDeep("input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']):not([type='checkbox']):not([type='radio']):not([type='search']), select, textarea")
+      .filter((e) => shown(e) && !siteSearch(e) && e.getAttribute("role") !== "searchbox"
+        && !/^(q|query|s|search|keywords?)$/i.test(e.getAttribute("name") || "") && !/^search\b/i.test(e.getAttribute("placeholder") || ""));
     if (boxes.length !== 1) return null;
     const b = boxes[0];
     const isEmail = (b.type || "").toLowerCase() === "email" || /email/i.test(b.getAttribute("autocomplete") || "")
