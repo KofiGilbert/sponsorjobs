@@ -319,3 +319,14 @@ def test_a_drop_only_box_gets_the_resume_in_sight():
     core = _between(_src("extension/autofill_core.js"), "  function dropZones() {", "\n  }\n")
     assert '"dragover"' in core and "defaultPrevented" in core and "accepts(document.body)" in core
     assert "dropResume(wc, resumePath)" in _between(main, "async function assistApply(", "\n}\n")
+
+
+def test_a_page_the_person_comes_back_to_is_walked_again():
+    """Live check 2026-11-27: back on a form the site had cleared, Autofill filled nothing (the walk
+    remembered the boxes of the old document). A new document forgets that page's walk."""
+    main = _src("shell-electron/main.js")
+    assert 'wc.on("did-navigate", (_e, url) => { forgetWalk(url); paneNavigated(wc, url); });' in main
+    fw = _between(main, "function forgetWalk(url) {", "\n}\n")
+    assert "_walkDone" in fw and "_walkAsked" in fw and 'k.endsWith(where)' in fw
+    js = _src("ui/static/app.js")
+    assert 'bbUseLatest(r.source_id, r.company || "")' in js        # the "left" line names the company

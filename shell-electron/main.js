@@ -267,7 +267,7 @@ function ensurePane() {
     } catch (e) { /* the window closed at once */ }
   });
   // (2026-11-26, audit case 35) every page the pane reaches: another job lets the application go
-  wc.on("did-navigate", (_e, url) => paneNavigated(wc, url));
+  wc.on("did-navigate", (_e, url) => { forgetWalk(url); paneNavigated(wc, url); });
   wc.on("did-navigate-in-page", (_e, url, isMainFrame) => { if (isMainFrame !== false) paneNavigated(wc, url); });
   for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-finish-load"]) {
     wc.on(ev, pushPaneState);
@@ -1256,6 +1256,14 @@ function fillPhase() { return _fillPhase; }
 // same page (after the site's window was acknowledged, or the agent's next step) carries on where
 // the first stopped and never fills a box twice.
 const _walkDone = new Map();
+// A new document on a page the walk did before (the person came back to it, or it reloaded): its
+// boxes are new and empty, so what the walk remembered doing there no longer holds (live check
+// 2026-11-27: back on a form the site had cleared, Autofill filled nothing).
+function forgetWalk(url) {
+  let where = "";
+  try { const u = new URL(url); where = "|" + u.host + u.pathname; } catch (e) { return; }
+  for (const m of [_walkDone, _walkAsked]) for (const k of [...m.keys()]) if (k.endsWith(where)) m.delete(k);
+}
 const _walkAsked = new Map();          // the boxes the walk left for the person, per page
 async function guidedWalk(wc, recordId, url, page, say, retryAsked, walkFrames, fr) {
   const pkey = finishRules.planKey(recordId, url);

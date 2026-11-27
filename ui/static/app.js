@@ -1600,7 +1600,7 @@
     }
     const options = [{ id: "tailor", primary: true, label: T("bb.tailorJob", "Tailor a resume for this job (about 1 min)"),
                        fn: () => bbTailorThenFill(r.source_id) }];
-    if (r.latest) options.push({ id: "latest", label: T("bb.useLatest", "Use my latest resume"), fn: () => bbUseLatest(r.source_id) });
+    if (r.latest) options.push({ id: "latest", label: T("bb.useLatest", "Use my latest resume"), fn: () => bbUseLatest(r.source_id, r.company || "") });
     sayChoice({ line: r.line, options });
   }
   async function bbTailorThenFill(sid) {
@@ -1645,11 +1645,11 @@
     await bbFillHere();
   }
   async function bbFillProfileOnly() { await bbFillHere({ profileOnly: true }); }
-  async function bbUseLatest(sid) {
+  async function bbUseLatest(sid, company) {
     let r = null;
     try { r = await api("/api/browser/job/latest", { source_id: sid }); } catch (e) { r = (e && e.data) || { error: e && e.message }; }
     if (!r || !r.record_id) { say({ line: (r && r.error) || T("bb.latestFail", "Could not use the latest resume. Try tailoring one."), tone: "wall" }); return; }
-    fillCtx(r.record_id, r.cv_path || "");
+    fillCtx(r.record_id, r.cv_path || "", company || "");
     await bbFillHere();
   }
   // A new address typed in the Browser bar is a new job: the application being filled is let go.
