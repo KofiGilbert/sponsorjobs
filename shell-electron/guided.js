@@ -124,6 +124,8 @@ async function walk(deps) {
       if (!c.top) {
         // a frame cannot tell whether its field is in the person's sight (the top page may be
         // scrolled away from the frame): measured from the top page, scrolled there when it is not
+        // the frame's own scroll moved the top page smoothly: the pointer waits until it is still
+        if (w.scrolled) await settledFrame(js, c);
         const sight = await frameSight(js, c, ref);
         if (sight === false) {
           const w2 = await cjs(`window.TailorAutofill.walkTo(${q(ref)}, { force: true })`, 3000);

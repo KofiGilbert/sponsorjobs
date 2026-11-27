@@ -219,3 +219,19 @@ def test_the_shell_never_reads_a_linkedin_page():
     src = MAIN_JS.read_text(encoding="utf-8")
     h = src.split('ipcMain.handle("pane:read-job"', 1)[1].split("\n});", 1)[0]
     assert h.index("linkedin") < h.index("executeJavaScript(READ_JOB_JS")
+
+
+def test_another_posting_on_the_same_path_is_another_job(client):
+    """Instacart: the US and the Canada posting of one role share /job and differ by gh_jid. The
+    Canada page must not be taken for the US application."""
+    rid = _old_resume(client)
+    recs = app._records()
+    try:
+        recs.merge_data(rid, {"source_job": {"url": "https://www.example-grocer.test/job/?gh_jid=111", "source": "page", "source_id": ""}})
+    finally:
+        recs.close()
+    same = client.post("/api/browser/job", headers=H, json={"url": "https://www.example-grocer.test/job/?gh_jid=111"}).get_json()
+    assert same.get("known") is True and same["record_id"] == rid
+    other = client.post("/api/browser/job", headers=H, json={"url": "https://www.example-grocer.test/job/?gh_jid=222",
+                                                              "html": _fx("careers_jsonld.html")}).get_json()
+    assert not other.get("known")

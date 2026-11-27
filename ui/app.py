@@ -15880,7 +15880,7 @@ def _record_for_page(keys: set) -> dict | None:
     try:
         for r in recs.list(limit=300):
             d = _record_data(r)
-            cand = {_url_key((d.get("source_job") or {}).get("url")), _url_key(d.get("apply_url"))} - {""}
+            cand = _page_keys((d.get("source_job") or {}).get("url"), d.get("apply_url"))
             if cand & keys and (WORKDIR / f"cv-{r['id']}.pdf").exists():
                 return r
     finally:
@@ -15888,14 +15888,27 @@ def _record_for_page(keys: set) -> dict | None:
     return None
 
 
+_JOB_QUERY = ("gh_jid", "jobid", "job_id", "jid", "jobreqid", "requisitionid", "token")
+
+
 def _page_keys(*urls) -> set:
+    """One job page's keys: host + path, and (2026-11-26, Instacart) the posting's id when the link
+    carries it in its query (gh_jid=...): two postings on one path (the US and the Canada version of a
+    role) are two jobs."""
+    from urllib.parse import parse_qsl, urlparse
     from sourcing.posting_read import _FORM_TAIL
     out = set()
     for u in urls:
         k = _url_key(u)
-        if k:
-            out.add(k)
-            out.add(_FORM_TAIL.sub("", k))
+        if not k:
+            continue
+        try:
+            q = sorted((a.lower(), b) for a, b in parse_qsl(urlparse(str(u)).query) if a.lower() in _JOB_QUERY)
+        except ValueError:
+            q = []
+        tail = ("?" + "&".join(f"{a}={b}" for a, b in q)) if q else ""
+        out.add(k + tail)
+        out.add(_FORM_TAIL.sub("", k) + tail)
     return out
 
 
