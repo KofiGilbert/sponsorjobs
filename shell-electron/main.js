@@ -620,7 +620,7 @@ function paneNavigated(wc, url) {
     const clicked = !!(st && st.clicked && !st.fired);
     if (clicked) disarmSuccessWatch("left-site");             // they pressed its Submit: asked once
     else { disarmSuccessWatch(); sentDetect.shared().leave("moved-on"); }
-    if (gone.recordId != null) siteSaid({ kind: "left", recordId: gone.recordId, url, why: c.why, clicked });
+    siteSaid({ kind: "left", recordId: gone.recordId, url, why: c.why, clicked });   // the old line never stays
     return;
   }
   if (_lastCtx && _lastCtx.recordId != null) {
