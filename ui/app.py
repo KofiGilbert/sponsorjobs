@@ -12155,6 +12155,12 @@ def preps_prefill():
     try:
         by_job = _board_reconcile(w)
         live = [j for j in w.board_jobs() if j.get("stage") not in ("rejected", "archived")]
+        # (2026-11-27) ?source_id= : the Orb's "Practice for your Acme interview" names the job
+        want = str(request.args.get("source_id") or "").strip()
+        pinned = next((j for j in w.board_jobs() if j.get("source_id") == want), None) if want else None
+        if pinned:
+            live = [pinned]
+            best = None
         if live:
             j = live[0]
             when = _when(j.get("stage_at"))
@@ -21277,11 +21283,25 @@ def agent_ask():
             orb.log("mute" if cmd == "mute" else "unmute", "chat", now)
             return jsonify({"ok": True, "kind": "agent", "orb": {"muted": cmd == "mute"}, "buttons": [],
                             "text": "Sounds off." if cmd == "mute" else "Sounds on."})
-        mode = orb.chat_mode(now)
-        orb.log("chat", mode, now)
+        # (2026-11-27, QA) the Orb's own questions: answered from the data here, no AI call, and
+        # never counted against the chat's hourly cap
+        # (only from the Orb's chat: other callers keep the assistant's own status answers)
+        question = "" if body.get("change") or not body.get("orb") else _orb_rules().orb_question(text)
+        if not question:
+            mode = orb.chat_mode(now)
+            orb.log("chat", mode, now)
         orb.add_turn("user", text, now)
     finally:
         orb.close()
+    if question:
+        out = _orb_answer(question)
+        orb = _orb_store()
+        try:
+            orb.log("orb_question", question, now)
+        finally:
+            orb.close()
+        _orb_turn("assistant", out.get("text") or "")
+        return jsonify({"ok": True, "kind": "agent", "intent": {"intent": "orb_" + question}, "mode": "local", **out})
     if mode == "ai":
         intent = _agent_parse(text)
         _orb_spend(now)
@@ -21386,12 +21406,13 @@ def _orb_config(orb=None) -> dict:
     try:
         setting = orb.pref("enabled", True) is not False
         muted = bool(orb.pref("muted", False))
+        celebrations = orb.pref("celebrations", True) is not False
     finally:
         if own:
             orb.close()
     on, why = R.enabled(env_on=R.flag("SJ_ORB"), setting_on=setting, remote_on=_orb_remote_on())
     now = _orb_now()
-    return {"ok": True, "enabled": on, "off_reason": why, "setting": setting, "muted": muted,
+    return {"ok": True, "enabled": on, "off_reason": why, "setting": setting, "muted": muted, "celebrations": celebrations,
             "nudges": on and R.flag("SJ_ORB_NUDGES"), "quiet": _orb_quiet(now),
             "env_off": not R.flag("SJ_ORB")}
 
@@ -21401,6 +21422,15 @@ def orb_page():
     """The Orb's own small page: the shell shows it in a transparent view above the app and the
     in-app browser (shell-electron/orb_view.js). It holds no data; the app sends it what to show."""
     resp = make_response(render_template("orb.html"))
+    resp.headers["Content-Security-Policy"] = APP_CSP
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/confetti")
+def confetti_page():
+    """The celebration burst's page (shell-electron/confetti_view.js): one canvas, no data."""
+    resp = make_response(render_template("confetti.html"))
     resp.headers["Content-Security-Policy"] = APP_CSP
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -21422,6 +21452,8 @@ def orb_settings():
         if "enabled" in body:
             orb.set_pref("enabled", bool(body["enabled"]), now)
             orb.log("enabled" if body["enabled"] else "disabled", str(body.get("from") or "")[:20], now)
+        if "celebrations" in body:
+            orb.set_pref("celebrations", bool(body["celebrations"]), now)
         if "muted" in body:
             orb.set_pref("muted", bool(body["muted"]), now)
             orb.log("mute" if body["muted"] else "unmute", str(body.get("from") or "")[:20], now)
@@ -21447,15 +21479,37 @@ def orb_event():
 
 
 def _orb_who(r: dict) -> str:
-    return ((r.get("company") or "").strip() or ((r.get("role") or r.get("title") or "").split(" · ")[0].strip())
-            or "a job")
+    """The employer as people say it ("Tyson Foods", not "Tyson Foods Inc"), else the role."""
+    from sourcing.brands import brand_name
+    return (brand_name((r.get("company") or "").strip())
+            or ((r.get("role") or r.get("title") or "").split(" · ")[0].strip()) or "a job")
+
+
+def _orb_day(s) -> str:
+    """"2026-11-23..." -> "Nov 23"; "" when it is not a date."""
+    from datetime import date
+    try:
+        d = date.fromisoformat(str(s or "")[:10])
+    except ValueError:
+        return ""
+    return f"{d.strftime('%b')} {d.day}"
 
 
 def _orb_candidates(now) -> list[dict]:
-    """Every nudge the data supports right now, each {type, key, text, action}. Real data only:
-    nothing is made up to fill a quiet day."""
-    import hashlib
-    from submit.stages import is_waiting_to_submit
+    """Every concrete thing the data says waits on the person right now, ONE thing each with ONE
+    action, in each kind's own order (rules.rank interleaves the kinds):
+
+    * followup  "Follow up with Acme (applied Nov 23)"   [Draft email]  oldest due first
+    * practice  "Practice for your Acme interview"       [Practice]     newest interview first
+    * ready     "Resume ready for Acme"                  [Apply]        best fit first
+    * sent      "Did you send your Acme application?"    [Answer]       asked once, after a day
+    * facts / matches as before.
+
+    Real data only: nothing is made up to fill a quiet day. A resume counts as ready only while
+    its job is still To apply on the Tracker (2026-11-27, QA: 17 of 24 "ready" resumes were for
+    jobs the person had closed, so "25 resumes are ready to apply" was not true)."""
+    from sourcing.board import TODO_STAGES
+    from submit.stages import app_stage, is_ready_to_apply
     out: list[dict] = []
     today = now.date()
     recs = _records()
@@ -21463,42 +21517,59 @@ def _orb_candidates(now) -> list[dict]:
         rows = recs.list(limit=2000)
     finally:
         recs.close()
-    ready = [r for r in rows if is_waiting_to_submit(_record_data(r))]
-    # (2026-11-26) The daily sweep: an Autofill over a day old with nothing showing it was sent
-    # (no thank-you page, form post, confirmation email or yes) is asked about ONCE more.
-    from submit.stages import app_stage
-    for r in rows:
-        d = _record_data(r)
-        age = _filled_age(d)
-        if age is None or age < ASK_AGAIN_AFTER_S or not _ask_submitted(d, app_stage(d)["stage"]):
-            continue
-        role, company = _record_label(r, d)
-        out.append({"type": "sent", "key": f"sent:{r['id']}:{d.get('filled_at')}",
-                    "text": f"Did you send your {company or role or 'job'} application?",
-                    "action": {"nav": "tracker", "label": "Open Tracker"}})
-        break
-    # The Tracker's own board: the follow-ups due today and the jobs at Interviewing.
     w = _watchlist()
     try:
         due = w.due_followups(today)
         interviews = w.board_jobs("interviewing")
+        sids = {str(r["id"]): _board_key(r)[0] for r in rows}
+        states = w.board_states(list(sids.values())) if rows else {}
+        board = {rid: {"sid": sid, **(states.get(sid) or {})} for rid, sid in sids.items()}
     finally:
         w.close()
-    h = lambda ids: hashlib.sha1(",".join(sorted(str(i) for i in ids)).encode()).hexdigest()[:10]
-    if due:
-        text = (f"Time to follow up with {_orb_who(due[0])}" if len(due) == 1
-                else f"{len(due)} follow-ups are due")
-        out.append({"type": "followup", "key": "followup:" + h([r.get("source_id") for r in due]), "text": text,
-                    "action": {"nav": "tracker", "label": "Open Tracker"}})
-    if ready:
-        text = (f"Your resume for {_orb_who(ready[0])} is ready to apply" if len(ready) == 1
-                else f"{len(ready)} resumes are ready to apply")
-        out.append({"type": "ready", "key": "ready:" + h([r["id"] for r in ready]), "text": text,
-                    "action": {"nav": "tracker", "label": "Open Tracker"}})
-    for r in interviews[:1]:
-        out.append({"type": "practice", "key": f"practice:{r.get('source_id')}",
-                    "text": f"Practice for your {_orb_who(r)} interview",
-                    "action": {"nav": "prep", "label": "Practice"}})
+
+    def still_todo(r) -> bool:
+        b = board.get(str(r["id"])) or {}
+        return (not b.get("stage") or b["stage"] in TODO_STAGES) and b.get("live") != "closed"
+
+    asked: set[str] = set()
+    for r in rows:
+        d = _record_data(r)
+        age = _filled_age(d)
+        if age is None or age < ASK_AGAIN_AFTER_S or not still_todo(r) or not _ask_submitted(d, app_stage(d)["stage"]):
+            continue
+        asked.add(str(r["id"]))
+        role, company = _record_label(r, d)
+        out.append({"type": "sent", "key": f"sent:{r['id']}:{d.get('filled_at')}",
+                    "text": f"Did you send your {_orb_who({'company': company, 'role': role})} application?",
+                    "action": {"do": "panel", "sid": board[str(r["id"])]["sid"], "label": "Answer"}})
+    for j in due:
+        when = _orb_day(j.get("applied_at")) or (_orb_day(j.get("stage_at")) if j.get("stage") == "applied" else "")
+        text = (f"Follow up with {_orb_who(j)} (applied {when})" if when and j.get("stage") == "applied"
+                else f"Follow up with {_orb_who(j)}")
+        out.append({"type": "followup", "key": f"followup:{j.get('source_id')}:{j.get('follow_up_at')}", "text": text,
+                    "action": {"do": "draft", "sid": j.get("source_id"), "label": "Draft email"}})
+    for j in interviews:
+        out.append({"type": "practice", "key": f"practice:{j.get('source_id')}",
+                    "text": f"Practice for your {_orb_who(j)} interview",
+                    "action": {"do": "practice", "sid": j.get("source_id"), "label": "Practice"}})
+    # the Tracker's own rule: a To apply card's newest package still ready to apply (one per job)
+    ready, seen_jobs = [], set()
+    for r in sorted(rows, key=lambda r: -int(r["id"])):
+        sid = board[str(r["id"])]["sid"]
+        if sid in seen_jobs or not still_todo(r) or not is_ready_to_apply(_record_data(r)):
+            continue
+        seen_jobs.add(sid)
+        if str(r["id"]) not in asked:
+            ready.append(r)
+    fit = lambda r: _record_data(r).get("fit")                                    # noqa: E731
+    ready.sort(key=lambda r: (-(fit(r) if isinstance(fit(r), (int, float)) else -1), -int(r["id"])))
+    for r in ready:
+        role, company = _record_label(r, _record_data(r))
+        who = _orb_who({"company": company, "role": role})
+        out.append({"type": "ready", "key": f"ready:{r['id']}", "text": f"Resume ready for {who}",
+                    "fit": fit(r) if isinstance(fit(r), (int, float)) else None,
+                    "role": role if company and role and role != company else "", "company": who,
+                    "action": {"do": "apply", "rid": r["id"], "label": "Apply"}})
     try:
         out += _orb_match_candidates(now)
     except Exception:                  # noqa: BLE001 - the other nudges still stand
@@ -21507,10 +21578,6 @@ def _orb_candidates(now) -> list[dict]:
         out += _orb_fact_candidates(today)
     except Exception:                  # noqa: BLE001
         traceback.print_exc()
-    waiting = len(due) + len(ready) + len(interviews)
-    if waiting >= 2:
-        out.append({"type": "daily", "key": f"daily:{today.isoformat()}",
-                    "text": f"{waiting} things wait on you today", "action": {"chat": "waiting", "label": "Show me"}})
     return out
 
 
@@ -21565,7 +21632,27 @@ def _orb_fact_candidates(today) -> list[dict]:
 def _orb_public(n: dict | None) -> dict | None:
     if not n:
         return None
-    return {"id": n["id"], "type": n["type"], "text": n["text"], "action": n.get("action") or None}
+    return {"id": n.get("id"), "type": n["type"], "text": n["text"], "action": n.get("action") or None}
+
+
+def _orb_waiting(orb, now) -> tuple[list[dict], int]:
+    """(the top few things waiting, how many wait in all). The chat's opening and its "What's
+    waiting on me?" answer both read this one list, straight from the data: a nudge the person
+    already acted on or turned off still waits while its data says so (the interview is still
+    booked), so the list stays true; only the unasked bubbles follow the nudge rules."""
+    from orb import rules as R
+    cands = _orb_candidates(now)
+    try:
+        orb.sync(cands, now)
+    except Exception:                  # noqa: BLE001 - an old table still answers
+        traceback.print_exc()
+    ids = {r["dedup_key"]: r["id"] for r in orb.nudges(statuses=None)}
+    rows = R.rank([dict(c, id=ids.get(c["key"])) for c in cands if c.get("type") in R.KINDS])
+    _ORB_ORDER["v"] = {c["key"]: i for i, c in enumerate(cands)}
+    return [_orb_public(r) for r in rows[:R.WAITING_TOP]], len(rows)
+
+
+_ORB_ORDER: dict = {}                  # today's list order (dedup key -> place), for the bubble pick
 
 
 @app.get("/api/orb/nudge")
@@ -21580,15 +21667,9 @@ def orb_nudge():
     now = _orb_now()
     orb = _orb_store()
     try:
-        try:
-            orb.sync(_orb_candidates(now), now)
-        except Exception:              # noqa: BLE001 - an old table still answers
-            traceback.print_exc()
+        waiting, count = _orb_waiting(orb, now)
         orb.prune(now)
         snoozed = orb.snoozed(now)
-        rows = [r for r in orb.nudges() if r["type"] not in snoozed]
-        rows.sort(key=lambda r: -int(r.get("priority") or 0))
-        waiting = [_orb_public(r) for r in rows[:3]]
         nudge, why = None, "nudges_off"
         if cfg["nudges"] and request.args.get("peek") != "1":
             shown, last = orb.shown_today(now)
@@ -21596,14 +21677,17 @@ def orb_nudge():
                                  typing=request.args.get("typing") == "1",
                                  autofill=request.args.get("autofill") == "1", quiet=cfg["quiet"])
             if ok:
-                n = R.pick(rows, snoozed=snoozed)
+                rows = [r for r in orb.nudges() if r["type"] in R.KINDS]
+                n = R.pick(rows, snoozed=snoozed, shown_kinds=orb.shown_kinds_today(now), order=_ORB_ORDER.get("v"))
                 if n:
                     orb.mark(n["id"], "shown", now)
                     nudge = _orb_public(n)
                     why = ""
                 else:
                     why = "none"
-        return jsonify({"ok": True, "nudge": nudge, "waiting": waiting, "count": len(rows), "why": why})
+        # the badge counts what is worth a look now: the few the chat opens with, never every row
+        return jsonify({"ok": True, "nudge": nudge, "waiting": waiting, "count": count, "badge": len(waiting),
+                        "more": max(0, count - len(waiting)), "why": why})
     finally:
         orb.close()
 
@@ -21625,36 +21709,90 @@ def orb_nudge_mark(nid: int):
     return jsonify({"ok": True, "status": row["status"]})
 
 
+def _orb_answer(kind: str) -> dict:
+    """The Orb's own questions, answered from the person's data on this computer, no AI call
+    (rules.orb_question). Short, true, plain words, one action a line: {text, orb_items, more,
+    buttons}. ``orb_items`` are rows of {text, action}; the app draws each with its own button."""
+    from orb import rules as R
+    now = _orb_now()
+    if kind == "how":
+        return {"text": R.HOW_TEXT, "buttons": []}
+    if kind == "waiting":
+        orb = _orb_store()
+        try:
+            items, count = _orb_waiting(orb, now)
+        finally:
+            orb.close()
+        if not items:
+            return {"text": "Nothing waits on you right now. Pick a job on Jobs and I will tailor a resume for it.",
+                    "orb_items": [], "more": 0, "buttons": []}
+        return {"text": "Here is what waits on you:" if len(items) > 1 else "One thing waits on you:",
+                "orb_items": items, "more": max(0, count - len(items)), "buttons": []}
+    cands = _orb_candidates(now)
+    if kind == "today":
+        ready = [c for c in cands if c["type"] == "ready"]
+        if not ready:
+            return {"text": "No resume is waiting to be sent. Pick a job on Jobs and I will tailor one.",
+                    "orb_items": [{"type": "nav", "text": "Find a job to tailor for",
+                                   "action": {"nav": "jobs", "label": "Open Jobs"}}], "more": 0, "buttons": []}
+        items = []
+        for c in ready[:R.WAITING_TOP]:
+            what = f"{c['role']} at {c['company']}" if c.get("role") else c["company"]
+            fit = f", {int(c['fit'])}% fit" if isinstance(c.get("fit"), (int, float)) else ""
+            items.append({"type": "ready", "text": what + fit, "action": c["action"]})
+        text = ("Start with this one. Its resume is ready:" if len(items) == 1
+                else "Start with these. Their resumes are ready, best fit first:")
+        return {"text": text, "orb_items": items, "more": max(0, len(ready) - len(items)), "buttons": []}
+    if kind == "practice":
+        nxt = next((c for c in cands if c["type"] == "practice"), None)
+        if not nxt:
+            return {"text": "No interview is on your Tracker yet. You can still practice for any job you applied to.",
+                    "orb_items": [{"type": "practice", "text": "Practice for a job",
+                                   "action": {"do": "practice", "label": "Practice"}}], "more": 0, "buttons": []}
+        return {"text": "This interview is on your Tracker:", "orb_items": [_orb_public(nxt)], "more": 0, "buttons": []}
+    return {"text": "", "buttons": []}
+
+
+@app.post("/api/orb/celebrate")
+@_guard
+def orb_celebrate():
+    """{event: submitted | interviewing | offer, reduced_motion}: whether to throw confetti and how
+    much (orb/rules.py celebration). The applied total is the Tracker's own (the first ever and
+    every 10th application are milestones). Logged as an event: kind and size only."""
+    from orb import rules as R
+    body = request.json or {}
+    event = str(body.get("event") or "")
+    orb, now = _orb_store(), _orb_now()
+    try:
+        enabled = orb.pref("celebrations", True) is not False
+        total = 0
+        if enabled and event == "submitted":
+            try:
+                from datetime import date
+
+                from sourcing.board import funnel_metrics
+                w = _watchlist()
+                try:
+                    _board_reconcile(w)
+                    total = int(funnel_metrics(w.funnel_rows(), date.today(), _board_goal()).get("applied_total") or 0)
+                finally:
+                    w.close()
+            except Exception:          # noqa: BLE001 - a light burst, never none, when the count fails
+                traceback.print_exc()
+        size = R.celebration(event, applied_total=total, enabled=enabled, reduced_motion=bool(body.get("reduced_motion")))
+        if size:
+            orb.log("celebrate", f"{event}:{size}", now)
+        return jsonify({"ok": True, "size": size, "applied_total": total})
+    finally:
+        orb.close()
+
+
 @app.get("/api/orb/today")
 @_guard
 def orb_today():
     """"Which jobs should I apply to today?", answered from the person's own records with no AI
-    call: the resumes ready to apply (oldest first), then the follow-ups due."""
-    from submit.stages import is_waiting_to_submit
-    now = _orb_now()
-    recs = _records()
-    try:
-        rows = recs.list(limit=2000)
-    finally:
-        recs.close()
-    ready = [(str(r.get("created_at") or ""), r) for r in rows if is_waiting_to_submit(_record_data(r))]
-    w = _watchlist()
-    try:
-        due = w.due_followups(now.date())
-    finally:
-        w.close()
-    ready.sort(key=lambda x: x[0])
-    names = [f"{(r.get('role') or 'a role').split(' · ')[0]} at {r['company']}" if r.get("company")
-             else (r.get("role") or "a role").split(" · ")[0] for _c, r in ready[:3]]
-    if names:
-        text = ("Apply to these first, their resumes are ready: " + "; ".join(names) + "."
-                + (f" {len(ready) - 3} more wait on the Tracker." if len(ready) > 3 else ""))
-    else:
-        text = "No resume is waiting to be sent. Pick a job on Home and I will tailor one."
-    if due:
-        text += f" Also, {len(due)} {'follow-up is' if len(due) == 1 else 'follow-ups are'} due."
-    return jsonify({"ok": True, "kind": "agent", "text": text,
-                    "buttons": [{"id": "open_tracker", "label": "Open Tracker"}] if (ready or due) else []})
+    call: the resumes ready for jobs still To apply, best fit first, each with Apply."""
+    return jsonify({"ok": True, "kind": "agent", **_orb_answer("today")})
 
 
 _ORB_SUMMARY_SYSTEM = (

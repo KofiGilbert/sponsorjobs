@@ -178,7 +178,9 @@ class OrbStore:
                         "action_json) VALUES(?,?,?,?,?,'pending',?,?)",
                         (c["type"], key, rules.KINDS[c["type"]]["priority"], str(c.get("text") or "")[:160],
                          stamp, rules.expires_at(c["type"], now), action))
-                elif old["status"] == "shown" and rules.may_repeat(old["type"], old["shown_at"], now):
+                # shown (or acted on: the follow-up drafted but the data says it is still due) comes
+                # back after its kind's repeat window
+                elif old["status"] in ("shown", "acted") and rules.may_repeat(old["type"], old["shown_at"], now):
                     self._conn.execute("UPDATE orb_nudge SET status='pending', text=?, action_json=?, expires_at=? "
                                        "WHERE id=?", (str(c.get("text") or "")[:160], action,
                                                       rules.expires_at(c["type"], now), old["id"]))
@@ -202,6 +204,19 @@ class OrbStore:
                                    (day,)).fetchone()[0]
             last = self._conn.execute("SELECT MAX(at) FROM orb_event WHERE kind='nudge_shown'").fetchone()[0]
         return int(n or 0), last
+
+    def shown_kinds_today(self, now: datetime) -> dict[str, int]:
+        """How many bubbles of each kind showed today (the event's ref is "kind:id")."""
+        day = now.date().isoformat()
+        with self._lock:
+            rows = self._conn.execute("SELECT ref FROM orb_event WHERE kind='nudge_shown' AND substr(at,1,10)=?",
+                                      (day,)).fetchall()
+        out: dict[str, int] = {}
+        for (ref,) in rows:
+            k = str(ref or "").split(":")[0]
+            if k:
+                out[k] = out.get(k, 0) + 1
+        return out
 
     def mark(self, nid: int, status: str, now: datetime) -> dict | None:
         """shown | acted | dismissed. Two dismissals of one kind in a row turn it off for a week."""

@@ -11,7 +11,11 @@
  * sight, so the page reports the window then. The person may drag it (a 4 px threshold tells a
  * click from a drag), the spot is kept per anchor, and a double click puts it back.
  *
- * orbRect() is pure so tests can pin it (tests/test_orb_view.py). */
+ * It never covers what the person needs to see in the pane (2026-11-27): the pointer and the field
+ * it names, the site's Submit and the field that needs them. main.js reads those from the page
+ * (ORB_AVOID_JS) and hands them over (setAvoid); the Orb glides to the nearest free spot and back.
+ *
+ * orbRect() is pure so tests can pin it (tests/test_orb_js.py). */
 "use strict";
 
 const BOX = 72;              // the ball's box in page pixels: 56 px ball plus its glow
@@ -23,12 +27,10 @@ function num(v, d) { const n = Number(v); return Number.isFinite(n) ? n : d; }
 // and bottom edges to the ball's box. content: {w, h} the page's size in page pixels (ball and
 // bubble). win: {width, height} the window's content size in points. zoom: the app's zoom.
 // Returns the view's rect in points, where the bubble opens (side, vert) and the clamped offset.
-function orbRect({ anchor, offset, content, win, zoom }) {
+function place({ anchor, offset, content, win, zoom }) {
   const z = num(zoom, 1) > 0 ? num(zoom, 1) : 1;
   const W = Math.max(0, num(win && win.width, 0)), H = Math.max(0, num(win && win.height, 0));
-  const a = anchor && num(anchor.width, 0) > 0 && num(anchor.height, 0) > 0
-    ? { x: num(anchor.x, 0), y: num(anchor.y, 0), width: num(anchor.width, 0), height: num(anchor.height, 0) }
-    : { x: 0, y: 0, width: W, height: H };
+  const a = anchorOf(anchor, W, H);
   const s = BOX * z;
   const def = MARGIN * z;
   const r0 = offset && Number.isFinite(Number(offset.r)) ? Number(offset.r) : def;
@@ -45,8 +47,98 @@ function orbRect({ anchor, offset, content, win, zoom }) {
   x = Math.max(0, Math.min(x, Math.max(0, W - cw)));
   y = Math.max(0, Math.min(y, Math.max(0, H - ch)));
   const rect = { x: Math.round(x), y: Math.round(y), width: Math.round(Math.min(cw, W || cw)), height: Math.round(Math.min(ch, H || ch)) };
-  return { rect, side, vert, offset: { r: a.x + a.width - right, b: a.y + a.height - bottom } };
+  const ball = { x: right - s, y: bottom - s, width: s, height: s };
+  return { rect, ball, side, vert, offset: { r: a.x + a.width - right, b: a.y + a.height - bottom } };
 }
+
+function anchorOf(anchor, W, H) {
+  return anchor && num(anchor.width, 0) > 0 && num(anchor.height, 0) > 0
+    ? { x: num(anchor.x, 0), y: num(anchor.y, 0), width: num(anchor.width, 0), height: num(anchor.height, 0) }
+    : { x: 0, y: 0, width: W, height: H };
+}
+
+const PAD = 8;               // points kept clear around what the Orb must not cover
+function hits(rect, avoid) {
+  return (avoid || []).some((v) => v && num(v.width, 0) > 0 && num(v.height, 0) > 0
+    && rect.x < v.x + v.width + PAD && rect.x + rect.width > v.x - PAD
+    && rect.y < v.y + v.height + PAD && rect.y + rect.height > v.y - PAD);
+}
+
+// (2026-11-27, QA) What the Orb must never cover: the pointer and the field it names, the site's
+// Submit, the field that needs the person (avoid: rects in window points). Where the person put
+// it (or the default corner) while that spot is free; otherwise the nearest free spot among the
+// anchor's corners and edge middles, ball and bubble together. moved: true when it stepped aside.
+function orbRect(args) {
+  const base = place(args);
+  const avoid = (args && args.avoid) || [];
+  if (!avoid.length || !hits(base.rect, avoid)) return Object.assign(base, { moved: false });
+  const z = num(args.zoom, 1) > 0 ? num(args.zoom, 1) : 1;
+  const W = Math.max(0, num(args.win && args.win.width, 0)), H = Math.max(0, num(args.win && args.win.height, 0));
+  const a = anchorOf(args.anchor, W, H);
+  const s = BOX * z, m = MARGIN * z;
+  const far = { r: a.width - s - m, b: a.height - s - m };
+  const mid = { r: (a.width - s) / 2, b: (a.height - s) / 2 };
+  const spots = [
+    { r: m, b: m }, { r: far.r, b: m }, { r: m, b: far.b }, { r: far.r, b: far.b },
+    { r: m, b: mid.b }, { r: mid.r, b: m }, { r: far.r, b: mid.b }, { r: mid.r, b: far.b },
+  ];
+  // and the smallest step: just above, or just left of, each thing it would cover (the chat's
+  // input box under a nudge: the Orb lifts a little, it does not fly to another corner)
+  for (const v of avoid) {
+    if (!v || !(num(v.width, 0) > 0)) continue;
+    spots.push({ r: base.offset.r, b: a.y + a.height - (num(v.y, 0) - PAD - 1) });
+    spots.push({ r: a.x + a.width - (num(v.x, 0) - PAD - 1), b: base.offset.b });
+  }
+  const cx = base.ball.x + s / 2, cy = base.ball.y + s / 2;
+  let best = null;
+  for (const off of spots) {
+    const p = place(Object.assign({}, args, { offset: off }));
+    if (hits(p.rect, avoid)) continue;
+    const d = Math.hypot(p.ball.x + s / 2 - cx, p.ball.y + s / 2 - cy);
+    if (!best || d < best.d) best = { d, p };
+  }
+  if (!best) return Object.assign(base, { moved: false });   // nowhere free: stay where it was put
+  return Object.assign(best.p, { moved: true, offset: base.offset });
+}
+
+// Read in the Browser pane's page (main.js, every 600 ms while the Orb is docked there): what the
+// Orb must not cover, in the page's CSS pixels. The pointer (its arrow and label) and the element
+// it names, the current needs-you ring and its Next chip, and the site's Submit.
+const ORB_AVOID_JS = `(() => {
+  const out = [], vw = innerWidth, vh = innerHeight;
+  const add = (r) => {
+    if (!r || !(r.width > 0) || !(r.height > 0) || r.bottom < 0 || r.right < 0 || r.top > vh || r.left > vw) return;
+    out.push({ x: r.left, y: r.top, width: r.width, height: r.height });
+  };
+  try {
+    const h = document.querySelector("[data-sj-pointer]"), p = h && h.shadowRoot && h.shadowRoot.querySelector(".p.on");
+    if (p) { const a = p.querySelector("svg"), t = p.querySelector(".t"); if (a) add(a.getBoundingClientRect()); if (t) add(t.getBoundingClientRect()); }
+    const P = window.TailorPointer, el = P && P.target && P.target();
+    if (el) add(el);
+    // where the pointer is GOING (it glides there, and a page out of sight never finishes the
+    // glide): the arrow and its label at their resting place
+    const st = P && P.state && P.state();
+    const t2 = p && p.querySelector(".t");
+    if (st && t2) {
+      const ml = parseFloat(t2.style.marginLeft) || 0, mt = t2.style.marginTop ? parseFloat(t2.style.marginTop) : 24;
+      add({ left: st.x, top: st.y, right: st.x + 34, bottom: st.y + 42, width: 34, height: 42 });
+      const lx = st.x + 40 + ml, ly = st.y + mt;
+      add({ left: lx, top: ly, right: lx + t2.offsetWidth, bottom: ly + t2.offsetHeight, width: t2.offsetWidth, height: t2.offsetHeight });
+    }
+  } catch (e) { /* not ours */ }
+  try {
+    const g = document.querySelector("[data-sj-glow]"), sr = g && g.shadowRoot;
+    if (sr) for (const n of sr.querySelectorAll(".r.cur, .chip")) if (!n.hidden && !n.classList.contains("off")) add(n.getBoundingClientRect());
+  } catch (e) { /* not ours */ }
+  try {
+    const SUB = /^(submit( (my |your )?application)?|send( (my )?application)?|review and submit|complete application|apply( now)?)$/i;
+    let subs = [...document.querySelectorAll(".tailor-submit-hint")];
+    if (!subs.length) subs = [...document.querySelectorAll("button, input[type='submit'], [role='button']")]
+      .filter((b) => SUB.test(String(b.innerText || b.value || b.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim()));
+    for (const b of subs.slice(0, 4)) add(b.getBoundingClientRect());
+  } catch (e) { /* not ours */ }
+  return out.slice(0, 12);
+})()`;
 
 // The view itself. deps: { win, WebContentsView, server, preload, readPrefs, writePrefs }.
 function createOrb(deps) {
@@ -59,6 +151,9 @@ function createOrb(deps) {
   let content = { w: BOX, h: BOX };
   let place = { side: "right", vert: "up" };
   let drag = null;                    // { kind, r, b } at the drag's start
+  let avoid = [];                     // rects in window points the Orb must not cover (setAvoid)
+  let shown = null;                   // the bounds set last, and the spot they came from
+  let glideTimer = null;
 
   const zoom = () => { try { return win.webContents.getZoomFactor(); } catch (e) { return 1; } };
   const offsets = () => (readPrefs().orb || {});
@@ -106,20 +201,44 @@ function createOrb(deps) {
     try { if (view.webContents.getZoomFactor() !== z) view.webContents.setZoomFactor(z); } catch (e) { /* gone */ }
     const anchor = state.anchor ? { x: state.anchor.x * z, y: state.anchor.y * z, width: state.anchor.width * z, height: state.anchor.height * z } : null;
     const off = drag ? drag.now : offsetFor(state.kind);
-    const out = orbRect({ anchor, offset: off, content, win: size, zoom: z });
+    // while the person drags, it goes where their hand goes; else it steps aside when it must
+    // the app's own controls the page reports (the chat's input box), and in the pane what the
+    // page there shows (setAvoid)
+    const own = (state.avoid || []).map((r) => ({ x: num(r.x, 0) * z, y: num(r.y, 0) * z, width: num(r.width, 0) * z, height: num(r.height, 0) * z }));
+    const out = orbRect({ anchor, offset: off, content, win: size, zoom: z, avoid: drag ? [] : own.concat(state.kind === "pane" ? avoid : []) });
     if (drag) drag.clamped = out.offset;
-    view.setBounds(out.rect);
+    const spot = Math.round(out.ball.x) + "," + Math.round(out.ball.y);
+    // a new spot (stepping aside, or back): a short glide; a bubble growing in place: at once
+    if (shown && shown.spot !== spot && !drag && shown.visible) glide(shown.rect, out.rect);
+    else { clearInterval(glideTimer); glideTimer = null; view.setBounds(out.rect); }
+    shown = { rect: out.rect, spot, visible: !!ready };
     view.setVisible(ready);
     if (out.side !== place.side || out.vert !== place.vert) { place = { side: out.side, vert: out.vert }; send(); }
+  }
+
+  // About 180 ms in ten steps (setBounds has no animation of its own on a view).
+  function glide(from, to) {
+    clearInterval(glideTimer);
+    let i = 0;
+    const N = 10;
+    glideTimer = setInterval(() => {
+      i += 1;
+      const t = i / N, e = 1 - Math.pow(1 - t, 3);
+      const r = { x: Math.round(from.x + (to.x - from.x) * e), y: Math.round(from.y + (to.y - from.y) * e),
+                  width: Math.round(to.width), height: Math.round(to.height) };
+      try { if (view) view.setBounds(i >= N ? to : r); } catch (err) { /* gone */ }
+      if (i >= N) { clearInterval(glideTimer); glideTimer = null; }
+    }, 18);
   }
 
   return {
     // From the app page: { visible, anchor: {x,y,width,height} in page pixels, kind, ...what to show }.
     set(payload) {
       const p = payload || {};
-      state = { visible: !!p.visible, anchor: p.anchor || null, kind: p.kind === "pane" ? "pane" : "window" };
+      state = { visible: !!p.visible, anchor: p.anchor || null, kind: p.kind === "pane" ? "pane" : "window",
+                avoid: Array.isArray(p.avoid) ? p.avoid.slice(0, 8) : [] };
       last = Object.assign({}, p);
-      delete last.anchor;
+      delete last.anchor; delete last.avoid;
       if (state.visible) ensure();
       // the app page (re)loaded and says hello: the Orb's page is already up, say so
       if (p.boot && ready) onReady();
@@ -159,6 +278,15 @@ function createOrb(deps) {
       this.dragEnd();
     },
     reset() { drag = null; saveOffset(state.kind, null); layout(); },
+    // What the Orb must not cover in the Browser pane, in window points (main.js reads the page).
+    setAvoid(list) {
+      const next = (Array.isArray(list) ? list : []).slice(0, 16).map((r) => ({
+        x: Math.round(num(r.x, 0)), y: Math.round(num(r.y, 0)), width: Math.round(num(r.width, 0)), height: Math.round(num(r.height, 0)) }));
+      if (JSON.stringify(next) === JSON.stringify(avoid)) return;
+      avoid = next;
+      layout();
+    },
+    dockedToPane() { return !!(view && state.visible && state.kind === "pane"); },
     // The pane was just created above us: come back on top.
     raise() { if (view) { try { win.contentView.addChildView(view); } catch (e) { /* window gone */ } } },
     layout,
@@ -172,4 +300,4 @@ function createOrb(deps) {
   };
 }
 
-module.exports = { orbRect, createOrb, BOX, MARGIN };
+module.exports = { orbRect, createOrb, BOX, MARGIN, ORB_AVOID_JS };

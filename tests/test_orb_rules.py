@@ -61,8 +61,44 @@ def test_sync_pick_and_priority(st):
     st.sync([_c("matches", "m:1"), _c("ready", "r:1"), _c("followup", "f:1")], T0)
     rows = st.nudges()
     assert [r["type"] for r in rows] == ["matches", "ready", "followup"]
-    assert rules.pick(rows, snoozed=set())["type"] == "ready"
-    assert rules.pick(rows, snoozed={"ready"})["type"] == "followup"
+    assert rules.pick(rows, snoozed=set())["type"] == "followup"
+    assert rules.pick(rows, snoozed={"followup"})["type"] == "ready"
+    # a kind already shown today steps back for one that was not
+    assert rules.pick(rows, snoozed=set(), shown_kinds={"followup": 1})["type"] == "ready"
+    assert rules.pick(rows, snoozed=set(), shown_kinds={"followup": 1, "ready": 1})["type"] == "matches"
+
+
+def test_rank_takes_one_of_each_kind_before_a_second():
+    rows = ([{"type": "followup", "text": f"f{i}"} for i in range(15)] + [{"type": "ready", "text": "r0"},
+            {"type": "ready", "text": "r1"}] + [{"type": "practice", "text": "p0"}])
+    top = [r["text"] for r in rules.rank(rows)]
+    assert top[:3] == ["f0", "p0", "r0"] and top[3:5] == ["f1", "r1"] and len(top) == len(rows)
+    assert rules.rank([]) == []
+
+
+def test_no_kind_is_a_vague_total():
+    # (2026-11-27) "40 things wait on you today" is gone: every kind is one concrete thing
+    assert "daily" not in rules.KINDS
+
+
+@pytest.mark.parametrize("text,kind", [
+    ("What's waiting on me?", "waiting"), ("what is waiting for me", "waiting"), ("What do I need to do today?", "waiting"),
+    ("Which jobs should I apply to today?", "today"), ("what jobs should I apply for", "today"),
+    ("Practice for my next interview", "practice"), ("mock interview please", "practice"),
+    ("How do you work?", "how"), ("what can you do", "how"),
+    ("Do I have any interviews coming up?", "practice"), ("any follow-ups due?", "waiting"),
+    ("who should I follow up with", "waiting"),
+    ("Find me 5 data analyst jobs in Chicago", ""), ("tailor my resume for this job", ""), ("", ""),
+])
+def test_the_orbs_own_questions_need_no_ai(text, kind):
+    assert rules.orb_question(text) == kind
+
+
+def test_the_how_text_is_short_plain_and_true():
+    t = rules.HOW_TEXT
+    assert "\u2014" not in t and "\u2013" not in t and " - " not in t
+    assert "never press Submit" in t and "3 times a day" in t
+    assert len(t.split()) <= 70
 
 
 def test_data_gone_expires_and_repeat_window(st):
@@ -159,3 +195,38 @@ def test_erase_clears_everything_but_settings(st):
     st.erase()
     assert st.nudges(statuses=None) == [] and st.count_events("chat", T0 - timedelta(days=1)) == 0
     assert st.pref("enabled") is False
+
+
+@pytest.mark.parametrize("event,total,kw,want", [
+    ("submitted", 1, {}, "big"),            # the first application ever
+    ("submitted", 2, {}, "light"),
+    ("submitted", 9, {}, "light"),
+    ("submitted", 10, {}, "big"),           # every 10th
+    ("submitted", 30, {}, "big"),
+    ("submitted", 0, {}, "light"),          # the count failed: a light one, never none
+    ("interviewing", 3, {}, "big"),
+    ("offer", 3, {}, "big"),
+    ("submitted", 1, {"reduced_motion": True}, ""),   # the Orb's face and the bubble say it then
+    ("submitted", 10, {"enabled": False}, ""),        # Celebrations off in Settings
+    ("saved", 1, {}, ""),
+])
+def test_celebrations(event, total, kw, want):
+    assert rules.celebration(event, applied_total=total, **kw) == want
+
+
+def test_an_acted_nudge_whose_data_still_holds_comes_back_after_its_window(st):
+    st.sync([_c("practice", "p:1")], T0)
+    n = st.nudges()[0]
+    st.mark(n["id"], "shown", T0)
+    st.mark(n["id"], "acted", T0)
+    st.sync([_c("practice", "p:1")], T0 + timedelta(days=1))
+    assert st.get(n["id"])["status"] == "acted"
+    st.sync([_c("practice", "p:1")], T0 + timedelta(days=3, minutes=1))
+    assert st.get(n["id"])["status"] == "pending"
+
+
+def test_pick_follows_the_datas_order_within_a_kind(st):
+    st.sync([_c("ready", "r:old"), _c("ready", "r:best")], T0)
+    rows = st.nudges()
+    assert rules.pick(rows, snoozed=set())["dedup_key"] == "r:old"
+    assert rules.pick(rows, snoozed=set(), order={"r:best": 0, "r:old": 1})["dedup_key"] == "r:best"

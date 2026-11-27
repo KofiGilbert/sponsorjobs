@@ -2462,6 +2462,16 @@ body.panel-open .app {
 /* The chat in assistant mode: a reply's buttons sit under the bubble, like the autobuild action. */
 .agent-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: -2px 0 6px; }
 @media (max-width: 560px) { .agent-acts { margin-left: 0; } }
+/* (2026-11-27) The Orb's list in the chat: one concrete thing a row, its one button on the right,
+   then "and N more on your Tracker" as a quiet link. */
+.orb-items { display: flex; flex-direction: column; gap: 6px; margin: -2px 0 10px; max-width: 680px; }
+.orb-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 8px 8px 14px;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.orb-item-text { min-width: 0; font-size: 14px; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+.orb-item .btn { flex: none; }
+.orb-more { align-self: flex-start; padding: 2px 0; border: 0; background: none; font: inherit; font-size: 13px;
+  color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.orb-more:hover { color: var(--ink); }
 /* Check first, connect inline (agent/home.py connect_reply): one button, then the wait. */
 .agent-connect { align-items: center; }
 .agent-connect .ac-wait { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }

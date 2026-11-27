@@ -2505,7 +2505,42 @@ function ensureOrb() {
 }
 const fromApp = (e) => !!(win && !win.isDestroyed() && e.sender === win.webContents);
 const fromOrb = (e) => !!(orb && orb.isOrb(e.sender));
-ipcMain.on("orb:set", (e, payload) => { if (fromApp(e) && ensureOrb()) orb.set(payload); });
+// (2026-11-27) the celebration burst: its own click-through layer over the window (confetti_view.js)
+const confettiView = require("./confetti_view");
+let confetti = null;
+ipcMain.on("orb:celebrate", (e, size) => {
+  if (!fromApp(e)) return;
+  if (!confetti) confetti = confettiView.createConfetti({ BrowserWindow, win, server: SERVER });
+  confetti.burst(size === "big" ? "big" : "light");
+});
+ipcMain.on("orb:set", (e, payload) => { if (fromApp(e) && ensureOrb()) { orb.set(payload); orbAvoidWatch(); } });
+// (2026-11-27) While the Orb is docked to the Browser pane, the page is read twice a second for
+// what the Orb must not cover (orb_view.js ORB_AVOID_JS: the pointer and its field, the field that
+// needs the person, the site's Submit), turned into window points and handed to the Orb, which
+// steps aside to the nearest free spot. Stopped the moment it leaves the pane.
+let _orbAvoidTimer = null;
+function orbAvoidWatch() {
+  const on = !!(orb && orb.dockedToPane() && pane && !paneQuiet && !pane.webContents.isDestroyed());
+  if (!on) {
+    if (_orbAvoidTimer) { clearInterval(_orbAvoidTimer); _orbAvoidTimer = null; }
+    if (orb) orb.setAvoid([]);
+    return;
+  }
+  if (_orbAvoidTimer) return;
+  let busy = false;
+  _orbAvoidTimer = setInterval(() => {
+    if (!orb || !orb.dockedToPane() || !pane || paneQuiet || pane.webContents.isDestroyed()) { orbAvoidWatch(); return; }
+    if (busy) return;
+    busy = true;
+    const wc = pane.webContents;
+    const pb = pane.getBounds();
+    wc.executeJavaScript(orbView.ORB_AVOID_JS, true).then((list) => {
+      if (!orb || !Array.isArray(list) || !(pb.width > 0)) return;
+      const z = wc.getZoomFactor() || 1;
+      orb.setAvoid(list.map((r) => ({ x: pb.x + r.x * z, y: pb.y + r.y * z, width: r.width * z, height: r.height * z })));
+    }).catch(() => {}).finally(() => { busy = false; });
+  }, 500);
+}
 ipcMain.on("orb:size", (e, s) => { if (fromOrb(e)) orb.size(s); });
 ipcMain.on("orb:drag", (e, d) => { if (fromOrb(e)) orb.drag(d && d.dx, d && d.dy); });
 ipcMain.on("orb:drag-end", (e) => { if (fromOrb(e)) orb.dragEnd(); });

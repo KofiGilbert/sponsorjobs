@@ -359,7 +359,10 @@ async function run(o) {
     assert(a1[1][0] === "n" && a1[1][1] === "Pat" && /^Suggested: Pat\./.test(a1[0]), "Enter accepted it, on to the next " + JSON.stringify(a1));
     assert(a2[1][0] === "Sam" && a2[1][1] === "c" && a2[0] === "Choose an answer", "typing replaced it; the felony question has no suggestion " + JSON.stringify(a2));
     assert(sent === 0, "the form was never sent");
-    const names = told.filter((d) => d.n).map((d) => d.label);
+    // (2026-11-27) each item is named twice: as the move starts ("going"), then once the pointer is on it
+    const names = told.filter((d) => d.n && !d.going).map((d) => d.label);
+    const going = told.filter((d) => d.n && d.going).map((d) => d.label);
+    assert(JSON.stringify(going) === JSON.stringify(names), "named before the move too " + JSON.stringify(told));
     assert(JSON.stringify(names) === JSON.stringify(["the privacy notice", "Nickname to print on your badge", "Have you ever been convicted of a felony?"]),
            "the bar hears each item the pointer is on " + JSON.stringify(told));
   }

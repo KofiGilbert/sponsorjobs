@@ -104,6 +104,8 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // and what the person did on it (its clicks, its bubble's buttons and answers, its menu).
   orbSet: (payload) => ipcRenderer.send("orb:set", payload || {}),
   onOrbEvent: (cb) => ipcRenderer.on("orb:event", (_e, data) => cb(data)),
+  // (2026-11-27) the celebration burst over the whole window (confetti_view.js): "light" | "big"
+  celebrate: (size) => ipcRenderer.send("orb:celebrate", size === "big" ? "big" : "light"),
   // Is the app window in front? (an OS notification is only for a window out of sight)
   isFocused: () => ipcRenderer.invoke("app:focused"),
 });

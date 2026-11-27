@@ -4723,9 +4723,10 @@ function qsaSafe(sel, root) {
     return r;
   }
   // Wait until the page stops moving under an element (a smooth scroll), 1.5 s at most.
-  async function settled(el) {
+  async function settled(el, maxMs) {
     let last = null;
-    for (let i = 0; i < 30; i++) {
+    const n = Math.max(2, Math.ceil((maxMs || 1500) / 50));
+    for (let i = 0; i < n; i++) {
       await plainSleep(50);
       const t = Math.round(topRect(el).top);
       if (last !== null && t === last) return;
@@ -4750,8 +4751,8 @@ function qsaSafe(sel, root) {
     // ``force``: the shell saw the box out of the person's sight (a frame's field below the top
     // page's fold, which the frame alone cannot tell)
     if ((o && o.force) || !inView(box)) {
-      let reduce = false;
-      try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { reduce = false; }
+      let reduce = !!(o && o.instant);    // Next / Previous: there at once, so the pointer lands at once
+      try { reduce = reduce || window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { /* keep */ }
       try { box.scrollIntoView({ block: "center", behavior: reduce ? "instant" : "smooth" }); } catch (e) { box.scrollIntoView(); }
       scrolled = true;
     }
@@ -4964,10 +4965,14 @@ function qsaSafe(sel, root) {
     if (!list.length) return { n: 0, i: -1 };
     _needsAt = dir === 0 ? 0 : (_needsAt + (dir < 0 ? -1 : 1) + list.length) % list.length;
     const ref = list[_needsAt];
-    const w = walkStart(ref);
     const el = elByRef(ref);
-    if (w.scrolled && el) await settled(visibleBox(el));
+    // (2026-11-27, the owner: "Next takes too long, it looks stopped") the bar names the target
+    // first, the page jumps to it (no smooth scroll to wait out), the settle wait is capped, and
+    // the pointer lands on the field; nothing is re-checked before the move
     _needsCur = ref;
+    if (el) tellNeeds({ n: list.length, i: _needsAt, label: shortName(el), suggest: _needsSuggest.get(ref) || "", ref, going: true });
+    const w = walkStart(ref, { instant: true });
+    if (w.scrolled && el) await settled(visibleBox(el), 250);
     currentGlow(ref);
     try { if (el && el.focus) el.focus({ preventScroll: true }); } catch (e) { /* fine */ }
     // (2026-11-26, the owner) a suggestion (an acknowledgement's words) is typed in and left
@@ -5083,9 +5088,22 @@ function qsaSafe(sel, root) {
     let value = "";
     if (tagOf(el) === "SELECT") { const o = el.options[el.selectedIndex]; value = o && o.value !== "" ? cleanText(o.text || "") : ""; }
     else if (tagOf(el) === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "")) value = el.checked ? (cleanText(rawLabel(el) || "") || "checked") : "";
-    else if (isWidgetInput(el) || el.getAttribute("role") === "combobox") value = comboValue(el) || chosenPills(el).join(", ");
+    else if (isWidgetInput(el) || el.getAttribute("role") === "combobox") value = shownChoice(el) || comboValue(el) || chosenPills(el).join(", ");
     else value = String(el.value || "").trim();
     return { value: String(value || "").slice(0, 300), kind };
+  }
+  // The choice beside a react-select's search box in the site's own words ("No", not "no").
+  function shownChoice(el) {
+    const want = comboValue(el);
+    if (!want) return "";
+    let node = el;
+    for (let i = 0; i < 5 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      const v = qsaSafe(VALUE_SEL, node).find((x) => norm(x.textContent) === want);
+      if (v) return cleanText(v.textContent);
+    }
+    return "";
   }
   /** The pointer on a field the agent asks the person about, with what to do there: a list or a
    * choice moves on by itself once picked; a box once the person leaves it. */

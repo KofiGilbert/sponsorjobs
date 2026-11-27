@@ -152,6 +152,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Replay the forms
         run: node tests/js/test_replay_forms.js > replay.json || (cat replay.json; exit 1)
+      - name: The guided ask and walk on a real page
+        run: node tests/js/test_guide_replay.js
 
   # The one check branch protection requires: green when the site tests, every shard and the
   # replay passed.

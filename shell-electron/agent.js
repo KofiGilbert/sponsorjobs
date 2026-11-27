@@ -1978,6 +1978,7 @@ function createAgent(deps) {
       const n = open.length;
       const onPage = new Set();              // answered on the page, or filled there by the shell
       const settled = new Set();             // answered, or passed with Next
+      let lastView = null;                   // the page as last read: the next field lights from it at once
       const at = (q) => open.findIndex((d) => sameLabel(d.question, q));
       const finishAsk = (res) => Object.assign({}, res, { onPage });
       // An answer that came from Telegram (Hybrid): into the form, by the shell.
@@ -2006,11 +2007,23 @@ function createAgent(deps) {
         for (let i = 0; i < n && !(r && r.ok); i++) {
           const d = open[i];
           if (settled.has(d.question)) continue;
-          st.guide = { next: false };
+          st.guide = { next: false, wake: null };
           progress(recordId, "guide", (n === 1 ? "1 field needs you." : n + " fields need you.") + " " + (i + 1) + " of " + n,
                    { step, guide: { i: i + 1, n, question: d.question, id } });
           let lit = 0, last = null, same = 0;
+          // (2026-11-27, the owner: Next "takes too long, it looks stopped") the pointer goes to the
+          // next field at once, from the page as last read; the page is read again after the move
+          if (lastView) {
+            const pre = indexFor(lastView.text, d.question);
+            if (pre && !lastView.frameOf.has(pre)) { await unlight(); await js(HL_ON(pre)); await js(POINT_JS(pre)); lit = pre; }
+          }
           for (;;) {
+            if (st.guide && st.guide.next) {       // Next pressed while the page was being read
+              await unlight();
+              await once("/api/autoapply/agent/answer", { id, index: i, question: d.question, action: "leave", standing: false });
+              settled.add(d.question);
+              break;
+            }
             if (st.stop) {
               await unlight();
               await deps.postApp("/api/autoapply/agent/ask/close", { id }).catch(() => null);
@@ -2030,13 +2043,17 @@ function createAgent(deps) {
             }
             let v2 = null;
             try { v2 = await view(wc, fr); } catch (e) { if (e && e.stopped) throw e; v2 = null; }
+            if (v2) lastView = v2;
+            if (st.guide && st.guide.next) continue;          // Next came in meanwhile: on at once
             const idx = v2 ? indexFor(v2.text, d.question) : 0;
             if (idx && idx !== lit && !v2.frameOf.has(idx)) { await unlight(); await js(HL_ON(idx)); await js(POINT_JS(idx)); lit = idx; }
             // The field holds a value now: a choice counts at once; typed text once the person
             // left the box (or stopped typing), so half a word is never taken. A list's choice the
             // view does not show (a react-select) is read the way the person sees it.
             const lines = v2 ? linesFor(v2.text, d.question) : [];
-            const seen = idx && !lines.some((ln) => FILLED_LINE_RE.test(ln)) && !v2.frameOf.has(idx) ? await js(CHOICE_JS(idx)) : null;
+            // (2026-11-27) a list's choice is read in the page first: its own words, whatever the line says
+            const listLine = lines.some((ln) => /^\*?\[\d+\]<combobox\b/.test(ln));
+            const seen = idx && (listLine || !lines.some((ln) => FILLED_LINE_RE.test(ln))) && !v2.frameOf.has(idx) ? await js(CHOICE_JS(idx)) : null;
             if (idx && (seen || lines.some((ln) => FILLED_LINE_RE.test(ln)))) {
               const got = seen ? seen.value : (pageValue(lines) || null);
               const box = got == null ? ((await js(VALUE_JS(idx))) || {}) : { value: got, typing: false };
@@ -2068,7 +2085,8 @@ function createAgent(deps) {
               if (w.ok) { r = w; break; }
               if (settled.has(d.question)) { await unlight(); break; }
             }
-            await delay(GUIDE_POLL_MS);
+            // the wait ends early on Next (guideNext wakes it)
+            await new Promise((res) => { const t = setTimeout(res, GUIDE_POLL_MS); if (st.guide) st.guide.wake = () => { clearTimeout(t); res(); }; });
           }
         }
       } finally {
@@ -4046,7 +4064,14 @@ function createAgent(deps) {
 
   function stop() { if (current) current.stop = true; if (batchOn) batchOn.stop = true; }
   // The bar's Next during the guided ask: on to the next field, this one stays flagged.
-  function guideNext() { if (current && current.guide) { current.guide.next = true; return { ok: true }; } return { ok: false }; }
+  function guideNext() {
+    if (current && current.guide) {
+      current.guide.next = true;
+      try { if (current.guide.wake) current.guide.wake(); } catch (e) { /* fine */ }
+      return { ok: true };
+    }
+    return { ok: false };
+  }
   const isReady = (recordId) => ready.has(recordId);
   // The full Review answers list of a job waiting at Ready to send, self-identification values
   // included: only for the app's own window (agent:ready), never posted to the engine.
