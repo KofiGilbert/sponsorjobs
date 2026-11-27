@@ -298,12 +298,25 @@ to `SCENARIOS`.
 
 ## What is not verified on a real site
 
-The gaps branch (2026-11-27): the job identity rule, the child window for a site's chooser (and
-whether Dropbox and Google Drive choosers hand the file back to the form from it; Google may
-refuse sign-in in an embedded window), the CDP drop on a real drop-only box (proved in headless
-Chromium in the replay, not in the Electron pane), the email-first step on a live iCIMS site, and
-the model reading places and confirmations in other languages with the real model: none of it
-was run in the owner's window yet.
+The gaps branch, live check in the owner's dev window (2026-11-27, never submitted):
+* case 35: a Luminis Health Greenhouse form filled; the app's link to another Luminis posting (same
+  site, another id) let it go ("You left the form"), Autofill there took the any-job path, and back
+  on the first form the application came back and Autofill filled it again. Found and fixed live:
+  the walk remembered the old document's boxes (nothing refilled); a page watch armed on an
+  email-first step had no anchor and filled the next site's form; a Browser job declined at the
+  country note kept its application with no page and the next job filled with it.
+* case 9: a site link that opens a window over the filled form (Luminis' logo) opened as its own
+  window and the form stayed. Dropbox and Google Drive choosers were not tried.
+* case 9, drops: on a test page served locally in the Electron pane, the drag through CDP delivered
+  a trusted drop with the file. No real site with a drop-only box was found.
+* case 32: a Vancouver posting got the Canada note before anything was filled, and "Not this one"
+  filled nothing. The model path was not run live: the company AI reported its monthly limit and the
+  owner's own key has no credit.
+* case 7: on Cotiviti's iCIMS page (job 20540) the Orb asked once, Yes typed the email in sight and
+  stopped; Next and the captcha untouched. Found and fixed live: the careers site's header search box
+  made the page read as two boxes, so the step was not seen.
+* Not checked live: the 4xx / 5xx and "closed" lines after a real Submit (nothing is submitted in a
+  check), and confirmation emails in other languages.
 
 The network patterns for Workday, iCIMS, SmartRecruiters, SuccessFactors, Taleo and Workable are
 the shapes their submit addresses are known to take, not recorded captures (their fixture says
