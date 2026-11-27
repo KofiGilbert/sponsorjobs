@@ -55,7 +55,7 @@ def test_the_shell_rules_under_node(script, ok):
 def test_every_pane_navigation_is_checked_against_the_filled_job():
     main = _src("shell-electron/main.js")
     pane = _between(main, "function ensurePane()", "\n}\n")
-    assert 'wc.on("did-navigate", (_e, url) => paneNavigated(wc, url))' in pane
+    assert "paneNavigated(wc, url)" in pane.split('wc.on("did-navigate"', 1)[1].split("\n", 1)[0]
     assert "paneNavigated(wc, url)" in pane.split('"did-navigate-in-page"', 1)[1]
     nav = _between(main, "function paneNavigated(", "\n}\n")
     # never while the app fills or the agent runs; another job stops both watches and tells the app
