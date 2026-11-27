@@ -2023,19 +2023,19 @@ async function applyDecision(url, pageUrl) {
 // (2026-11-26) The Autofill button's second half (preload's assistApply calls it with the fill's
 // own result): the agent finishes only what the fast fill left (finish.js needsFinish), or, for a
 // plain fill, the drawn pointer goes. The site's Submit is never pressed on this path.
-ipcMain.handle("assist:finish", async (_e, opts, report) => {
-  const o = opts || {};
-  _fillBusy++;
-  try {
-    // the email-first step is the person's: no agent, no needs-you end (emailStepTurn said it)
-    if (report && report.reason === "email-step") return report;
-    const r = o.finish ? await finishAfterAutofill(o, report) : report;
-    const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
-    // the pages the agent reached are this application's too
-    if (wc && o.recordId != null && r && r.agent) noteFilled(o.recordId, wc.getURL() || "", true);
-    return await guideEnd(r);
-  } finally { _fillBusy--; }
+ipcMain.handle("assist:finish", (_e, opts, report) => {
+  _fillBusy++;                       // the agent's own navigations never let the application go
+  return finishAndEnd(opts || {}, report).finally(() => { _fillBusy--; });
 });
+async function finishAndEnd(o, report) {
+  // the email-first step is the person's: no agent, no needs-you end (emailStepTurn said it)
+  if (report && report.reason === "email-step") return report;
+  const r = o.finish ? await finishAfterAutofill(o, report) : report;
+  const wc = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+  // the pages the agent reached are this application's too
+  if (wc && o.recordId != null && r && r.agent) noteFilled(o.recordId, wc.getURL() || "", true);
+  return guideEnd(r);
+}
 
 // (2026-11-26) The end of every Autofill: the pointer rests on the first field that needs the
 // person (outlined, with Next / Previous on the status line), else on the site's Submit, outlined,
